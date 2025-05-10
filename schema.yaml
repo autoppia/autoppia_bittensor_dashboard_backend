@@ -1,0 +1,87 @@
+# Task Collection
+tasks:
+  type: object
+  properties:
+    validator_uid:
+      type: integer
+      description: The unique identifier of the validator
+    miner_uid:
+      type: integer
+      description: The unique identifier of the miner
+    miner_hotkey:
+      type: string
+      description: The hotkey of the miner
+    task_id:
+      type: string
+      description: The unique identifier of the task
+    success:
+      type: boolean
+      description: Whether the task was successful or not
+    score:
+      type: number
+      description: The score assigned to the task
+    duration:
+      type: number
+      description: The duration of the task in seconds
+    website:
+      type: string
+      description: The website associated with the task
+    created_at:
+      type: string
+      format: date-time
+      description: The timestamp when the record was created
+  required:
+    - validator_uid
+    - miner_uid
+    - miner_hotkey
+    - task_id
+    - success
+    - score
+    - duration
+    - created_at
+  additionalProperties: false
+
+# Metric Collection
+metrics:
+  type: object
+  properties:
+    miner_uid:
+      type: integer
+      description: The unique identifier of the miner
+    miner_hotkey:
+      type: string
+      description: The hotkey of the miner
+    tasks_per_validator:
+      type: object
+      description: Count of tasks performed for each validator
+      additionalProperties:
+        type: integer
+    scores:
+      type: object
+      description: Scores received from each validator
+      additionalProperties:
+        type: number
+    times:
+      type: object
+      description: Execution times for tasks from each validator
+      additionalProperties:
+        type: number
+    successful_tasks:
+      type: integer
+      description: Count of successfully completed tasks
+    total_tasks:
+      type: integer
+      description: Total number of tasks attempted
+    success_rate:
+      type: number
+      description: Ratio of successful tasks to total tasks
+  required:
+    - miner_uid
+    - miner_hotkey
+    - tasks_per_validator
+    - scores
+    - times
+    - successful_tasks
+    - total_tasks
+    - success_rate
+  additionalProperties: false
