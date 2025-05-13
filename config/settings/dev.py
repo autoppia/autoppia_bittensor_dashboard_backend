@@ -8,6 +8,6 @@ DEBUG = True
 
 SECRET_KEY = os.environ["SECRET_KEY"]
 
-MONGO_CONNECTION_URI = "mongodb://localhost:27017"
+MONGO_CONNECTION_URI = os.environ["MONGO_CONNECTION_URI"]
 
 CORS_ALLOW_ALL_ORIGINS = True
