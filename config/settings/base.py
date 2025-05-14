@@ -31,6 +31,8 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+CORS_ALLOW_ALL_ORIGINS = True
+
 ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
@@ -49,4 +51,10 @@ TEMPLATES = [
 ]
 
 STATIC_URL = "static/"
+
+ALLOWED_HOSTS = [
+    'localhost',
+    '127.0.0.1',
+    'api-leaderboard.autoppia.com'
+]
 
