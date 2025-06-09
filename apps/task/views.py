@@ -1,193 +1,219 @@
+# apps/task/views.py
+
 from django.conf import settings
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from pymongo import MongoClient
 from datetime import datetime, timezone, timedelta
+from apps.database.mongo_service import MongoService
 
 
 class TaskViewSet(viewsets.ViewSet):
-    mongo_connection_uri = settings.MONGO_CONNECTION_URI
-    mongo_client = MongoClient(mongo_connection_uri)
-    mongo_database = mongo_client["autoppia"]
+    """
+    API endpoints to list, create, and filter task logs.
+    Uses the database defined by settings.MONGO_TASK_DB_NAME.
+    """
+
+    db = MongoService.db(settings.MONGO_DB_NAME)
+
+    def list(self, request):
+        """Return all task logs."""
+        tasks = self.db["tasks"].find()
+        return Response(list(tasks))
 
     def create(self, request):
-        validator_uid = request.data.get("validator_uid")
-        miner_uid = request.data.get("miner_uid")
-        miner_hotkey = request.data.get("miner_hotkey")
-        task_id = request.data.get("task_id")
-        success = request.data.get("success")
-        score = request.data.get("score")
-        duration = request.data.get("duration")
-        website = request.data.get("website")
-        created_at = request.data.get("created_at", datetime.now(timezone.utc).timestamp())
+        """Insert a new task record and update or create the corresponding metric."""
+        task_data = self._extract_task_data(request)
+        insert_result = self._insert_task_in_db(task_data)
+        if not insert_result.acknowledged:
+            return Response(
+                {"error": "Failed to insert task into database"}, status=500
+            )
 
-        task_data = {
-            "validator_uid": validator_uid,
-            "miner_uid": miner_uid,
-            "miner_hotkey": miner_hotkey,
-            "task_id": task_id,
-            "success": success,
-            "score": score,
-            "duration": duration,
-            "website": website,
-            "created_at": created_at
-        }
-
-        result = self.mongo_database["tasks"].insert_one(task_data)
-        if not result.acknowledged:
-            return Response({"error": "Failed to create task log"}, status=500)
-
-        metric = self.mongo_database["metrics"].find_one({"miner_uid": miner_uid})
-        validator_uid_string = str(validator_uid)
-
-        if metric and metric["miner_hotkey"] == miner_hotkey:
-            if metric["tasks_per_validator"].get(validator_uid_string):
-                total_score = metric["scores"][validator_uid_string] * metric["tasks_per_validator"][validator_uid_string] + score                
-                total_duration = metric["durations"][validator_uid_string] * metric["tasks_per_validator"][validator_uid_string] + duration
-                metric["tasks_per_validator"][validator_uid_string] += 1
-
-                metric["scores"][validator_uid_string] = round(total_score / metric["tasks_per_validator"][validator_uid_string], 3)            
-                metric["durations"][validator_uid_string] = round(total_duration / metric["tasks_per_validator"][validator_uid_string])
-                
-            else:             
-                metric["tasks_per_validator"][validator_uid_string] = 1
-
-                metric["scores"][validator_uid_string] = score
-
-                metric["durations"][validator_uid_string] = duration        
-                metric["duration_avg"] = duration      
-
-            metric["score_avg"] = sum(metric["scores"].values()) / len(metric["scores"].values())      
-            metric["score_avg"] = round(metric["score_avg"], 3) 
-
-            metric["duration_avg"] = sum(metric["durations"].values()) / len(metric["durations"].values())
-            metric["duration_avg"] = round(metric["duration_avg"])
-
-            metric["successful_tasks"] += 1 if success else 0
-            metric["total_tasks"] += 1
-            metric["success_rate"] = round(metric["successful_tasks"] / metric["total_tasks"], 3)
-
-            result = self.mongo_database["metrics"].replace_one({"miner_uid": miner_uid}, metric)
-            if not result.acknowledged:
-                return Response({"error": "Failed to update metric"}, status=500)
-
+        miner_uid = task_data["miner_uid"]
+        metric = self._fetch_metric_from_db(miner_uid)
+        if metric and metric.get("miner_hotkey") == task_data["miner_hotkey"]:
+            update_result = self._update_metric_in_db(metric, task_data)
+            if not update_result.acknowledged:
+                return Response(
+                    {"error": "Failed to update metric in database"}, status=500
+                )
         else:
-            new_metric = {
-                "miner_uid": miner_uid,
-                "miner_hotkey": miner_hotkey,
-                "tasks_per_validator": {
-                    validator_uid_string: 1
-                },
-                "scores": {
-                    validator_uid_string: score
-                },
-                "durations": {
-                    validator_uid_string: duration
-                },
-                "successful_tasks": 1 if success else 0,
-                "total_tasks": 1,
-                "success_rate": 1 if success else 0,
-            }
+            create_result = self._create_metric_in_db(metric, task_data)
+            if not create_result.acknowledged:
+                return Response(
+                    {"error": "Failed to create metric in database"}, status=500
+                )
 
-            if metric:                
-                result = self.mongo_database["metrics"].replace_one({"miner_uid": miner_uid}, new_metric)
-            else:
-                result = self.mongo_database["metrics"].insert_one(new_metric)
+        return Response({"message": "Task logged successfully"}, status=201)
 
-            if not result.acknowledged:
-                return Response({"error": "Failed to log task"}, status=500)
-
-        if result.acknowledged:
-            return Response({"message": "Task logged successfully"}, status=201)
-        else:
-            return Response({"message": "Failed to log task"}, status=500)
-        
     @action(detail=False, url_path="filtered")
     def filtered_tasks(self, request):
+        """Return aggregated metrics filtered by period and websites."""
         period = request.GET.get("period", "All")
-        websites = request.GET.get("websites", "")
-        websites = websites.split(",")
+        websites = [w for w in request.GET.get("websites", "").split(",") if w]
+        pipeline = self._build_filtered_pipeline(period, websites)
+        tasks = self.db["tasks"].aggregate(pipeline)
+        return Response(list(tasks))
 
-        query = {}
+    # —— Private helper methods —— #
 
+    def _extract_task_data(self, request):
+        now_ts = datetime.now(timezone.utc).timestamp()
+        return {
+            "validator_uid": request.data.get("validator_uid"),
+            "miner_uid": request.data.get("miner_uid"),
+            "miner_hotkey": request.data.get("miner_hotkey"),
+            "task_id": request.data.get("task_id"),
+            "success": request.data.get("success"),
+            "score": request.data.get("score"),
+            "duration": request.data.get("duration"),
+            "website": request.data.get("website"),
+            "created_at": request.data.get("created_at", now_ts),
+        }
+
+    def _insert_task_in_db(self, task_data):
+        """Insert the task record into the tasks collection."""
+        return self.db["tasks"].insert_one(task_data)
+
+    def _fetch_metric_from_db(self, miner_uid):
+        """Fetch the metric document for a given miner_uid."""
+        return self.db["metrics"].find_one({"miner_uid": miner_uid})
+
+    def _update_metric_in_db(self, metric, task_data):
+        """Update an existing metric document with new task results."""
+        vid = str(task_data["validator_uid"])
+        key = f"validator_{vid}"
+        score = task_data["score"]
+        duration = task_data["duration"]
+
+        if key in metric["tasks_per_validator"]:
+            count = metric["tasks_per_validator"][key]
+            total_score = metric["scores_per_validator"][key] * count + score
+            total_duration = metric["durations_per_validator"][key] * count + duration
+            metric["tasks_per_validator"][key] += 1
+            metric["scores_per_validator"][key] = round(
+                total_score / metric["tasks_per_validator"][key], 3
+            )
+            metric["durations_per_validator"][key] = round(
+                total_duration / metric["tasks_per_validator"][key]
+            )
+        else:
+            metric["tasks_per_validator"][key] = 1
+            metric["scores_per_validator"][key] = score
+            metric["durations_per_validator"][key] = duration
+
+        # Recalculate averages and success rates
+        metric["score_avg"] = round(
+            sum(metric["scores_per_validator"].values())
+            / len(metric["scores_per_validator"]),
+            3,
+        )
+        metric["duration_avg"] = round(
+            sum(metric["durations_per_validator"].values())
+            / len(metric["durations_per_validator"])
+        )
+        metric["successful_tasks"] += 1 if task_data["success"] else 0
+        metric["total_tasks"] += 1
+        metric["success_rate"] = round(
+            metric["successful_tasks"] / metric["total_tasks"], 3
+        )
+
+        return self.db["metrics"].replace_one(
+            {"miner_uid": task_data["miner_uid"]}, metric
+        )
+
+    def _create_metric_in_db(self, metric, task_data):
+        """Create a new metric document based on the first task entry."""
+        vid = str(task_data["validator_uid"])
+        key = f"validator_{vid}"
+        new_metric = {
+            "miner_uid": task_data["miner_uid"],
+            "miner_hotkey": task_data["miner_hotkey"],
+            "tasks_per_validator": {key: 1},
+            "scores_per_validator": {key: task_data["score"]},
+            "durations_per_validator": {key: task_data["duration"]},
+            "successful_tasks": 1 if task_data["success"] else 0,
+            "total_tasks": 1,
+            "success_rate": 1 if task_data["success"] else 0,
+        }
+        if metric:
+            return self.db["metrics"].replace_one(
+                {"miner_uid": task_data["miner_uid"]}, new_metric
+            )
+        return self.db["metrics"].insert_one(new_metric)
+
+    def _build_filtered_pipeline(self, period, websites):
+        """Construct the aggregation pipeline for filtered task metrics."""
         now = datetime.now(timezone.utc)
         if period == "Day":
-            start_date = now - timedelta(days=1)
+            start = now - timedelta(days=1)
         elif period == "Week":
-            start_date = now - timedelta(days=7)
+            start = now - timedelta(days=7)
         elif period == "Month":
-            start_date = now - timedelta(days=30)
+            start = now - timedelta(days=30)
+        else:
+            start = None
 
-        if period != "All":
-            query["created_at"] = {"$gte": start_date.timestamp()}
-
+        match = {}
+        if start:
+            match["created_at"] = {"$gte": start.timestamp()}
         if websites:
-            query["website"] = {"$in": websites}
+            match["website"] = {"$in": websites}
 
-        pipeline = [
-            {
-                "$match": query
-            },
+        return [
+            {"$match": match},
             {
                 "$group": {
                     "_id": {
                         "miner_uid": "$miner_uid",
                         "miner_hotkey": "$miner_hotkey",
-                        "validator_uid": "$validator_uid"
-                    }, 
+                        "validator_uid": "$validator_uid",
+                    },
                     "score": {"$avg": "$score"},
-                    "duration": {"$avg": "$duration"}
+                    "duration": {"$avg": "$duration"},
                 }
             },
             {
                 "$group": {
                     "_id": {
                         "miner_uid": "$_id.miner_uid",
-                        "miner_hotkey": "$_id.miner_hotkey"
+                        "miner_hotkey": "$_id.miner_hotkey",
                     },
-                    "scores": {
+                    "scores_per_validator": {
                         "$push": {
-                            "k": {"$toString": "$_id.validator_uid"}, 
-                            "v": "$score"
+                            "k": {"$toString": "$_id.validator_uid"},
+                            "v": "$score",
                         }
                     },
-                    "durations": {
+                    "durations_per_validator": {
                         "$push": {
-                            "k": {"$toString": "$_id.validator_uid"}, 
-                            "v": "$duration"
+                            "k": {"$toString": "$_id.validator_uid"},
+                            "v": "$duration",
                         }
                     },
                     "score_avg": {"$avg": "$score"},
-                    "duration_avg": {"$avg": "$duration"}
+                    "duration_avg": {"$avg": "$duration"},
                 }
             },
             {
                 "$addFields": {
-                    "scores": {
-                        "$arrayToObject": "$scores"
+                    "scores_per_validator": {"$arrayToObject": "$scores_per_validator"},
+                    "durations_per_validator": {
+                        "$arrayToObject": "$durations_per_validator"
                     },
-                    "durations": {
-                        "$arrayToObject": "$durations"
-                    }
                 }
             },
             {
                 "$project": {
                     "miner_uid": "$_id.miner_uid",
                     "miner_hotkey": "$_id.miner_hotkey",
-                    "scores": 1,
-                    "durations": 1,
-                    "score_avg": { "$round": ["$score_avg", 3] },
-                    "duration_avg": { "$round": ["$duration_avg", 0] },
-                    "_id": 0
+                    "scores_per_validator": 1,
+                    "durations_per_validator": 1,
+                    "score_avg": {"$round": ["$score_avg", 3]},
+                    "duration_avg": {"$round": ["$duration_avg", 0]},
+                    "_id": 0,
                 }
             },
-            {
-                "$sort": {"miner_uid": 1}
-            }
+            {"$sort": {"miner_uid": 1}},
         ]
-        
-        tasks = self.mongo_database["tasks"].aggregate(pipeline)
-        return Response(list(tasks))
-        
