@@ -34,8 +34,8 @@ A Django REST API for tracking and aggregating Bittensor miner tasks and perform
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/autoppia/autoppia_bittensor_dashboard_backend.git
-cd autoppia_bittensor_dashboard_backend
+git clone https://github.com/autoppia/bittensor-leaderboard.git
+cd bittensor-leaderboard
 ```
 
 ### 2. Create virtual environment
@@ -97,17 +97,27 @@ The API will be available at `http://localhost:8000`
 
 ## 🚀 Production Deployment
 
-### Using PM2 (Recommended)
+### Install system dependencies
 
 ```bash
-source venv/bin/activate
-pm2 start "python manage.py runserver 0.0.0.0:8000" --name leaderboard_backend
-deactivate
+# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install required packages
+sudo apt install -y nginx nodejs npm
+
+# Install PM2 globally
+sudo npm install -g pm2
 ```
 
-## 🌐 Nginx Configuration
+### Configure Nginx
 
-For production deployment with Nginx reverse proxy:
+```bash
+# Edit Nginx configuration
+sudo nano /etc/nginx/sites-available/default
+```
+
+Replace all content with:
 
 ```nginx
 server {
@@ -122,7 +132,51 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
+
+server {
+    listen 80;
+    server_name leaderboard.autoppia.com;
+
+    location / {
+        proxy_pass http://localhost:7000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
 ```
+
+```bash
+# Test and restart Nginx
+sudo nginx -t
+sudo systemctl restart nginx
+sudo systemctl enable nginx
+```
+
+### Start application with PM2
+
+```bash
+cd ~/autoppia_bittensor_dashboard_backend
+source venv/bin/activate
+
+# Start Django API
+pm2 start "/home/admin/autoppia_bittensor_dashboard_backend/venv/bin/python3 manage.py runserver 0.0.0.0:8000" --name leaderboard_backend
+
+# Save PM2 configuration
+pm2 save
+pm2 startup
+
+deactivate
+```
+
+### Configure DNS (Cloudflare)
+
+1. Go to your Cloudflare dashboard
+2. Update DNS records:
+   - `api-leaderboard` A record → Your VPS IP (195.179.228.132)
+   - `leaderboard` A record → Your VPS IP (195.179.228.132)
+3. Set Proxy status to "Proxied" for both records
 
 ## 📊 Data Structure
 
@@ -189,7 +243,7 @@ server {
 ### Submit a task
 
 ```bash
-curl -X POST http://localhost:8000/api/tasks/ \
+curl -X POST http://api-leaderboard.autoppia.com/tasks/ \
   -H "Content-Type: application/json" \
   -d '{
     "validator_uid": "validator_123",
@@ -207,17 +261,17 @@ curl -X POST http://localhost:8000/api/tasks/ \
 
 ```bash
 # Tasks from last week for specific websites
-curl "http://localhost:8000/api/tasks/filtered/?period=Week&websites=example.com,test.com"
+curl "http://api-leaderboard.autoppia.com/tasks/filtered/?period=Week&websites=example.com,test.com"
 ```
 
 ### Get miner metrics
 
 ```bash
 # All metrics
-curl http://localhost:8000/api/metrics/
+curl http://api-leaderboard.autoppia.com/metrics/
 
 # Specific miner
-curl http://localhost:8000/api/metrics/miner_456/
+curl http://api-leaderboard.autoppia.com/metrics/miner_456/
 ```
 
 ## 🐛 Troubleshooting
@@ -243,6 +297,24 @@ curl http://localhost:8000/api/metrics/miner_456/
 ### Useful Commands
 
 ```bash
+# Check PM2 status
+pm2 status
+
+# View application logs
+pm2 logs leaderboard_backend
+
+# Restart application
+pm2 restart leaderboard_backend
+
+# Check Nginx status
+sudo systemctl status nginx
+
+# Test Nginx configuration
+sudo nginx -t
+
+# Reload Nginx
+sudo systemctl reload nginx
+
 # Test MongoDB connection
 python manage.py shell
 >>> from apps.database.mongo_service import MongoService
@@ -250,10 +322,6 @@ python manage.py shell
 
 # Check Django configuration
 python manage.py check
-
-# View application logs
-tail -f logs/django.log  # if logging is configured
-pm2 logs leaderboard_backend
 ```
 
 ---
