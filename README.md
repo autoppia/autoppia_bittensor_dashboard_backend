@@ -34,8 +34,8 @@ A Django REST API for tracking and aggregating Bittensor miner tasks and perform
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/autoppia/bittensor-leaderboard.git
-cd bittensor-leaderboard
+git clone https://github.com/autoppia/autoppia_bittensor_dashboard_backend.git
+cd autoppia_bittensor_dashboard_backend
 ```
 
 ### 2. Create virtual environment
