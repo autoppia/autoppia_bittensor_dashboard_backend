@@ -1,30 +1,67 @@
 # apps/task/views.py
 
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Any
+from datetime import datetime, timezone, timedelta
+
 from django.conf import settings
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from datetime import datetime, timezone, timedelta
+
 from apps.database.mongo_service import MongoService
+
+
+@dataclass
+class LeaderboardTaskRecord:
+    validator_uid: int
+    miner_uid: int
+    miner_hotkey: str
+    task_id: str
+    website: str
+    success: bool = False
+    score: float = 0.0
+    duration: float = 0.0
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LeaderboardTaskRecord":
+        return cls(
+            validator_uid=data["validator_uid"],
+            miner_uid=data["miner_uid"],
+            miner_hotkey=data["miner_hotkey"],
+            task_id=data["task_id"],
+            website=data["website"],
+            success=data.get("success", False),
+            score=data.get("score", 0.0),
+            duration=data.get("duration", 0.0),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        d["created_at"] = datetime.now(timezone.utc).timestamp()
+        return d
 
 
 class TaskViewSet(viewsets.ViewSet):
     """
-    API endpoints to list, create (single & bulk), and filter task logs.
+    API endpoints to create (single & bulk) and filter task logs.
     Uses the database defined by settings.MONGO_TASK_DB_NAME.
     """
 
     db = MongoService.db(settings.MONGO_DB_NAME)
 
     def create(self, request):
-        """POST /tasks/  → Insert a single task record."""
-        task_data = self._extract_task_data(request.data)
-        insert_result = self._insert_task_in_db(task_data)
-        if not insert_result.acknowledged:
+        """POST /tasks/ → Insert a single task record."""
+        record = LeaderboardTaskRecord.from_dict(request.data)
+        task_data = record.to_dict()
+
+        ins = self.db["tasks"].insert_one(task_data)
+        if not ins.acknowledged:
             return Response(
                 {"error": "Failed to insert task into database"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
         self._upsert_metric(task_data)
         return Response(
             {"message": "Task logged successfully"}, status=status.HTTP_201_CREATED
@@ -34,60 +71,50 @@ class TaskViewSet(viewsets.ViewSet):
     def bulk_create(self, request):
         """
         POST /tasks/bulk/
-        Recibe {"tasks": [ {...}, {...}, ... ]}
-        Inserta todos los registros en un solo batch y devuelve un informe por cada uno.
+        Recibe siempre un array JSON de LeaderboardTaskRecord:
+          [
+            {validator_uid:…, miner_uid:…, …},
+            {…},
+            …
+          ]
+        Inserta todos los registros en un batch y devuelve un informe por cada uno.
         """
-        tasks = request.data.get("tasks", [])
         results = []
-        for idx, payload in enumerate(tasks):
+        for idx, item in enumerate(request.data or []):
             try:
-                task_data = self._extract_task_data(payload)
-                ins = self._insert_task_in_db(task_data)
+                record = LeaderboardTaskRecord.from_dict(item)
+                task_data = record.to_dict()
+
+                ins = self.db["tasks"].insert_one(task_data)
                 if not ins.acknowledged:
                     raise RuntimeError("insert failed")
+
                 self._upsert_metric(task_data)
                 results.append(
-                    {"index": idx, "task_id": payload.get("task_id"), "status": "ok"}
+                    {"index": idx, "task_id": record.task_id, "status": "ok"}
                 )
             except Exception as e:
                 results.append(
                     {
                         "index": idx,
-                        "task_id": payload.get("task_id"),
+                        "task_id": item.get("task_id"),
                         "status": "error",
                         "detail": str(e),
                     }
                 )
+
         return Response({"results": results}, status=status.HTTP_207_MULTI_STATUS)
 
-    @action(detail=False, url_path="filtered", methods=["get"])
+    @action(detail=False, methods=["get"], url_path="filtered")
     def filtered_tasks(self, request):
-        """GET /tasks/filtered/?period=...&websites=...  → Filtered aggregated metrics."""
+        """GET /tasks/filtered/?period=...&websites=... → Filtered aggregated metrics."""
         period = request.GET.get("period", "All")
         websites = [w for w in request.GET.get("websites", "").split(",") if w]
         pipeline = self._build_filtered_pipeline(period, websites)
         tasks = self.db["tasks"].aggregate(pipeline)
         return Response(list(tasks))
 
-    # —— Private helper methods —— #
-
-    def _extract_task_data(self, data):
-        """Normalize incoming payload (dict) into the stored document."""
-        now_ts = datetime.now(timezone.utc).timestamp()
-        return {
-            "validator_uid": data.get("validator_uid"),
-            "miner_uid": data.get("miner_uid"),
-            "miner_hotkey": data.get("miner_hotkey"),
-            "task_id": data.get("task_id"),
-            "success": data.get("success"),
-            "score": data.get("score"),
-            "duration": data.get("duration"),
-            "website": data.get("website"),
-            "created_at": now_ts,
-        }
-
-    def _insert_task_in_db(self, task_data):
-        return self.db["tasks"].insert_one(task_data)
+    # ——— Private helpers ——— #
 
     def _fetch_metric_from_db(self, miner_uid):
         return self.db["metrics"].find_one({"miner_uid": miner_uid})
@@ -114,7 +141,6 @@ class TaskViewSet(viewsets.ViewSet):
             metric["scores_per_validator"][key] = score
             metric["durations_per_validator"][key] = duration
 
-        # Recalculate averages and success rate
         metric["score_avg"] = round(
             sum(metric["scores_per_validator"].values())
             / len(metric["scores_per_validator"]),
@@ -154,7 +180,6 @@ class TaskViewSet(viewsets.ViewSet):
         return self.db["metrics"].insert_one(new_metric)
 
     def _upsert_metric(self, task_data):
-        """Update existing metric or create a new one."""
         metric = self._fetch_metric_from_db(task_data["miner_uid"])
         if metric and metric.get("miner_hotkey") == task_data["miner_hotkey"]:
             self._update_metric_in_db(metric, task_data)
