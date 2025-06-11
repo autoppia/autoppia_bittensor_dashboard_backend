@@ -69,7 +69,7 @@ class TaskViewSet(viewsets.ViewSet):
             "score": request.data.get("score"),
             "duration": request.data.get("duration"),
             "website": request.data.get("website"),
-            "created_at": request.data.get("created_at", now_ts),
+            "created_at": now_ts,
         }
 
     def _insert_task_in_db(self, task_data):
