@@ -10,6 +10,10 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.database.mongo_service import MongoService
+import logging
+import traceback
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -81,9 +85,12 @@ class TaskViewSet(viewsets.ViewSet):
           ]
         Inserta todos los registros en un batch y devuelve un informe por cada uno.
         """
+        # 1) Logueamos el payload completo para inspección
+        logger.info(f"[bulk_create] payload received: {request.data!r}")
+
         results = []
-        for idx, item in enumerate(request.data or []):
-            try:
+        try:
+            for idx, item in enumerate(request.data or []):
                 record = LeaderboardTaskRecord.from_dict(item)
                 task_data = record.to_dict()
 
@@ -95,17 +102,16 @@ class TaskViewSet(viewsets.ViewSet):
                 results.append(
                     {"index": idx, "task_id": record.task_id, "status": "ok"}
                 )
-            except Exception as e:
-                results.append(
-                    {
-                        "index": idx,
-                        "task_id": item.get("task_id"),
-                        "status": "error",
-                        "detail": str(e),
-                    }
-                )
 
-        return Response({"results": results}, status=status.HTTP_207_MULTI_STATUS)
+            return Response({"results": results}, status=status.HTTP_207_MULTI_STATUS)
+
+        except Exception as e:
+            # 2) Logueamos la excepción completa con traceback
+            logger.error(f"[bulk_create] exception:\n{traceback.format_exc()}")
+            return Response(
+                {"error": "Internal server error during bulk insert"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     @action(detail=False, methods=["get"], url_path="filtered")
     def filtered_tasks(self, request):
