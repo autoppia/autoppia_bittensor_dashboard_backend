@@ -1,7 +1,7 @@
 # apps/task/views.py
 
 from django.conf import settings
-from rest_framework import viewsets
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from datetime import datetime, timezone, timedelta
@@ -10,46 +10,59 @@ from apps.database.mongo_service import MongoService
 
 class TaskViewSet(viewsets.ViewSet):
     """
-    API endpoints to list, create, and filter task logs.
+    API endpoints to list, create (single & bulk), and filter task logs.
     Uses the database defined by settings.MONGO_TASK_DB_NAME.
     """
 
     db = MongoService.db(settings.MONGO_DB_NAME)
 
-    def list(self, request):
-        """Return all task logs."""
-        tasks = self.db["tasks"].find()
-        return Response(list(tasks))
-
     def create(self, request):
-        """Insert a new task record and update or create the corresponding metric."""
-        task_data = self._extract_task_data(request)
+        """POST /tasks/  → Insert a single task record."""
+        task_data = self._extract_task_data(request.data)
         insert_result = self._insert_task_in_db(task_data)
         if not insert_result.acknowledged:
             return Response(
-                {"error": "Failed to insert task into database"}, status=500
+                {"error": "Failed to insert task into database"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+        self._upsert_metric(task_data)
+        return Response(
+            {"message": "Task logged successfully"}, status=status.HTTP_201_CREATED
+        )
 
-        miner_uid = task_data["miner_uid"]
-        metric = self._fetch_metric_from_db(miner_uid)
-        if metric and metric.get("miner_hotkey") == task_data["miner_hotkey"]:
-            update_result = self._update_metric_in_db(metric, task_data)
-            if not update_result.acknowledged:
-                return Response(
-                    {"error": "Failed to update metric in database"}, status=500
+    @action(detail=False, methods=["post"], url_path="bulk")
+    def bulk_create(self, request):
+        """
+        POST /tasks/bulk/
+        Recibe {"tasks": [ {...}, {...}, ... ]}
+        Inserta todos los registros en un solo batch y devuelve un informe por cada uno.
+        """
+        tasks = request.data.get("tasks", [])
+        results = []
+        for idx, payload in enumerate(tasks):
+            try:
+                task_data = self._extract_task_data(payload)
+                ins = self._insert_task_in_db(task_data)
+                if not ins.acknowledged:
+                    raise RuntimeError("insert failed")
+                self._upsert_metric(task_data)
+                results.append(
+                    {"index": idx, "task_id": payload.get("task_id"), "status": "ok"}
                 )
-        else:
-            create_result = self._create_metric_in_db(metric, task_data)
-            if not create_result.acknowledged:
-                return Response(
-                    {"error": "Failed to create metric in database"}, status=500
+            except Exception as e:
+                results.append(
+                    {
+                        "index": idx,
+                        "task_id": payload.get("task_id"),
+                        "status": "error",
+                        "detail": str(e),
+                    }
                 )
+        return Response({"results": results}, status=status.HTTP_207_MULTI_STATUS)
 
-        return Response({"message": "Task logged successfully"}, status=201)
-
-    @action(detail=False, url_path="filtered")
+    @action(detail=False, url_path="filtered", methods=["get"])
     def filtered_tasks(self, request):
-        """Return aggregated metrics filtered by period and websites."""
+        """GET /tasks/filtered/?period=...&websites=...  → Filtered aggregated metrics."""
         period = request.GET.get("period", "All")
         websites = [w for w in request.GET.get("websites", "").split(",") if w]
         pipeline = self._build_filtered_pipeline(period, websites)
@@ -58,30 +71,28 @@ class TaskViewSet(viewsets.ViewSet):
 
     # —— Private helper methods —— #
 
-    def _extract_task_data(self, request):
+    def _extract_task_data(self, data):
+        """Normalize incoming payload (dict) into the stored document."""
         now_ts = datetime.now(timezone.utc).timestamp()
         return {
-            "validator_uid": request.data.get("validator_uid"),
-            "miner_uid": request.data.get("miner_uid"),
-            "miner_hotkey": request.data.get("miner_hotkey"),
-            "task_id": request.data.get("task_id"),
-            "success": request.data.get("success"),
-            "score": request.data.get("score"),
-            "duration": request.data.get("duration"),
-            "website": request.data.get("website"),
+            "validator_uid": data.get("validator_uid"),
+            "miner_uid": data.get("miner_uid"),
+            "miner_hotkey": data.get("miner_hotkey"),
+            "task_id": data.get("task_id"),
+            "success": data.get("success"),
+            "score": data.get("score"),
+            "duration": data.get("duration"),
+            "website": data.get("website"),
             "created_at": now_ts,
         }
 
     def _insert_task_in_db(self, task_data):
-        """Insert the task record into the tasks collection."""
         return self.db["tasks"].insert_one(task_data)
 
     def _fetch_metric_from_db(self, miner_uid):
-        """Fetch the metric document for a given miner_uid."""
         return self.db["metrics"].find_one({"miner_uid": miner_uid})
 
     def _update_metric_in_db(self, metric, task_data):
-        """Update an existing metric document with new task results."""
         vid = str(task_data["validator_uid"])
         key = f"validator_{vid}"
         score = task_data["score"]
@@ -103,7 +114,7 @@ class TaskViewSet(viewsets.ViewSet):
             metric["scores_per_validator"][key] = score
             metric["durations_per_validator"][key] = duration
 
-        # Recalculate averages and success rates
+        # Recalculate averages and success rate
         metric["score_avg"] = round(
             sum(metric["scores_per_validator"].values())
             / len(metric["scores_per_validator"]),
@@ -124,7 +135,6 @@ class TaskViewSet(viewsets.ViewSet):
         )
 
     def _create_metric_in_db(self, metric, task_data):
-        """Create a new metric document based on the first task entry."""
         vid = str(task_data["validator_uid"])
         key = f"validator_{vid}"
         new_metric = {
@@ -143,8 +153,15 @@ class TaskViewSet(viewsets.ViewSet):
             )
         return self.db["metrics"].insert_one(new_metric)
 
+    def _upsert_metric(self, task_data):
+        """Update existing metric or create a new one."""
+        metric = self._fetch_metric_from_db(task_data["miner_uid"])
+        if metric and metric.get("miner_hotkey") == task_data["miner_hotkey"]:
+            self._update_metric_in_db(metric, task_data)
+        else:
+            self._create_metric_in_db(metric, task_data)
+
     def _build_filtered_pipeline(self, period, websites):
-        """Construct the aggregation pipeline for filtered task metrics."""
         now = datetime.now(timezone.utc)
         if period == "Day":
             start = now - timedelta(days=1)
