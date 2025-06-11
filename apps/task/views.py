@@ -18,6 +18,7 @@ class LeaderboardTaskRecord:
     miner_uid: int
     miner_hotkey: str
     task_id: str
+    task_prompt: str
     website: str
     success: bool = False
     score: float = 0.0
@@ -30,6 +31,7 @@ class LeaderboardTaskRecord:
             miner_uid=data["miner_uid"],
             miner_hotkey=data["miner_hotkey"],
             task_id=data["task_id"],
+            task_prompt=data["task_prompt"],
             website=data["website"],
             success=data.get("success", False),
             score=data.get("score", 0.0),
