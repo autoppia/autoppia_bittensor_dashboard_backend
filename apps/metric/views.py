@@ -19,6 +19,7 @@ class MetricViewSet(viewsets.ViewSet):
         projection = {
             "miner_uid": 1,
             "miner_hotkey": 1,
+            "miner_coldkey": 1,
             "scores_per_validator": 1,
             "durations_per_validator": 1,
             "score_avg": 1,
