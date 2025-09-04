@@ -10,6 +10,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "apps.task",
     "apps.metric",
+    "apps.validator_runs",
     "corsheaders",
     "django.contrib.admin",
     "django.contrib.auth",
@@ -20,8 +21,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',
-    'django.middleware.common.CommonMiddleware',
+    "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.common.CommonMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -52,9 +53,4 @@ TEMPLATES = [
 
 STATIC_URL = "static/"
 
-ALLOWED_HOSTS = [
-    'localhost',
-    '127.0.0.1',
-    'api-leaderboard.autoppia.com'
-]
-
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "api-leaderboard.autoppia.com"]
