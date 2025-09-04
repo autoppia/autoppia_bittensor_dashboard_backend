@@ -26,13 +26,11 @@ class ValidatorRunViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Nunca enviamos _id → lo autogenera Mongo
         now = datetime.now(timezone.utc)
 
-        # Campos que permitimos actualizar:
+        # Campos que permitimos actualizar (sin address)
         allowed = {
             "validator_id": validator_id,
-            "address": body.get("address"),
             "hotkey": body.get("hotkey"),
             "coldkey": body.get("coldkey"),
             "version": body.get("version"),
@@ -44,14 +42,18 @@ class ValidatorRunViewSet(viewsets.ViewSet):
         }
 
         try:
-            res = self.db["validator_info"].update_one(
+            res = self.db["validator_runs"].update_one(
                 {"validator_id": validator_id},
                 {
-                    # setOnInsert solo se aplica si NO existe → crea created_at
-                    "$setOnInsert": {"created_at": now},
-                    "$set": allowed,
+                    "$setOnInsert": {"created_at": now},  # se crea sólo en el insert
+                    "$set": allowed,  # se actualiza siempre
                 },
                 upsert=True,
+            )
+            # Devuelve también created_at/updated_at para verificar
+            doc = self.db["validator_runs"].find_one(
+                {"validator_id": validator_id},
+                {"_id": 0, "created_at": 1, "updated_at": 1},
             )
             return Response(
                 {
@@ -60,6 +62,7 @@ class ValidatorRunViewSet(viewsets.ViewSet):
                     "upserted_id": str(res.upserted_id) if res.upserted_id else None,
                     "matched": res.matched_count,
                     "modified": res.modified_count,
+                    **(doc or {}),
                 }
             )
         except Exception:
@@ -87,12 +90,11 @@ class ValidatorRunViewSet(viewsets.ViewSet):
             "message": body.get("message") or "",
             "run_id": body.get("run_id"),
             "extra": body.get("extra") or {},
-            # sólo created_at; los eventos son append-only
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(timezone.utc),  # append-only
         }
 
         try:
-            ins = self.db["validator_events"].insert_one(doc)
+            ins = self.db["validator_run_events"].insert_one(doc)
             return Response({"ok": True, "inserted_id": str(ins.inserted_id)})
         except Exception:
             logger.error(f"[create_event] exception:\n{traceback.format_exc()}")
@@ -106,7 +108,6 @@ class ValidatorRunViewSet(viewsets.ViewSet):
         projection = {
             "_id": 0,
             "validator_id": 1,
-            "address": 1,
             "hotkey": 1,
             "coldkey": 1,
             "version": 1,
@@ -117,12 +118,25 @@ class ValidatorRunViewSet(viewsets.ViewSet):
             "created_at": 1,
             "updated_at": 1,
         }
-        docs = self.db["validator_info"].find({}, projection).sort("validator_id", 1)
+        docs = self.db["validator_runs"].find({}, projection).sort("validator_id", 1)
         return Response(list(docs))
 
     # GET /validator-runs/{validator_id}/
     def retrieve(self, request, pk=None):
-        doc = self.db["validator_info"].find_one({"validator_id": int(pk)}, {"_id": 0})
+        projection = {
+            "_id": 0,
+            "validator_id": 1,
+            "hotkey": 1,
+            "coldkey": 1,
+            "version": 1,
+            "llm": 1,
+            "evaluator": 1,
+            "operator": 1,
+            "demo_webs": 1,
+            "created_at": 1,
+            "updated_at": 1,
+        }
+        doc = self.db["validator_runs"].find_one({"validator_id": int(pk)}, projection)
         return Response(doc)
 
     # GET /validator-runs/{validator_id}/events/?limit=N
@@ -130,7 +144,7 @@ class ValidatorRunViewSet(viewsets.ViewSet):
     def list_events(self, request, pk=None):
         limit = int(request.GET.get("limit", 100))
         cur = (
-            self.db["validator_events"]
+            self.db["validator_run_events"]
             .find({"validator_id": int(pk)}, {"_id": 0})
             .sort("created_at", -1)
             .limit(limit)
