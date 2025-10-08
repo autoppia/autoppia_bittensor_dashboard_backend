@@ -1,34 +1,52 @@
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from app.config import settings
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
 _client: AsyncIOMotorClient | None = None
+_mock_client = None
 
 
-def get_client() -> AsyncIOMotorClient:
-    """Get or create the MongoDB client."""
-    global _client
-    if _client is None:
-        _client = AsyncIOMotorClient(settings.MONGO_URI)
-        logger.info(f"Connected to MongoDB at {settings.MONGO_URI}")
-    return _client
+def get_client():
+    """Get or create the MongoDB client (real or mock)."""
+    global _client, _mock_client
+    
+    # Check if we're in mock mode
+    if os.getenv("USE_MOCK_DB", "false").lower() == "true":
+        if _mock_client is None:
+            from app.db.mock_mongo import get_mock_client
+            _mock_client = get_mock_client()
+            logger.info("Using Mock MongoDB for testing")
+        return _mock_client
+    else:
+        if _client is None:
+            _client = AsyncIOMotorClient(settings.MONGO_URI)
+            logger.info(f"Connected to MongoDB at {settings.MONGO_URI}")
+        return _client
 
 
-def get_db() -> AsyncIOMotorDatabase:
-    """Get the database instance."""
-    return get_client()[settings.MONGO_DB]
+def get_db():
+    """Get the database instance (real or mock)."""
+    client = get_client()
+    db_name = settings.MONGO_DB if os.getenv("USE_MOCK_DB", "false").lower() != "true" else "autoppia_test"
+    return client[db_name]
 
 
 async def ensure_indexes():
     """Create all necessary indexes for the collections."""
     db = get_db()
     
+    # Skip index creation in mock mode
+    if os.getenv("USE_MOCK_DB", "false").lower() == "true":
+        logger.info("Skipping index creation in mock mode")
+        return
+    
     try:
         # Rounds collection - unique constraint on validator_uid + round_id
         await db.rounds.create_index(
-            [("validator_uid", 1), ("round_id", 1)], 
+            [("validator_info.validator_uid", 1), ("round_id", 1)], 
             unique=True, 
             name="u_round"
         )
@@ -36,42 +54,34 @@ async def ensure_indexes():
 
         # Events collection - compound index for efficient queries
         await db.events.create_index(
-            [("validator_uid", 1), ("round_id", 1), ("ts", 1)], 
+            [("validator_info.validator_uid", 1), ("round_id", 1), ("ts", 1)], 
             name="e_vr_ts"
         )
         logger.info("Created index for events collection")
 
-        # Task runs collection - unique constraint on validator_uid + round_id + task_id + miner_uid
-        await db.task_runs.create_index(
-            [("validator_uid", 1), ("round_id", 1), ("task_id", 1), ("miner_uid", 1)],
+        # Task executions collection - unique constraint on validator_uid + round_id + task_id + miner_uid
+        await db.task_executions.create_index(
+            [("validator_info.validator_uid", 1), ("round_id", 1), ("task_id", 1), ("miner_info.miner_uid", 1)],
             unique=True, 
-            name="u_task_run"
+            name="u_task_execution"
         )
-        logger.info("Created index for task_runs collection")
+        logger.info("Created index for task_executions collection")
 
-        # Agent runs collection - unique constraint on validator_uid + round_id + miner_uid
-        await db.agent_runs.create_index(
-            [("validator_uid", 1), ("round_id", 1), ("miner_uid", 1)],
+        # Agent evaluation runs collection - unique constraint on validator_uid + round_id + miner_uid
+        await db.agent_evaluation_runs.create_index(
+            [("validator_info.validator_uid", 1), ("round_id", 1), ("miner_info.miner_uid", 1)],
             unique=True, 
-            name="u_agent_run"
+            name="u_agent_evaluation_run"
         )
-        logger.info("Created index for agent_runs collection")
+        logger.info("Created index for agent_evaluation_runs collection")
 
-        # Weights collection - unique constraint on validator_uid + round_id
-        await db.weights.create_index(
-            [("validator_uid", 1), ("round_id", 1)], 
+        # Tasks collection - unique constraint on task_id
+        await db.tasks.create_index(
+            [("task_id", 1)], 
             unique=True, 
-            name="u_weights"
+            name="u_task"
         )
-        logger.info("Created index for weights collection")
-
-        # Round results collection - unique constraint on validator_uid + round_id
-        await db.round_results.create_index(
-            [("validator_uid", 1), ("round_id", 1)], 
-            unique=True, 
-            name="u_round_results"
-        )
-        logger.info("Created index for round_results collection")
+        logger.info("Created index for tasks collection")
 
         # Optional: Create TTL index for idempotency if using persistent storage
         # await db.idempotency.create_index("created_at", expireAfterSeconds=settings.IDEMPOTENCY_TTL)

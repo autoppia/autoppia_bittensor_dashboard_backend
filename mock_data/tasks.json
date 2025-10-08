@@ -1,0 +1,4472 @@
+[
+  {
+    "task_id": "round_1759955216_000_task_0000",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "facebook.com",
+    "web_project": "social_media",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.571467955128196,
+    "metadata": {
+      "generated_at": 1759955216.9621248,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "5f7309b6-421e-4a0a-ac1c-276981ce86a8"
+  },
+  {
+    "task_id": "round_1759955216_000_task_0001",
+    "prompt": "Search for 'machine learning' and bookmark the first article",
+    "website": "google.com",
+    "web_project": "blog",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.43050397871537865,
+    "metadata": {
+      "generated_at": 1759955216.9621572,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "057fd25a-de45-4901-8464-bf10d2871057"
+  },
+  {
+    "task_id": "round_1759955216_000_task_0002",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "google.com",
+    "web_project": "social_media",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.36272022909306534,
+    "metadata": {
+      "generated_at": 1759955216.9621701,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "86fe7356-89e7-4aad-a9e1-bbbbd6847754"
+  },
+  {
+    "task_id": "round_1759955216_000_task_0003",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "amazon.com",
+    "web_project": "search_engine",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6222113751237878,
+    "metadata": {
+      "generated_at": 1759955216.9621785,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "ac0ef482-4584-486d-84c9-c3bc1619db55"
+  },
+  {
+    "task_id": "round_1759955216_000_task_0004",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "twitter.com",
+    "web_project": "streaming",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7230372104520428,
+    "metadata": {
+      "generated_at": 1759955216.9621851,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "ce915b84-18de-41bb-8c61-976e5b8049ab"
+  },
+  {
+    "task_id": "round_1759955216_000_task_0005",
+    "prompt": "Find a product under $100 and add it to wishlist",
+    "website": "facebook.com",
+    "web_project": "streaming",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5330296079628296,
+    "metadata": {
+      "generated_at": 1759955216.962192,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "0fd2fb48-0277-4fcc-95ba-5bdba2e8f85f"
+  },
+  {
+    "task_id": "round_1759955216_000_task_0006",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "reddit.com",
+    "web_project": "social_media",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7150990229380325,
+    "metadata": {
+      "generated_at": 1759955216.9622023,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "06c45bd1-dbe8-4630-9d56-51f001d56acb"
+  },
+  {
+    "task_id": "round_1759955216_000_task_0007",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "amazon.com",
+    "web_project": "search_engine",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8446301824646152,
+    "metadata": {
+      "generated_at": 1759955216.9622085,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "41097e44-e6d8-47d6-8390-6eae2296bfda"
+  },
+  {
+    "task_id": "round_1759955216_000_task_0008",
+    "prompt": "Find the contact information and send a message",
+    "website": "youtube.com",
+    "web_project": "social_media",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8740082344440261,
+    "metadata": {
+      "generated_at": 1759955216.9622157,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "8281df4c-f2e4-47a6-a5a7-ca9764e99dc2"
+  },
+  {
+    "task_id": "round_1759955216_001_task_0000",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "twitter.com",
+    "web_project": "ecommerce",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.30648116871566405,
+    "metadata": {
+      "generated_at": 1759955216.963146,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "21e786ab-a40d-45d3-9dc9-b897fc091a07"
+  },
+  {
+    "task_id": "round_1759955216_001_task_0001",
+    "prompt": "Create a new post with the title 'Test Post'",
+    "website": "amazon.com",
+    "web_project": "search_engine",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6972756265172755,
+    "metadata": {
+      "generated_at": 1759955216.9631557,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "f68c4f3a-857d-4ea9-bfb6-883699764743"
+  },
+  {
+    "task_id": "round_1759955216_001_task_0002",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "github.com",
+    "web_project": "blog",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7265271100563592,
+    "metadata": {
+      "generated_at": 1759955216.9631627,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "1b8aeeb7-bbc2-4c87-a918-e2ddf1fff695"
+  },
+  {
+    "task_id": "round_1759955216_001_task_0003",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "amazon.com",
+    "web_project": "streaming",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6380794065784199,
+    "metadata": {
+      "generated_at": 1759955216.9631712,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "18002486-8b5c-4edf-910b-f5c39305f8da"
+  },
+  {
+    "task_id": "round_1759955216_001_task_0004",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "github.com",
+    "web_project": "ecommerce",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5037057793002679,
+    "metadata": {
+      "generated_at": 1759955216.9631786,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "81ac51c2-0b8f-4221-9d5b-f521b37db03f"
+  },
+  {
+    "task_id": "round_1759955216_001_task_0005",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "stackoverflow.com",
+    "web_project": "search_engine",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8078715147820066,
+    "metadata": {
+      "generated_at": 1759955216.9631875,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "cdeda10b-03c5-4fea-bb5a-9cb7f45c7df8"
+  },
+  {
+    "task_id": "round_1759955216_001_task_0006",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "twitter.com",
+    "web_project": "search_engine",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6786263765658779,
+    "metadata": {
+      "generated_at": 1759955216.9631932,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "a655ca65-054a-45e7-abd3-2f61b0a560cc"
+  },
+  {
+    "task_id": "round_1759955216_001_task_0007",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "youtube.com",
+    "web_project": "blog",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7547003253028346,
+    "metadata": {
+      "generated_at": 1759955216.9631982,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "f921659d-9964-43cb-8be7-26cd331c9cf7"
+  },
+  {
+    "task_id": "round_1759955216_001_task_0008",
+    "prompt": "Search for 'machine learning' and bookmark the first article",
+    "website": "github.com",
+    "web_project": "blog",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.37438545485679353,
+    "metadata": {
+      "generated_at": 1759955216.9632053,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "e66782f3-8811-46a5-885d-91a8eeb58cf8"
+  },
+  {
+    "task_id": "round_1759955216_001_task_0009",
+    "prompt": "Find a product under $100 and add it to wishlist",
+    "website": "linkedin.com",
+    "web_project": "social_media",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.382107755008732,
+    "metadata": {
+      "generated_at": 1759955216.9632108,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "350fa097-7fa3-460d-9e08-ad5278c8809b"
+  },
+  {
+    "task_id": "round_1759955216_001_task_0010",
+    "prompt": "Find a product under $100 and add it to wishlist",
+    "website": "stackoverflow.com",
+    "web_project": "blog",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8601531431168687,
+    "metadata": {
+      "generated_at": 1759955216.963216,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "9b1dd918-4ace-41dd-8252-5d8f3882c358"
+  },
+  {
+    "task_id": "round_1759955216_001_task_0011",
+    "prompt": "Search for 'machine learning' and bookmark the first article",
+    "website": "github.com",
+    "web_project": "streaming",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6418378641329368,
+    "metadata": {
+      "generated_at": 1759955216.9632218,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "33c4e967-8714-4ceb-879c-55c1a9174f99"
+  },
+  {
+    "task_id": "round_1759955216_002_task_0000",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "reddit.com",
+    "web_project": "blog",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3138920003813756,
+    "metadata": {
+      "generated_at": 1759955216.9639928,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "7af7bf79-fcd6-4e60-a7e2-c943deb0b707"
+  },
+  {
+    "task_id": "round_1759955216_002_task_0001",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "github.com",
+    "web_project": "social_media",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7976518843115649,
+    "metadata": {
+      "generated_at": 1759955216.9639976,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "f9fa2ea0-3eba-41d2-bb55-d46bd8351f98"
+  },
+  {
+    "task_id": "round_1759955216_002_task_0002",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "amazon.com",
+    "web_project": "blog",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3181556514355778,
+    "metadata": {
+      "generated_at": 1759955216.9640012,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "7beccbbb-abc6-4511-88da-d9f0c989121a"
+  },
+  {
+    "task_id": "round_1759955216_002_task_0003",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "netflix.com",
+    "web_project": "ecommerce",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5635164351039574,
+    "metadata": {
+      "generated_at": 1759955216.9640036,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "a857796a-e366-4a49-b662-0a98a067c47e"
+  },
+  {
+    "task_id": "round_1759955216_002_task_0004",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "stackoverflow.com",
+    "web_project": "streaming",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6614351212820049,
+    "metadata": {
+      "generated_at": 1759955216.9640062,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "c0ef2879-55dc-4556-9614-0935e790410c"
+  },
+  {
+    "task_id": "round_1759955216_002_task_0005",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "github.com",
+    "web_project": "blog",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7652868841445679,
+    "metadata": {
+      "generated_at": 1759955216.9640105,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "170585f1-d938-48e6-9792-a0284c982ac1"
+  },
+  {
+    "task_id": "round_1759955216_002_task_0006",
+    "prompt": "Find the contact information and send a message",
+    "website": "stackoverflow.com",
+    "web_project": "ecommerce",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3415390754737916,
+    "metadata": {
+      "generated_at": 1759955216.9640138,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "b70c4e9a-6a5f-4d4b-8cdb-265680a188f3"
+  },
+  {
+    "task_id": "round_1759955216_003_task_0000",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "twitter.com",
+    "web_project": "streaming",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6977295288822876,
+    "metadata": {
+      "generated_at": 1759955216.9643273,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "2aac59e1-da9c-4f1d-8ad5-81e8fe576c76"
+  },
+  {
+    "task_id": "round_1759955216_003_task_0001",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "twitter.com",
+    "web_project": "blog",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7595705063154823,
+    "metadata": {
+      "generated_at": 1759955216.9643307,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "f839115d-2346-452b-8b13-fdadda87d025"
+  },
+  {
+    "task_id": "round_1759955216_003_task_0002",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "twitter.com",
+    "web_project": "search_engine",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7369966196591343,
+    "metadata": {
+      "generated_at": 1759955216.9643345,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "782e197c-ee48-46d6-9a2a-3a3dd36dc408"
+  },
+  {
+    "task_id": "round_1759955216_003_task_0003",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "netflix.com",
+    "web_project": "search_engine",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.4922676581188675,
+    "metadata": {
+      "generated_at": 1759955216.964337,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "eede25fb-3183-460f-a5d1-79f86ccda445"
+  },
+  {
+    "task_id": "round_1759955216_003_task_0004",
+    "prompt": "Find a product under $100 and add it to wishlist",
+    "website": "github.com",
+    "web_project": "streaming",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5514336921607699,
+    "metadata": {
+      "generated_at": 1759955216.9643393,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "14ba3a65-49bf-415b-b636-aaba8475b6fb"
+  },
+  {
+    "task_id": "round_1759955216_003_task_0005",
+    "prompt": "Search for 'machine learning' and bookmark the first article",
+    "website": "youtube.com",
+    "web_project": "streaming",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.4934391327698192,
+    "metadata": {
+      "generated_at": 1759955216.9643414,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "fe567a2a-aacc-48b1-9648-9f3124afc05b"
+  },
+  {
+    "task_id": "round_1759955216_003_task_0006",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "youtube.com",
+    "web_project": "blog",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5899784912463457,
+    "metadata": {
+      "generated_at": 1759955216.9643438,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "c68e680b-47ba-4c60-98c3-027581419972"
+  },
+  {
+    "task_id": "round_1759955216_003_task_0007",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "google.com",
+    "web_project": "search_engine",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6398285068206413,
+    "metadata": {
+      "generated_at": 1759955216.964347,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "13a09240-eb0b-4d12-947d-7b7a3024a4bd"
+  },
+  {
+    "task_id": "round_1759955216_004_task_0000",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "reddit.com",
+    "web_project": "blog",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7234872218353607,
+    "metadata": {
+      "generated_at": 1759955216.96511,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "6426d675-7f53-41c0-bfa9-a244c8085bfe"
+  },
+  {
+    "task_id": "round_1759955216_004_task_0001",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "google.com",
+    "web_project": "blog",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7622510217301379,
+    "metadata": {
+      "generated_at": 1759955216.9651177,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "ec74000d-c91b-4ec4-93a2-329bdb670445"
+  },
+  {
+    "task_id": "round_1759955216_004_task_0002",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "youtube.com",
+    "web_project": "social_media",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3413758877662223,
+    "metadata": {
+      "generated_at": 1759955216.9651268,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "72c97af2-3928-4a29-add2-241865c14a46"
+  },
+  {
+    "task_id": "round_1759955216_004_task_0003",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "reddit.com",
+    "web_project": "social_media",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8100628918369286,
+    "metadata": {
+      "generated_at": 1759955216.965132,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "a356b2cb-2d71-4eec-817a-3e57efe0fd2f"
+  },
+  {
+    "task_id": "round_1759955216_004_task_0004",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "amazon.com",
+    "web_project": "social_media",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7232039961914369,
+    "metadata": {
+      "generated_at": 1759955216.9651399,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "7412a03c-d9d3-4235-96c3-ab467678309d"
+  },
+  {
+    "task_id": "round_1759955216_004_task_0005",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "linkedin.com",
+    "web_project": "social_media",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6535622490428435,
+    "metadata": {
+      "generated_at": 1759955216.9651463,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "1a3f6c12-a82c-49d9-aefb-b314065a33f3"
+  },
+  {
+    "task_id": "round_1759955216_004_task_0006",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "google.com",
+    "web_project": "social_media",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6756166780453206,
+    "metadata": {
+      "generated_at": 1759955216.9651544,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "c4786295-9614-4115-a727-d736144fc622"
+  },
+  {
+    "task_id": "round_1759955216_004_task_0007",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "twitter.com",
+    "web_project": "social_media",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.621225656007458,
+    "metadata": {
+      "generated_at": 1759955216.9651604,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "e851e4a4-984c-45e6-99f5-3445f8f112ec"
+  },
+  {
+    "task_id": "round_1759955216_004_task_0008",
+    "prompt": "Search for 'machine learning' and bookmark the first article",
+    "website": "linkedin.com",
+    "web_project": "blog",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8576083856986487,
+    "metadata": {
+      "generated_at": 1759955216.9651659,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "962de308-5576-4d1a-92fe-9689e2895c07"
+  },
+  {
+    "task_id": "round_1759955216_005_task_0000",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "linkedin.com",
+    "web_project": "streaming",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.33566907237364685,
+    "metadata": {
+      "generated_at": 1759955216.9659362,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "4f981d32-22b7-40bb-bcd3-ddcbcc7beb53"
+  },
+  {
+    "task_id": "round_1759955216_005_task_0001",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "facebook.com",
+    "web_project": "social_media",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6811071258347547,
+    "metadata": {
+      "generated_at": 1759955216.9659412,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "95031643-e132-4e51-8187-546b59f3b869"
+  },
+  {
+    "task_id": "round_1759955216_005_task_0002",
+    "prompt": "Create a new post with the title 'Test Post'",
+    "website": "reddit.com",
+    "web_project": "streaming",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.33149764529079423,
+    "metadata": {
+      "generated_at": 1759955216.965945,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "ee5185f4-0ffc-4046-853a-9a41d586a5e2"
+  },
+  {
+    "task_id": "round_1759955216_005_task_0003",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "reddit.com",
+    "web_project": "ecommerce",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8384822200986373,
+    "metadata": {
+      "generated_at": 1759955216.9659476,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "965f2741-fabb-4679-893e-d7abcfae2cfb"
+  },
+  {
+    "task_id": "round_1759955216_005_task_0004",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "netflix.com",
+    "web_project": "ecommerce",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6085504521652044,
+    "metadata": {
+      "generated_at": 1759955216.96595,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "6e023a0d-86a4-49b8-91db-46ccc825c9a4"
+  },
+  {
+    "task_id": "round_1759955216_006_task_0000",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "stackoverflow.com",
+    "web_project": "streaming",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.4395807378556297,
+    "metadata": {
+      "generated_at": 1759955216.9661865,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "ac0110c6-f710-4bc8-a7fa-142d6c964e6e"
+  },
+  {
+    "task_id": "round_1759955216_006_task_0001",
+    "prompt": "Find a product under $100 and add it to wishlist",
+    "website": "twitter.com",
+    "web_project": "streaming",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6234647727477372,
+    "metadata": {
+      "generated_at": 1759955216.9661896,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "6d94adfc-ba50-4a11-a996-073f220ff009"
+  },
+  {
+    "task_id": "round_1759955216_006_task_0002",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "linkedin.com",
+    "web_project": "streaming",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8861422071690117,
+    "metadata": {
+      "generated_at": 1759955216.966193,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "cbfb59cf-53ae-40c7-ab22-03ce9a7bd8e1"
+  },
+  {
+    "task_id": "round_1759955216_006_task_0003",
+    "prompt": "Find a product under $100 and add it to wishlist",
+    "website": "reddit.com",
+    "web_project": "search_engine",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6999347156282294,
+    "metadata": {
+      "generated_at": 1759955216.966195,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "7f7c4a48-e0b0-4c61-99af-d4ee6477f101"
+  },
+  {
+    "task_id": "round_1759955216_006_task_0004",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "github.com",
+    "web_project": "streaming",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5629686835345196,
+    "metadata": {
+      "generated_at": 1759955216.9661975,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "9d166017-9a08-49cf-a680-98f9004f6bba"
+  },
+  {
+    "task_id": "round_1759955216_006_task_0005",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "amazon.com",
+    "web_project": "social_media",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8393101201419424,
+    "metadata": {
+      "generated_at": 1759955216.966201,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "3ae53ca6-583b-45b4-8ad4-d2bc04363943"
+  },
+  {
+    "task_id": "round_1759955216_006_task_0006",
+    "prompt": "Find the contact information and send a message",
+    "website": "netflix.com",
+    "web_project": "ecommerce",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7153541415760389,
+    "metadata": {
+      "generated_at": 1759955216.9662044,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "63361495-068c-4359-91f1-d6eba46775b5"
+  },
+  {
+    "task_id": "round_1759955216_006_task_0007",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "youtube.com",
+    "web_project": "ecommerce",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6455665812443134,
+    "metadata": {
+      "generated_at": 1759955216.9662077,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "f90893ea-d17c-4a51-a8d7-f00b23bbdbc6"
+  },
+  {
+    "task_id": "round_1759955216_006_task_0008",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "reddit.com",
+    "web_project": "streaming",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5920642438272339,
+    "metadata": {
+      "generated_at": 1759955216.96621,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "ef57b524-c1ec-411a-9e89-0b160e0e136c"
+  },
+  {
+    "task_id": "round_1759955216_006_task_0009",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "google.com",
+    "web_project": "blog",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7602637056666848,
+    "metadata": {
+      "generated_at": 1759955216.966212,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "348c419c-842a-4c29-b0fb-0745ae85fda0"
+  },
+  {
+    "task_id": "round_1759955216_006_task_0010",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "google.com",
+    "web_project": "search_engine",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.38823531774865794,
+    "metadata": {
+      "generated_at": 1759955216.966244,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "5dd3654a-68a0-47aa-8e34-2fb31a29ef72"
+  },
+  {
+    "task_id": "round_1759955216_006_task_0011",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "reddit.com",
+    "web_project": "blog",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7458066029824403,
+    "metadata": {
+      "generated_at": 1759955216.9662466,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "3691b3be-62c1-4371-be7b-c9404df5b312"
+  },
+  {
+    "task_id": "round_1759955216_007_task_0000",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "github.com",
+    "web_project": "social_media",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3228745963548508,
+    "metadata": {
+      "generated_at": 1759955216.966585,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "a27d8098-e547-49a8-bc83-53a3bb8300f9"
+  },
+  {
+    "task_id": "round_1759955216_007_task_0001",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "facebook.com",
+    "web_project": "blog",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8523889216586429,
+    "metadata": {
+      "generated_at": 1759955216.966588,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "c3510015-e1d7-4882-8547-6fc5c6170e1c"
+  },
+  {
+    "task_id": "round_1759955216_007_task_0002",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "facebook.com",
+    "web_project": "search_engine",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3592623495340897,
+    "metadata": {
+      "generated_at": 1759955216.9665904,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "86b9d3c2-bc8c-463b-8287-9fc6dac755fd"
+  },
+  {
+    "task_id": "round_1759955216_007_task_0003",
+    "prompt": "Create a new post with the title 'Test Post'",
+    "website": "amazon.com",
+    "web_project": "blog",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8606668319429376,
+    "metadata": {
+      "generated_at": 1759955216.9665952,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "869b6d5a-3eb0-4e2c-b8cc-8229d7522c69"
+  },
+  {
+    "task_id": "round_1759955216_007_task_0004",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "stackoverflow.com",
+    "web_project": "streaming",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8332307438833402,
+    "metadata": {
+      "generated_at": 1759955216.9665973,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "14f240cb-3596-4754-bbd4-214a323262a2"
+  },
+  {
+    "task_id": "round_1759955216_007_task_0005",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "reddit.com",
+    "web_project": "streaming",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3468416208239314,
+    "metadata": {
+      "generated_at": 1759955216.966601,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "6e634e6a-93ae-4ab9-8df8-47a1721ed7c5"
+  },
+  {
+    "task_id": "round_1759955216_007_task_0006",
+    "prompt": "Search for 'machine learning' and bookmark the first article",
+    "website": "stackoverflow.com",
+    "web_project": "social_media",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.32900258740253224,
+    "metadata": {
+      "generated_at": 1759955216.9666033,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "2f1c2bff-26d6-4ca3-b9ff-ae861eef278d"
+  },
+  {
+    "task_id": "round_1759955216_007_task_0007",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "linkedin.com",
+    "web_project": "ecommerce",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.738143149822122,
+    "metadata": {
+      "generated_at": 1759955216.9666066,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "cb887821-30ca-42b8-89d1-51381a18bb63"
+  },
+  {
+    "task_id": "round_1759955216_007_task_0008",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "netflix.com",
+    "web_project": "social_media",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3158980949001055,
+    "metadata": {
+      "generated_at": 1759955216.96661,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "4c80ba4e-930f-4b3b-83ff-74c828ef172b"
+  },
+  {
+    "task_id": "round_1759955216_007_task_0009",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "stackoverflow.com",
+    "web_project": "streaming",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8359980967921472,
+    "metadata": {
+      "generated_at": 1759955216.9666126,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "e2b3f91a-a50a-4efb-b79c-1bfd078e5f5b"
+  },
+  {
+    "task_id": "round_1759955216_007_task_0010",
+    "prompt": "Search for 'machine learning' and bookmark the first article",
+    "website": "twitter.com",
+    "web_project": "streaming",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5725373242842333,
+    "metadata": {
+      "generated_at": 1759955216.9666147,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "b4300d8e-7ec8-48fb-be62-bc3e3df3c3f0"
+  },
+  {
+    "task_id": "round_1759955216_008_task_0000",
+    "prompt": "Search for 'machine learning' and bookmark the first article",
+    "website": "netflix.com",
+    "web_project": "social_media",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.4257322750680505,
+    "metadata": {
+      "generated_at": 1759955216.967297,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "41161852-67c6-46ab-8947-de895e64702d"
+  },
+  {
+    "task_id": "round_1759955216_008_task_0001",
+    "prompt": "Search for 'machine learning' and bookmark the first article",
+    "website": "facebook.com",
+    "web_project": "social_media",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8681488374872093,
+    "metadata": {
+      "generated_at": 1759955216.9673047,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "f260049c-2a34-4d5f-892b-fef030223039"
+  },
+  {
+    "task_id": "round_1759955216_008_task_0002",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "netflix.com",
+    "web_project": "social_media",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7467073170968574,
+    "metadata": {
+      "generated_at": 1759955216.9673107,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "a4ea6711-aac5-4eba-8988-94ef7a980955"
+  },
+  {
+    "task_id": "round_1759955216_008_task_0003",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "reddit.com",
+    "web_project": "social_media",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.4677277950032431,
+    "metadata": {
+      "generated_at": 1759955216.967316,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "6e23596b-80aa-4f43-8130-61caf34414ce"
+  },
+  {
+    "task_id": "round_1759955216_008_task_0004",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "youtube.com",
+    "web_project": "blog",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6909462482837729,
+    "metadata": {
+      "generated_at": 1759955216.9673214,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "59ef9446-3a05-4a13-a28a-c80b8109d62b"
+  },
+  {
+    "task_id": "round_1759955216_009_task_0000",
+    "prompt": "Create a new post with the title 'Test Post'",
+    "website": "github.com",
+    "web_project": "streaming",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.4458167023980591,
+    "metadata": {
+      "generated_at": 1759955216.9678683,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "193f2f1e-7012-416d-8322-727c78b5df0a"
+  },
+  {
+    "task_id": "round_1759955216_009_task_0001",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "amazon.com",
+    "web_project": "search_engine",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7468523394273019,
+    "metadata": {
+      "generated_at": 1759955216.9678752,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "3dd9d395-3f9c-4833-9f0b-6936f943deda"
+  },
+  {
+    "task_id": "round_1759955216_009_task_0002",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "linkedin.com",
+    "web_project": "ecommerce",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8141323901789457,
+    "metadata": {
+      "generated_at": 1759955216.967881,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "6d67a5a3-5369-44e4-aeeb-71e94d32a44a"
+  },
+  {
+    "task_id": "round_1759955216_009_task_0003",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "facebook.com",
+    "web_project": "search_engine",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8485223803437387,
+    "metadata": {
+      "generated_at": 1759955216.9678876,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "b48e6ed4-f48a-4d3e-80bc-48e294aa8344"
+  },
+  {
+    "task_id": "round_1759955216_009_task_0004",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "google.com",
+    "web_project": "streaming",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5975353665587684,
+    "metadata": {
+      "generated_at": 1759955216.9678936,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "ed2d5f40-213b-42b9-856f-7a6f9ca45590"
+  },
+  {
+    "task_id": "round_1759955216_009_task_0005",
+    "prompt": "Find a product under $100 and add it to wishlist",
+    "website": "twitter.com",
+    "web_project": "ecommerce",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.43719330713241344,
+    "metadata": {
+      "generated_at": 1759955216.967899,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "dd722645-e9d9-47f9-ac29-467fb421d9d5"
+  },
+  {
+    "task_id": "round_1759955216_009_task_0006",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "linkedin.com",
+    "web_project": "social_media",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.4554675345054455,
+    "metadata": {
+      "generated_at": 1759955216.9679046,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "8a4a601c-540c-4247-ada4-5d7006676dd8"
+  },
+  {
+    "task_id": "round_1759955216_009_task_0007",
+    "prompt": "Create a new post with the title 'Test Post'",
+    "website": "linkedin.com",
+    "web_project": "streaming",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7276936623302219,
+    "metadata": {
+      "generated_at": 1759955216.967912,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "28e4cb12-d173-4c5f-b051-a5d6d57dd233"
+  },
+  {
+    "task_id": "round_1759955216_009_task_0008",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "linkedin.com",
+    "web_project": "search_engine",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5262357508225723,
+    "metadata": {
+      "generated_at": 1759955216.967919,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "78173d43-67b4-435d-91bb-41c757054e61"
+  },
+  {
+    "task_id": "round_1759955216_009_task_0009",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "facebook.com",
+    "web_project": "ecommerce",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8234832536062857,
+    "metadata": {
+      "generated_at": 1759955216.9679258,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "59248fcf-d71a-4312-956e-2b6c74aba2eb"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0000",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "reddit.com",
+    "web_project": "social_media",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7706183847088417,
+    "metadata": {
+      "generated_at": 1759955216.9687355,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "de9b5de6-c648-45ac-80b2-05817b0d1e1a"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0001",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "amazon.com",
+    "web_project": "social_media",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.42486670327799225,
+    "metadata": {
+      "generated_at": 1759955216.968743,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "33c630af-cc1c-480c-80d5-f4c1d0e3c76a"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0002",
+    "prompt": "Find the contact information and send a message",
+    "website": "google.com",
+    "web_project": "social_media",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5781366384360271,
+    "metadata": {
+      "generated_at": 1759955216.9687488,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "1fa60aea-ddc9-4eeb-8d04-aed722b0270d"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0003",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "facebook.com",
+    "web_project": "streaming",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.45133767820159276,
+    "metadata": {
+      "generated_at": 1759955216.9687562,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "c894bef1-f107-4505-8564-1b200c2afbcc"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0004",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "reddit.com",
+    "web_project": "blog",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8309973962498685,
+    "metadata": {
+      "generated_at": 1759955216.968763,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "f91dcead-c6f8-4117-ac6f-a94caa5fb603"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0005",
+    "prompt": "Find the contact information and send a message",
+    "website": "google.com",
+    "web_project": "ecommerce",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6582339317071202,
+    "metadata": {
+      "generated_at": 1759955216.9687688,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "2d98817e-35ab-43fc-9cea-dcb4d27a6e6f"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0006",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "github.com",
+    "web_project": "ecommerce",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7490612217111088,
+    "metadata": {
+      "generated_at": 1759955216.9687736,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "f0708587-3bde-4168-b45c-8727ffd2eb7a"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0007",
+    "prompt": "Search for 'machine learning' and bookmark the first article",
+    "website": "stackoverflow.com",
+    "web_project": "streaming",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7316637224884144,
+    "metadata": {
+      "generated_at": 1759955216.9687815,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "dd9afce9-1728-4380-9483-25c356fd9bee"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0008",
+    "prompt": "Find a product under $100 and add it to wishlist",
+    "website": "youtube.com",
+    "web_project": "ecommerce",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.4611166994836359,
+    "metadata": {
+      "generated_at": 1759955216.968789,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "f263dab5-7790-4f1f-9acf-0d8236513c65"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0009",
+    "prompt": "Find the contact information and send a message",
+    "website": "facebook.com",
+    "web_project": "ecommerce",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.31143110422793713,
+    "metadata": {
+      "generated_at": 1759955216.9687943,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "6d0e6cf2-d699-4da8-ada0-7116d822220b"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0010",
+    "prompt": "Find a product under $100 and add it to wishlist",
+    "website": "amazon.com",
+    "web_project": "ecommerce",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.641798337550127,
+    "metadata": {
+      "generated_at": 1759955216.9687996,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "6d0cb85b-abd5-4ad0-b38d-653e6d4b7d5a"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0011",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "github.com",
+    "web_project": "blog",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7392049489637946,
+    "metadata": {
+      "generated_at": 1759955216.9688077,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "a512a8a5-e41b-48d1-8852-01cb4c9ea794"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0012",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "google.com",
+    "web_project": "ecommerce",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8415270131738699,
+    "metadata": {
+      "generated_at": 1759955216.9688146,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "43b706c4-f2c5-43f2-83da-caae3e5d1a0a"
+  },
+  {
+    "task_id": "round_1759955216_010_task_0013",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "google.com",
+    "web_project": "ecommerce",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5143436039444499,
+    "metadata": {
+      "generated_at": 1759955216.9688199,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "e47f6a34-8a45-44c9-82d2-1a6793974a8d"
+  },
+  {
+    "task_id": "round_1759955216_011_task_0000",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "youtube.com",
+    "web_project": "streaming",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.4399012890566397,
+    "metadata": {
+      "generated_at": 1759955216.9694753,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "68cf7064-6d5d-46ca-937e-c26171b89e16"
+  },
+  {
+    "task_id": "round_1759955216_011_task_0001",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "facebook.com",
+    "web_project": "search_engine",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3160967924266888,
+    "metadata": {
+      "generated_at": 1759955216.9694817,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "d5426aef-af59-4ba7-9f36-33d3b35a23de"
+  },
+  {
+    "task_id": "round_1759955216_011_task_0002",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "reddit.com",
+    "web_project": "ecommerce",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8243836941595235,
+    "metadata": {
+      "generated_at": 1759955216.969491,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "060c0185-e197-4e75-83bb-ef5647091bbe"
+  },
+  {
+    "task_id": "round_1759955216_011_task_0003",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "linkedin.com",
+    "web_project": "streaming",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.33625633461805216,
+    "metadata": {
+      "generated_at": 1759955216.9694965,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "4650e033-4f57-4188-ac0e-05aa0b3625a7"
+  },
+  {
+    "task_id": "round_1759955216_011_task_0004",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "amazon.com",
+    "web_project": "ecommerce",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6333199223324099,
+    "metadata": {
+      "generated_at": 1759955216.9695022,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "397b971d-ddb6-472e-adca-9e219e6aa482"
+  },
+  {
+    "task_id": "round_1759955216_011_task_0005",
+    "prompt": "Create a new post with the title 'Test Post'",
+    "website": "reddit.com",
+    "web_project": "search_engine",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8380227677623329,
+    "metadata": {
+      "generated_at": 1759955216.96951,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "10ea7e6d-0936-4d64-9cac-6ceeef3a74cb"
+  },
+  {
+    "task_id": "round_1759955216_012_task_0000",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "reddit.com",
+    "web_project": "search_engine",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5954880750645708,
+    "metadata": {
+      "generated_at": 1759955216.9700081,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "d5f15d43-9987-49fa-a666-57913c0594bb"
+  },
+  {
+    "task_id": "round_1759955216_012_task_0001",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "facebook.com",
+    "web_project": "social_media",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8624637070236183,
+    "metadata": {
+      "generated_at": 1759955216.9700232,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "1ae2cce2-7990-4086-a586-a7e583910f8e"
+  },
+  {
+    "task_id": "round_1759955216_012_task_0002",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "google.com",
+    "web_project": "search_engine",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.4943870555515626,
+    "metadata": {
+      "generated_at": 1759955216.9700294,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "472b84ba-0391-4339-8e6c-c65aa63e21f4"
+  },
+  {
+    "task_id": "round_1759955216_012_task_0003",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "facebook.com",
+    "web_project": "ecommerce",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6144321769190657,
+    "metadata": {
+      "generated_at": 1759955216.9700346,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "6b019e79-3020-46ba-b1cd-816391c4e0aa"
+  },
+  {
+    "task_id": "round_1759955216_012_task_0004",
+    "prompt": "Find a product under $100 and add it to wishlist",
+    "website": "amazon.com",
+    "web_project": "ecommerce",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8626867439954702,
+    "metadata": {
+      "generated_at": 1759955216.9700396,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "dbe9e827-ca09-423c-b4e3-95dab3bb5e8b"
+  },
+  {
+    "task_id": "round_1759955216_012_task_0005",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "linkedin.com",
+    "web_project": "social_media",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.40229239883994933,
+    "metadata": {
+      "generated_at": 1759955216.9700444,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "12cc744b-9f53-420a-8c3b-19d259149e2e"
+  },
+  {
+    "task_id": "round_1759955216_012_task_0006",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "linkedin.com",
+    "web_project": "ecommerce",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.41775816690145734,
+    "metadata": {
+      "generated_at": 1759955216.9700515,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "b0ef1597-3572-438f-8aaf-0e8855f7c3f6"
+  },
+  {
+    "task_id": "round_1759955216_012_task_0007",
+    "prompt": "Navigate to the login page and sign in with test credentials",
+    "website": "netflix.com",
+    "web_project": "search_engine",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7547269940941654,
+    "metadata": {
+      "generated_at": 1759955216.9700568,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "c095f82c-0431-438f-99e7-90be79258510"
+  },
+  {
+    "task_id": "round_1759955216_012_task_0008",
+    "prompt": "Navigate to settings and change the theme to dark mode",
+    "website": "youtube.com",
+    "web_project": "streaming",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.41128309257730056,
+    "metadata": {
+      "generated_at": 1759955216.9700637,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "155191a2-1197-4a4f-bfd2-360dc9b172d8"
+  },
+  {
+    "task_id": "round_1759955216_012_task_0009",
+    "prompt": "Search for 'machine learning' and bookmark the first article",
+    "website": "youtube.com",
+    "web_project": "ecommerce",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.4129501949426386,
+    "metadata": {
+      "generated_at": 1759955216.9700706,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "8bbdd300-148e-4c0c-b59b-8d89dd1afaa2"
+  },
+  {
+    "task_id": "round_1759955216_013_task_0000",
+    "prompt": "Create a new post with the title 'Test Post'",
+    "website": "reddit.com",
+    "web_project": "streaming",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7695632148508402,
+    "metadata": {
+      "generated_at": 1759955216.970588,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "606048a3-9769-495d-9e15-47b84a0f0b69"
+  },
+  {
+    "task_id": "round_1759955216_013_task_0001",
+    "prompt": "Find the contact information and send a message",
+    "website": "netflix.com",
+    "web_project": "ecommerce",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3814998307857273,
+    "metadata": {
+      "generated_at": 1759955216.9705944,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "74c5c077-078e-4cb2-a2bc-0b206b08ef06"
+  },
+  {
+    "task_id": "round_1759955216_013_task_0002",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "linkedin.com",
+    "web_project": "search_engine",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.4381593000611399,
+    "metadata": {
+      "generated_at": 1759955216.970602,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "78aff2a6-c6f2-4336-8559-98b17be92035"
+  },
+  {
+    "task_id": "round_1759955216_013_task_0003",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "facebook.com",
+    "web_project": "blog",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5781007147012807,
+    "metadata": {
+      "generated_at": 1759955216.9706087,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "15e3642e-ae09-42b4-81be-0aa387269566"
+  },
+  {
+    "task_id": "round_1759955216_013_task_0004",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "linkedin.com",
+    "web_project": "ecommerce",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6791944848231477,
+    "metadata": {
+      "generated_at": 1759955216.9706135,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "18d174ef-2d36-436b-aee6-03010c681a8c"
+  },
+  {
+    "task_id": "round_1759955216_013_task_0005",
+    "prompt": "Create a new post with the title 'Test Post'",
+    "website": "youtube.com",
+    "web_project": "ecommerce",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6690179181126863,
+    "metadata": {
+      "generated_at": 1759955216.970616,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "e2953277-842c-46ee-86f9-aa18800d406a"
+  },
+  {
+    "task_id": "round_1759955216_013_task_0006",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "google.com",
+    "web_project": "ecommerce",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5008394659337773,
+    "metadata": {
+      "generated_at": 1759955216.9706204,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "8dfae32c-51fa-4866-9418-019c3a34c102"
+  },
+  {
+    "task_id": "round_1759955216_013_task_0007",
+    "prompt": "Find the contact information and send a message",
+    "website": "linkedin.com",
+    "web_project": "blog",
+    "use_case": "upload",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5785292105790796,
+    "metadata": {
+      "generated_at": 1759955216.9706225,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "a9e41472-fcd8-4b14-9463-9ebabb5b7e14"
+  },
+  {
+    "task_id": "round_1759955216_013_task_0008",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "linkedin.com",
+    "web_project": "ecommerce",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3919964050964039,
+    "metadata": {
+      "generated_at": 1759955216.9706247,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "ee93551c-55ea-4ea3-804c-db4ad2e3c8fd"
+  },
+  {
+    "task_id": "round_1759955216_013_task_0009",
+    "prompt": "Search for 'python tutorial' and open the first video",
+    "website": "twitter.com",
+    "web_project": "blog",
+    "use_case": "login",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7153663835318871,
+    "metadata": {
+      "generated_at": 1759955216.970628,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "dc2268a1-d292-4269-b5c7-10dd64fac340"
+  },
+  {
+    "task_id": "round_1759955216_013_task_0010",
+    "prompt": "Create a new post with the title 'Test Post'",
+    "website": "facebook.com",
+    "web_project": "streaming",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8454914780365719,
+    "metadata": {
+      "generated_at": 1759955216.9706314,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "296ddb49-fdac-4d9c-a650-c16cf31b12fa"
+  },
+  {
+    "task_id": "round_1759955216_013_task_0011",
+    "prompt": "Search for 'machine learning' and bookmark the first article",
+    "website": "facebook.com",
+    "web_project": "streaming",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3800928087311008,
+    "metadata": {
+      "generated_at": 1759955216.9706337,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "9ad46b9f-c75d-416f-961c-1609f9be0bb8"
+  },
+  {
+    "task_id": "round_1759955216_014_task_0000",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "netflix.com",
+    "web_project": "social_media",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6765691146143575,
+    "metadata": {
+      "generated_at": 1759955216.9711237,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "2e660f45-f90c-4df0-afbc-b8179d2db281"
+  },
+  {
+    "task_id": "round_1759955216_014_task_0001",
+    "prompt": "Find a product under $100 and add it to wishlist",
+    "website": "amazon.com",
+    "web_project": "blog",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8300991606302177,
+    "metadata": {
+      "generated_at": 1759955216.9711266,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "e573cc80-4a86-498f-b0d5-5b5883dee0cc"
+  },
+  {
+    "task_id": "round_1759955216_014_task_0002",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "google.com",
+    "web_project": "social_media",
+    "use_case": "search",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.8164572442493492,
+    "metadata": {
+      "generated_at": 1759955216.9711301,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "e716ae72-54cb-42fb-b777-37679de4652b"
+  },
+  {
+    "task_id": "round_1759955216_014_task_0003",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "stackoverflow.com",
+    "web_project": "social_media",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7322422197028193,
+    "metadata": {
+      "generated_at": 1759955216.9711325,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "81ffdbd1-ea38-4420-81d4-f8fe0a6e98f9"
+  },
+  {
+    "task_id": "round_1759955216_014_task_0004",
+    "prompt": "Browse the latest posts and like the first 3 posts",
+    "website": "amazon.com",
+    "web_project": "streaming",
+    "use_case": "purchase",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5397505184977365,
+    "metadata": {
+      "generated_at": 1759955216.9711344,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "95959724-95a1-4186-ac2c-c028e875b050"
+  },
+  {
+    "task_id": "round_1759955216_014_task_0005",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "facebook.com",
+    "web_project": "blog",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.7744222780292562,
+    "metadata": {
+      "generated_at": 1759955216.9711368,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "a09437ef-25a8-4de8-8965-01a2f122e1f5"
+  },
+  {
+    "task_id": "round_1759955216_014_task_0006",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "netflix.com",
+    "web_project": "social_media",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6096284817650908,
+    "metadata": {
+      "generated_at": 1759955216.9711404,
+      "generator": "test_data",
+      "complexity": "high"
+    },
+    "_id": "3561a99e-bb45-43cb-a040-24de592aff12"
+  },
+  {
+    "task_id": "round_1759955216_014_task_0007",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "github.com",
+    "web_project": "social_media",
+    "use_case": "download",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.6104706825899453,
+    "metadata": {
+      "generated_at": 1759955216.971143,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "e6935cb9-34dc-415f-b65b-95f3dcf28e6e"
+  },
+  {
+    "task_id": "round_1759955216_014_task_0008",
+    "prompt": "Navigate to profile and update the bio",
+    "website": "amazon.com",
+    "web_project": "search_engine",
+    "use_case": "navigate",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.5823176719910828,
+    "metadata": {
+      "generated_at": 1759955216.971145,
+      "generator": "test_data",
+      "complexity": "low"
+    },
+    "_id": "5a973f79-ec40-47bc-adec-86ec14c7cf93"
+  },
+  {
+    "task_id": "round_1759955216_014_task_0009",
+    "prompt": "Search for 'laptop' and add the first result to cart",
+    "website": "reddit.com",
+    "web_project": "blog",
+    "use_case": "share",
+    "expected_actions": [
+      {
+        "type": "click",
+        "selector": "button.search"
+      },
+      {
+        "type": "type",
+        "text": "test query",
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "wait",
+        "duration": 2.0
+      }
+    ],
+    "max_execution_time": 30.0,
+    "difficulty": 0.3757104942532566,
+    "metadata": {
+      "generated_at": 1759955216.9711485,
+      "generator": "test_data",
+      "complexity": "medium"
+    },
+    "_id": "da5ad1db-a6a2-4e56-902a-bd21fb38a7b6"
+  },
+  {
+    "task_id": "test_round_1759955276_task_0000",
+    "prompt": "Generated task 1 for round test_round_1759955276",
+    "website": "example0.com",
+    "web_project": "project_0",
+    "use_case": "use_case_0",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.5,
+    "metadata": {
+      "generated_at": 1759955276.533868,
+      "generator": "synthetic"
+    },
+    "_id": "2329675c-5be8-4be8-90bc-222436fbef07"
+  },
+  {
+    "task_id": "test_round_1759955276_task_0001",
+    "prompt": "Generated task 2 for round test_round_1759955276",
+    "website": "example1.com",
+    "web_project": "project_1",
+    "use_case": "use_case_1",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.6,
+    "metadata": {
+      "generated_at": 1759955276.533884,
+      "generator": "synthetic"
+    },
+    "_id": "0be76be3-a88d-40d7-b1f4-299869fc8fce"
+  },
+  {
+    "task_id": "test_round_1759955276_task_0002",
+    "prompt": "Generated task 3 for round test_round_1759955276",
+    "website": "example2.com",
+    "web_project": "project_0",
+    "use_case": "use_case_2",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.7,
+    "metadata": {
+      "generated_at": 1759955276.5338914,
+      "generator": "synthetic"
+    },
+    "_id": "ee3bc12e-aa2b-4d26-9c92-f59a773eaed0"
+  },
+  {
+    "task_id": "test_round_1759955276_task_0003",
+    "prompt": "Generated task 4 for round test_round_1759955276",
+    "website": "example0.com",
+    "web_project": "project_1",
+    "use_case": "use_case_3",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.8,
+    "metadata": {
+      "generated_at": 1759955276.5338953,
+      "generator": "synthetic"
+    },
+    "_id": "e4eccb6e-65f6-460d-afbc-8e0f2de62715"
+  },
+  {
+    "task_id": "test_round_1759955276_task_0004",
+    "prompt": "Generated task 5 for round test_round_1759955276",
+    "website": "example1.com",
+    "web_project": "project_0",
+    "use_case": "use_case_0",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.9,
+    "metadata": {
+      "generated_at": 1759955276.533899,
+      "generator": "synthetic"
+    },
+    "_id": "f7001fcf-f8bc-4144-bffd-02e2d8269b85"
+  },
+  {
+    "task_id": "test_round_1759955297_task_0000",
+    "prompt": "Generated task 1 for round test_round_1759955297",
+    "website": "example0.com",
+    "web_project": "project_0",
+    "use_case": "use_case_0",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.5,
+    "metadata": {
+      "generated_at": 1759955297.5305736,
+      "generator": "synthetic"
+    },
+    "_id": "8b4fb2b8-ffcc-46c0-9b4a-414f597f8e57"
+  },
+  {
+    "task_id": "test_round_1759955297_task_0001",
+    "prompt": "Generated task 2 for round test_round_1759955297",
+    "website": "example1.com",
+    "web_project": "project_1",
+    "use_case": "use_case_1",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.6,
+    "metadata": {
+      "generated_at": 1759955297.5305908,
+      "generator": "synthetic"
+    },
+    "_id": "148970ed-ecbc-497f-8c6b-ee5616e4180f"
+  },
+  {
+    "task_id": "test_round_1759955297_task_0002",
+    "prompt": "Generated task 3 for round test_round_1759955297",
+    "website": "example2.com",
+    "web_project": "project_0",
+    "use_case": "use_case_2",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.7,
+    "metadata": {
+      "generated_at": 1759955297.5305972,
+      "generator": "synthetic"
+    },
+    "_id": "969af352-0764-4866-a92b-f9e19455a71e"
+  },
+  {
+    "task_id": "test_round_1759955297_task_0003",
+    "prompt": "Generated task 4 for round test_round_1759955297",
+    "website": "example0.com",
+    "web_project": "project_1",
+    "use_case": "use_case_3",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.8,
+    "metadata": {
+      "generated_at": 1759955297.5306013,
+      "generator": "synthetic"
+    },
+    "_id": "e3c4e899-92b5-469e-93ad-e1ec173b680f"
+  },
+  {
+    "task_id": "test_round_1759955297_task_0004",
+    "prompt": "Generated task 5 for round test_round_1759955297",
+    "website": "example1.com",
+    "web_project": "project_0",
+    "use_case": "use_case_0",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.9,
+    "metadata": {
+      "generated_at": 1759955297.5306048,
+      "generator": "synthetic"
+    },
+    "_id": "98e3e073-0d3b-4e41-b304-129459ec0912"
+  },
+  {
+    "task_id": "test_round_1759955302_task_0000",
+    "prompt": "Generated task 1 for round test_round_1759955302",
+    "website": "example0.com",
+    "web_project": "project_0",
+    "use_case": "use_case_0",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.5,
+    "metadata": {
+      "generated_at": 1759955302.7532196,
+      "generator": "synthetic"
+    },
+    "_id": "8cba3406-fc8d-4ade-bbff-6d4a7ad484e9"
+  },
+  {
+    "task_id": "test_round_1759955302_task_0001",
+    "prompt": "Generated task 2 for round test_round_1759955302",
+    "website": "example1.com",
+    "web_project": "project_1",
+    "use_case": "use_case_1",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.6,
+    "metadata": {
+      "generated_at": 1759955302.7532277,
+      "generator": "synthetic"
+    },
+    "_id": "a0d326af-f22d-4d60-8425-039cb750ad01"
+  },
+  {
+    "task_id": "test_round_1759955302_task_0002",
+    "prompt": "Generated task 3 for round test_round_1759955302",
+    "website": "example2.com",
+    "web_project": "project_0",
+    "use_case": "use_case_2",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.7,
+    "metadata": {
+      "generated_at": 1759955302.75323,
+      "generator": "synthetic"
+    },
+    "_id": "87f91eea-6842-4964-93a9-4d6bda327158"
+  },
+  {
+    "task_id": "test_round_1759955302_task_0003",
+    "prompt": "Generated task 4 for round test_round_1759955302",
+    "website": "example0.com",
+    "web_project": "project_1",
+    "use_case": "use_case_3",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.8,
+    "metadata": {
+      "generated_at": 1759955302.7532318,
+      "generator": "synthetic"
+    },
+    "_id": "f8610e52-5e38-439e-8681-5a148040d0d5"
+  },
+  {
+    "task_id": "test_round_1759955302_task_0004",
+    "prompt": "Generated task 5 for round test_round_1759955302",
+    "website": "example1.com",
+    "web_project": "project_0",
+    "use_case": "use_case_0",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.9,
+    "metadata": {
+      "generated_at": 1759955302.7532334,
+      "generator": "synthetic"
+    },
+    "_id": "e3590bd7-e86d-43c7-ae51-140567455c5e"
+  },
+  {
+    "task_id": "demo_round_1759955369_task_0000",
+    "prompt": "Generated task 1 for round demo_round_1759955369",
+    "website": "example0.com",
+    "web_project": "project_0",
+    "use_case": "use_case_0",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.5,
+    "metadata": {
+      "generated_at": 1759955369.8972414,
+      "generator": "synthetic"
+    },
+    "_id": "63dc063d-e664-4ab6-b823-5f67fe13025b"
+  },
+  {
+    "task_id": "demo_round_1759955369_task_0001",
+    "prompt": "Generated task 2 for round demo_round_1759955369",
+    "website": "example1.com",
+    "web_project": "project_1",
+    "use_case": "use_case_1",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.6,
+    "metadata": {
+      "generated_at": 1759955369.8972504,
+      "generator": "synthetic"
+    },
+    "_id": "c2131628-dc14-42a0-964f-af91ee35ed9c"
+  },
+  {
+    "task_id": "demo_round_1759955369_task_0002",
+    "prompt": "Generated task 3 for round demo_round_1759955369",
+    "website": "example2.com",
+    "web_project": "project_0",
+    "use_case": "use_case_2",
+    "expected_actions": null,
+    "max_execution_time": null,
+    "difficulty": 0.7,
+    "metadata": {
+      "generated_at": 1759955369.8972535,
+      "generator": "synthetic"
+    },
+    "_id": "3e2e849f-5837-4fb7-9f5c-129ce9eddfea"
+  }
+]
