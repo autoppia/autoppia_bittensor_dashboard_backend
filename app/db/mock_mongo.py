@@ -148,6 +148,29 @@ class MockCollection:
                 count += 1
         return count
     
+    def distinct(self, field: str, filter_dict: Dict[str, Any] = None) -> List[Any]:
+        """Get distinct values for a field."""
+        distinct_values = set()
+        
+        for document in self._data:
+            if filter_dict is None or self._apply_filter(filter_dict, document):
+                # Handle nested field access
+                if "." in field:
+                    keys = field.split(".")
+                    value = document
+                    try:
+                        for k in keys:
+                            value = value[k]
+                        if value is not None:
+                            distinct_values.add(value)
+                    except (KeyError, TypeError):
+                        continue
+                else:
+                    if field in document and document[field] is not None:
+                        distinct_values.add(document[field])
+        
+        return list(distinct_values)
+    
     def aggregate(self, pipeline: List[Dict[str, Any]]) -> 'MockCursor':
         """Simple aggregation pipeline support."""
         # Start with all documents
@@ -160,12 +183,42 @@ class MockCollection:
                 docs = [doc for doc in docs if self._apply_filter(filter_dict, doc)]
             
             elif "$group" in stage:
-                # Simple group by implementation
+                # Enhanced group by implementation
                 group_spec = stage["$group"]
                 groups = {}
                 
                 for doc in docs:
-                    group_key = doc.get(group_spec["_id"])
+                    # Handle complex _id grouping
+                    if isinstance(group_spec["_id"], dict):
+                        # Handle nested grouping like {"agent_name": "$agent_runs.miner_info.miner_hotkey", "day": {"$dayOfYear": ...}}
+                        group_key = {}
+                        for key, value in group_spec["_id"].items():
+                            if isinstance(value, dict) and "$dayOfYear" in value:
+                                # Mock day of year calculation
+                                timestamp = doc.get("started_at", time.time())
+                                day_of_year = int((timestamp % (365 * 24 * 60 * 60)) / (24 * 60 * 60)) + 1
+                                group_key[key] = day_of_year
+                            else:
+                                # Handle nested field access
+                                if isinstance(value, str) and value.startswith("$"):
+                                    field_path = value[1:]  # Remove $
+                                    if "." in field_path:
+                                        keys = field_path.split(".")
+                                        val = doc
+                                        try:
+                                            for k in keys:
+                                                val = val[k]
+                                            group_key[key] = val
+                                        except (KeyError, TypeError):
+                                            group_key[key] = None
+                                    else:
+                                        group_key[key] = doc.get(field_path)
+                                else:
+                                    group_key[key] = value
+                        group_key = tuple(sorted(group_key.items()))
+                    else:
+                        group_key = doc.get(group_spec["_id"])
+                    
                     if group_key not in groups:
                         groups[group_key] = {}
                     
@@ -176,40 +229,114 @@ class MockCollection:
                         
                         if operation == {"$sum": 1}:
                             groups[group_key][field] = groups[group_key].get(field, 0) + 1
-                        elif operation == {"$sum": "$total_reward"}:
-                            groups[group_key][field] = groups[group_key].get(field, 0) + doc.get("total_reward", 0)
-                        elif operation == {"$sum": "$n_tasks_total"}:
-                            groups[group_key][field] = groups[group_key].get(field, 0) + doc.get("n_tasks_total", 0)
-                        elif operation == {"$sum": "$n_tasks_completed"}:
-                            groups[group_key][field] = groups[group_key].get(field, 0) + doc.get("n_tasks_completed", 0)
-                        elif operation == {"$avg": "$avg_eval_score"}:
-                            # Simple average calculation
-                            if field not in groups[group_key]:
-                                groups[group_key][field] = {"sum": 0, "count": 0}
-                            groups[group_key][field]["sum"] += doc.get("avg_eval_score", 0)
-                            groups[group_key][field]["count"] += 1
-                        elif operation == {"$min": "$rank"}:
-                            current = groups[group_key].get(field)
-                            new_val = doc.get("rank")
-                            if current is None or (new_val is not None and new_val < current):
-                                groups[group_key][field] = new_val
-                        elif operation == {"$first": "$miner_info"}:
-                            if field not in groups[group_key]:
-                                groups[group_key][field] = doc.get("miner_info")
-                        elif operation == {"$push": {"round_id": "$round_id", "rank": "$rank", "score": "$avg_eval_score", "reward": "$total_reward"}}:
+                        elif isinstance(operation, dict) and "$sum" in operation:
+                            sum_field = operation["$sum"]
+                            if sum_field.startswith("$"):
+                                sum_field = sum_field[1:]
+                                if "." in sum_field:
+                                    keys = sum_field.split(".")
+                                    val = doc
+                                    try:
+                                        for k in keys:
+                                            val = val[k]
+                                        groups[group_key][field] = groups[group_key].get(field, 0) + (val or 0)
+                                    except (KeyError, TypeError):
+                                        pass
+                                else:
+                                    groups[group_key][field] = groups[group_key].get(field, 0) + (doc.get(sum_field, 0) or 0)
+                            else:
+                                groups[group_key][field] = groups[group_key].get(field, 0) + 1
+                        elif isinstance(operation, dict) and "$avg" in operation:
+                            avg_field = operation["$avg"]
+                            if avg_field.startswith("$"):
+                                avg_field = avg_field[1:]
+                                if "." in avg_field:
+                                    keys = avg_field.split(".")
+                                    val = doc
+                                    try:
+                                        for k in keys:
+                                            val = val[k]
+                                        if field not in groups[group_key]:
+                                            groups[group_key][field] = {"sum": 0, "count": 0}
+                                        groups[group_key][field]["sum"] += (val or 0)
+                                        groups[group_key][field]["count"] += 1
+                                    except (KeyError, TypeError):
+                                        pass
+                                else:
+                                    if field not in groups[group_key]:
+                                        groups[group_key][field] = {"sum": 0, "count": 0}
+                                    groups[group_key][field]["sum"] += (doc.get(avg_field, 0) or 0)
+                                    groups[group_key][field]["count"] += 1
+                        elif isinstance(operation, dict) and "$min" in operation:
+                            min_field = operation["$min"]
+                            if min_field.startswith("$"):
+                                min_field = min_field[1:]
+                                if "." in min_field:
+                                    keys = min_field.split(".")
+                                    val = doc
+                                    try:
+                                        for k in keys:
+                                            val = val[k]
+                                        current = groups[group_key].get(field)
+                                        if current is None or (val is not None and val < current):
+                                            groups[group_key][field] = val
+                                    except (KeyError, TypeError):
+                                        pass
+                                else:
+                                    current = groups[group_key].get(field)
+                                    new_val = doc.get(min_field)
+                                    if current is None or (new_val is not None and new_val < current):
+                                        groups[group_key][field] = new_val
+                        elif isinstance(operation, dict) and "$first" in operation:
+                            first_field = operation["$first"]
+                            if first_field.startswith("$"):
+                                first_field = first_field[1:]
+                                if "." in first_field:
+                                    keys = first_field.split(".")
+                                    val = doc
+                                    try:
+                                        for k in keys:
+                                            val = val[k]
+                                        if field not in groups[group_key]:
+                                            groups[group_key][field] = val
+                                    except (KeyError, TypeError):
+                                        pass
+                                else:
+                                    if field not in groups[group_key]:
+                                        groups[group_key][field] = doc.get(first_field)
+                        elif isinstance(operation, dict) and "$push" in operation:
+                            push_spec = operation["$push"]
                             if field not in groups[group_key]:
                                 groups[group_key][field] = []
-                            groups[group_key][field].append({
-                                "round_id": doc.get("round_id"),
-                                "rank": doc.get("rank"),
-                                "score": doc.get("avg_eval_score"),
-                                "reward": doc.get("total_reward")
-                            })
+                            
+                            push_doc = {}
+                            for push_field, push_value in push_spec.items():
+                                if isinstance(push_value, str) and push_value.startswith("$"):
+                                    push_value = push_value[1:]
+                                    if "." in push_value:
+                                        keys = push_value.split(".")
+                                        val = doc
+                                        try:
+                                            for k in keys:
+                                                val = val[k]
+                                            push_doc[push_field] = val
+                                        except (KeyError, TypeError):
+                                            push_doc[push_field] = None
+                                    else:
+                                        push_doc[push_field] = doc.get(push_value)
+                                else:
+                                    push_doc[push_field] = push_value
+                            
+                            groups[group_key][field].append(push_doc)
                 
                 # Convert groups back to documents
                 docs = []
                 for group_key, group_data in groups.items():
-                    doc = {"_id": group_key}
+                    if isinstance(group_key, tuple):
+                        # Handle complex grouping
+                        doc = {"_id": dict(group_key)}
+                    else:
+                        doc = {"_id": group_key}
                     doc.update(group_data)
                     
                     # Calculate averages
@@ -230,8 +357,136 @@ class MockCollection:
             
             elif "$limit" in stage:
                 docs = docs[:stage["$limit"]]
+            
+            elif "$lookup" in stage:
+                # Simple lookup implementation
+                lookup_spec = stage["$lookup"]
+                from_collection = lookup_spec["from"]
+                local_field = lookup_spec["localField"]
+                foreign_field = lookup_spec["foreignField"]
+                as_field = lookup_spec["as"]
+                
+                # Get the foreign collection data
+                foreign_collection = self._get_foreign_collection(from_collection)
+                
+                for doc in docs:
+                    lookup_value = doc.get(local_field)
+                    matches = []
+                    
+                    for foreign_doc in foreign_collection:
+                        if foreign_doc.get(foreign_field) == lookup_value:
+                            matches.append(foreign_doc)
+                    
+                    doc[as_field] = matches
+            
+            elif "$unwind" in stage:
+                # Unwind array fields
+                unwind_field = stage["$unwind"]
+                if isinstance(unwind_field, str):
+                    unwind_field = f"${unwind_field}"
+                
+                new_docs = []
+                for doc in docs:
+                    if unwind_field.startswith("$"):
+                        field_name = unwind_field[1:]
+                        array_field = doc.get(field_name, [])
+                        if isinstance(array_field, list):
+                            for item in array_field:
+                                new_doc = doc.copy()
+                                new_doc[field_name] = item
+                                new_docs.append(new_doc)
+                        else:
+                            new_docs.append(doc)
+                    else:
+                        new_docs.append(doc)
+                docs = new_docs
+            
+            elif "$addFields" in stage:
+                # Add computed fields
+                add_fields_spec = stage["$addFields"]
+                for doc in docs:
+                    for field, expression in add_fields_spec.items():
+                        if isinstance(expression, dict):
+                            if "$max" in expression:
+                                # Handle $max operation
+                                max_field = expression["$max"]
+                                if isinstance(max_field, list):
+                                    max_values = []
+                                    for field_ref in max_field:
+                                        if isinstance(field_ref, str) and field_ref.startswith("$"):
+                                            field_path = field_ref[1:]
+                                            if "." in field_path:
+                                                keys = field_path.split(".")
+                                                val = doc
+                                                try:
+                                                    for k in keys:
+                                                        val = val[k]
+                                                    if isinstance(val, list):
+                                                        max_values.extend(val)
+                                                except (KeyError, TypeError):
+                                                    pass
+                                            else:
+                                                val = doc.get(field_path)
+                                                if isinstance(val, list):
+                                                    max_values.extend(val)
+                                    doc[field] = max(max_values) if max_values else None
+                            elif "$avg" in expression:
+                                # Handle $avg operation
+                                avg_field = expression["$avg"]
+                                if isinstance(avg_field, list):
+                                    avg_values = []
+                                    for field_ref in avg_field:
+                                        if isinstance(field_ref, str) and field_ref.startswith("$"):
+                                            field_path = field_ref[1:]
+                                            if "." in field_path:
+                                                keys = field_path.split(".")
+                                                val = doc
+                                                try:
+                                                    for k in keys:
+                                                        val = val[k]
+                                                    if isinstance(val, list):
+                                                        avg_values.extend(val)
+                                                except (KeyError, TypeError):
+                                                    pass
+                                            else:
+                                                val = doc.get(field_path)
+                                                if isinstance(val, list):
+                                                    avg_values.extend(val)
+                                    doc[field] = sum(avg_values) / len(avg_values) if avg_values else 0
+                            elif "$size" in expression:
+                                # Handle $size operation
+                                size_field = expression["$size"]
+                                if isinstance(size_field, str) and size_field.startswith("$"):
+                                    field_path = size_field[1:]
+                                    if "." in field_path:
+                                        keys = field_path.split(".")
+                                        val = doc
+                                        try:
+                                            for k in keys:
+                                                val = val[k]
+                                            doc[field] = len(val) if isinstance(val, list) else 0
+                                        except (KeyError, TypeError):
+                                            doc[field] = 0
+                                    else:
+                                        val = doc.get(field_path)
+                                        doc[field] = len(val) if isinstance(val, list) else 0
+                        else:
+                            doc[field] = expression
         
         return MockCursor(docs)
+    
+    def _get_foreign_collection(self, collection_name: str) -> List[Dict[str, Any]]:
+        """Get data from a foreign collection for lookup operations."""
+        try:
+            # This is a simple implementation that loads the foreign collection
+            # In a real implementation, this would access the database
+            foreign_file = self.data_dir / f"{collection_name}.json"
+            if foreign_file.exists():
+                with open(foreign_file, 'r') as f:
+                    return json.load(f)
+            return []
+        except Exception:
+            return []
 
 
 class MockCursor:
@@ -323,7 +578,7 @@ def get_mock_client() -> MockMongoClient:
     """Get the global mock client instance."""
     global _mock_client
     if _mock_client is None:
-        _mock_client = MockMongoClient(data_dir="mock_data")
+        _mock_client = MockMongoClient(data_dir="data/mock")
     return _mock_client
 
 

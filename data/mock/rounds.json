@@ -1,0 +1,124 @@
+[
+  {
+    "round_id": "round_1760070061_000",
+    "validator_info": {
+      "uid": 123,
+      "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+      "coldkey": null,
+      "stake": 1000.0,
+      "vtrust": 0.0
+    },
+    "start_block": 2672,
+    "start_epoch": 134,
+    "end_block": 9175,
+    "end_epoch": 77,
+    "started_at": 1760007264.8610337,
+    "ended_at": 1760009021.3209863,
+    "elapsed_sec": 1756.4599525928497,
+    "max_epochs": 20,
+    "max_blocks": 360,
+    "n_tasks": 11,
+    "n_miners": 4,
+    "n_winners": 3,
+    "miners": [
+      {
+        "uid": 6,
+        "hotkey": "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
+        "coldkey": null,
+        "agent_name": "",
+        "agent_image": "",
+        "github": ""
+      },
+      {
+        "uid": 1,
+        "hotkey": "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEYSj2FQjYq9c",
+        "coldkey": null,
+        "agent_name": "",
+        "agent_image": "",
+        "github": ""
+      },
+      {
+        "uid": 4,
+        "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+        "coldkey": null,
+        "agent_name": "",
+        "agent_image": "",
+        "github": ""
+      },
+      {
+        "uid": 2,
+        "hotkey": "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
+        "coldkey": null,
+        "agent_name": "",
+        "agent_image": "",
+        "github": ""
+      }
+    ],
+    "winners": [
+      {
+        "miner_uid": 6,
+        "rank": 1,
+        "score": 0.897,
+        "reward": 8.974
+      },
+      {
+        "miner_uid": 1,
+        "rank": 2,
+        "score": 0.82,
+        "reward": 8.2
+      },
+      {
+        "miner_uid": 4,
+        "rank": 3,
+        "score": 0.701,
+        "reward": 7.012
+      }
+    ],
+    "winner_scores": [],
+    "weights": null,
+    "_id": "cc06971e-3ce3-41c7-b6b2-ede5a188ccbc"
+  },
+  {
+    "round_id": "test_round_001",
+    "validator_info": {
+      "uid": 123,
+      "hotkey": "test_hotkey",
+      "coldkey": null,
+      "stake": 1000.0,
+      "vtrust": 0.0
+    },
+    "start_block": 1000,
+    "start_epoch": 50,
+    "end_block": 1100,
+    "end_epoch": 55,
+    "started_at": 1234567890.0,
+    "ended_at": 1234567890.0,
+    "elapsed_sec": 300.0,
+    "max_epochs": 20,
+    "max_blocks": 360,
+    "n_tasks": 1,
+    "n_miners": 1,
+    "n_winners": 1,
+    "miners": [
+      {
+        "uid": 1,
+        "hotkey": "miner_hotkey_1",
+        "coldkey": null,
+        "agent_name": "",
+        "agent_image": "",
+        "github": ""
+      }
+    ],
+    "winners": [
+      {
+        "miner_uid": 1,
+        "rank": 1,
+        "score": 0.9,
+        "reward": 9.0
+      }
+    ],
+    "winner_scores": [],
+    "weights": null,
+    "_id": "5c0b2592-8ba8-4706-be4e-9991d9bfb25a"
+  }
+]

@@ -1,0 +1,2368 @@
+[
+  {
+    "solution_id": "34ad51df-ae5a-4e1d-bc0d-6d3062668d3d",
+    "task_id": "round_1760070061_000_task_0000_round_1760070061_000_6",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_6",
+    "miner_uid": 6,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "input[name='username']",
+          "timestamp": 1760070061.8408859
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 382,
+          "timestamp": 1760070061.8408916
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.840894
+        }
+      }
+    ],
+    "web_agent_id": "agent_6_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0000_round_1760070061_000_6",
+    "_id": "4dc6a244-b517-419d-8a41-2df6155f2fc1"
+  },
+  {
+    "solution_id": "dc82451c-c749-4eae-9ca7-296a46745445",
+    "task_id": "round_1760070061_000_task_0000_round_1760070061_000_2",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_2",
+    "miner_uid": 2,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "textarea.comment",
+          "timestamp": 1760070061.8409817
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.8409853
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 3.9398717280423665,
+          "timestamp": 1760070061.8409872
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8409886
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 360,
+          "timestamp": 1760070061.8409922
+        }
+      }
+    ],
+    "web_agent_id": "agent_2_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0000_round_1760070061_000_2",
+    "_id": "056c81ef-1d21-40a9-9e94-9ae94aa84256"
+  },
+  {
+    "solution_id": "b9d3a000-1c94-4b39-a78e-20205cf39737",
+    "task_id": "round_1760070061_000_task_0000_round_1760070061_000_5",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_5",
+    "miner_uid": 5,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "type",
+        "attributes": {
+          "text": "test query",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.8410537
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8410556
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "input.submit",
+          "timestamp": 1760070061.8410573
+        }
+      }
+    ],
+    "web_agent_id": "agent_5_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0000_round_1760070061_000_5",
+    "_id": "4899fc86-41a0-4b56-a9cc-9a0dd769a6d0"
+  },
+  {
+    "solution_id": "5f21d368-016f-4f99-a9db-9218f334bf86",
+    "task_id": "round_1760070061_000_task_0000_round_1760070061_000_3",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_3",
+    "miner_uid": 3,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.8410952
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8410969
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 142,
+          "timestamp": 1760070061.841099
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8411005
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 3.57459018097671,
+          "timestamp": 1760070061.841102
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.841103
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "a.login",
+          "timestamp": 1760070061.8411038
+        }
+      }
+    ],
+    "web_agent_id": "agent_3_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0000_round_1760070061_000_3",
+    "_id": "690b4c99-2ba3-49c8-83c0-44ca814ceaa9"
+  },
+  {
+    "solution_id": "40f6a064-d651-44ad-97a0-92b9fb724879",
+    "task_id": "round_1760070061_000_task_0000_round_1760070061_000_1",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_1",
+    "miner_uid": 1,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.8411512
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 1.292015969688761,
+          "timestamp": 1760070061.8411539
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "input.submit",
+          "timestamp": 1760070061.8411548
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "a.login",
+          "timestamp": 1760070061.8411574
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "input.submit",
+          "timestamp": 1760070061.8411586
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8411596
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 165,
+          "timestamp": 1760070061.8411613
+        }
+      }
+    ],
+    "web_agent_id": "agent_1_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0000_round_1760070061_000_1",
+    "_id": "30333f21-b208-4864-a85f-49754929959b"
+  },
+  {
+    "solution_id": "5e0101a1-a738-4e9e-9feb-79e4e03fce1d",
+    "task_id": "round_1760070061_000_task_0001_round_1760070061_000_6",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_6",
+    "miner_uid": 6,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 162,
+          "timestamp": 1760070061.8412063
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 3.746935865443402,
+          "timestamp": 1760070061.8412077
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.829640718148269,
+          "timestamp": 1760070061.8412092
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.34866070727198,
+          "timestamp": 1760070061.8412101
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "button.menu",
+          "timestamp": 1760070061.841211
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 2.4916114605319892,
+          "timestamp": 1760070061.8412135
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "a.login",
+          "timestamp": 1760070061.8412147
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "button.search",
+          "timestamp": 1760070061.8412158
+        }
+      }
+    ],
+    "web_agent_id": "agent_6_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0001_round_1760070061_000_6",
+    "_id": "31b4a61e-5ed2-49d0-8846-0908fffba0e4"
+  },
+  {
+    "solution_id": "37db8277-342f-454a-b2f6-d627ff052a7f",
+    "task_id": "round_1760070061_000_task_0001_round_1760070061_000_2",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_2",
+    "miner_uid": 2,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "button.search",
+          "timestamp": 1760070061.8412561
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.8412578
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.8412588
+        }
+      }
+    ],
+    "web_agent_id": "agent_2_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0001_round_1760070061_000_2",
+    "_id": "fa8ba118-fb10-434f-b9da-a3ada7b7bff4"
+  },
+  {
+    "solution_id": "07d8b519-cd90-4075-a26b-9226f39acf3c",
+    "task_id": "round_1760070061_000_task_0001_round_1760070061_000_5",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_5",
+    "miner_uid": 5,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8412979
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.843837471004166,
+          "timestamp": 1760070061.8412993
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "button.menu",
+          "timestamp": 1760070061.8413005
+        }
+      }
+    ],
+    "web_agent_id": "agent_5_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0001_round_1760070061_000_5",
+    "_id": "6ff9e6e9-3fc3-44a1-a8f8-a261bc1ccc8e"
+  },
+  {
+    "solution_id": "3705414e-74f4-4448-b817-212acdaeefbf",
+    "task_id": "round_1760070061_000_task_0001_round_1760070061_000_3",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_3",
+    "miner_uid": 3,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.8413508
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 114,
+          "timestamp": 1760070061.841353
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 396,
+          "timestamp": 1760070061.8413548
+        }
+      }
+    ],
+    "web_agent_id": "agent_3_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0001_round_1760070061_000_3",
+    "_id": "9559e8d0-dbce-4f5e-b77b-218ac5b60634"
+  },
+  {
+    "solution_id": "1364c0d7-c9df-47ca-87e4-9522d11029b5",
+    "task_id": "round_1760070061_000_task_0001_round_1760070061_000_1",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_1",
+    "miner_uid": 1,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "type",
+        "attributes": {
+          "text": "password",
+          "selector": "input[name='username']",
+          "timestamp": 1760070061.8413985
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "input[name='username']",
+          "timestamp": 1760070061.8414006
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.8414018
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.132991743190452,
+          "timestamp": 1760070061.8414028
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 339,
+          "timestamp": 1760070061.8414044
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "password",
+          "selector": "textarea.comment",
+          "timestamp": 1760070061.8414059
+        }
+      }
+    ],
+    "web_agent_id": "agent_1_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0001_round_1760070061_000_1",
+    "_id": "dab2348b-b718-4a28-a68e-0bdae7221eb8"
+  },
+  {
+    "solution_id": "4fa3565e-73ee-4429-878b-b77a64754c8b",
+    "task_id": "round_1760070061_000_task_0002_round_1760070061_000_6",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_6",
+    "miner_uid": 6,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8414397
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 182,
+          "timestamp": 1760070061.8414414
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 244,
+          "timestamp": 1760070061.841443
+        }
+      }
+    ],
+    "web_agent_id": "agent_6_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0002_round_1760070061_000_6",
+    "_id": "1c93f439-1038-4392-8e2e-3807d754f16d"
+  },
+  {
+    "solution_id": "303b2021-6c26-4622-932c-86cd51bac2a6",
+    "task_id": "round_1760070061_000_task_0002_round_1760070061_000_2",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_2",
+    "miner_uid": 2,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8414757
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8414772
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8414783
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 2.3973262418606667,
+          "timestamp": 1760070061.8414795
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8414807
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "a.login",
+          "timestamp": 1760070061.8415756
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 240,
+          "timestamp": 1760070061.8415787
+        }
+      }
+    ],
+    "web_agent_id": "agent_2_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0002_round_1760070061_000_2",
+    "_id": "32da4ace-639e-4338-9668-45abbd73c334"
+  },
+  {
+    "solution_id": "6def8ea4-722f-43c6-99cc-ca378d6dbcd5",
+    "task_id": "round_1760070061_000_task_0002_round_1760070061_000_5",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_5",
+    "miner_uid": 5,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.8416164
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 1.06899740186073,
+          "timestamp": 1760070061.8416176
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.841619
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "button.menu",
+          "timestamp": 1760070061.8416202
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "test query",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.8416214
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.8416243
+        }
+      }
+    ],
+    "web_agent_id": "agent_5_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0002_round_1760070061_000_5",
+    "_id": "0adadb91-e054-4038-a5b7-26fd573cdffb"
+  },
+  {
+    "solution_id": "0c63ba0c-20f0-42be-aaf7-54d6c1e8b2a7",
+    "task_id": "round_1760070061_000_task_0002_round_1760070061_000_3",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_3",
+    "miner_uid": 3,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8416674
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8416686
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.84167
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8416712
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8416722
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.8416734
+        }
+      }
+    ],
+    "web_agent_id": "agent_3_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0002_round_1760070061_000_3",
+    "_id": "a2a07d6d-fc64-4c1e-b655-39ead99a2600"
+  },
+  {
+    "solution_id": "66fa15a5-d312-40cd-aa7f-3353855b2350",
+    "task_id": "round_1760070061_000_task_0002_round_1760070061_000_1",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_1",
+    "miner_uid": 1,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "button.menu",
+          "timestamp": 1760070061.8417158
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "input.submit",
+          "timestamp": 1760070061.841717
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "input[name='username']",
+          "timestamp": 1760070061.8417182
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8417208
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 192,
+          "timestamp": 1760070061.841724
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 128,
+          "timestamp": 1760070061.8417256
+        }
+      }
+    ],
+    "web_agent_id": "agent_1_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0002_round_1760070061_000_1",
+    "_id": "94f55314-2683-402f-8c4a-339c70cab98d"
+  },
+  {
+    "solution_id": "8d536ba8-6530-4568-8800-0badc20d07c1",
+    "task_id": "round_1760070061_000_task_0003_round_1760070061_000_6",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_6",
+    "miner_uid": 6,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 154,
+          "timestamp": 1760070061.841776
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "button.search",
+          "timestamp": 1760070061.8417773
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 3.350949135356973,
+          "timestamp": 1760070061.8417788
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.8417802
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "input.submit",
+          "timestamp": 1760070061.8417816
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8417835
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 343,
+          "timestamp": 1760070061.8417852
+        }
+      }
+    ],
+    "web_agent_id": "agent_6_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0003_round_1760070061_000_6",
+    "_id": "6d84d682-1bfc-4b2c-8682-1c1303c99190"
+  },
+  {
+    "solution_id": "a6c397d9-5ca5-4d0d-a80e-221f82b21fc6",
+    "task_id": "round_1760070061_000_task_0003_round_1760070061_000_2",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_2",
+    "miner_uid": 2,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8418179
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 102,
+          "timestamp": 1760070061.8418205
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.497796956145928,
+          "timestamp": 1760070061.8418217
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.8418229
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8418243
+        }
+      }
+    ],
+    "web_agent_id": "agent_2_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0003_round_1760070061_000_2",
+    "_id": "4928bd3d-11f8-4e70-83ac-8d26a852f50b"
+  },
+  {
+    "solution_id": "e37dfa4d-1101-4914-b810-60229aaab57a",
+    "task_id": "round_1760070061_000_task_0003_round_1760070061_000_5",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_5",
+    "miner_uid": 5,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "a.login",
+          "timestamp": 1760070061.841862
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "input[name='username']",
+          "timestamp": 1760070061.8418634
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 130,
+          "timestamp": 1760070061.841865
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "button.search",
+          "timestamp": 1760070061.8418663
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8418672
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 1.9812473363907999,
+          "timestamp": 1760070061.8418684
+        }
+      }
+    ],
+    "web_agent_id": "agent_5_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0003_round_1760070061_000_5",
+    "_id": "cd75e8ac-9d25-404a-bd1b-3c62b45ad84f"
+  },
+  {
+    "solution_id": "ba33c967-8d34-42ad-aaf0-de531cc7227c",
+    "task_id": "round_1760070061_000_task_0003_round_1760070061_000_3",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_3",
+    "miner_uid": 3,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 425,
+          "timestamp": 1760070061.8419166
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8419182
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8419197
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.312423634179194,
+          "timestamp": 1760070061.841921
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "password",
+          "selector": "textarea.comment",
+          "timestamp": 1760070061.8419225
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "password",
+          "selector": "textarea.comment",
+          "timestamp": 1760070061.8419242
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8419266
+        }
+      }
+    ],
+    "web_agent_id": "agent_3_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0003_round_1760070061_000_3",
+    "_id": "e5f7e271-eec2-4bbd-85c2-15c2b8d404ee"
+  },
+  {
+    "solution_id": "c8609586-0c5f-4a81-a624-a489a4ccc80e",
+    "task_id": "round_1760070061_000_task_0003_round_1760070061_000_1",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_1",
+    "miner_uid": 1,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 2.0711810964306516,
+          "timestamp": 1760070061.8419669
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "password",
+          "selector": "textarea.comment",
+          "timestamp": 1760070061.8419685
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.465668706889742,
+          "timestamp": 1760070061.8419697
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.841971
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 2.0907539773182555,
+          "timestamp": 1760070061.8419716
+        }
+      }
+    ],
+    "web_agent_id": "agent_1_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0003_round_1760070061_000_1",
+    "_id": "7e8294b0-5b92-4d31-b94f-ba011fd365a5"
+  },
+  {
+    "solution_id": "932d051d-2fd6-4c82-a7f8-88c409e6c42a",
+    "task_id": "round_1760070061_000_task_0004_round_1760070061_000_6",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_6",
+    "miner_uid": 6,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 326,
+          "timestamp": 1760070061.8420045
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.550080508566227,
+          "timestamp": 1760070061.8420057
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "input.submit",
+          "timestamp": 1760070061.8420067
+        }
+      }
+    ],
+    "web_agent_id": "agent_6_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0004_round_1760070061_000_6",
+    "_id": "6a57f703-ccc4-4d25-ad44-d87436d7fd05"
+  },
+  {
+    "solution_id": "47f6e5db-0cb3-4703-bef5-8935626f7ee9",
+    "task_id": "round_1760070061_000_task_0004_round_1760070061_000_2",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_2",
+    "miner_uid": 2,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.848892977231724,
+          "timestamp": 1760070061.8420439
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 3.6259954246172543,
+          "timestamp": 1760070061.842046
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 382,
+          "timestamp": 1760070061.8420475
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 304,
+          "timestamp": 1760070061.8420494
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "input.submit",
+          "timestamp": 1760070061.8420515
+        }
+      }
+    ],
+    "web_agent_id": "agent_2_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0004_round_1760070061_000_2",
+    "_id": "25f20f60-da41-4e3b-8d8a-0c8cd97a50cb"
+  },
+  {
+    "solution_id": "da813fdb-a5e5-49e1-be8d-85e1ce37ab4a",
+    "task_id": "round_1760070061_000_task_0004_round_1760070061_000_5",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_5",
+    "miner_uid": 5,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8420937
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8420954
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 2.162005570666979,
+          "timestamp": 1760070061.8420963
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8420975
+        }
+      }
+    ],
+    "web_agent_id": "agent_5_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0004_round_1760070061_000_5",
+    "_id": "dd48894b-fc05-4dd6-9d36-a1ad4273301b"
+  },
+  {
+    "solution_id": "f0e3f473-dbef-4456-b445-faafecc4d1dc",
+    "task_id": "round_1760070061_000_task_0004_round_1760070061_000_3",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_3",
+    "miner_uid": 3,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.842143
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "textarea.comment",
+          "timestamp": 1760070061.8421457
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.842147
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 365,
+          "timestamp": 1760070061.8421485
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "test query",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.84215
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.00311225247538,
+          "timestamp": 1760070061.842151
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8421519
+        }
+      }
+    ],
+    "web_agent_id": "agent_3_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0004_round_1760070061_000_3",
+    "_id": "6f2fc16d-04e7-4dac-9cb6-9d1a4621f91b"
+  },
+  {
+    "solution_id": "6dd96ebe-21dc-4465-a80d-dc520faf85cc",
+    "task_id": "round_1760070061_000_task_0004_round_1760070061_000_1",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_1",
+    "miner_uid": 1,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 2.3918290135961797,
+          "timestamp": 1760070061.8421888
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 207,
+          "timestamp": 1760070061.8421905
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "a.login",
+          "timestamp": 1760070061.842192
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "input.submit",
+          "timestamp": 1760070061.8421931
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8421957
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "input.submit",
+          "timestamp": 1760070061.8421967
+        }
+      }
+    ],
+    "web_agent_id": "agent_1_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0004_round_1760070061_000_1",
+    "_id": "f0a958dc-f676-4e54-b5f1-5a305abf7b87"
+  },
+  {
+    "solution_id": "fef52826-3138-40cb-999f-f4e5836c7c0b",
+    "task_id": "round_1760070061_000_task_0005_round_1760070061_000_6",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_6",
+    "miner_uid": 6,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8422315
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 1.1850938620369336,
+          "timestamp": 1760070061.8422341
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.8422353
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 2.642316621428169,
+          "timestamp": 1760070061.8422365
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.8422375
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "password",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.842239
+        }
+      }
+    ],
+    "web_agent_id": "agent_6_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0005_round_1760070061_000_6",
+    "_id": "43a88b46-5a79-4e72-969b-0b648839d838"
+  },
+  {
+    "solution_id": "acacb416-b72f-49bb-b723-32fce642573b",
+    "task_id": "round_1760070061_000_task_0005_round_1760070061_000_2",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_2",
+    "miner_uid": 2,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 3.8009335701364706,
+          "timestamp": 1760070061.8422782
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "button.search",
+          "timestamp": 1760070061.8422794
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "input[name='username']",
+          "timestamp": 1760070061.8422809
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.8422823
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "a.login",
+          "timestamp": 1760070061.8422832
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8422842
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8422852
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 436,
+          "timestamp": 1760070061.8422866
+        }
+      }
+    ],
+    "web_agent_id": "agent_2_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0005_round_1760070061_000_2",
+    "_id": "f5ae1f56-4716-41e2-84da-180994192712"
+  },
+  {
+    "solution_id": "dd5ebb88-5cfa-4798-83bd-24d3584f9598",
+    "task_id": "round_1760070061_000_task_0005_round_1760070061_000_5",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_5",
+    "miner_uid": 5,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.377894903287947,
+          "timestamp": 1760070061.8423336
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "textarea.comment",
+          "timestamp": 1760070061.8423362
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "button.menu",
+          "timestamp": 1760070061.8423376
+        }
+      }
+    ],
+    "web_agent_id": "agent_5_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0005_round_1760070061_000_5",
+    "_id": "f444406e-06d8-4f1a-b0bd-08b03bba95e0"
+  },
+  {
+    "solution_id": "91ada82c-7f16-494b-9889-803203a0ed3b",
+    "task_id": "round_1760070061_000_task_0005_round_1760070061_000_3",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_3",
+    "miner_uid": 3,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 451,
+          "timestamp": 1760070061.842366
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "button.menu",
+          "timestamp": 1760070061.8423686
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8423707
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 366,
+          "timestamp": 1760070061.8423724
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "a.login",
+          "timestamp": 1760070061.8423736
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.582582586950398,
+          "timestamp": 1760070061.8423746
+        }
+      }
+    ],
+    "web_agent_id": "agent_3_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0005_round_1760070061_000_3",
+    "_id": "bad6e0af-4b95-4f1f-a9d5-5879a872a0d3"
+  },
+  {
+    "solution_id": "bf6d905e-e019-46fc-8257-e9c7db0d6554",
+    "task_id": "round_1760070061_000_task_0005_round_1760070061_000_1",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_1",
+    "miner_uid": 1,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 356,
+          "timestamp": 1760070061.842411
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.8424125
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "test query",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.842414
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.822348948224355,
+          "timestamp": 1760070061.842415
+        }
+      }
+    ],
+    "web_agent_id": "agent_1_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0005_round_1760070061_000_1",
+    "_id": "27eac28f-3a8d-4a92-9a82-f8843f561906"
+  },
+  {
+    "solution_id": "851ce897-1f9b-4f33-b5a8-ea9ede93988e",
+    "task_id": "round_1760070061_000_task_0006_round_1760070061_000_6",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_6",
+    "miner_uid": 6,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 487,
+          "timestamp": 1760070061.842504
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.6105860187868855,
+          "timestamp": 1760070061.8425052
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "input.submit",
+          "timestamp": 1760070061.8425064
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "test query",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.842508
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.842509
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.84251
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.8425128
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.8425145
+        }
+      }
+    ],
+    "web_agent_id": "agent_6_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0006_round_1760070061_000_6",
+    "_id": "924f3491-26a6-4198-8fc4-616c22720ecd"
+  },
+  {
+    "solution_id": "9591e717-2981-488d-b7f9-76689b9f7c77",
+    "task_id": "round_1760070061_000_task_0006_round_1760070061_000_2",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_2",
+    "miner_uid": 2,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "type",
+        "attributes": {
+          "text": "password",
+          "selector": "input[name='username']",
+          "timestamp": 1760070061.8425536
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 105,
+          "timestamp": 1760070061.8425558
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 1.6996900182771184,
+          "timestamp": 1760070061.8425567
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.633330460551887,
+          "timestamp": 1760070061.8425577
+        }
+      }
+    ],
+    "web_agent_id": "agent_2_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0006_round_1760070061_000_2",
+    "_id": "b06ee3f6-0283-4835-8127-f182252d223d"
+  },
+  {
+    "solution_id": "fb094a9b-2aa2-4f42-ab65-65c6c7319fb2",
+    "task_id": "round_1760070061_000_task_0006_round_1760070061_000_5",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_5",
+    "miner_uid": 5,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 403,
+          "timestamp": 1760070061.8425918
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8425932
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "textarea.comment",
+          "timestamp": 1760070061.8425946
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "button.menu",
+          "timestamp": 1760070061.8425956
+        }
+      }
+    ],
+    "web_agent_id": "agent_5_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0006_round_1760070061_000_5",
+    "_id": "d6a10803-350e-43a9-80bd-cf3ccef9bd96"
+  },
+  {
+    "solution_id": "103b5e3c-b37e-4b3b-b27c-b8e1c83a7c46",
+    "task_id": "round_1760070061_000_task_0006_round_1760070061_000_3",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_3",
+    "miner_uid": 3,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "a.login",
+          "timestamp": 1760070061.8426433
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "input[name='username']",
+          "timestamp": 1760070061.8426461
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "button.search",
+          "timestamp": 1760070061.8426473
+        }
+      }
+    ],
+    "web_agent_id": "agent_3_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0006_round_1760070061_000_3",
+    "_id": "ca2b5909-605d-4e46-9b24-157c3e6b9348"
+  },
+  {
+    "solution_id": "6ac1aeb3-7b34-4216-93c0-d46a11cdf7fe",
+    "task_id": "round_1760070061_000_task_0006_round_1760070061_000_1",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_1",
+    "miner_uid": 1,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 2.6479941005359184,
+          "timestamp": 1760070061.842682
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.8426836
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.842686
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.842688
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "password",
+          "selector": "textarea.comment",
+          "timestamp": 1760070061.8426893
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "password",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.8426907
+        }
+      }
+    ],
+    "web_agent_id": "agent_1_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0006_round_1760070061_000_1",
+    "_id": "1f497e04-281b-43c2-88ee-e9f8888a65b1"
+  },
+  {
+    "solution_id": "8a9b4e86-d753-404f-9fa6-cd6f1fca234a",
+    "task_id": "round_1760070061_000_task_0007_round_1760070061_000_6",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_6",
+    "miner_uid": 6,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 364,
+          "timestamp": 1760070061.8427184
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "a.login",
+          "timestamp": 1760070061.8427198
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.842721
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "input[name='username']",
+          "timestamp": 1760070061.8427234
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "button.menu",
+          "timestamp": 1760070061.8427248
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.460614571969845,
+          "timestamp": 1760070061.842726
+        }
+      }
+    ],
+    "web_agent_id": "agent_6_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0007_round_1760070061_000_6",
+    "_id": "fa0844b6-7650-47d6-ac2a-8dafe87a0b5e"
+  },
+  {
+    "solution_id": "02e7af5c-694d-413f-a84f-12993a7777e7",
+    "task_id": "round_1760070061_000_task_0007_round_1760070061_000_2",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_2",
+    "miner_uid": 2,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.963691261913627,
+          "timestamp": 1760070061.8427823
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 262,
+          "timestamp": 1760070061.8427842
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "input.submit",
+          "timestamp": 1760070061.8427866
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.8427877
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 1.714422132427127,
+          "timestamp": 1760070061.842789
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 373,
+          "timestamp": 1760070061.8427918
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 1.4767008152118608,
+          "timestamp": 1760070061.842793
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.842794
+        }
+      }
+    ],
+    "web_agent_id": "agent_2_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0007_round_1760070061_000_2",
+    "_id": "ad74b39f-cdfc-44d0-baeb-c684f1619969"
+  },
+  {
+    "solution_id": "bf096328-8b6f-427c-94d5-a1f7aea65091",
+    "task_id": "round_1760070061_000_task_0007_round_1760070061_000_5",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_5",
+    "miner_uid": 5,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8428452
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "test query",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.8428469
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "textarea.comment",
+          "timestamp": 1760070061.8428483
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 4.69609504243326,
+          "timestamp": 1760070061.8428516
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8428526
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 397,
+          "timestamp": 1760070061.8428543
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8428552
+        }
+      }
+    ],
+    "web_agent_id": "agent_5_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0007_round_1760070061_000_5",
+    "_id": "df75e08a-c9d8-433d-a514-3146a9c597cd"
+  },
+  {
+    "solution_id": "9824a805-188d-4327-b103-6503f2ff9694",
+    "task_id": "round_1760070061_000_task_0007_round_1760070061_000_3",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_3",
+    "miner_uid": 3,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 194,
+          "timestamp": 1760070061.8428946
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "button.search",
+          "timestamp": 1760070061.8428962
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "input.submit",
+          "timestamp": 1760070061.8428974
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "a.login",
+          "timestamp": 1760070061.8428984
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.8428998
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.842901
+        }
+      }
+    ],
+    "web_agent_id": "agent_3_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0007_round_1760070061_000_3",
+    "_id": "de086a47-8132-492d-8ea4-6e31f0100a81"
+  },
+  {
+    "solution_id": "2e5566ac-be5e-4be7-8c8d-cfb1ea48e653",
+    "task_id": "round_1760070061_000_task_0007_round_1760070061_000_1",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_1",
+    "miner_uid": 1,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 1.5801746377081036,
+          "timestamp": 1760070061.8429458
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 316,
+          "timestamp": 1760070061.84295
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.842952
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 1.4016315861620625,
+          "timestamp": 1760070061.842953
+        }
+      }
+    ],
+    "web_agent_id": "agent_1_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0007_round_1760070061_000_1",
+    "_id": "1ff52d61-e900-473b-a4f7-3a1ed4beeefb"
+  },
+  {
+    "solution_id": "f5a5c552-5c8a-4bcb-b863-978a3f72e76c",
+    "task_id": "round_1760070061_000_task_0008_round_1760070061_000_6",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_6",
+    "miner_uid": 6,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.8430033
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 3.3286469100033917,
+          "timestamp": 1760070061.8430047
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "button.menu",
+          "timestamp": 1760070061.8430061
+        }
+      }
+    ],
+    "web_agent_id": "agent_6_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0008_round_1760070061_000_6",
+    "_id": "ae6b3d4d-6514-4d93-b8d8-583e41f5c344"
+  },
+  {
+    "solution_id": "0a37b6aa-f981-4738-9c6a-973317b2a3d5",
+    "task_id": "round_1760070061_000_task_0008_round_1760070061_000_2",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_2",
+    "miner_uid": 2,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "textarea.comment",
+          "timestamp": 1760070061.8430407
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.843043
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "a.link",
+          "timestamp": 1760070061.8430443
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "test query",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.8430457
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8430467
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "input[name='username']",
+          "timestamp": 1760070061.8430479
+        }
+      }
+    ],
+    "web_agent_id": "agent_2_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0008_round_1760070061_000_2",
+    "_id": "8c2d079e-d86c-421b-8e94-a1c6addc86e9"
+  },
+  {
+    "solution_id": "6e369cd7-df93-482e-9c47-a5454e3b17e8",
+    "task_id": "round_1760070061_000_task_0008_round_1760070061_000_5",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_5",
+    "miner_uid": 5,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "type",
+        "attributes": {
+          "text": "password",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.8430963
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "test query",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.843098
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 2.328558098295841,
+          "timestamp": 1760070061.843099
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "test query",
+          "selector": "textarea.comment",
+          "timestamp": 1760070061.8431003
+        }
+      }
+    ],
+    "web_agent_id": "agent_5_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0008_round_1760070061_000_5",
+    "_id": "bba6a5ed-d2b6-47f0-87ba-635c4ebe6de3"
+  },
+  {
+    "solution_id": "419cb3fe-7b93-47fe-a8c2-09b8a0516367",
+    "task_id": "round_1760070061_000_task_0008_round_1760070061_000_3",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_3",
+    "miner_uid": 3,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 316,
+          "timestamp": 1760070061.8431344
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.8431363
+        }
+      },
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "span.menu-item",
+          "timestamp": 1760070061.8431382
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "test query",
+          "selector": "input[name='q']",
+          "timestamp": 1760070061.8431396
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8431406
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "username",
+          "selector": "input[name='password']",
+          "timestamp": 1760070061.843142
+        }
+      }
+    ],
+    "web_agent_id": "agent_3_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0008_round_1760070061_000_3",
+    "_id": "9ba88e8f-aab7-4e43-ac1c-9a3f3bd3dae0"
+  },
+  {
+    "solution_id": "3ee994fe-892d-4fbb-9da9-30b49cfac3db",
+    "task_id": "round_1760070061_000_task_0008_round_1760070061_000_1",
+    "round_id": "round_1760070061_000",
+    "agent_run_id": "round_1760070061_000_1",
+    "miner_uid": 1,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "down",
+          "amount": 326,
+          "timestamp": 1760070061.8431754
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 2.1786329635109336,
+          "timestamp": 1760070061.8431764
+        }
+      },
+      {
+        "type": "wait",
+        "attributes": {
+          "duration": 2.0539125057827468,
+          "timestamp": 1760070061.8431778
+        }
+      },
+      {
+        "type": "hover",
+        "attributes": {
+          "selector": "div.product",
+          "timestamp": 1760070061.8431787
+        }
+      },
+      {
+        "type": "type",
+        "attributes": {
+          "text": "search term",
+          "selector": "input[name='username']",
+          "timestamp": 1760070061.84318
+        }
+      },
+      {
+        "type": "scroll",
+        "attributes": {
+          "direction": "up",
+          "amount": 318,
+          "timestamp": 1760070061.8431814
+        }
+      }
+    ],
+    "web_agent_id": "agent_1_1760070061",
+    "recording": "recording_data_round_1760070061_000_task_0008_round_1760070061_000_1",
+    "_id": "fecee8f1-d713-4128-8812-01a200887b63"
+  },
+  {
+    "solution_id": "test_solution_001",
+    "task_id": "test_round_001_task_0000",
+    "round_id": "test_round_001",
+    "agent_run_id": "test_round_001_1",
+    "miner_uid": 1,
+    "validator_uid": 123,
+    "actions": [
+      {
+        "type": "click",
+        "attributes": {
+          "selector": "button",
+          "timestamp": 1234567890.0
+        }
+      }
+    ],
+    "web_agent_id": "test_agent",
+    "recording": "test_recording",
+    "_id": "9911d822-549b-4ade-aac2-cb905cca9ced"
+  }
+]

@@ -6,7 +6,9 @@ import time
 
 from app.config import settings
 from app.db.mongo import ensure_indexes, close_client
-from app.api.routes.rounds import router as rounds_router
+from app.api.routes.rounds_get import router as rounds_get_router
+from app.api.routes.rounds_post import router as rounds_post_router
+from app.api.routes.ui import router as ui_router
 from app.services.idempotency import get_cache_stats
 
 # Configure logging
@@ -54,7 +56,9 @@ async def log_requests(request: Request, call_next):
 
 
 # Include routers
-app.include_router(rounds_router)
+app.include_router(rounds_get_router)  # GET endpoints for data retrieval
+app.include_router(rounds_post_router)  # POST endpoints for data submission
+app.include_router(ui_router)  # UI endpoints for dashboard
 
 
 # Health check endpoint
