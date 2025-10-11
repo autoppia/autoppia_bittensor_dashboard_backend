@@ -251,6 +251,105 @@ MOCK_TASKS = {
     }
 }
 
+@router.get("/search")
+async def search_tasks(
+    query: Optional[str] = Query(None, description="Search query"),
+    website: Optional[str] = Query(None, description="Filter by website"),
+    useCase: Optional[str] = Query(None, description="Filter by use case"),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    agentRunId: Optional[str] = Query(None, description="Filter by agent run ID"),
+    minScore: Optional[float] = Query(None, description="Minimum score filter"),
+    maxScore: Optional[float] = Query(None, description="Maximum score filter"),
+    startDate: Optional[str] = Query(None, description="Filter by start date"),
+    endDate: Optional[str] = Query(None, description="Filter by end date"),
+    page: int = Query(1, description="Page number"),
+    limit: int = Query(20, description="Items per page"),
+    sortBy: Optional[str] = Query("startTime", description="Sort field"),
+    sortOrder: Optional[str] = Query("desc", description="Sort order")
+):
+    """Advanced search for tasks with multiple filters."""
+    tasks = list(MOCK_TASKS.values())
+    
+    # Apply filters
+    if website:
+        tasks = [t for t in tasks if t["website"] == website]
+    if useCase:
+        tasks = [t for t in tasks if t["useCase"] == useCase]
+    if status:
+        tasks = [t for t in tasks if t["status"] == status]
+    if agentRunId:
+        tasks = [t for t in tasks if t["agentRunId"] == agentRunId]
+    if minScore is not None:
+        tasks = [t for t in tasks if t["score"] >= minScore]
+    if maxScore is not None:
+        tasks = [t for t in tasks if t["score"] <= maxScore]
+    
+    # Remove detailed fields for search results
+    for task in tasks:
+        task.pop("actions", None)
+        task.pop("screenshots", None)
+        task.pop("logs", None)
+        task.pop("metadata", None)
+    
+    # Pagination
+    start_idx = (page - 1) * limit
+    end_idx = start_idx + limit
+    paginated_tasks = tasks[start_idx:end_idx]
+    
+    # Generate facets
+    facets = {
+        "websites": [{"name": "Autozone", "count": 1}],
+        "useCases": [{"name": "buy_product", "count": 1}],
+        "statuses": [{"name": "completed", "count": 1}],
+        "scoreRanges": [{"range": "0.8-1.0", "count": 1}]
+    }
+    
+    return {
+        "data": {
+            "tasks": paginated_tasks,
+            "total": len(tasks),
+            "page": page,
+            "limit": limit,
+            "facets": facets
+        }
+    }
+
+@router.get("/analytics")
+async def get_task_analytics(
+    timeRange: Optional[str] = Query("24h", description="Time range"),
+    website: Optional[str] = Query(None, description="Filter by website"),
+    useCase: Optional[str] = Query(None, description="Filter by use case"),
+    agentRunId: Optional[str] = Query(None, description="Filter by agent run ID")
+):
+    """Get analytics data for tasks."""
+    # In production, this would query the database with time range filters
+    analytics = {
+        "totalTasks": 150,
+        "completedTasks": 120,
+        "failedTasks": 30,
+        "averageScore": 0.75,
+        "averageDuration": 52.3,
+        "successRate": 80,
+        "performanceByWebsite": [
+            {"website": "Autozone", "tasks": 45, "averageScore": 0.78},
+            {"website": "AutoDining", "tasks": 32, "averageScore": 0.72}
+        ],
+        "performanceByUseCase": [
+            {"useCase": "buy_product", "tasks": 28, "averageScore": 0.80},
+            {"useCase": "book_reservation", "tasks": 15, "averageScore": 0.70}
+        ],
+        "performanceOverTime": [
+            {
+                "timestamp": "2024-01-15T10:00:00Z",
+                "tasks": 5,
+                "averageScore": 0.78,
+                "successRate": 80
+            }
+        ]
+    }
+    
+    return {"data": {"analytics": analytics}}
+
 @router.get("/{taskId}")
 async def get_task_details(
     taskId: str = Path(..., description="The unique identifier of the task"),
@@ -499,69 +598,6 @@ async def get_tasks_list(
         }
     }
 
-@router.get("/search")
-async def search_tasks(
-    query: Optional[str] = Query(None, description="Search query"),
-    website: Optional[str] = Query(None, description="Filter by website"),
-    useCase: Optional[str] = Query(None, description="Filter by use case"),
-    status: Optional[str] = Query(None, description="Filter by status"),
-    agentRunId: Optional[str] = Query(None, description="Filter by agent run ID"),
-    minScore: Optional[float] = Query(None, description="Minimum score filter"),
-    maxScore: Optional[float] = Query(None, description="Maximum score filter"),
-    startDate: Optional[str] = Query(None, description="Filter by start date"),
-    endDate: Optional[str] = Query(None, description="Filter by end date"),
-    page: int = Query(1, description="Page number"),
-    limit: int = Query(20, description="Items per page"),
-    sortBy: Optional[str] = Query("startTime", description="Sort field"),
-    sortOrder: Optional[str] = Query("desc", description="Sort order")
-):
-    """Advanced search for tasks with multiple filters."""
-    tasks = list(MOCK_TASKS.values())
-    
-    # Apply filters
-    if website:
-        tasks = [t for t in tasks if t["website"] == website]
-    if useCase:
-        tasks = [t for t in tasks if t["useCase"] == useCase]
-    if status:
-        tasks = [t for t in tasks if t["status"] == status]
-    if agentRunId:
-        tasks = [t for t in tasks if t["agentRunId"] == agentRunId]
-    if minScore is not None:
-        tasks = [t for t in tasks if t["score"] >= minScore]
-    if maxScore is not None:
-        tasks = [t for t in tasks if t["score"] <= maxScore]
-    
-    # Remove detailed fields for search results
-    for task in tasks:
-        task.pop("actions", None)
-        task.pop("screenshots", None)
-        task.pop("logs", None)
-        task.pop("metadata", None)
-    
-    # Pagination
-    start_idx = (page - 1) * limit
-    end_idx = start_idx + limit
-    paginated_tasks = tasks[start_idx:end_idx]
-    
-    # Generate facets
-    facets = {
-        "websites": [{"name": "Autozone", "count": 1}],
-        "useCases": [{"name": "buy_product", "count": 1}],
-        "statuses": [{"name": "completed", "count": 1}],
-        "scoreRanges": [{"range": "0.8-1.0", "count": 1}]
-    }
-    
-    return {
-        "data": {
-            "tasks": paginated_tasks,
-            "total": len(tasks),
-            "page": page,
-            "limit": limit,
-            "facets": facets
-        }
-    }
-
 @router.get("/{taskId}/actions")
 async def get_task_actions(
     taskId: str = Path(..., description="The unique identifier of the task"),
@@ -740,39 +776,3 @@ async def compare_tasks(request: CompareTasksRequest):
     }
     
     return {"data": {"tasks": tasks, "comparison": comparison}}
-
-@router.get("/analytics")
-async def get_task_analytics(
-    timeRange: Optional[str] = Query("24h", description="Time range"),
-    website: Optional[str] = Query(None, description="Filter by website"),
-    useCase: Optional[str] = Query(None, description="Filter by use case"),
-    agentRunId: Optional[str] = Query(None, description="Filter by agent run ID")
-):
-    """Get analytics data for tasks."""
-    # In production, this would query the database with time range filters
-    analytics = {
-        "totalTasks": 150,
-        "completedTasks": 120,
-        "failedTasks": 30,
-        "averageScore": 0.75,
-        "averageDuration": 52.3,
-        "successRate": 80,
-        "performanceByWebsite": [
-            {"website": "Autozone", "tasks": 45, "averageScore": 0.78},
-            {"website": "AutoDining", "tasks": 32, "averageScore": 0.72}
-        ],
-        "performanceByUseCase": [
-            {"useCase": "buy_product", "tasks": 28, "averageScore": 0.80},
-            {"useCase": "book_reservation", "tasks": 15, "averageScore": 0.70}
-        ],
-        "performanceOverTime": [
-            {
-                "timestamp": "2024-01-15T10:00:00Z",
-                "tasks": 5,
-                "averageScore": 0.78,
-                "successRate": 80
-            }
-        ]
-    }
-    
-    return {"data": {"analytics": analytics}}
