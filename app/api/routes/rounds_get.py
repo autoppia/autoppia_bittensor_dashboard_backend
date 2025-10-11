@@ -29,7 +29,34 @@ async def list_rounds(
     """
     try:
         logger.info(f"Fetching rounds list with limit={limit}, skip={skip}")
-        rounds = await DataBuilder.build_rounds_list(limit=limit, skip=skip)
+        
+        # Get rounds directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
+        db = get_mock_db()
+        rounds_docs = await db.rounds.find().sort("round_id", -1).skip(skip).limit(limit).to_list(length=limit)
+        
+        # Convert to RoundWithDetails objects (minimal construction)
+        rounds = []
+        for doc in rounds_docs:
+            round_data = Round(**doc)
+            # Create minimal RoundWithDetails with just the round data
+            # This avoids the expensive DataBuilder.build_rounds_list() call
+            round_with_details = RoundWithDetails(
+                round_id=round_data.round_id,
+                start_block=round_data.start_block,
+                end_block=round_data.end_block,
+                started_at=round_data.started_at,
+                ended_at=round_data.ended_at,
+                n_tasks=round_data.n_tasks,
+                n_winners=round_data.n_winners,
+                winners=round_data.winners,
+                average_score=round_data.average_score,
+                top_score=round_data.top_score,
+                validators=round_data.validators,
+                agent_evaluation_runs=[]  # Empty for performance - can be populated on demand
+            )
+            rounds.append(round_with_details)
         
         logger.info(f"Successfully retrieved {len(rounds)} rounds")
         return rounds
@@ -55,14 +82,38 @@ async def get_round(round_id: str):
     """
     try:
         logger.info(f"Fetching round {round_id}")
-        round_data = await DataBuilder.build_round_with_details(round_id)
         
-        if not round_data:
+        # Get round directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
+        db = get_mock_db()
+        round_doc = await db.rounds.find_one({"round_id": round_id})
+        
+        if not round_doc:
             logger.warning(f"Round {round_id} not found")
             raise HTTPException(status_code=404, detail=f"Round {round_id} not found")
         
-        logger.info(f"Successfully retrieved round {round_id} with {len(round_data.agent_evaluation_runs)} agent runs")
-        return round_data
+        round_data = Round(**round_doc)
+        
+        # Create minimal RoundWithDetails with just the round data
+        # This avoids the expensive DataBuilder.build_round_with_details() call
+        round_with_details = RoundWithDetails(
+            round_id=round_data.round_id,
+            start_block=round_data.start_block,
+            end_block=round_data.end_block,
+            started_at=round_data.started_at,
+            ended_at=round_data.ended_at,
+            n_tasks=round_data.n_tasks,
+            n_winners=round_data.n_winners,
+            winners=round_data.winners,
+            average_score=round_data.average_score,
+            top_score=round_data.top_score,
+            validators=round_data.validators,
+            agent_evaluation_runs=[]  # Empty for performance - can be populated on demand
+        )
+        
+        logger.info(f"Successfully retrieved round {round_id}")
+        return round_with_details
         
     except HTTPException:
         raise
@@ -93,7 +144,30 @@ async def get_round_agent_runs(
     """
     try:
         logger.info(f"Fetching agent runs for round {round_id} with limit={limit}, skip={skip}")
-        agent_runs = await DataBuilder.build_agent_runs_list(round_id=round_id, limit=limit, skip=skip)
+        
+        # Get agent runs directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import AgentEvaluationRun
+        db = get_mock_db()
+        agent_runs_docs = await db.agent_evaluation_runs.find({"round_id": round_id}).skip(skip).limit(limit).to_list(length=limit)
+        
+        # Convert to AgentEvaluationRunWithDetails objects (minimal construction)
+        agent_runs = []
+        for doc in agent_runs_docs:
+            agent_run_data = AgentEvaluationRun(**doc)
+            # Create minimal AgentEvaluationRunWithDetails with just the agent run data
+            # This avoids the expensive DataBuilder.build_agent_runs_list() call
+            agent_run_with_details = AgentEvaluationRunWithDetails(
+                agent_run_id=agent_run_data.agent_run_id,
+                round_id=agent_run_data.round_id,
+                validator_uid=agent_run_data.validator_uid,
+                miner_uid=agent_run_data.miner_uid,
+                started_at=agent_run_data.started_at,
+                ended_at=agent_run_data.ended_at,
+                total_reward=agent_run_data.total_reward,
+                tasks=[]  # Empty for performance - can be populated on demand
+            )
+            agent_runs.append(agent_run_with_details)
         
         logger.info(f"Successfully retrieved {len(agent_runs)} agent runs for round {round_id}")
         return agent_runs
@@ -119,15 +193,34 @@ async def get_agent_run(agent_run_id: str):
     """
     try:
         logger.info(f"Fetching agent run {agent_run_id}")
-        agent_run_data = await DataBuilder.build_agent_run_with_details(agent_run_id)
         
-        if not agent_run_data:
+        # Get agent run directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import AgentEvaluationRun
+        db = get_mock_db()
+        agent_run_doc = await db.agent_evaluation_runs.find_one({"agent_run_id": agent_run_id})
+        
+        if not agent_run_doc:
             logger.warning(f"Agent run {agent_run_id} not found")
             raise HTTPException(status_code=404, detail=f"Agent run {agent_run_id} not found")
         
-        logger.info(f"Successfully retrieved agent run {agent_run_id} with {len(agent_run_data.tasks)} tasks, "
-                   f"{len(agent_run_data.task_solutions)} task solutions, {len(agent_run_data.evaluation_results)} evaluation results")
-        return agent_run_data
+        agent_run_data = AgentEvaluationRun(**agent_run_doc)
+        
+        # Create minimal AgentEvaluationRunWithDetails with just the agent run data
+        # This avoids the expensive DataBuilder.build_agent_run_with_details() call
+        agent_run_with_details = AgentEvaluationRunWithDetails(
+            agent_run_id=agent_run_data.agent_run_id,
+            round_id=agent_run_data.round_id,
+            validator_uid=agent_run_data.validator_uid,
+            miner_uid=agent_run_data.miner_uid,
+            started_at=agent_run_data.started_at,
+            ended_at=agent_run_data.ended_at,
+            total_reward=agent_run_data.total_reward,
+            tasks=[]  # Empty for performance - can be populated on demand
+        )
+        
+        logger.info(f"Successfully retrieved agent run {agent_run_id}")
+        return agent_run_with_details
         
     except HTTPException:
         raise
@@ -156,7 +249,36 @@ async def list_agent_runs(
     """
     try:
         logger.info(f"Fetching agent runs list with round_id={round_id}, limit={limit}, skip={skip}")
-        agent_runs = await DataBuilder.build_agent_runs_list(round_id=round_id, limit=limit, skip=skip)
+        
+        # Get agent runs directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import AgentEvaluationRun
+        db = get_mock_db()
+        
+        # Build query filter
+        query_filter = {}
+        if round_id:
+            query_filter["round_id"] = round_id
+        
+        agent_runs_docs = await db.agent_evaluation_runs.find(query_filter).skip(skip).limit(limit).to_list(length=limit)
+        
+        # Convert to AgentEvaluationRunWithDetails objects (minimal construction)
+        agent_runs = []
+        for doc in agent_runs_docs:
+            agent_run_data = AgentEvaluationRun(**doc)
+            # Create minimal AgentEvaluationRunWithDetails with just the agent run data
+            # This avoids the expensive DataBuilder.build_agent_runs_list() call
+            agent_run_with_details = AgentEvaluationRunWithDetails(
+                agent_run_id=agent_run_data.agent_run_id,
+                round_id=agent_run_data.round_id,
+                validator_uid=agent_run_data.validator_uid,
+                miner_uid=agent_run_data.miner_uid,
+                started_at=agent_run_data.started_at,
+                ended_at=agent_run_data.ended_at,
+                total_reward=agent_run_data.total_reward,
+                tasks=[]  # Empty for performance - can be populated on demand
+            )
+            agent_runs.append(agent_run_with_details)
         
         logger.info(f"Successfully retrieved {len(agent_runs)} agent runs")
         return agent_runs

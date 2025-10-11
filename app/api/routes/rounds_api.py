@@ -11,7 +11,7 @@ from app.models.rounds import (
     TimelinePoint, RoundComparison, TopMiner
 )
 from app.services.data_builder import DataBuilder
-from app.db.mock_mongo import get_mock_db
+from app.services.cache import cached, CACHE_TTL
 import logging
 import random
 
@@ -41,19 +41,22 @@ async def get_rounds(
         if hasattr(limit, 'annotation'):
             limit = 20
 
+        # Get all rounds directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
         db = get_mock_db()
-        data_builder = DataBuilder(db)
+        rounds_docs = await db.rounds.find().to_list(length=100)
         
-        # Get all rounds
-        rounds_data = data_builder.get_rounds()
+        # Convert to Round objects
+        rounds_data = [Round(**doc) for doc in rounds_docs]
         
         # Filter by status if provided
         if status:
-            rounds_data = [r for r in rounds_data if r.status == status]
+            rounds_data = [r for r in rounds_data if (r.round_id == "round_020" and status == "active") or (r.round_id != "round_020" and status == "completed")]
         
         # Sort rounds
         if sortBy == "id":
-            rounds_data.sort(key=lambda x: x.round_id, reverse=(sortOrder == "desc"))
+            rounds_data.sort(key=lambda x: int(x.round_id.split('_')[1]) if '_' in x.round_id else 0, reverse=(sortOrder == "desc"))
         elif sortBy == "startTime":
             rounds_data.sort(key=lambda x: x.started_at or 0, reverse=(sortOrder == "desc"))
         elif sortBy == "endTime":
@@ -81,8 +84,8 @@ async def get_rounds(
             
             rounds.append({
                 "id": int(round_data.round_id.split('_')[1]),
-                "startBlock": start_block,
-                "endBlock": end_block,
+                "startBlock": int(start_block),
+                "endBlock": int(end_block),
                 "current": round_data.round_id == "round_020",  # Make round 20 current
                 "startTime": datetime.fromtimestamp(round_data.started_at, tz=timezone.utc).isoformat(),
                 "endTime": datetime.fromtimestamp(round_data.ended_at, tz=timezone.utc).isoformat() if round_data.ended_at else None,
@@ -114,64 +117,8 @@ async def get_rounds(
             code="ROUNDS_FETCH_ERROR"
         )
 
-@router.get("/{round_id}", response_model=RoundDetailResponse)
-async def get_round_detail(round_id: int = Path(..., description="Round ID")):
-    """
-    Returns detailed information for a specific round.
-    """
-    try:
-        logger.info(f"Fetching round detail for round_id={round_id}")
-
-        db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
-        # Get round data
-        rounds_data = data_builder.get_rounds()
-        round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
-        
-        if not round_data:
-            raise HTTPException(status_code=404, detail="Round not found")
-        
-        # Calculate progress
-        current_block = round_data.started_at + int((round_data.ended_at or round_data.started_at + 3600) - round_data.started_at) * 0.75
-        start_block = round_data.started_at
-        end_block = round_data.ended_at or round_data.started_at + 3600
-        blocks_remaining = max(0, end_block - current_block)
-        progress = min(1.0, (current_block - start_block) / (end_block - start_block))
-        
-        round_info = {
-            "id": round_id,
-            "startBlock": start_block,
-            "endBlock": end_block,
-            "current": round_data.round_id == "round_020",
-            "startTime": datetime.fromtimestamp(round_data.started_at, tz=timezone.utc).isoformat(),
-            "endTime": datetime.fromtimestamp(round_data.ended_at, tz=timezone.utc).isoformat() if round_data.ended_at else None,
-            "status": "active" if round_data.round_id == "round_020" else "completed",
-            "totalTasks": round_data.n_tasks,
-            "completedTasks": int(round_data.n_tasks * 0.75),
-            "averageScore": round_data.average_score or 0.0,
-            "topScore": round_data.top_score or 0.0,
-            "currentBlock": int(current_block),
-            "blocksRemaining": int(blocks_remaining),
-            "progress": progress
-        }
-        
-        return RoundDetailResponse(
-            success=True,
-            data={"round": round_info}
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error fetching round detail: {e}")
-        return RoundDetailResponse(
-            success=False,
-            error=f"Failed to fetch round detail: {str(e)}",
-            code="ROUND_DETAIL_ERROR"
-        )
-
 @router.get("/current", response_model=RoundDetailResponse)
+@cached("current_round", CACHE_TTL["current_round"])
 async def get_current_round():
     """
     Returns information about the current active round.
@@ -179,15 +126,15 @@ async def get_current_round():
     try:
         logger.info("Fetching current round")
 
+        # Get current round directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
         db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
-        # Get current round (round 20)
-        rounds_data = data_builder.get_rounds()
-        round_data = next((r for r in rounds_data if r.round_id == "round_020"), None)
-        
-        if not round_data:
+        round_doc = await db.rounds.find_one({"round_id": "round_020"})
+        if not round_doc:
             raise HTTPException(status_code=404, detail="No current round found")
+        
+        round_data = Round(**round_doc)
         
         # Calculate progress
         current_block = round_data.started_at + int((round_data.ended_at or round_data.started_at + 3600) - round_data.started_at) * 0.75
@@ -198,8 +145,8 @@ async def get_current_round():
         
         round_info = {
             "id": 20,
-            "startBlock": start_block,
-            "endBlock": end_block,
+            "startBlock": int(start_block),
+            "endBlock": int(end_block),
             "current": True,
             "startTime": datetime.fromtimestamp(round_data.started_at, tz=timezone.utc).isoformat(),
             "endTime": datetime.fromtimestamp(round_data.ended_at, tz=timezone.utc).isoformat() if round_data.ended_at else None,
@@ -228,7 +175,67 @@ async def get_current_round():
             code="CURRENT_ROUND_ERROR"
         )
 
+@router.get("/{round_id}", response_model=RoundDetailResponse)
+@cached("round_detail", CACHE_TTL["round_detail"])
+async def get_round_detail(round_id: int = Path(..., description="Round ID")):
+    """
+    Returns detailed information for a specific round.
+    """
+    try:
+        logger.info(f"Fetching round detail for round_id={round_id}")
+
+        # Get round data directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
+        db = get_mock_db()
+        round_doc = await db.rounds.find_one({"round_id": f"round_{round_id:03d}"})
+        if not round_doc:
+            raise HTTPException(status_code=404, detail="Round not found")
+        
+        # Convert to Round object (no need for full details)
+        round_data = Round(**round_doc)
+        
+        # Calculate progress
+        current_block = round_data.started_at + int((round_data.ended_at or round_data.started_at + 3600) - round_data.started_at) * 0.75
+        start_block = round_data.started_at
+        end_block = round_data.ended_at or round_data.started_at + 3600
+        blocks_remaining = max(0, end_block - current_block)
+        progress = min(1.0, (current_block - start_block) / (end_block - start_block))
+        
+        round_info = {
+            "id": round_id,
+            "startBlock": int(start_block),
+            "endBlock": int(end_block),
+            "current": round_data.round_id == "round_020",
+            "startTime": datetime.fromtimestamp(round_data.started_at, tz=timezone.utc).isoformat(),
+            "endTime": datetime.fromtimestamp(round_data.ended_at, tz=timezone.utc).isoformat() if round_data.ended_at else None,
+            "status": "active" if round_data.round_id == "round_020" else "completed",
+            "totalTasks": round_data.n_tasks,
+            "completedTasks": int(round_data.n_tasks * 0.75),
+            "averageScore": round_data.average_score or 0.0,
+            "topScore": round_data.top_score or 0.0,
+            "currentBlock": int(current_block),
+            "blocksRemaining": int(blocks_remaining),
+            "progress": progress
+        }
+        
+        return RoundDetailResponse(
+            success=True,
+            data={"round": round_info}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching round detail: {e}")
+        return RoundDetailResponse(
+            success=False,
+            error=f"Failed to fetch round detail: {str(e)}",
+            code="ROUND_DETAIL_ERROR"
+        )
+
 @router.get("/{round_id}/statistics", response_model=RoundStatisticsResponse)
+@cached("round_statistics", CACHE_TTL["round_statistics"])
 async def get_round_statistics(round_id: int = Path(..., description="Round ID")):
     """
     Returns comprehensive statistics for a specific round.
@@ -236,15 +243,16 @@ async def get_round_statistics(round_id: int = Path(..., description="Round ID")
     try:
         logger.info(f"Fetching statistics for round_id={round_id}")
 
+        # Get round data directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
         db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
-        # Get round data
-        rounds_data = data_builder.get_rounds()
-        round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
-        
-        if not round_data:
+        round_doc = await db.rounds.find_one({"round_id": f"round_{round_id:03d}"})
+        if not round_doc:
             raise HTTPException(status_code=404, detail="Round not found")
+        
+        # Convert to Round object (no need for full details)
+        round_data = Round(**round_doc)
         
         # Mock statistics calculation
         total_miners = 50
@@ -289,6 +297,7 @@ async def get_round_statistics(round_id: int = Path(..., description="Round ID")
         )
 
 @router.get("/{round_id}/miners", response_model=RoundMinersResponse)
+@cached("round_miners", CACHE_TTL["round_miners"])
 async def get_round_miners(
     round_id: int = Path(..., description="Round ID"),
     page: int = Query(1, ge=1, description="Page number"),
@@ -317,20 +326,34 @@ async def get_round_miners(
         if hasattr(maxScore, 'annotation'):
             maxScore = None
 
+        # Get round data directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
         db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
-        # Get round data
-        rounds_data = data_builder.get_rounds()
-        round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
-        
-        if not round_data:
+        round_doc = await db.rounds.find_one({"round_id": f"round_{round_id:03d}"})
+        if not round_doc:
             raise HTTPException(status_code=404, detail="Round not found")
         
-        # Mock miners data
+        # Convert to Round object (no need for full details)
+        round_data = Round(**round_doc)
+        
+        # Use real miners data from the round
         miners = []
-        for i in range(50):  # 50 miners
-            score = round(random.uniform(0.3, 0.95), 3)
+        for i, miner in enumerate(round_data.miners):
+            # Get miner's score from winners if they won
+            score = 0.0
+            ranking = None
+            for winner in round_data.winners:
+                if winner.get('miner_uid') == miner.uid:
+                    score = winner.get('score', 0.0)
+                    ranking = winner.get('rank', i + 1)
+                    break
+            
+            # If not a winner, assign a random lower score
+            if score == 0.0:
+                score = round(random.uniform(0.1, 0.4), 3)
+                ranking = i + 1
+            
             miner_success = score > 0.5
             
             # Apply filters
@@ -342,18 +365,18 @@ async def get_round_miners(
                 continue
             
             miners.append({
-                "uid": 42 + i,
-                "hotkey": f"5GHrA5gqhWVm1Cp92jXaoH7caxtE7xsFHxJooL5h8aE9mdTe{i:02d}",
+                "uid": miner.uid,
+                "hotkey": miner.hotkey,
                 "success": miner_success,
                 "score": score,
                 "duration": round(random.uniform(20, 60), 1),
-                "ranking": i + 1,
-                "tasksCompleted": random.randint(10, 20),
-                "tasksTotal": 20,
+                "ranking": ranking,
+                "tasksCompleted": random.randint(max(1, round_data.n_tasks - 5), round_data.n_tasks),
+                "tasksTotal": round_data.n_tasks,
                 "stake": random.randint(50000, 200000),
                 "emission": random.randint(2500, 10000),
                 "lastSeen": datetime.now(timezone.utc).isoformat(),
-                "validatorId": f"validator_{round_data.validator_info.uid}"
+                "validatorId": f"validator_{round_data.validators[0].uid}"
             })
         
         # Sort miners
@@ -407,34 +430,40 @@ async def get_round_top_miners(
         if hasattr(limit, 'annotation'):
             limit = 10
 
-        db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
         # Get round data
-        rounds_data = data_builder.get_rounds()
+        rounds_data = await DataBuilder.build_rounds_list(limit=100, skip=0)
         round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
         
         if not round_data:
             raise HTTPException(status_code=404, detail="Round not found")
         
-        # Mock top miners data
+        # Use real top miners data from winners
         miners = []
-        for i in range(limit):
-            score = round(random.uniform(0.8, 0.95), 3)
-            miners.append({
-                "uid": 42 + i,
-                "hotkey": f"5GHrA5gqhWVm1Cp92jXaoH7caxtE7xsFHxJooL5h8aE9mdTe{i:02d}",
-                "success": True,
-                "score": score,
-                "duration": round(random.uniform(20, 40), 1),
-                "ranking": i + 1,
-                "tasksCompleted": random.randint(15, 20),
-                "tasksTotal": 20,
-                "stake": random.randint(100000, 200000),
-                "emission": random.randint(5000, 10000),
-                "lastSeen": datetime.now(timezone.utc).isoformat(),
-                "validatorId": f"validator_{round_data.validator_info.uid}"
-            })
+        top_winners = round_data.winners[:limit]  # Get top N winners
+        
+        for i, winner in enumerate(top_winners):
+            # Find the miner info
+            miner_info = None
+            for miner in round_data.miners:
+                if miner.uid == winner.get('miner_uid'):
+                    miner_info = miner
+                    break
+            
+            if miner_info:
+                miners.append({
+                    "uid": miner_info.uid,
+                    "hotkey": miner_info.hotkey,
+                    "success": True,
+                    "score": winner.get('score', 0.0),
+                    "duration": round(random.uniform(20, 40), 1),
+                    "ranking": winner.get('rank', i + 1),
+                    "tasksCompleted": random.randint(max(1, round_data.n_tasks - 3), round_data.n_tasks),
+                    "tasksTotal": round_data.n_tasks,
+                    "stake": random.randint(100000, 200000),
+                    "emission": random.randint(5000, 10000),
+                    "lastSeen": datetime.now(timezone.utc).isoformat(),
+                    "validatorId": f"validator_{round_data.validators[0].uid}"
+                })
         
         # Sort by score descending
         miners.sort(key=lambda x: x["score"], reverse=True)
@@ -470,11 +499,8 @@ async def get_round_miner_detail(
     try:
         logger.info(f"Fetching miner detail for round_id={round_id}, uid={uid}")
 
-        db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
         # Get round data
-        rounds_data = data_builder.get_rounds()
+        rounds_data = await DataBuilder.build_rounds_list(limit=100, skip=0)
         round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
         
         if not round_data:
@@ -513,6 +539,7 @@ async def get_round_miner_detail(
         )
 
 @router.get("/{round_id}/validators", response_model=RoundValidatorsResponse)
+@cached("round_validators", CACHE_TTL["round_validators"])
 async def get_round_validators(round_id: int = Path(..., description="Round ID")):
     """
     Returns validators and their performance for a specific round.
@@ -520,42 +547,73 @@ async def get_round_validators(round_id: int = Path(..., description="Round ID")
     try:
         logger.info(f"Fetching validators for round_id={round_id}")
 
+        # Get round data directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
         db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
-        # Get round data
-        rounds_data = data_builder.get_rounds()
-        round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
-        
-        if not round_data:
+        round_doc = await db.rounds.find_one({"round_id": f"round_{round_id:03d}"})
+        if not round_doc:
             raise HTTPException(status_code=404, detail="Round not found")
         
-        # Get validator info from round
-        validator = round_data.validator_info
+        # Convert to Round object (no need for full details)
+        round_data = Round(**round_doc)
         
-        validators = [{
-            "id": f"validator_{validator.uid}",
-            "name": validator.name or f"Validator {validator.uid}",
-            "hotkey": validator.hotkey,
-            "icon": f"/validators/{validator.name or f'validator_{validator.uid}'}.png",
-            "status": "active",
-            "totalTasks": round_data.n_tasks,
-            "completedTasks": int(round_data.n_tasks * 0.95),
-            "averageScore": round_data.average_score or 0.0,
-            "weight": int(validator.stake),
-            "trust": validator.vtrust,
-            "version": int(validator.version.split('.')[0]) if validator.version else 7,
-            "stake": int(validator.stake),
-            "emission": int(validator.stake * 0.05),
-            "lastSeen": datetime.now(timezone.utc).isoformat(),
-            "uptime": 99.5
-        }]
+        # Get all validators for this round with unique performance data
+        validators = []
+        for i, validator in enumerate(round_data.validators):
+            # Generate unique performance metrics for each validator
+            # Use validator UID as seed for consistent but unique data
+            import hashlib
+            seed = f"{validator.uid}_{round_id}"
+            hash_obj = hashlib.md5(seed.encode())
+            hash_int = int(hash_obj.hexdigest()[:8], 16)
+            
+            # Generate validator-specific performance variations
+            base_completion_rate = 0.85 + (hash_int % 15) / 100  # 85-99% completion
+            base_uptime = 95.0 + (hash_int % 5)  # 95-99% uptime
+            base_score_variance = (hash_int % 20) / 100  # 0-19% score variance
+            
+            # Calculate validator-specific metrics
+            # Make total tasks vary per validator for more realistic diversity
+            base_total_tasks = round_data.n_tasks
+            task_variance = (hash_int % 7) - 3  # -3 to +3 task variance
+            validator_total_tasks = max(1, base_total_tasks + task_variance)
+            
+            completed_tasks = int(validator_total_tasks * base_completion_rate)
+            validator_avg_score = (round_data.average_score or 0.0) + base_score_variance
+            validator_avg_score = min(1.0, max(0.0, validator_avg_score))  # Clamp between 0-1
+            
+            # Generate different statuses based on performance
+            if base_completion_rate >= 0.95:
+                status = "active"
+            elif base_completion_rate >= 0.85:
+                status = "syncing"
+            else:
+                status = "lagging"
+            
+            validators.append({
+                "id": f"validator_{validator.uid}",
+                "name": validator.name or f"Validator {validator.uid}",
+                "hotkey": validator.hotkey,
+                "icon": f"/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
+                "status": status,
+                "totalTasks": validator_total_tasks,
+                "completedTasks": completed_tasks,
+                "averageScore": round(validator_avg_score, 3),
+                "weight": int(validator.stake),
+                "trust": validator.vtrust,
+                "version": int(validator.version.split('.')[0]) if validator.version else 7,
+                "stake": int(validator.stake),
+                "emission": int(validator.stake * 0.05),
+                "lastSeen": datetime.now(timezone.utc).isoformat(),
+                "uptime": round(base_uptime, 1)
+            })
         
         return RoundValidatorsResponse(
             success=True,
             data={
                 "validators": validators,
-                "total": 1
+                "total": len(validators)
             }
         )
         
@@ -580,35 +638,68 @@ async def get_round_validator_detail(
     try:
         logger.info(f"Fetching validator detail for round_id={round_id}, validator_id={validator_id}")
 
-        db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
         # Get round data
-        rounds_data = data_builder.get_rounds()
+        rounds_data = await DataBuilder.build_rounds_list(limit=100, skip=0)
         round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
         
         if not round_data:
             raise HTTPException(status_code=404, detail="Round not found")
         
-        # Get validator info from round
-        validator = round_data.validator_info
+        # Find the specific validator by ID
+        validator = None
+        for v in round_data.validators:
+            if f"validator_{v.uid}" == validator_id:
+                validator = v
+                break
+        
+        if not validator:
+            raise HTTPException(status_code=404, detail="Validator not found in this round")
+        
+        # Generate unique performance metrics for this specific validator
+        import hashlib
+        seed = f"{validator.uid}_{round_id}"
+        hash_obj = hashlib.md5(seed.encode())
+        hash_int = int(hash_obj.hexdigest()[:8], 16)
+        
+        # Generate validator-specific performance variations
+        base_completion_rate = 0.85 + (hash_int % 15) / 100  # 85-99% completion
+        base_uptime = 95.0 + (hash_int % 5)  # 95-99% uptime
+        base_score_variance = (hash_int % 20) / 100  # 0-19% score variance
+        
+        # Calculate validator-specific metrics
+        # Make total tasks vary per validator for more realistic diversity
+        base_total_tasks = round_data.n_tasks
+        task_variance = (hash_int % 7) - 3  # -3 to +3 task variance
+        validator_total_tasks = max(1, base_total_tasks + task_variance)
+        
+        completed_tasks = int(validator_total_tasks * base_completion_rate)
+        validator_avg_score = (round_data.average_score or 0.0) + base_score_variance
+        validator_avg_score = min(1.0, max(0.0, validator_avg_score))  # Clamp between 0-1
+        
+        # Generate different statuses based on performance
+        if base_completion_rate >= 0.95:
+            status = "active"
+        elif base_completion_rate >= 0.85:
+            status = "syncing"
+        else:
+            status = "lagging"
         
         validator_detail = {
             "id": validator_id,
             "name": validator.name or f"Validator {validator.uid}",
             "hotkey": validator.hotkey,
-            "icon": f"/validators/{validator.name or f'validator_{validator.uid}'}.png",
-            "status": "active",
-            "totalTasks": round_data.n_tasks,
-            "completedTasks": int(round_data.n_tasks * 0.95),
-            "averageScore": round_data.average_score or 0.0,
+            "icon": f"/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
+            "status": status,
+            "totalTasks": validator_total_tasks,
+            "completedTasks": completed_tasks,
+            "averageScore": round(validator_avg_score, 3),
             "weight": int(validator.stake),
             "trust": validator.vtrust,
             "version": int(validator.version.split('.')[0]) if validator.version else 7,
             "stake": int(validator.stake),
             "emission": int(validator.stake * 0.05),
             "lastSeen": datetime.now(timezone.utc).isoformat(),
-            "uptime": 99.5
+            "uptime": round(base_uptime, 1)
         }
         
         return RoundValidatorsResponse(
@@ -650,11 +741,8 @@ async def get_round_activity(
         if hasattr(since, 'annotation'):
             since = None
 
-        db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
         # Get round data
-        rounds_data = data_builder.get_rounds()
+        rounds_data = await DataBuilder.build_rounds_list(limit=100, skip=0)
         round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
         
         if not round_data:
@@ -723,11 +811,8 @@ async def get_round_progress(round_id: int = Path(..., description="Round ID")):
     try:
         logger.info(f"Fetching progress for round_id={round_id}")
 
-        db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
         # Get round data
-        rounds_data = data_builder.get_rounds()
+        rounds_data = await DataBuilder.build_rounds_list(limit=100, skip=0)
         round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
         
         if not round_data:
@@ -750,8 +835,8 @@ async def get_round_progress(round_id: int = Path(..., description="Round ID")):
         progress_info = {
             "roundId": round_id,
             "currentBlock": int(current_block),
-            "startBlock": start_block,
-            "endBlock": end_block,
+            "startBlock": int(start_block),
+            "endBlock": int(end_block),
             "blocksRemaining": int(blocks_remaining),
             "progress": progress,
             "estimatedTimeRemaining": {
@@ -786,11 +871,8 @@ async def get_round_summary(round_id: int = Path(..., description="Round ID")):
     try:
         logger.info(f"Fetching summary for round_id={round_id}")
 
-        db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
         # Get round data
-        rounds_data = data_builder.get_rounds()
+        rounds_data = await DataBuilder.build_rounds_list(limit=100, skip=0)
         round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
         
         if not round_data:
@@ -845,11 +927,8 @@ async def compare_rounds(request: RoundComparisonRequest):
     try:
         logger.info(f"Comparing rounds: {request.roundIds}")
 
-        db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
         # Get rounds data
-        rounds_data = data_builder.get_rounds()
+        rounds_data = await DataBuilder.build_rounds_list(limit=100, skip=0)
         
         comparisons = []
         for round_id in request.roundIds:
@@ -910,11 +989,8 @@ async def get_round_timeline(round_id: int = Path(..., description="Round ID")):
     try:
         logger.info(f"Fetching timeline for round_id={round_id}")
 
-        db = get_mock_db()
-        data_builder = DataBuilder(db)
-        
         # Get round data
-        rounds_data = data_builder.get_rounds()
+        rounds_data = await DataBuilder.build_rounds_list(limit=100, skip=0)
         round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
         
         if not round_data:
@@ -935,7 +1011,7 @@ async def get_round_timeline(round_id: int = Path(..., description="Round ID")):
             
             timeline.append({
                 "timestamp": current_time.isoformat(),
-                "block": round_data.started_at + int(elapsed_hours * 100),
+                "block": int(round_data.started_at + elapsed_hours * 100),
                 "completedTasks": int(round_data.n_tasks * progress * 0.75),
                 "averageScore": round_data.average_score or 0.0,
                 "activeMiners": int(50 * (1 - progress * 0.1))  # Slight decrease over time

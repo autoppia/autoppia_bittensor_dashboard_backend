@@ -1,8 +1,10 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 import logging
 import time
+import os
 
 from app.config import settings
 from app.db.mongo import ensure_indexes, close_client
@@ -11,6 +13,13 @@ from app.api.routes.rounds_post import router as rounds_post_router
 from app.api.routes.ui import router as ui_router
 from app.api.routes.overview import router as overview_router
 from app.api.routes.rounds_api import router as rounds_api_router
+from app.api.routes.cache import router as cache_router
+from app.api.routes.agents import router as agents_router
+from app.api.routes.agent_runs import router as agent_runs_router
+from app.api.routes.tasks import router as tasks_router
+# Optimized routes
+from app.api.routes.optimized_ui import router as optimized_ui_router
+from app.api.routes.optimized_rounds_post import router as optimized_rounds_post_router
 from app.services.idempotency import get_cache_stats
 
 # Configure logging
@@ -38,6 +47,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files for images
+images_path = os.path.join(os.path.dirname(__file__), "..", "images")
+if os.path.exists(images_path):
+    app.mount("/images", StaticFiles(directory=images_path), name="images")
+    logger.info(f"Mounted static files from {images_path}")
+else:
+    logger.warning(f"Images directory not found at {images_path}")
+
 
 # Add request logging middleware
 @app.middleware("http")
@@ -63,6 +80,13 @@ app.include_router(rounds_post_router)  # POST endpoints for data submission
 app.include_router(ui_router)  # UI endpoints for dashboard
 app.include_router(overview_router, prefix="/api")  # Overview section endpoints
 app.include_router(rounds_api_router, prefix="/api")  # Rounds section API endpoints
+app.include_router(cache_router)  # Cache management endpoints
+app.include_router(agents_router)  # Agents API endpoints
+app.include_router(agent_runs_router, prefix="/api")  # Agent runs API endpoints
+app.include_router(tasks_router)  # Tasks API endpoints
+# Optimized routers
+app.include_router(optimized_ui_router)  # Optimized UI endpoints
+app.include_router(optimized_rounds_post_router)  # Optimized POST endpoints
 
 
 # Health check endpoint

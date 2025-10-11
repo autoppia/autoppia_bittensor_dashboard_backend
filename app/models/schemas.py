@@ -38,7 +38,7 @@ class MinerInfo(BaseModel):
 class Round(BaseModel):
     """Round definition with all necessary information."""
     round_id: str  # Ordinal round ID (incremental)
-    validator_info: ValidatorInfo  # Full validator information embedded
+    validators: List[ValidatorInfo]  # Multiple validators participating in this round
     
     # Bittensor timing information
     start_block: int
@@ -65,6 +65,11 @@ class Round(BaseModel):
     winners: Optional[List[Dict[str, Any]]] = None  # Final winners with rankings
     winner_scores: List[float] = Field(default_factory=list)  # Scores of each winner
     weights: Optional[Dict[int, float]] = None  # Final weights assigned to miners
+    
+    # Calculated statistics
+    average_score: Optional[float] = None  # Average score across all miners
+    top_score: Optional[float] = None  # Highest score achieved
+    status: str = "active"  # Round status: active, completed, pending
 
 
 # --- Agent Evaluation Run ---

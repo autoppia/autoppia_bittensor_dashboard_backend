@@ -17,6 +17,7 @@ from app.models.overview import (
 )
 from app.services.data_builder import DataBuilder
 from app.db.mock_mongo import get_mock_db
+from app.services.cache import cached, CACHE_TTL
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/v1/overview", tags=["overview"])
 
 
 @router.get("/metrics", response_model=OverviewMetricsResponse)
+@cached("overview_metrics", CACHE_TTL["overview_metrics"])
 async def get_overview_metrics():
     """
     Returns high-level metrics for the overview dashboard.
@@ -36,7 +38,7 @@ async def get_overview_metrics():
         
         # Calculate metrics
         current_round = len(rounds) if rounds else 0
-        total_validators = len(set(round.validator_info.uid for round in rounds))
+        total_validators = len(set(validator.uid for round in rounds for validator in round.validators))
         total_miners = len(set(miner.uid for round in rounds for miner in round.miners))
         
         # Calculate top score from latest round
@@ -46,8 +48,8 @@ async def get_overview_metrics():
         
         # Get version from validator info (use the most recent validator)
         subnet_version = "1.0.0"  # Default fallback
-        if rounds and rounds[0].validator_info.version:
-            subnet_version = rounds[0].validator_info.version
+        if rounds and rounds[0].validators and rounds[0].validators[0].version:
+            subnet_version = rounds[0].validators[0].version
         
         # Mock data for websites (this could be calculated from tasks if needed)
         total_websites = 11
@@ -77,6 +79,7 @@ async def get_overview_metrics():
 
 
 @router.get("/validators", response_model=ValidatorsListResponse)
+@cached("validators_list", CACHE_TTL["validators_list"])
 async def get_validators(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
@@ -101,26 +104,54 @@ async def get_validators(
         # Get rounds data to extract validators
         rounds = await DataBuilder.build_rounds_list(limit=50, skip=0)
         
-        # Extract unique validators
+        # Extract unique validators with diverse performance data
         validators_data = {}
         for round_data in rounds:
-            validator = round_data.validator_info
-            if validator.uid not in validators_data:
-                validators_data[validator.uid] = {
-                    "id": f"validator_{validator.uid}",
-                    "name": validator.name or f"Validator {validator.uid}",  # Use real name or fallback
-                    "hotkey": validator.hotkey,
-                    "icon": f"/validators/{validator.name or f'validator_{validator.uid}'}.png",
-                    "currentTask": "Login for the following username:user<web_agent_id> and password:password123...",
-                    "status": "Sending Tasks",
-                    "totalTasks": round_data.n_tasks,
-                    "weight": validator.stake,
-                    "trust": validator.vtrust,
-                    "version": int(validator.version.split('.')[0]) if validator.version else 7,  # Extract major version
-                    "lastSeen": datetime.fromtimestamp(round_data.ended_at or round_data.started_at, tz=timezone.utc).isoformat(),
-                    "stake": int(validator.stake),
-                    "emission": int(validator.stake * 0.05)  # Mock emission calculation
-                }
+            for validator in round_data.validators:
+                if validator.uid not in validators_data:
+                    # Generate unique performance metrics for each validator
+                    import hashlib
+                    seed = f"{validator.uid}_overview"
+                    hash_obj = hashlib.md5(seed.encode())
+                    hash_int = int(hash_obj.hexdigest()[:8], 16)
+                    
+                    # Generate validator-specific performance variations
+                    base_completion_rate = 0.85 + (hash_int % 15) / 100  # 85-99% completion
+                    base_uptime = 95.0 + (hash_int % 5)  # 95-99% uptime
+                    
+                    # Make total tasks vary per validator for more realistic diversity
+                    base_total_tasks = round_data.n_tasks
+                    task_variance = (hash_int % 7) - 3  # -3 to +3 task variance
+                    validator_total_tasks = max(1, base_total_tasks + task_variance)
+                    
+                    # Generate different statuses and tasks based on performance
+                    if base_completion_rate >= 0.95:
+                        status = "Sending Tasks"
+                        current_task = "Processing web automation tasks for round validation..."
+                    elif base_completion_rate >= 0.90:
+                        status = "Syncing"
+                        current_task = "Synchronizing with network consensus..."
+                    else:
+                        status = "Lagging"
+                        current_task = "Catching up with network state..."
+                    
+                    validators_data[validator.uid] = {
+                        "id": f"validator_{validator.uid}",
+                        "name": validator.name or f"Validator {validator.uid}",  # Use real name or fallback
+                        "hotkey": validator.hotkey,
+                        "icon": f"/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
+                        "currentTask": current_task,
+                        "status": status,
+                        "totalTasks": validator_total_tasks,
+                        "weight": validator.stake,
+                        "trust": validator.vtrust,
+                        "version": int(validator.version.split('.')[0]) if validator.version else 7,  # Extract major version
+                        "lastSeen": datetime.fromtimestamp(round_data.ended_at or round_data.started_at, tz=timezone.utc).isoformat(),
+                        "stake": int(validator.stake),
+                        "emission": int(validator.stake * 0.05),  # Mock emission calculation
+                        "uptime": round(base_uptime, 1),
+                        "completedTasks": int(validator_total_tasks * base_completion_rate)
+                    }
         
         # Convert to list and apply filters
         validators_list = list(validators_data.values())
@@ -173,26 +204,56 @@ async def get_validator_detail(validator_id: str):
         # Get rounds data to find the validator
         rounds = await DataBuilder.build_rounds_list(limit=50, skip=0)
         
-        # Find the validator
+        # Find the validator with unique performance data
         validator_data = None
         for round_data in rounds:
-            if f"validator_{round_data.validator_info.uid}" == validator_id:
-                validator = round_data.validator_info
-                validator_data = {
-                    "id": validator_id,
-                    "name": validator.name or f"Validator {validator.uid}",  # Use real name or fallback
-                    "hotkey": validator.hotkey,
-                    "icon": f"/validators/{validator.name or f'validator_{validator.uid}'}.png",
-                    "currentTask": "Login for the following username:user<web_agent_id> and password:password123...",
-                    "status": "Sending Tasks",
-                    "totalTasks": round_data.n_tasks,
-                    "weight": validator.stake,
-                    "trust": validator.vtrust,
-                    "version": int(validator.version.split('.')[0]) if validator.version else 7,  # Extract major version
-                    "lastSeen": datetime.fromtimestamp(round_data.ended_at or round_data.started_at, tz=timezone.utc).isoformat(),
-                    "stake": int(validator.stake),
-                    "emission": int(validator.stake * 0.05)
-                }
+            for validator in round_data.validators:
+                if f"validator_{validator.uid}" == validator_id:
+                    # Generate unique performance metrics for this specific validator
+                    import hashlib
+                    seed = f"{validator.uid}_detail"
+                    hash_obj = hashlib.md5(seed.encode())
+                    hash_int = int(hash_obj.hexdigest()[:8], 16)
+                    
+                    # Generate validator-specific performance variations
+                    base_completion_rate = 0.85 + (hash_int % 15) / 100  # 85-99% completion
+                    base_uptime = 95.0 + (hash_int % 5)  # 95-99% uptime
+                    
+                    # Make total tasks vary per validator for more realistic diversity
+                    base_total_tasks = round_data.n_tasks
+                    task_variance = (hash_int % 7) - 3  # -3 to +3 task variance
+                    validator_total_tasks = max(1, base_total_tasks + task_variance)
+                    
+                    # Generate different statuses and tasks based on performance
+                    if base_completion_rate >= 0.95:
+                        status = "Sending Tasks"
+                        current_task = "Processing web automation tasks for round validation..."
+                    elif base_completion_rate >= 0.90:
+                        status = "Syncing"
+                        current_task = "Synchronizing with network consensus..."
+                    else:
+                        status = "Lagging"
+                        current_task = "Catching up with network state..."
+                    
+                    validator_data = {
+                        "id": validator_id,
+                        "name": validator.name or f"Validator {validator.uid}",  # Use real name or fallback
+                        "hotkey": validator.hotkey,
+                        "icon": f"/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
+                        "currentTask": current_task,
+                        "status": status,
+                        "totalTasks": validator_total_tasks,
+                        "weight": validator.stake,
+                        "trust": validator.vtrust,
+                        "version": int(validator.version.split('.')[0]) if validator.version else 7,  # Extract major version
+                        "lastSeen": datetime.fromtimestamp(round_data.ended_at or round_data.started_at, tz=timezone.utc).isoformat(),
+                        "stake": int(validator.stake),
+                        "emission": int(validator.stake * 0.05),
+                        "uptime": round(base_uptime, 1),
+                        "completedTasks": int(validator_total_tasks * base_completion_rate)
+                    }
+                    break
+            if validator_data:
                 break
         
         if not validator_data:
@@ -217,6 +278,7 @@ async def get_validator_detail(validator_id: str):
 
 
 @router.get("/rounds/current", response_model=CurrentRoundResponse)
+@cached("current_round", CACHE_TTL["current_round"])
 async def get_current_round():
     """
     Returns information about the current round.
@@ -224,37 +286,39 @@ async def get_current_round():
     try:
         logger.info("Fetching current round information")
         
-        # Get the latest round
-        rounds = await DataBuilder.build_rounds_list(limit=1, skip=0)
-        
-        if not rounds:
+        # Get current round directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
+        db = get_mock_db()
+        round_doc = await db.rounds.find_one({"round_id": "round_020"})
+        if not round_doc:
             return CurrentRoundResponse(
                 success=False,
-                error="No rounds found",
+                error="No current round found",
                 code="NO_ROUNDS_FOUND"
             )
         
-        latest_round = rounds[0]
+        round_data = Round(**round_doc)
         
         # Calculate round metrics
-        total_tasks = latest_round.n_tasks
-        completed_tasks = latest_round.n_winners
+        total_tasks = round_data.n_tasks
+        completed_tasks = round_data.n_winners
         average_score = 0.0
         top_score = 0.0
         
-        if latest_round.winners:
-            scores = [winner.get('score', 0.0) for winner in latest_round.winners]
+        if round_data.winners:
+            scores = [winner.get('score', 0.0) for winner in round_data.winners]
             average_score = sum(scores) / len(scores) if scores else 0.0
             top_score = max(scores) if scores else 0.0
         
         round_info = RoundInfo(
-            id=int(latest_round.round_id) if latest_round.round_id.isdigit() else 20,
-            startBlock=latest_round.start_block,
-            endBlock=latest_round.end_block or latest_round.start_block + 1000,
+            id=int(round_data.round_id.split('_')[1]) if '_' in round_data.round_id else 20,
+            startBlock=round_data.start_block,
+            endBlock=round_data.end_block or round_data.start_block + 1000,
             current=True,
-            startTime=datetime.fromtimestamp(latest_round.started_at, tz=timezone.utc).isoformat(),
-            endTime=datetime.fromtimestamp(latest_round.ended_at, tz=timezone.utc).isoformat() if latest_round.ended_at else None,
-            status="active" if not latest_round.ended_at else "completed",
+            startTime=datetime.fromtimestamp(round_data.started_at, tz=timezone.utc).isoformat(),
+            endTime=datetime.fromtimestamp(round_data.ended_at, tz=timezone.utc).isoformat() if round_data.ended_at else None,
+            status="active" if not round_data.ended_at else "completed",
             totalTasks=total_tasks,
             completedTasks=completed_tasks,
             averageScore=average_score,
@@ -276,6 +340,7 @@ async def get_current_round():
 
 
 @router.get("/rounds", response_model=RoundsListResponse)
+@cached("rounds_list", CACHE_TTL["rounds_list"])
 async def get_rounds(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
@@ -296,14 +361,19 @@ async def get_rounds(
         if hasattr(limit, 'annotation'):
             limit = 10
         
-        # Get rounds data
-        rounds = await DataBuilder.build_rounds_list(limit=50, skip=0)
+        # Get rounds data directly from mock DB (much faster)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
+        db = get_mock_db()
+        rounds_docs = await db.rounds.find().sort("round_id", -1).limit(50).to_list(length=50)
         
         # Convert to round info format
         rounds_list = []
         current_round = None
         
-        for i, round_data in enumerate(rounds):
+        for i, round_doc in enumerate(rounds_docs):
+            round_data = Round(**round_doc)
+            
             # Calculate round metrics
             total_tasks = round_data.n_tasks
             completed_tasks = round_data.n_winners
@@ -316,20 +386,20 @@ async def get_rounds(
                 top_score = max(scores) if scores else 0.0
             
             round_info = RoundInfo(
-                id=int(round_data.round_id) if round_data.round_id.isdigit() else 20 - i,
+                id=int(round_data.round_id.split('_')[1]) if '_' in round_data.round_id else 20 - i,
                 startBlock=round_data.start_block,
                 endBlock=round_data.end_block or round_data.start_block + 1000,
-                current=(i == 0),  # First round is current
+                current=(round_data.round_id == "round_020"),  # Round 20 is current
                 startTime=datetime.fromtimestamp(round_data.started_at, tz=timezone.utc).isoformat(),
                 endTime=datetime.fromtimestamp(round_data.ended_at, tz=timezone.utc).isoformat() if round_data.ended_at else None,
-                status="active" if not round_data.ended_at else "completed",
+                status="active" if round_data.round_id == "round_020" else "completed",
                 totalTasks=total_tasks,
                 completedTasks=completed_tasks,
                 averageScore=average_score,
                 topScore=top_score
             )
             
-            if i == 0:
+            if round_data.round_id == "round_020":
                 current_round = round_info
             
             rounds_list.append(round_info)
@@ -492,10 +562,11 @@ async def get_statistics():
         rounds = await DataBuilder.build_rounds_list(limit=50, skip=0)
         
         # Calculate statistics
-        total_stake = sum(round_data.validator_info.stake for round_data in rounds)
+        total_stake = sum(validator.stake for round_data in rounds for validator in round_data.validators)
         total_emission = int(total_stake * 0.05)  # Mock emission calculation
-        average_trust = sum(round_data.validator_info.vtrust for round_data in rounds) / len(rounds) if rounds else 0.0
-        active_validators = len(set(round.validator_info.uid for round in rounds))
+        all_validators = [validator for round_data in rounds for validator in round_data.validators]
+        average_trust = sum(validator.vtrust for validator in all_validators) / len(all_validators) if all_validators else 0.0
+        active_validators = len(set(validator.uid for round_data in rounds for validator in round_data.validators))
         registered_miners = len(set(miner.uid for round in rounds for miner in round.miners))
         total_tasks_completed = sum(round_data.n_winners for round_data in rounds)
         
@@ -541,7 +612,7 @@ async def get_network_status():
         
         # Get rounds data to determine active validators
         rounds = await DataBuilder.build_rounds_list(limit=10, skip=0)
-        active_validators = len(set(round.validator_info.uid for round in rounds))
+        active_validators = len(set(validator.uid for round_data in rounds for validator in round_data.validators))
         
         # Mock network status
         network_status = NetworkStatus(
@@ -584,13 +655,16 @@ async def get_recent_activity(
             if round_data.winners:
                 top_winner = round_data.winners[0]
                 
+                validator_name = round_data.validators[0].name if round_data.validators else "Unknown"
+                validator_uid = round_data.validators[0].uid if round_data.validators else 0
+                
                 activity = RecentActivity(
                     id=f"activity_{i+1}",
                     type="task_completed",
-                    message=f"Validator 'Autoppia {round_data.validator_info.uid}' completed task #{top_winner.get('task_id', 'unknown')}",
+                    message=f"Validator '{validator_name} {validator_uid}' completed task #{top_winner.get('task_id', 'unknown')}",
                     timestamp=datetime.fromtimestamp(round_data.ended_at or round_data.started_at, tz=timezone.utc).isoformat(),
                     metadata={
-                        "validatorId": f"validator_{round_data.validator_info.uid}",
+                        "validatorId": f"validator_{validator_uid}",
                         "taskId": str(top_winner.get('task_id', 'unknown')),
                         "score": top_winner.get('score', 0.0)
                     }
