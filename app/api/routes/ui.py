@@ -9,7 +9,7 @@ from app.models.ui import (
     AnalyticsResponse
 )
 from app.services.data_builder import DataBuilder
-from app.api.deps import get_mock_db
+from app.db.mock_mongo import get_mock_db
 import logging
 
 logger = logging.getLogger(__name__)

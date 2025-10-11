@@ -19,6 +19,8 @@ class ValidatorInfo(BaseModel):
     coldkey: Optional[str] = None
     stake: float = 0.0
     vtrust: float = 0.0
+    name: Optional[str] = None  # Validator name
+    version: Optional[str] = None  # Validator version
 
 
 # --- Miner Information ---
@@ -239,8 +241,8 @@ class Feedback(BaseModel):
     total_execution_time: float  # Total time taken for execution
     time_penalty: float  # Penalty points for exceeding expected time
     critical_test_penalty: int  # Penalty points for failing critical tests
-    test_results: list[TestResult]  # Detailed test results
-    execution_history: list[Any]  # Detailed execution logs
+    test_results: list[TestResult] = Field(default_factory=list)  # Detailed test results
+    execution_history: list[Any] = Field(default_factory=list)  # Detailed execution logs
 
     def to_text(self) -> str:
         """Generates a human-readable textual summary."""

@@ -1,0 +1,180 @@
+"""
+Overview section UI models for the AutoPPIA Bittensor Dashboard.
+These models match the API specifications provided by the frontend team.
+"""
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field
+from datetime import datetime
+
+
+# --- Base Response Models ---
+class BaseResponse(BaseModel):
+    """Base response model with success flag."""
+    success: bool
+    data: Optional[Any] = None
+    error: Optional[str] = None
+    code: Optional[str] = None
+
+
+# --- Overview Metrics Models ---
+class OverviewMetrics(BaseModel):
+    """Overview dashboard metrics."""
+    topScore: float
+    totalWebsites: int
+    totalValidators: int
+    totalMiners: int
+    currentRound: int
+    subnetVersion: str
+    lastUpdated: str  # ISO timestamp
+
+
+class OverviewMetricsResponse(BaseResponse):
+    """Response model for overview metrics endpoint."""
+    data: Optional[Dict[str, OverviewMetrics]] = None
+
+
+# --- Validator Models ---
+class ValidatorInfo(BaseModel):
+    """Validator information for overview section."""
+    id: str
+    name: str
+    hotkey: str
+    icon: str
+    currentTask: str
+    status: str  # "Sending Tasks", "Evaluating", "Waiting", "Offline"
+    totalTasks: int
+    weight: float
+    trust: float
+    version: int
+    lastSeen: str  # ISO timestamp
+    uptime: float
+    stake: int
+    emission: int
+
+
+class ValidatorsListResponse(BaseResponse):
+    """Response model for validators list endpoint."""
+    data: Optional[Dict[str, Any]] = None  # Contains validators list, total, page, limit
+
+
+class ValidatorDetailResponse(BaseResponse):
+    """Response model for validator detail endpoint."""
+    data: Optional[Dict[str, ValidatorInfo]] = None
+
+
+# --- Round Models ---
+class RoundInfo(BaseModel):
+    """Round information for overview section."""
+    id: int
+    startBlock: int
+    endBlock: int
+    current: bool
+    startTime: str  # ISO timestamp
+    endTime: Optional[str] = None  # ISO timestamp
+    status: str  # "active", "completed", "pending"
+    totalTasks: int
+    completedTasks: int
+    averageScore: float
+    topScore: float
+
+
+class CurrentRoundResponse(BaseResponse):
+    """Response model for current round endpoint."""
+    data: Optional[Dict[str, RoundInfo]] = None
+
+
+class RoundsListResponse(BaseResponse):
+    """Response model for rounds list endpoint."""
+    data: Optional[Dict[str, Any]] = None  # Contains rounds list, currentRound, total
+
+
+class RoundDetailResponse(BaseResponse):
+    """Response model for round detail endpoint."""
+    data: Optional[Dict[str, RoundInfo]] = None
+
+
+# --- Leaderboard Models ---
+class LeaderboardEntry(BaseModel):
+    """Leaderboard entry for performance comparison."""
+    round: int
+    subnet36: float
+    openai_cua: float
+    anthropic_cua: float
+    browser_use: float
+    timestamp: str  # ISO timestamp
+
+
+class LeaderboardResponse(BaseResponse):
+    """Response model for leaderboard endpoint."""
+    data: Optional[Dict[str, Any]] = None  # Contains leaderboard list, total, timeRange
+
+
+# --- Statistics Models ---
+class SubnetStatistics(BaseModel):
+    """Subnet statistics and network health metrics."""
+    totalStake: int
+    totalEmission: int
+    averageTrust: float
+    activeValidators: int
+    registeredMiners: int
+    totalTasksCompleted: int
+    averageTaskScore: float
+    lastUpdated: str  # ISO timestamp
+
+
+class StatisticsResponse(BaseResponse):
+    """Response model for statistics endpoint."""
+    data: Optional[Dict[str, SubnetStatistics]] = None
+
+
+# --- Network Status Models ---
+class NetworkStatus(BaseModel):
+    """Network status information."""
+    status: str  # "healthy", "degraded", "down"
+    message: str
+    lastChecked: str  # ISO timestamp
+    activeValidators: int
+    networkLatency: int
+
+
+class NetworkStatusResponse(BaseResponse):
+    """Response model for network status endpoint."""
+    data: Optional[NetworkStatus] = None
+
+
+# --- Recent Activity Models ---
+class ActivityMetadata(BaseModel):
+    """Activity metadata for recent activity feed."""
+    validatorId: Optional[str] = None
+    taskId: Optional[str] = None
+    score: Optional[float] = None
+    roundId: Optional[str] = None
+    startBlock: Optional[int] = None
+
+
+class RecentActivity(BaseModel):
+    """Recent activity entry."""
+    id: str
+    type: str  # "task_completed", "validator_joined", "round_started", "round_ended", "miner_registered"
+    message: str
+    timestamp: str  # ISO timestamp
+    metadata: ActivityMetadata
+
+
+class RecentActivityResponse(BaseResponse):
+    """Response model for recent activity endpoint."""
+    data: Optional[Dict[str, Any]] = None  # Contains activities list, total
+
+
+# --- Performance Trends Models ---
+class PerformanceTrend(BaseModel):
+    """Performance trend data point."""
+    date: str
+    averageScore: float
+    totalTasks: int
+    activeValidators: int
+
+
+class PerformanceTrendsResponse(BaseResponse):
+    """Response model for performance trends endpoint."""
+    data: Optional[Dict[str, Any]] = None  # Contains trends list, period

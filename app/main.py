@@ -9,6 +9,8 @@ from app.db.mongo import ensure_indexes, close_client
 from app.api.routes.rounds_get import router as rounds_get_router
 from app.api.routes.rounds_post import router as rounds_post_router
 from app.api.routes.ui import router as ui_router
+from app.api.routes.overview import router as overview_router
+from app.api.routes.rounds_api import router as rounds_api_router
 from app.services.idempotency import get_cache_stats
 
 # Configure logging
@@ -59,6 +61,8 @@ async def log_requests(request: Request, call_next):
 app.include_router(rounds_get_router)  # GET endpoints for data retrieval
 app.include_router(rounds_post_router)  # POST endpoints for data submission
 app.include_router(ui_router)  # UI endpoints for dashboard
+app.include_router(overview_router, prefix="/api")  # Overview section endpoints
+app.include_router(rounds_api_router, prefix="/api")  # Rounds section API endpoints
 
 
 # Health check endpoint
@@ -86,9 +90,9 @@ async def on_startup():
     logger.info("Starting Autoppia Leaderboard API...")
     
     try:
-        # Ensure MongoDB indexes are created
-        await ensure_indexes()
-        logger.info("MongoDB indexes ensured successfully")
+        # Skip MongoDB initialization for development with mock data
+        # await ensure_indexes()
+        logger.info("Skipping MongoDB initialization - using mock data")
         
         logger.info(f"API server ready on {settings.HOST}:{settings.PORT}")
         logger.info(f"API documentation available at /docs")
@@ -105,9 +109,9 @@ async def on_shutdown():
     logger.info("Shutting down Autoppia Leaderboard API...")
     
     try:
-        # Close MongoDB connection
-        await close_client()
-        logger.info("MongoDB connection closed")
+        # Skip MongoDB cleanup for development with mock data
+        # await close_client()
+        logger.info("Skipping MongoDB cleanup - using mock data")
         
     except Exception as e:
         logger.error(f"Error during shutdown: {e}")
