@@ -32,11 +32,11 @@ def create_api_response(data: any, success: bool = True, message: str = None, er
 
 def parse_query_params(
     page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
     type: Optional[AgentType] = Query(None, description="Filter by agent type"),
     status: Optional[AgentStatus] = Query(None, description="Filter by status"),
-    sortBy: str = Query("name", description="Sort field"),
-    sortOrder: str = Query("asc", description="Sort order"),
+    sortBy: str = Query("averageScore", description="Sort field"),
+    sortOrder: str = Query("desc", description="Sort order"),
     search: Optional[str] = Query(None, description="Search term")
 ) -> AgentListQuery:
     """Parse agent list query parameters."""

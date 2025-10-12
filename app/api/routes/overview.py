@@ -714,16 +714,23 @@ async def get_recent_activity(
             if round_data.winners:
                 top_winner = round_data.winners[0]
                 
-                validator_name = round_data.validators[0].name if round_data.validators else "Unknown"
-                validator_uid = round_data.validators[0].uid if round_data.validators else 0
+                # Find the winning miner's information
+                winning_miner = None
+                for miner in round_data.miners:
+                    if miner.uid == top_winner.get('miner_uid'):
+                        winning_miner = miner
+                        break
+                
+                miner_name = winning_miner.agent_name if winning_miner else f"Miner {top_winner.get('miner_uid', 'unknown')}"
+                miner_uid = top_winner.get('miner_uid', 0)
                 
                 activity = RecentActivity(
                     id=f"activity_{i+1}",
                     type="task_completed",
-                    message=f"Validator '{validator_name} {validator_uid}' completed task #{top_winner.get('task_id', 'unknown')}",
+                    message=f"Miner '{miner_name} {miner_uid}' completed task #{top_winner.get('task_id', 'unknown')}",
                     timestamp=datetime.fromtimestamp(round_data.ended_at or round_data.started_at, tz=timezone.utc).isoformat(),
                     metadata={
-                        "validatorId": f"validator_{validator_uid}",
+                        "minerId": f"miner_{miner_uid}",
                         "taskId": str(top_winner.get('task_id', 'unknown')),
                         "score": top_winner.get('score', 0.0)
                     }
