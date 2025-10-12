@@ -12,6 +12,8 @@ from app.models.agents import (
     TopAgent, MostActiveAgent, PerformanceDistribution,
     ComparisonMetrics, AgentComparisonMetrics
 )
+from app.models.miners import Miner, MinerRun, MinerStatus
+from app.services.miners_service import MinersService
 
 
 class AgentsService:
@@ -19,13 +21,45 @@ class AgentsService:
     
     def __init__(self):
         """Initialize the agents service."""
+        self._miners_service = MinersService()
         self._mock_agents = self._generate_mock_agents()
         self._mock_runs = self._generate_mock_runs()
         self._mock_activities = self._generate_mock_activities()
     
     def get_agents(self, query: AgentListQuery) -> Tuple[List[Agent], int]:
         """Get paginated list of agents with filtering and sorting."""
-        agents = self._mock_agents.copy()
+        # Get miners data and convert to agents
+        miners = self._miners_service._mock_miners.copy()
+        
+        # Convert miners to agents
+        agents = []
+        for miner in miners:
+            agent = Agent(
+                id=miner.id,
+                uid=miner.uid,
+                name=miner.name,
+                hotkey=miner.hotkey,
+                type=self._get_agent_type_from_miner(miner),
+                imageUrl=miner.imageUrl,
+                githubUrl=miner.githubUrl,
+                taostatsUrl=miner.taostatsUrl,
+                isSota=miner.isSota,
+                description=miner.description,
+                version="1.0.0",
+                status=self._convert_miner_status_to_agent_status(miner.status),
+                totalRuns=miner.totalRuns,
+                successfulRuns=miner.successfulRuns,
+                averageScore=miner.averageScore,
+                bestScore=miner.bestScore,
+                successRate=miner.successRate,
+                averageDuration=miner.averageDuration,
+                totalTasks=miner.totalTasks,
+                completedTasks=miner.completedTasks,
+                lastSeen=datetime.fromisoformat(miner.lastSeen.replace('Z', '+00:00')),
+                createdAt=datetime.fromisoformat(miner.createdAt.replace('Z', '+00:00')),
+                updatedAt=datetime.fromisoformat(miner.updatedAt.replace('Z', '+00:00'))
+            )
+            agents.append(agent)
         
         # Apply filters
         if query.type:
@@ -63,7 +97,98 @@ class AgentsService:
     
     def get_agent_by_id(self, agent_id: str) -> Optional[Agent]:
         """Get agent by ID."""
-        return next((a for a in self._mock_agents if a.id == agent_id), None)
+        # Get miners data and find the specific agent
+        miners = self._miners_service._mock_miners
+        # Try multiple matching strategies
+        miner = None
+        
+        # First try exact ID match
+        miner = next((m for m in miners if m.id == agent_id), None)
+        
+        # Then try name-based matching
+        if not miner:
+            agent_id_lower = agent_id.lower()
+            for m in miners:
+                # Try various name formats
+                name_variants = [
+                    m.name.lower(),
+                    m.name.lower().replace(' ', '-'),
+                    m.name.lower().replace(' ', '_'),
+                    m.name.lower().replace(' ', ''),
+                ]
+                if agent_id_lower in name_variants:
+                    miner = m
+                    break
+        
+        # Special case for known agents
+        if not miner:
+            if agent_id.lower() == 'openai-cua':
+                miner = next((m for m in miners if 'openai' in m.name.lower() and m.isSota), None)
+            elif agent_id.lower() == 'anthropic-cua':
+                miner = next((m for m in miners if 'anthropic' in m.name.lower() and m.isSota), None)
+            elif agent_id.lower() == 'browser-use-agent':
+                miner = next((m for m in miners if 'browser' in m.name.lower() and m.isSota), None)
+            elif agent_id.lower() == 'autoppia-bittensor':
+                miner = next((m for m in miners if 'autoppia' in m.name.lower()), None)
+        
+        if not miner:
+            return None
+        
+        # Convert miner to agent
+        agent = Agent(
+            id=miner.id,
+            uid=miner.uid,
+            name=miner.name,
+            hotkey=miner.hotkey,
+            type=self._get_agent_type_from_miner(miner),
+            imageUrl=miner.imageUrl,
+            githubUrl=miner.githubUrl,
+            taostatsUrl=miner.taostatsUrl,
+            isSota=miner.isSota,
+            description=miner.description,
+            version="1.0.0",
+            status=self._convert_miner_status_to_agent_status(miner.status),
+            totalRuns=miner.totalRuns,
+            successfulRuns=miner.successfulRuns,
+            averageScore=miner.averageScore,
+            bestScore=miner.bestScore,
+            successRate=miner.successRate,
+            averageDuration=miner.averageDuration,
+            totalTasks=miner.totalTasks,
+            completedTasks=miner.completedTasks,
+            lastSeen=datetime.fromisoformat(miner.lastSeen.replace('Z', '+00:00')),
+            createdAt=datetime.fromisoformat(miner.createdAt.replace('Z', '+00:00')),
+            updatedAt=datetime.fromisoformat(miner.updatedAt.replace('Z', '+00:00'))
+        )
+        return agent
+    
+    def _get_agent_type_from_miner(self, miner: Miner) -> AgentType:
+        """Convert miner to agent type."""
+        if miner.isSota:
+            if "openai" in miner.name.lower():
+                return AgentType.OPENAI
+            elif "anthropic" in miner.name.lower():
+                return AgentType.ANTHROPIC
+            elif "browser" in miner.name.lower():
+                return AgentType.BROWSER_USE
+            else:
+                return AgentType.CUSTOM
+        else:
+            if "autoppia" in miner.name.lower():
+                return AgentType.AUTOPPIA
+            else:
+                return AgentType.CUSTOM
+    
+    def _convert_miner_status_to_agent_status(self, miner_status: MinerStatus) -> AgentStatus:
+        """Convert miner status to agent status."""
+        if miner_status == MinerStatus.ACTIVE:
+            return AgentStatus.ACTIVE
+        elif miner_status == MinerStatus.INACTIVE:
+            return AgentStatus.INACTIVE
+        elif miner_status == MinerStatus.MAINTENANCE:
+            return AgentStatus.MAINTENANCE
+        else:
+            return AgentStatus.ACTIVE
     
     def get_agent_performance(self, agent_id: str, query: AgentPerformanceQuery) -> Optional[AgentPerformanceMetrics]:
         """Get agent performance metrics."""

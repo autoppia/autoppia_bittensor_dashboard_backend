@@ -70,9 +70,14 @@ class Granularity(str, Enum):
 class Agent(BaseModel):
     """Agent model representing an AI agent in the system."""
     id: str = Field(..., description="Unique agent identifier")
+    uid: Optional[int] = Field(None, description="Miner UID")
     name: str = Field(..., description="Agent name")
+    hotkey: Optional[str] = Field(None, description="Miner hotkey")
     type: AgentType = Field(..., description="Agent type")
     imageUrl: str = Field(..., description="URL to agent image/icon")
+    githubUrl: Optional[str] = Field(None, description="GitHub repository URL")
+    taostatsUrl: Optional[str] = Field(None, description="Taostats URL")
+    isSota: Optional[bool] = Field(None, description="Whether agent is SOTA")
     description: Optional[str] = Field(None, description="Agent description")
     version: Optional[str] = Field(None, description="Agent version")
     status: AgentStatus = Field(..., description="Agent status")

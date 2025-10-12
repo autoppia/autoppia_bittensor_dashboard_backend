@@ -17,6 +17,8 @@ from app.api.routes.cache import router as cache_router
 from app.api.routes.agents import router as agents_router
 from app.api.routes.agent_runs import router as agent_runs_router
 from app.api.routes.tasks import router as tasks_router
+from app.api.routes.miners import router as miners_router
+from app.api.routes.miner_list import router as miner_list_router
 # Optimized routes
 from app.api.routes.optimized_ui import router as optimized_ui_router
 from app.api.routes.optimized_rounds_post import router as optimized_rounds_post_router
@@ -84,6 +86,8 @@ app.include_router(cache_router)  # Cache management endpoints
 app.include_router(agents_router)  # Agents API endpoints
 app.include_router(agent_runs_router, prefix="/api")  # Agent runs API endpoints
 app.include_router(tasks_router)  # Tasks API endpoints
+app.include_router(miners_router)  # Miners API endpoints
+app.include_router(miner_list_router)  # Optimized miner list endpoints
 # Optimized routers
 app.include_router(optimized_ui_router)  # Optimized UI endpoints
 app.include_router(optimized_rounds_post_router)  # Optimized POST endpoints
