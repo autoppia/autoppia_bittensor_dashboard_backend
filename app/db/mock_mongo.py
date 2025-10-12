@@ -27,7 +27,19 @@ class MockCollection:
         if self.file_path.exists():
             try:
                 with open(self.file_path, 'r') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    # Handle different JSON structures
+                    if isinstance(data, list):
+                        return data
+                    elif isinstance(data, dict):
+                        # If it's a dict, look for common array keys
+                        for key in ['tasks', 'rounds', 'agent_evaluation_runs', 'task_solutions', 'evaluation_results']:
+                            if key in data and isinstance(data[key], list):
+                                return data[key]
+                        # If no array key found, return empty list
+                        return []
+                    else:
+                        return []
             except (json.JSONDecodeError, FileNotFoundError):
                 return []
         return []
@@ -43,6 +55,10 @@ class MockCollection:
     
     def _apply_filter(self, filter_dict: Dict[str, Any], document: Dict[str, Any]) -> bool:
         """Apply MongoDB-style filter to a document."""
+        # Safety check: ensure document is a dictionary
+        if not isinstance(document, dict):
+            return False
+            
         for key, value in filter_dict.items():
             if key == "_id":
                 if document.get("_id") != value:

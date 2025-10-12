@@ -16,6 +16,7 @@ class APICache:
     def __init__(self):
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._default_ttl = 300  # 5 minutes default
+        self._disabled = False  # Cache can be disabled for testing
         self._stats = {
             "hits": 0,
             "misses": 0,
@@ -54,6 +55,11 @@ class APICache:
     
     def get(self, key: str) -> Optional[Any]:
         """Get value from cache if not expired."""
+        if self._disabled:
+            self._stats["misses"] += 1
+            logger.debug(f"Cache disabled - miss for key: {key}")
+            return None
+            
         self._cleanup_expired()
         
         if key not in self._cache:
@@ -96,6 +102,20 @@ class APICache:
         logger.info(f"Cleared {cleared} cache entries")
         return cleared
     
+    def disable(self) -> None:
+        """Disable cache for testing purposes."""
+        self._disabled = True
+        logger.info("Cache disabled for testing")
+    
+    def enable(self) -> None:
+        """Enable cache."""
+        self._disabled = False
+        logger.info("Cache enabled")
+    
+    def is_disabled(self) -> bool:
+        """Check if cache is disabled."""
+        return self._disabled
+    
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
         total_requests = self._stats["hits"] + self._stats["misses"]
@@ -106,7 +126,8 @@ class APICache:
             "total_requests": total_requests,
             "hit_rate_percent": round(hit_rate, 2),
             "cache_size": len(self._cache),
-            "active_entries": len([e for e in self._cache.values() if not self._is_expired(e)])
+            "active_entries": len([e for e in self._cache.values() if not self._is_expired(e)]),
+            "disabled": self._disabled
         }
 
 # Global cache instance

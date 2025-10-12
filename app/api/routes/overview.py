@@ -24,6 +24,59 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/overview", tags=["overview"])
 
 
+@router.get("", response_model=OverviewMetricsResponse)
+async def get_overview():
+    """
+    Returns high-level overview metrics for the dashboard.
+    """
+    try:
+        logger.info("Fetching overview")
+        
+        # Get recent rounds data (lightweight - no agent evaluation runs)
+        rounds = await DataBuilder.build_rounds_list_lightweight(limit=10, skip=0)
+        
+        # Calculate metrics
+        current_round = len(rounds) if rounds else 0
+        total_validators = len(set(validator.uid for round in rounds for validator in round.validators))
+        total_miners = len(set(miner.uid for round in rounds for miner in round.miners))
+        
+        # Calculate top score from latest round
+        top_score = 0.0
+        if rounds and rounds[0].winners:
+            top_score = rounds[0].winners[0].get('score', 0.0)
+        
+        # Get version from validator info (use the most recent validator)
+        subnet_version = "1.0.0"  # Default fallback
+        if rounds and rounds[0].validators and rounds[0].validators[0].version:
+            subnet_version = rounds[0].validators[0].version
+        
+        # Mock data for websites (this could be calculated from tasks if needed)
+        total_websites = 11
+        
+        metrics = OverviewMetrics(
+            topScore=top_score,
+            totalWebsites=total_websites,
+            totalValidators=total_validators,
+            totalMiners=total_miners,
+            currentRound=current_round,
+            subnetVersion=subnet_version,
+            lastUpdated=datetime.now(timezone.utc).isoformat()
+        )
+        
+        return OverviewMetricsResponse(
+            success=True,
+            data={"metrics": metrics}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error fetching overview: {e}")
+        return OverviewMetricsResponse(
+            success=False,
+            error=f"Failed to fetch overview: {str(e)}",
+            code="OVERVIEW_FETCH_ERROR"
+        )
+
+
 @router.get("/metrics", response_model=OverviewMetricsResponse)
 @cached("overview_metrics", CACHE_TTL["overview_metrics"])
 async def get_overview_metrics():
@@ -34,7 +87,7 @@ async def get_overview_metrics():
         logger.info("Fetching overview metrics")
         
         # Get recent rounds data
-        rounds = await DataBuilder.build_rounds_list(limit=10, skip=0)
+        rounds = await DataBuilder.build_rounds_list_lightweight(limit=10, skip=0)
         
         # Calculate metrics
         current_round = len(rounds) if rounds else 0
@@ -102,7 +155,7 @@ async def get_validators(
             limit = 10
         
         # Get rounds data to extract validators
-        rounds = await DataBuilder.build_rounds_list(limit=50, skip=0)
+        rounds = await DataBuilder.build_rounds_list_lightweight(limit=50, skip=0)
         
         # Extract unique validators with diverse performance data
         validators_data = {}
@@ -202,7 +255,7 @@ async def get_validator_detail(validator_id: str):
         logger.info(f"Fetching validator details for {validator_id}")
         
         # Get rounds data to find the validator
-        rounds = await DataBuilder.build_rounds_list(limit=50, skip=0)
+        rounds = await DataBuilder.build_rounds_list_lightweight(limit=50, skip=0)
         
         # Find the validator with unique performance data
         validator_data = None
@@ -439,8 +492,14 @@ async def get_round_detail(round_id: str):
     try:
         logger.info(f"Fetching round details for {round_id}")
         
-        # Get the specific round
-        round_data = await DataBuilder.build_round_with_details(round_id)
+        # Convert round_id to proper format (e.g., "20" -> "round_020")
+        if round_id.isdigit():
+            round_id_formatted = f"round_{round_id.zfill(3)}"
+        else:
+            round_id_formatted = round_id
+        
+        # Get the specific round (lightweight - no agent evaluation runs)
+        round_data = await DataBuilder.get_round_lightweight(round_id_formatted)
         
         if not round_data:
             return RoundDetailResponse(
@@ -507,7 +566,7 @@ async def get_leaderboard(
             limit = 10
         
         # Get rounds data
-        rounds = await DataBuilder.build_rounds_list(limit=50, skip=0)
+        rounds = await DataBuilder.build_rounds_list_lightweight(limit=50, skip=0)
         
         # Generate leaderboard entries
         leaderboard_entries = []
@@ -559,7 +618,7 @@ async def get_statistics():
         logger.info("Fetching subnet statistics")
         
         # Get rounds data
-        rounds = await DataBuilder.build_rounds_list(limit=50, skip=0)
+        rounds = await DataBuilder.build_rounds_list_lightweight(limit=50, skip=0)
         
         # Calculate statistics
         total_stake = sum(validator.stake for round_data in rounds for validator in round_data.validators)
@@ -611,7 +670,7 @@ async def get_network_status():
         logger.info("Fetching network status")
         
         # Get rounds data to determine active validators
-        rounds = await DataBuilder.build_rounds_list(limit=10, skip=0)
+        rounds = await DataBuilder.build_rounds_list_lightweight(limit=10, skip=0)
         active_validators = len(set(validator.uid for round_data in rounds for validator in round_data.validators))
         
         # Mock network status
@@ -648,7 +707,7 @@ async def get_recent_activity(
         logger.info(f"Fetching recent activity with limit={limit}")
         
         # Get recent rounds data
-        rounds = await DataBuilder.build_rounds_list(limit=10, skip=0)
+        rounds = await DataBuilder.build_rounds_list_lightweight(limit=10, skip=0)
         
         activities = []
         for i, round_data in enumerate(rounds[:limit]):
@@ -712,7 +771,7 @@ async def get_performance_trends(
         logger.info(f"Fetching performance trends for {days} days")
         
         # Get rounds data
-        rounds = await DataBuilder.build_rounds_list(limit=days, skip=0)
+        rounds = await DataBuilder.build_rounds_list_lightweight(limit=days, skip=0)
         
         trends = []
         for i, round_data in enumerate(rounds):

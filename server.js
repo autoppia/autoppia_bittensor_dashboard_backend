@@ -238,11 +238,11 @@ app.get('/api/v1/rounds/:id/validators', (req, res) => {
   };
   
   const validators = [
-    generateValidatorData(124, "Autoppia", 1500.0, 0.86, "7.0.0", "high"),
-    generateValidatorData(129, "tao5", 850.0, 0.72, "6.8.2", "medium"),
-    generateValidatorData(133, "RoundTable21", 1434.0, 0.80, "7.0.3", "high"),
+    generateValidatorData(124, "Autoppia", 2000.0, 0.95, "7.0.0", "high"),
+    generateValidatorData(129, "tao5", 1000.0, 0.71, "6.8.2", "medium"),
+    generateValidatorData(133, "RoundTable21", 1500.0, 0.83, "7.0.3", "high"),
     generateValidatorData(135, "Kraken", 1200.0, 0.75, "6.9.1", "medium"),
-    generateValidatorData(137, "Yuma", 1100.0, 0.78, "6.7.4", "medium")
+    generateValidatorData(137, "Yuma", 2000.0, 0.83, "6.7.4", "medium")
   ];
   
   res.json({

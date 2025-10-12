@@ -653,6 +653,12 @@ class DatabaseService:
     def _get_validator_name(self, validator_uid: int) -> str:
         """Get validator name from UID."""
         names = {
+            123: "Autoppia",
+            124: "Autoppia",
+            129: "tao5",
+            133: "RoundTable21",
+            135: "Kraken",
+            137: "Yuma",
             456: "Autoppia",
             457: "tao5",
             458: "RoundTable21",

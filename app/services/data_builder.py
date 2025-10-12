@@ -134,6 +134,65 @@ class DataBuilder:
         return rounds_with_details
     
     @staticmethod
+    async def build_rounds_list_lightweight(limit: int = 100, skip: int = 0) -> List[Round]:
+        """
+        Build a list of basic Round objects without agent evaluation runs.
+        This is much faster for overview and basic round listing.
+        
+        Args:
+            limit: Maximum number of rounds to return
+            skip: Number of rounds to skip (for pagination)
+            
+        Returns:
+            List of Round objects (without agent evaluation runs)
+        """
+        db = get_mock_db()
+        
+        # Get rounds with pagination - sort by round_id descending to get latest first
+        rounds_docs = await db.rounds.find().sort("round_id", -1).skip(skip).limit(limit).to_list(length=limit)
+        
+        # Convert to Round objects (no agent evaluation runs)
+        rounds = []
+        for round_doc in rounds_docs:
+            try:
+                round_obj = Round(**round_doc)
+                rounds.append(round_obj)
+            except Exception as e:
+                logger.warning(f"Failed to parse round {round_doc.get('round_id', 'unknown')}: {e}")
+                continue
+        
+        logger.info(f"Built {len(rounds)} lightweight rounds (no agent evaluation runs)")
+        return rounds
+    
+    @staticmethod
+    async def get_round_lightweight(round_id: str) -> Optional[Round]:
+        """
+        Get a single round by ID without building agent evaluation runs.
+        This is much faster for basic round information.
+        
+        Args:
+            round_id: The ID of the round to get
+            
+        Returns:
+            Round object (without agent evaluation runs) or None if not found
+        """
+        db = get_mock_db()
+        
+        # Get the round document
+        round_doc = await db.rounds.find_one({"round_id": round_id})
+        if not round_doc:
+            logger.warning(f"Round {round_id} not found")
+            return None
+        
+        try:
+            round_obj = Round(**round_doc)
+            logger.info(f"Retrieved lightweight round {round_id}")
+            return round_obj
+        except Exception as e:
+            logger.error(f"Failed to parse round {round_id}: {e}")
+            return None
+    
+    @staticmethod
     async def build_agent_runs_list(round_id: Optional[str] = None, limit: int = 100, skip: int = 0) -> List[AgentEvaluationRunWithDetails]:
         """
         Build a list of complete AgentEvaluationRun objects with all their related data.

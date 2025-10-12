@@ -23,6 +23,88 @@ router = APIRouter(prefix="/v1/agent-runs", tags=["agent-runs"])
 agent_runs_service = AgentRunsService()
 
 
+@router.get("")
+async def get_agent_runs_list(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    roundId: Optional[int] = Query(None, description="Filter by round ID"),
+    validatorId: Optional[str] = Query(None, description="Filter by validator ID"),
+    agentId: Optional[str] = Query(None, description="Filter by agent ID"),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    sortBy: Optional[str] = Query("startTime", description="Sort field"),
+    sortOrder: Optional[str] = Query("desc", description="Sort order")
+):
+    """
+    Get list of agent runs with filtering and pagination.
+    """
+    try:
+        logger.info(f"Fetching agent runs list with page={page}, limit={limit}")
+        
+        # Mock data for now - in production this would come from the service
+        mock_runs = [
+            {
+                "runId": "run-001",
+                "agentId": "anthropic-cua",
+                "roundId": 20,
+                "validatorId": "validator_1",
+                "status": "completed",
+                "startTime": "2025-10-10T22:30:42.132661+00:00",
+                "endTime": "2025-10-10T23:14:39.132661+00:00",
+                "totalTasks": 11,
+                "completedTasks": 9,
+                "averageScore": 0.84,
+                "successRate": 81.8
+            },
+            {
+                "runId": "run-002", 
+                "agentId": "autoppia-bittensor",
+                "roundId": 20,
+                "validatorId": "validator_2",
+                "status": "completed",
+                "startTime": "2025-10-10T22:30:42.132661+00:00",
+                "endTime": "2025-10-10T23:14:39.132661+00:00",
+                "totalTasks": 11,
+                "completedTasks": 8,
+                "averageScore": 0.87,
+                "successRate": 72.7
+            }
+        ]
+        
+        # Apply filters
+        filtered_runs = mock_runs
+        if roundId:
+            filtered_runs = [r for r in filtered_runs if r["roundId"] == roundId]
+        if validatorId:
+            filtered_runs = [r for r in filtered_runs if r["validatorId"] == validatorId]
+        if agentId:
+            filtered_runs = [r for r in filtered_runs if r["agentId"] == agentId]
+        if status:
+            filtered_runs = [r for r in filtered_runs if r["status"] == status]
+        
+        # Apply pagination
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_runs = filtered_runs[start_idx:end_idx]
+        
+        return {
+            "success": True,
+            "data": {
+                "runs": paginated_runs,
+                "total": len(filtered_runs),
+                "page": page,
+                "limit": limit
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching agent runs list: {e}")
+        return {
+            "success": False,
+            "error": f"Failed to fetch agent runs: {str(e)}",
+            "code": "AGENT_RUNS_LIST_FETCH_ERROR"
+        }
+
+
 @router.get("/{runId}", response_model=AgentRunDetailResponse)
 @cached("agent_run_detail", CACHE_TTL.get("agent_run_detail", 60))
 async def get_agent_run_details(

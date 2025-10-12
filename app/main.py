@@ -107,6 +107,38 @@ async def idempotency_stats():
     return get_cache_stats()
 
 
+# Cache control endpoints (for testing)
+@app.get("/debug/cache-stats")
+async def cache_stats():
+    """Get API cache statistics (debug endpoint)."""
+    from app.services.cache import api_cache
+    return api_cache.get_stats()
+
+
+@app.post("/debug/cache-disable")
+async def disable_cache():
+    """Disable API cache for testing (debug endpoint)."""
+    from app.services.cache import api_cache
+    api_cache.disable()
+    return {"message": "Cache disabled", "disabled": True}
+
+
+@app.post("/debug/cache-enable")
+async def enable_cache():
+    """Enable API cache (debug endpoint)."""
+    from app.services.cache import api_cache
+    api_cache.enable()
+    return {"message": "Cache enabled", "disabled": False}
+
+
+@app.post("/debug/cache-clear")
+async def clear_cache():
+    """Clear all cache entries (debug endpoint)."""
+    from app.services.cache import api_cache
+    cleared = api_cache.clear()
+    return {"message": f"Cleared {cleared} cache entries", "cleared": cleared}
+
+
 # Startup event
 @app.on_event("startup")
 async def on_startup():

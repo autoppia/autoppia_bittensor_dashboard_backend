@@ -740,13 +740,17 @@ async def get_round_activity(
             type = None
         if hasattr(since, 'annotation'):
             since = None
-
-        # Get round data
-        rounds_data = await DataBuilder.build_rounds_list(limit=100, skip=0)
-        round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
         
-        if not round_data:
+        # Get round data (lightweight - no agent evaluation runs)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
+        db = get_mock_db()
+        round_doc = await db.rounds.find_one({"round_id": f"round_{round_id:03d}"})
+        
+        if not round_doc:
             raise HTTPException(status_code=404, detail="Round not found")
+        
+        round_data = Round(**round_doc)
         
         # Mock activity data
         activities = []
@@ -811,12 +815,16 @@ async def get_round_progress(round_id: int = Path(..., description="Round ID")):
     try:
         logger.info(f"Fetching progress for round_id={round_id}")
 
-        # Get round data
-        rounds_data = await DataBuilder.build_rounds_list(limit=100, skip=0)
-        round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
+        # Get round data (lightweight - no agent evaluation runs)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
+        db = get_mock_db()
+        round_doc = await db.rounds.find_one({"round_id": f"round_{round_id:03d}"})
         
-        if not round_data:
+        if not round_doc:
             raise HTTPException(status_code=404, detail="Round not found")
+        
+        round_data = Round(**round_doc)
         
         # Calculate progress
         current_block = round_data.started_at + int((round_data.ended_at or round_data.started_at + 3600) - round_data.started_at) * 0.75
@@ -989,12 +997,16 @@ async def get_round_timeline(round_id: int = Path(..., description="Round ID")):
     try:
         logger.info(f"Fetching timeline for round_id={round_id}")
 
-        # Get round data
-        rounds_data = await DataBuilder.build_rounds_list(limit=100, skip=0)
-        round_data = next((r for r in rounds_data if r.round_id == f"round_{round_id:03d}"), None)
+        # Get round data (lightweight - no agent evaluation runs)
+        from app.db.mock_mongo import get_mock_db
+        from app.models.schemas import Round
+        db = get_mock_db()
+        round_doc = await db.rounds.find_one({"round_id": f"round_{round_id:03d}"})
         
-        if not round_data:
+        if not round_doc:
             raise HTTPException(status_code=404, detail="Round not found")
+        
+        round_data = Round(**round_doc)
         
         # Generate timeline data
         timeline = []
