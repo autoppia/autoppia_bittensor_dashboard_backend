@@ -1,7 +1,8 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
 from enum import Enum
+from app.utils.validation import validate_miner_image_url
 
 
 class MinerStatus(str, Enum):
@@ -63,7 +64,7 @@ class Miner(BaseModel):
     uid: int = Field(..., description="Miner UID")
     name: str = Field(..., description="Miner name")
     hotkey: str = Field(..., description="Miner hotkey")
-    imageUrl: str = Field(..., description="Miner image URL")
+    imageUrl: str = Field(..., description="Miner image URL (must be valid URL or empty string)")
     githubUrl: Optional[str] = Field(None, description="GitHub repository URL")
     taostatsUrl: str = Field(..., description="Taostats URL")
     isSota: bool = Field(..., description="Whether miner is SOTA")
@@ -80,6 +81,11 @@ class Miner(BaseModel):
     lastSeen: str = Field(..., description="Last seen timestamp (ISO 8601)")
     createdAt: str = Field(..., description="Creation timestamp (ISO 8601)")
     updatedAt: str = Field(..., description="Last update timestamp (ISO 8601)")
+
+    @validator('imageUrl')
+    def validate_image_url(cls, v):
+        """Validate that imageUrl is a valid URL or empty string."""
+        return validate_miner_image_url(v)
 
 
 class Task(BaseModel):

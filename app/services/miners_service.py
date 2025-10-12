@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
 import math
 import random
+from app.utils.score_formatter import format_score_as_percentage_float
 from app.models.miners import (
     Miner, MinerRun, MinerActivity,
     MinerListQuery, MinerPerformanceQuery, MinerRunsQuery,
@@ -115,10 +116,10 @@ class MinersService:
             runs = [r for r in runs if r.status == query.status]
         
         if query.startDate:
-            runs = [r for r in runs if r.startTime >= query.startDate]
+            runs = [r for r in runs if datetime.fromisoformat(r.startTime.replace('Z', '+00:00')) >= query.startDate]
         
         if query.endDate:
-            runs = [r for r in runs if r.startTime <= query.endDate]
+            runs = [r for r in runs if datetime.fromisoformat(r.startTime.replace('Z', '+00:00')) <= query.endDate]
         
         # Apply sorting
         reverse = query.sortOrder == "desc"
@@ -153,7 +154,7 @@ class MinersService:
                 uid=123,
                 name="Autoppia Bittensor",
                 hotkey="5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-                imageUrl="https://example.com/avatar.png",
+                imageUrl="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRGNjBFNSIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5BSSB8PC90ZXh0Pgo8L3N2Zz4K",
                 githubUrl="https://github.com/autoppia/bittensor-agent",
                 taostatsUrl="https://taostats.io/miner/123",
                 isSota=False,
@@ -161,8 +162,8 @@ class MinersService:
                 description="Autoppia's native Bittensor agent for web automation tasks",
                 totalRuns=1247,
                 successfulRuns=1089,
-                averageScore=0.87,
-                bestScore=0.95,
+                averageScore=87.0,
+                bestScore=95.0,
                 successRate=87.3,
                 averageDuration=32.5,
                 totalTasks=6235,
@@ -176,7 +177,7 @@ class MinersService:
                 uid=456,
                 name="OpenAI CUA",
                 hotkey="5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
-                imageUrl="https://example.com/avatar.png",
+                imageUrl="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRGNjBFNSIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5BSSB8PC90ZXh0Pgo8L3N2Zz4K",
                 githubUrl="https://github.com/openai/computer-use-agent",
                 taostatsUrl="https://taostats.io/miner/456",
                 isSota=True,
@@ -184,8 +185,8 @@ class MinersService:
                 description="OpenAI's Computer Use Agent for web automation",
                 totalRuns=892,
                 successfulRuns=756,
-                averageScore=0.82,
-                bestScore=0.91,
+                averageScore=82.0,
+                bestScore=91.0,
                 successRate=84.8,
                 averageDuration=28.3,
                 totalTasks=4460,
@@ -199,7 +200,7 @@ class MinersService:
                 uid=789,
                 name="Anthropic CUA",
                 hotkey="5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy",
-                imageUrl="https://example.com/avatar.png",
+                imageUrl="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRGNjBFNSIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5BSSB8PC90ZXh0Pgo8L3N2Zz4K",
                 githubUrl="https://github.com/anthropics/computer-use-agent",
                 taostatsUrl="https://taostats.io/miner/789",
                 isSota=True,
@@ -207,8 +208,8 @@ class MinersService:
                 description="Anthropic's Computer Use Agent",
                 totalRuns=654,
                 successfulRuns=567,
-                averageScore=0.79,
-                bestScore=0.88,
+                averageScore=79.0,
+                bestScore=88.0,
                 successRate=86.7,
                 averageDuration=35.2,
                 totalTasks=3270,
@@ -222,7 +223,7 @@ class MinersService:
                 uid=101,
                 name="Browser Use Agent",
                 hotkey="5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEcsVqKvQYqQ",
-                imageUrl="https://example.com/avatar.png",
+                imageUrl="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRGNjBFNSIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5BSSB8PC90ZXh0Pgo8L3N2Zz4K",
                 githubUrl="https://github.com/browser-use/browser-use",
                 taostatsUrl="https://taostats.io/miner/101",
                 isSota=True,
@@ -230,8 +231,8 @@ class MinersService:
                 description="Browser Use framework agent for web automation",
                 totalRuns=423,
                 successfulRuns=345,
-                averageScore=0.74,
-                bestScore=0.85,
+                averageScore=74.0,
+                bestScore=85.0,
                 successRate=81.6,
                 averageDuration=42.1,
                 totalTasks=2115,
@@ -245,7 +246,7 @@ class MinersService:
                 uid=202,
                 name="Custom Agent Alpha",
                 hotkey="5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2Dj",
-                imageUrl="https://example.com/avatar.png",
+                imageUrl="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRGNjBFNSIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5BSSB8PC90ZXh0Pgo8L3N2Zz4K",
                 githubUrl="https://github.com/custom/alpha-agent",
                 taostatsUrl="https://taostats.io/miner/202",
                 isSota=False,
@@ -253,8 +254,8 @@ class MinersService:
                 description="Custom implementation for specialized tasks",
                 totalRuns=234,
                 successfulRuns=198,
-                averageScore=0.71,
-                bestScore=0.82,
+                averageScore=71.0,
+                bestScore=82.0,
                 successRate=84.6,
                 averageDuration=38.7,
                 totalTasks=1170,
@@ -277,8 +278,8 @@ class MinersService:
                 "isSota": True,
                 "totalRuns": 234,
                 "successfulRuns": 198,
-                "averageScore": 0.71,
-                "bestScore": 0.82,
+                "averageScore": 71.0,
+                "bestScore": 82.0,
                 "successRate": 84.6,
                 "averageDuration": 38.7,
                 "totalTasks": 1170,
@@ -295,7 +296,7 @@ class MinersService:
                 uid=agent_data["uid"],
                 name=agent_data["name"],
                 hotkey=agent_data["hotkey"],
-                imageUrl="https://example.com/avatar.png",
+                imageUrl="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRGNjBFNSIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5BSSB8PC90ZXh0Pgo8L3N2Zz4K",
                 githubUrl=agent_data["githubUrl"],
                 taostatsUrl=f"https://taostats.io/miner/{agent_data['uid']}",
                 isSota=agent_data["isSota"],
@@ -322,7 +323,7 @@ class MinersService:
                 uid=uid,
                 name=f"Miner {i}",
                 hotkey=f"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQ{i:02d}",
-                imageUrl="https://example.com/avatar.png",
+                imageUrl="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRGNjBFNSIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5BSSB8PC90ZXh0Pgo8L3N2Zz4K",
                 githubUrl=f"https://github.com/miner{i}/agent",
                 taostatsUrl=f"https://taostats.io/miner/{uid}",
                 isSota=False,  # These are regular miners, not SOTA agents
@@ -330,8 +331,8 @@ class MinersService:
                 description=f"Custom miner implementation {i}",
                 totalRuns=random.randint(50, 1000),
                 successfulRuns=random.randint(40, 900),
-                averageScore=round(random.uniform(0.5, 0.95), 2),
-                bestScore=round(random.uniform(0.8, 1.0), 2),
+                averageScore=format_score_as_percentage_float(random.uniform(0.5, 0.95)),
+                bestScore=format_score_as_percentage_float(random.uniform(0.8, 1.0)),
                 successRate=round(random.uniform(70, 95), 1),
                 averageDuration=round(random.uniform(20, 60), 1),
                 totalTasks=random.randint(250, 5000),
@@ -376,7 +377,7 @@ class MinersService:
                     website=random.choice(websites),
                     useCase=random.choice(use_cases),
                     status=task_status,
-                    score=random.uniform(0.6, 1.0) if task_status == TaskStatus.COMPLETED else 0.0,
+                    score=format_score_as_percentage_float(random.uniform(0.6, 1.0)) if task_status == TaskStatus.COMPLETED else 0.0,
                     duration=task_duration,
                     startTime=task_start,
                     endTime=task_end if task_status == TaskStatus.COMPLETED else None,
@@ -387,13 +388,13 @@ class MinersService:
             # Calculate run score and status
             if completed_tasks == num_tasks:
                 status = RunStatus.COMPLETED
-                score = random.uniform(0.8, 1.0)
+                score = format_score_as_percentage_float(random.uniform(0.8, 1.0))
             elif completed_tasks > num_tasks // 2:
                 status = RunStatus.COMPLETED
-                score = random.uniform(0.6, 0.8)
+                score = format_score_as_percentage_float(random.uniform(0.6, 0.8))
             else:
                 status = random.choice([RunStatus.FAILED, RunStatus.TIMEOUT])
-                score = random.uniform(0.0, 0.5)
+                score = format_score_as_percentage_float(random.uniform(0.0, 0.5))
             
             run = MinerRun(
                 runId=f"run_id_{uid}_{int(start_time.timestamp())}_{i}",

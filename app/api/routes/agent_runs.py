@@ -40,60 +40,14 @@ async def get_agent_runs_list(
     try:
         logger.info(f"Fetching agent runs list with page={page}, limit={limit}")
         
-        # Mock data for now - in production this would come from the service
-        mock_runs = [
-            {
-                "runId": "run-001",
-                "agentId": "anthropic-cua",
-                "roundId": 20,
-                "validatorId": "validator_1",
-                "status": "completed",
-                "startTime": "2025-10-10T22:30:42.132661+00:00",
-                "endTime": "2025-10-10T23:14:39.132661+00:00",
-                "totalTasks": 11,
-                "completedTasks": 9,
-                "averageScore": 0.84,
-                "successRate": 81.8
-            },
-            {
-                "runId": "run-002", 
-                "agentId": "autoppia-bittensor",
-                "roundId": 20,
-                "validatorId": "validator_2",
-                "status": "completed",
-                "startTime": "2025-10-10T22:30:42.132661+00:00",
-                "endTime": "2025-10-10T23:14:39.132661+00:00",
-                "totalTasks": 11,
-                "completedTasks": 8,
-                "averageScore": 0.87,
-                "successRate": 72.7
-            }
-        ]
-        
-        # Apply filters
-        filtered_runs = mock_runs
-        if roundId:
-            filtered_runs = [r for r in filtered_runs if r["roundId"] == roundId]
-        if validatorId:
-            filtered_runs = [r for r in filtered_runs if r["validatorId"] == validatorId]
-        if agentId:
-            filtered_runs = [r for r in filtered_runs if r["agentId"] == agentId]
-        if status:
-            filtered_runs = [r for r in filtered_runs if r["status"] == status]
-        
-        # Apply pagination
-        start_idx = (page - 1) * limit
-        end_idx = start_idx + limit
-        paginated_runs = filtered_runs[start_idx:end_idx]
+        # Get agent runs from the service instead of using hardcoded mock data
+        runs_data = await agent_runs_service.get_agent_runs_list(
+            page, limit, roundId, validatorId, agentId, status, sortBy, sortOrder
+        )
         
         return {
             "success": True,
-            "data": {
-                "runs": paginated_runs,
-                "total": len(filtered_runs),
-                "page": page,
-                "limit": limit
-            }
+            "data": runs_data
         }
         
     except Exception as e:
@@ -264,6 +218,15 @@ async def get_agent_run_tasks(
     """
     try:
         logger.info(f"Fetching tasks for agent run {runId}")
+        
+        # First check if the agent run exists
+        agent_run_doc = await agent_runs_service.db.agent_evaluation_runs.find_one({"agent_run_id": runId})
+        if not agent_run_doc:
+            return TasksResponse(
+                success=False,
+                error=f"Agent run with ID '{runId}' not found",
+                code="AGENT_RUN_NOT_FOUND"
+            )
         
         tasks_data = await agent_runs_service.get_agent_run_tasks(
             runId, page, limit, website, useCase, status, sortBy, sortOrder

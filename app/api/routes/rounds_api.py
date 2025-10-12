@@ -595,7 +595,7 @@ async def get_round_validators(round_id: int = Path(..., description="Round ID")
                 "id": f"validator_{validator.uid}",
                 "name": validator.name or f"Validator {validator.uid}",
                 "hotkey": validator.hotkey,
-                "icon": f"/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
+                "icon": f"https://autoppia.com/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
                 "status": status,
                 "totalTasks": validator_total_tasks,
                 "completedTasks": completed_tasks,

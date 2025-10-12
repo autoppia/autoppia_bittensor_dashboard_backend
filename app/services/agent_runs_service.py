@@ -7,6 +7,7 @@ import hashlib
 import random
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
+from app.utils.score_formatter import format_score_as_percentage_float
 from app.models.agent_runs import (
     AgentRun, Personas, Statistics, Summary, Task, Action, Website,
     RoundInfo, ValidatorInfo, AgentInfo, ScoreDistribution,
@@ -25,6 +26,120 @@ class AgentRunsService:
     
     def __init__(self):
         self.db = get_mock_db()
+    
+    async def get_agent_runs_list(
+        self, 
+        page: int = 1, 
+        limit: int = 20,
+        round_id: Optional[int] = None,
+        validator_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        status: Optional[str] = None,
+        sort_by: str = "startTime",
+        sort_order: str = "desc"
+    ) -> Dict[str, Any]:
+        """Get list of agent runs with filtering and pagination."""
+        try:
+            logger.info(f"Fetching agent runs list with page={page}, limit={limit}")
+            
+            # Build query
+            query = {}
+            if round_id:
+                query["round_id"] = f"round_{round_id:03d}"
+            if validator_id:
+                validator_uid = int(validator_id.split('-')[1]) if '-' in validator_id else int(validator_id)
+                query["validator_uid"] = validator_uid
+            if agent_id:
+                miner_uid = int(agent_id.split('-')[1]) if '-' in agent_id else int(agent_id)
+                query["miner_uid"] = miner_uid
+            
+            # Get agent runs
+            agent_runs_docs = await self.db.agent_evaluation_runs.find(query).to_list(length=1000)
+            
+            # Convert to agent runs
+            agent_runs = []
+            for doc in agent_runs_docs:
+                agent_run = AgentEvaluationRun(**doc)
+                
+                # Get round data
+                round_doc = await self.db.rounds.find_one({"round_id": agent_run.round_id})
+                if not round_doc:
+                    continue
+                
+                round_data = Round(**round_doc)
+                
+                # Find validator and miner
+                validator = next((v for v in round_data.validators if v.uid == agent_run.validator_uid), None)
+                miner = next((m for m in round_data.miners if m.uid == agent_run.miner_uid), None)
+                
+                if not validator or not miner:
+                    continue
+                
+                # Get evaluation results for metrics
+                evaluation_results = await self._get_evaluation_results_for_run(agent_run.agent_run_id)
+                avg_score = sum(er.final_score for er in evaluation_results) / len(evaluation_results) if evaluation_results else 0.0
+                overall_score = int(avg_score * 100)
+                
+                # Get ranking
+                ranking = 1
+                if round_data.winners:
+                    for i, winner in enumerate(round_data.winners):
+                        if winner.get('miner_uid') == agent_run.miner_uid:
+                            ranking = winner.get('rank', i + 1)
+                            break
+                
+                # Calculate success rate
+                successful_tasks = len([er for er in evaluation_results if er.final_score > 0.5])
+                total_tasks = len(evaluation_results)
+                success_rate = (successful_tasks / total_tasks * 100) if total_tasks > 0 else 0.0
+                
+                agent_runs.append({
+                    "runId": agent_run.agent_run_id,
+                    "agentId": f"agent-{miner.uid}",
+                    "roundId": int(agent_run.round_id.split('_')[1]) if '_' in agent_run.round_id else 20,
+                    "validatorId": f"validator-{validator.uid}",
+                    "status": "completed" if agent_run.ended_at else "running",
+                    "startTime": datetime.fromtimestamp(agent_run.started_at, tz=timezone.utc).isoformat(),
+                    "endTime": datetime.fromtimestamp(agent_run.ended_at, tz=timezone.utc).isoformat() if agent_run.ended_at else None,
+                    "totalTasks": total_tasks,
+                    "completedTasks": successful_tasks,
+                    "averageScore": avg_score,
+                    "successRate": success_rate,
+                    "overallScore": overall_score,
+                    "ranking": ranking,
+                    "duration": int((agent_run.ended_at or agent_run.started_at) - agent_run.started_at)
+                })
+            
+            # Apply status filter
+            if status:
+                agent_runs = [r for r in agent_runs if r["status"] == status]
+            
+            # Apply sorting
+            if sort_by == "startTime":
+                agent_runs.sort(key=lambda x: x["startTime"], reverse=(sort_order == "desc"))
+            elif sort_by == "score":
+                agent_runs.sort(key=lambda x: x["averageScore"], reverse=(sort_order == "desc"))
+            elif sort_by == "duration":
+                agent_runs.sort(key=lambda x: x["duration"], reverse=(sort_order == "desc"))
+            elif sort_by == "ranking":
+                agent_runs.sort(key=lambda x: x["ranking"], reverse=(sort_order == "desc"))
+            
+            # Apply pagination
+            total = len(agent_runs)
+            start_idx = (page - 1) * limit
+            end_idx = start_idx + limit
+            paginated_runs = agent_runs[start_idx:end_idx]
+            
+            return {
+                "runs": paginated_runs,
+                "total": total,
+                "page": page,
+                "limit": limit
+            }
+            
+        except Exception as e:
+            logger.error(f"Error fetching agent runs list: {e}")
+            return {"runs": [], "total": 0, "page": page, "limit": limit}
     
     async def get_agent_run_details(
         self, 
@@ -70,7 +185,7 @@ class AgentRunsService:
             successful_tasks = len([er for er in evaluation_results if er.final_score > 0.5])
             failed_tasks = total_tasks - successful_tasks
             avg_score = sum(er.final_score for er in evaluation_results) / len(evaluation_results) if evaluation_results else 0.0
-            overall_score = int(avg_score * 100)
+            overall_score = format_score_as_percentage_float(avg_score)
             
             # Calculate duration
             duration = int((agent_run.ended_at or agent_run.started_at) - agent_run.started_at)
@@ -108,7 +223,7 @@ class AgentRunsService:
                 roundId=int(agent_run.round_id.split('_')[1]) if '_' in agent_run.round_id else 20,
                 validatorId=f"validator-{validator.uid}",
                 validatorName=validator.name or f"Validator {validator.uid}",
-                validatorImage=f"/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
+                validatorImage=f"https://autoppia.com/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
                 startTime=datetime.fromtimestamp(agent_run.started_at, tz=timezone.utc).isoformat(),
                 endTime=datetime.fromtimestamp(agent_run.ended_at, tz=timezone.utc).isoformat() if agent_run.ended_at else None,
                 status=RunStatus.COMPLETED if agent_run.ended_at else RunStatus.RUNNING,
@@ -168,7 +283,7 @@ class AgentRunsService:
             validator_info = ValidatorInfo(
                 id=f"validator-{validator.uid}",
                 name=validator.name or f"Validator {validator.uid}",
-                image=f"/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
+                image=f"https://autoppia.com/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
                 description=f"{validator.name or f'Validator {validator.uid}'} Validator",
                 website="https://autoppia.com",
                 github="https://github.com/autoppia"
@@ -179,7 +294,7 @@ class AgentRunsService:
                 id=f"agent-{miner.uid}",
                 name=miner.agent_name or f"Agent {miner.uid}",
                 type="autoppia",
-                image=miner.agent_image or f"/images/icons/agents/agent_{miner.uid}.png",
+                image=miner.agent_image or f"https://autoppia.com/images/icons/agents/agent_{miner.uid}.png",
                 description=f"{miner.agent_name or f'Agent {miner.uid}'}'s main agent"
             )
             

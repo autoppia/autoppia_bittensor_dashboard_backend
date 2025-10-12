@@ -192,7 +192,7 @@ async def get_validators(
                         "id": f"validator_{validator.uid}",
                         "name": validator.name or f"Validator {validator.uid}",  # Use real name or fallback
                         "hotkey": validator.hotkey,
-                        "icon": f"/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
+                        "icon": f"https://autoppia.com/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
                         "currentTask": current_task,
                         "status": status,
                         "totalTasks": validator_total_tasks,
@@ -292,7 +292,7 @@ async def get_validator_detail(validator_id: str):
                         "id": validator_id,
                         "name": validator.name or f"Validator {validator.uid}",  # Use real name or fallback
                         "hotkey": validator.hotkey,
-                        "icon": f"/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
+                        "icon": f"https://autoppia.com/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
                         "currentTask": current_task,
                         "status": status,
                         "totalTasks": validator_total_tasks,

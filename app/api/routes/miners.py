@@ -7,6 +7,7 @@ from app.models.miners import (
     MinerListResponse, MinerPerformanceResponse, MinerRunsResponse, APIResponse,
     TimeRange, Granularity, MinerStatus, RunStatus
 )
+from app.models.miner_update import MinerImageUpdateRequest, MinerImageUpdateResponse
 from app.services.miners_service import MinersService
 
 # Create router
@@ -282,5 +283,47 @@ async def get_miner_run_details(uid: int, run_id: str):
             detail=create_error_response("INTERNAL_SERVER_ERROR", f"Failed to retrieve miner run details: {str(e)}").dict()
         )
 
+
+@router.put("/{uid}/image", response_model=MinerImageUpdateResponse)
+async def update_miner_image(uid: int, request: MinerImageUpdateRequest):
+    """
+    Update miner image URL.
+    
+    - **uid**: Miner UID
+    - **imageUrl**: New image URL (must be valid URL or empty string)
+    """
+    try:
+        # Check if miner exists
+        miner = miners_service.get_miner_by_uid(uid)
+        if not miner:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=create_error_response("MINER_NOT_FOUND", f"Miner with UID {uid} not found").dict()
+            )
+        
+        # Update the miner's image URL
+        # Note: In a real implementation, this would update the database
+        # For now, we'll update the mock data
+        miner.imageUrl = request.imageUrl
+        miner.updatedAt = datetime.now().isoformat()
+        
+        return MinerImageUpdateResponse(
+            success=True,
+            message=f"Successfully updated image for miner {uid}",
+            miner=miner.dict()
+        )
+    
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=create_error_response("INVALID_IMAGE_URL", str(e)).dict()
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=create_error_response("INTERNAL_SERVER_ERROR", f"Failed to update miner image: {str(e)}").dict()
+        )
 
 

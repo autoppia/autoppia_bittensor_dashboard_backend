@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from typing import Optional
 from app.models.miner_list import MinerListResponse, MinerDetailResponse, MinerListItem, MinerDetail
 from app.services.miners_service import MinersService
+from app.services.cache import cached, CACHE_TTL
 
 # Create router
 router = APIRouter(prefix="/api/v1/miner-list", tags=["miner-list"])
@@ -11,6 +12,7 @@ miners_service = MinersService()
 
 
 @router.get("/", response_model=MinerListResponse)
+@cached("miner_list", CACHE_TTL["miner_list"])
 async def get_miner_list(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
@@ -73,6 +75,7 @@ async def get_miner_list(
 
 
 @router.get("/{uid}", response_model=MinerDetailResponse)
+@cached("miner_detail", CACHE_TTL["miner_detail"])
 async def get_miner_detail(uid: int):
     """
     Get complete details for a specific miner by UID.

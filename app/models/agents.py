@@ -83,9 +83,12 @@ class Agent(BaseModel):
     status: AgentStatus = Field(..., description="Agent status")
     totalRuns: int = Field(default=0, description="Total number of runs")
     successfulRuns: int = Field(default=0, description="Number of successful runs")
-    averageScore: float = Field(default=0.0, description="Average score across all runs")
-    bestScore: float = Field(default=0.0, description="Best score achieved")
-    successRate: float = Field(default=0.0, description="Success rate percentage")
+    currentScore: float = Field(default=0.0, description="Current score (renamed from average score)")
+    currentTopScore: float = Field(default=0.0, description="Current top score (renamed from best score)")
+    currentRank: int = Field(default=0, description="Current rank")
+    bestRankEver: int = Field(default=0, description="Best rank ever achieved")
+    roundsParticipated: int = Field(default=0, description="Number of rounds participated")
+    alphaWonInPrizes: float = Field(default=0.0, description="Alpha won in prizes")
     averageDuration: float = Field(default=0.0, description="Average duration in seconds")
     totalTasks: int = Field(default=0, description="Total number of tasks")
     completedTasks: int = Field(default=0, description="Number of completed tasks")
@@ -151,6 +154,15 @@ class PerformanceTrend(BaseModel):
     score: float = Field(..., description="Average score for period")
     successRate: float = Field(..., description="Success rate for period")
     duration: float = Field(..., description="Average duration for period")
+
+
+class ScoreRoundDataPoint(BaseModel):
+    """Score vs round data point."""
+    round_id: int = Field(..., description="Round identifier")
+    score: float = Field(..., description="Score achieved in this round")
+    rank: Optional[int] = Field(None, description="Rank in this round")
+    reward: Optional[float] = Field(None, description="Reward received in this round")
+    timestamp: datetime = Field(..., description="Round timestamp")
 
 
 class AgentPerformanceMetrics(BaseModel):
@@ -254,6 +266,7 @@ class AgentListResponse(BaseModel):
 class AgentDetailResponse(BaseModel):
     """Agent detail response model."""
     agent: Agent = Field(..., description="Agent details")
+    scoreRoundData: List[ScoreRoundDataPoint] = Field(default_factory=list, description="Score vs round data points")
 
 
 class AgentPerformanceResponse(BaseModel):

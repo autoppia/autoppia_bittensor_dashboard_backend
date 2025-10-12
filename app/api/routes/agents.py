@@ -3,9 +3,9 @@ from typing import Optional, List
 from datetime import datetime
 
 from app.models.agents import (
-    AgentListQuery, AgentPerformanceQuery, AgentRunsQuery, 
+    AgentListQuery, AgentRunsQuery, 
     AgentActivityQuery, AllAgentActivityQuery, AgentCompareRequest,
-    AgentListResponse, AgentDetailResponse, AgentPerformanceResponse,
+    AgentListResponse, AgentDetailResponse,
     AgentRunsResponse, AgentRunDetailResponse, AgentActivityResponse,
     AgentStatisticsResponse, AgentComparisonResponse, APIResponse,
     TimeRange, Granularity, AgentType, AgentStatus, RunStatus, ActivityType
@@ -48,21 +48,6 @@ def parse_query_params(
         sortBy=sortBy,
         sortOrder=sortOrder,
         search=search
-    )
-
-
-def parse_performance_query_params(
-    timeRange: TimeRange = Query(TimeRange.SEVEN_DAYS, description="Time range"),
-    startDate: Optional[datetime] = Query(None, description="Start date"),
-    endDate: Optional[datetime] = Query(None, description="End date"),
-    granularity: Granularity = Query(Granularity.DAY, description="Data granularity")
-) -> AgentPerformanceQuery:
-    """Parse performance query parameters."""
-    return AgentPerformanceQuery(
-        timeRange=timeRange,
-        startDate=startDate,
-        endDate=endDate,
-        granularity=granularity
     )
 
 
@@ -136,7 +121,7 @@ async def get_all_agents(
     - **limit**: Number of items per page (default: 20, max: 100)
     - **type**: Filter by agent type (autoppia, openai, anthropic, browser-use, custom)
     - **status**: Filter by status (active, inactive, maintenance)
-    - **sortBy**: Sort field (name, averageScore, successRate, totalRuns, lastSeen)
+    - **sortBy**: Sort field (name, currentScore, totalRuns, lastSeen)
     - **sortOrder**: Sort order (asc, desc)
     - **search**: Search by agent name or description
     """
@@ -270,7 +255,7 @@ async def get_all_agent_activity(
 @router.get("/{agent_id}", response_model=APIResponse)
 async def get_agent_details(agent_id: str):
     """
-    Get detailed information for a specific agent.
+    Get detailed information for a specific agent with score vs round data points.
     
     - **agent_id**: Agent ID
     """
@@ -283,12 +268,18 @@ async def get_agent_details(agent_id: str):
                 detail=f"Agent with ID '{agent_id}' not found"
             )
         
-        response_data = AgentDetailResponse(agent=agent)
+        # Get score vs round data points
+        score_round_data = agents_service.get_agent_score_round_data(agent_id, limit=50)
+        
+        response_data = AgentDetailResponse(
+            agent=agent,
+            scoreRoundData=score_round_data
+        )
         
         return create_api_response(
             data=response_data.dict(),
             success=True,
-            message=f"Retrieved agent details for {agent_id}"
+            message=f"Retrieved agent details with score vs round data for {agent_id}"
         )
     
     except HTTPException:
@@ -297,54 +288,6 @@ async def get_agent_details(agent_id: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve agent details: {str(e)}"
-        )
-
-
-@router.get("/{agent_id}/performance", response_model=APIResponse)
-async def get_agent_performance(
-    agent_id: str,
-    query: AgentPerformanceQuery = Depends(parse_performance_query_params)
-):
-    """
-    Get performance metrics for a specific agent over a specified time range.
-    
-    - **agent_id**: Agent ID
-    - **timeRange**: Time range (1h, 24h, 7d, 30d, 90d, 1y, all)
-    - **startDate**: Start date (ISO 8601 format)
-    - **endDate**: End date (ISO 8601 format)
-    - **granularity**: Data granularity (hour, day, week, month)
-    """
-    try:
-        # Check if agent exists
-        agent = agents_service.get_agent_by_id(agent_id)
-        if not agent:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Agent with ID '{agent_id}' not found"
-            )
-        
-        metrics = agents_service.get_agent_performance(agent_id, query)
-        
-        if not metrics:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No performance data found for agent '{agent_id}'"
-            )
-        
-        response_data = AgentPerformanceResponse(metrics=metrics)
-        
-        return create_api_response(
-            data=response_data.dict(),
-            success=True,
-            message=f"Retrieved performance metrics for {agent_id}"
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve performance metrics: {str(e)}"
         )
 
 

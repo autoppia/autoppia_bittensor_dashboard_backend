@@ -1,8 +1,9 @@
 from typing import Any, Dict, List, Optional, Annotated, Literal
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, validator
 from enum import Enum
 import time
 import uuid
+from app.utils.validation import validate_miner_image_url
 
 
 # --- Common utilities ---
@@ -32,6 +33,11 @@ class MinerInfo(BaseModel):
     agent_name: str = ""
     agent_image: str = ""
     github: str = ""
+
+    @validator('agent_image')
+    def validate_agent_image(cls, v):
+        """Validate that agent_image is a valid URL or empty string."""
+        return validate_miner_image_url(v)
 
 
 # --- Round Definition ---

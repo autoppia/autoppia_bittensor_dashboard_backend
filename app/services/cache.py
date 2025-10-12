@@ -207,6 +207,8 @@ CACHE_TTL = {
     "network_status": 120,        # 2 minutes - network status changes moderately
     "leaderboard": 300,           # 5 minutes - leaderboard data changes slowly
     "agents_list": 600,           # 10 minutes - agents list rarely changes
+    "miner_list": 180,            # 3 minutes - miner list changes moderately
+    "miner_detail": 300,          # 5 minutes - individual miner details change slowly
     # Agent runs cache TTLs
     "agent_run_detail": 60,       # 1 minute - agent run details change frequently
     "agent_run_personas": 300,    # 5 minutes - personas data changes slowly

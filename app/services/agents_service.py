@@ -2,17 +2,18 @@ from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
 import math
 import random
+from app.utils.score_formatter import format_score_as_percentage_float, format_score_round_data
 from app.models.agents import (
-    Agent, AgentRun, AgentActivity, AgentPerformanceMetrics, 
+    Agent, AgentRun, AgentActivity, 
     AgentStatistics, AgentComparison, AgentComparisonResponse,
-    AgentListQuery, AgentPerformanceQuery, AgentRunsQuery, 
+    AgentListQuery, AgentRunsQuery, 
     AgentActivityQuery, AllAgentActivityQuery, AgentCompareRequest,
     AgentType, AgentStatus, RunStatus, TaskStatus, ActivityType,
     TimeRange, Granularity, ScoreDistribution, PerformanceTrend,
     TopAgent, MostActiveAgent, PerformanceDistribution,
-    ComparisonMetrics, AgentComparisonMetrics
+    ComparisonMetrics, AgentComparisonMetrics, ScoreRoundDataPoint
 )
-from app.models.miners import Miner, MinerRun, MinerStatus
+from app.models.miners import Miner, MinerRun, MinerStatus, MinerPerformanceQuery, MinerRunsQuery
 from app.services.miners_service import MinersService
 
 
@@ -49,9 +50,12 @@ class AgentsService:
                 status=self._convert_miner_status_to_agent_status(miner.status),
                 totalRuns=miner.totalRuns,
                 successfulRuns=miner.successfulRuns,
-                averageScore=miner.averageScore,
-                bestScore=miner.bestScore,
-                successRate=miner.successRate,
+                currentScore=miner.averageScore,  # Already in percentage format
+                currentTopScore=miner.bestScore,  # Already in percentage format
+                currentRank=self._calculate_current_rank(miner),
+                bestRankEver=self._calculate_best_rank_ever(miner),
+                roundsParticipated=miner.totalRuns,  # Using totalRuns as rounds participated
+                alphaWonInPrizes=self._calculate_alpha_prizes(miner),
                 averageDuration=miner.averageDuration,
                 totalTasks=miner.totalTasks,
                 completedTasks=miner.completedTasks,
@@ -78,10 +82,8 @@ class AgentsService:
         reverse = query.sortOrder == "desc"
         if query.sortBy == "name":
             agents.sort(key=lambda x: x.name, reverse=reverse)
-        elif query.sortBy == "averageScore":
-            agents.sort(key=lambda x: x.averageScore, reverse=reverse)
-        elif query.sortBy == "successRate":
-            agents.sort(key=lambda x: x.successRate, reverse=reverse)
+        elif query.sortBy == "currentScore":
+            agents.sort(key=lambda x: x.currentScore, reverse=reverse)
         elif query.sortBy == "totalRuns":
             agents.sort(key=lambda x: x.totalRuns, reverse=reverse)
         elif query.sortBy == "lastSeen":
@@ -150,9 +152,12 @@ class AgentsService:
             status=self._convert_miner_status_to_agent_status(miner.status),
             totalRuns=miner.totalRuns,
             successfulRuns=miner.successfulRuns,
-            averageScore=miner.averageScore,
-            bestScore=miner.bestScore,
-            successRate=miner.successRate,
+            currentScore=miner.averageScore,  # Renamed from averageScore
+            currentTopScore=miner.bestScore,  # Renamed from bestScore
+            currentRank=self._calculate_current_rank(miner),
+            bestRankEver=self._calculate_best_rank_ever(miner),
+            roundsParticipated=miner.totalRuns,  # Using totalRuns as rounds participated
+            alphaWonInPrizes=self._calculate_alpha_prizes(miner),
             averageDuration=miner.averageDuration,
             totalTasks=miner.totalTasks,
             completedTasks=miner.completedTasks,
@@ -161,6 +166,52 @@ class AgentsService:
             updatedAt=datetime.fromisoformat(miner.updatedAt.replace('Z', '+00:00'))
         )
         return agent
+    
+    def get_agent_score_round_data(self, agent_id: str, limit: int = 50) -> List[ScoreRoundDataPoint]:
+        """Get score vs round data points for an agent."""
+        agent = self.get_agent_by_id(agent_id)
+        if not agent:
+            return []
+        
+        # Use miners service to get runs data
+        try:
+            uid = agent.uid
+            if not uid:
+                return []
+            
+            # Get miner runs to extract score vs round data
+            miner_runs_query = MinerRunsQuery(
+                page=1,
+                limit=limit,
+                sortBy="startTime",
+                sortOrder="desc"
+            )
+            
+            miner_runs = self._miners_service.get_miner_runs(uid, miner_runs_query)
+            
+            if not miner_runs:
+                return []
+            
+            # Convert miner runs to score round data points
+            score_round_data = []
+            for miner_run in miner_runs[0]:  # miner_runs is (runs, total)
+                if miner_run.score is not None:
+                    data_point = ScoreRoundDataPoint(
+                        round_id=miner_run.roundId,
+                        score=miner_run.score,  # Already in percentage format
+                        rank=miner_run.ranking,
+                        reward=0.0,  # Default reward, could be enhanced later
+                        timestamp=datetime.fromisoformat(miner_run.startTime.replace('Z', '+00:00'))
+                    )
+                    score_round_data.append(data_point)
+            
+            # Sort by round_id descending (most recent first)
+            score_round_data.sort(key=lambda x: x.round_id, reverse=True)
+            
+            return score_round_data
+        except Exception as e:
+            print(f"Error getting score round data: {e}")
+            return []
     
     def _get_agent_type_from_miner(self, miner: Miner) -> AgentType:
         """Convert miner to agent type."""
@@ -190,138 +241,91 @@ class AgentsService:
         else:
             return AgentStatus.ACTIVE
     
-    def get_agent_performance(self, agent_id: str, query: AgentPerformanceQuery) -> Optional[AgentPerformanceMetrics]:
-        """Get agent performance metrics."""
-        agent = self.get_agent_by_id(agent_id)
-        if not agent:
-            return None
-        
-        # Calculate time range
-        end_date = datetime.now()
-        if query.endDate:
-            end_date = query.endDate
-        elif query.timeRange == TimeRange.ONE_HOUR:
-            start_date = end_date - timedelta(hours=1)
-        elif query.timeRange == TimeRange.TWENTY_FOUR_HOURS:
-            start_date = end_date - timedelta(days=1)
-        elif query.timeRange == TimeRange.SEVEN_DAYS:
-            start_date = end_date - timedelta(days=7)
-        elif query.timeRange == TimeRange.THIRTY_DAYS:
-            start_date = end_date - timedelta(days=30)
-        elif query.timeRange == TimeRange.NINETY_DAYS:
-            start_date = end_date - timedelta(days=90)
-        elif query.timeRange == TimeRange.ONE_YEAR:
-            start_date = end_date - timedelta(days=365)
-        else:  # ALL
-            start_date = datetime(2024, 1, 1)
-        
-        if query.startDate:
-            start_date = query.startDate
-        
-        # Filter runs for this agent in the time range
-        agent_runs = [r for r in self._mock_runs 
-                     if r.agentId == agent_id and 
-                     start_date <= r.startTime <= end_date]
-        
-        if not agent_runs:
-            return AgentPerformanceMetrics(
-                agentId=agent_id,
-                timeRange={"start": start_date.isoformat(), "end": end_date.isoformat()}
-            )
-        
-        # Calculate metrics
-        total_runs = len(agent_runs)
-        successful_runs = len([r for r in agent_runs if r.status == RunStatus.COMPLETED])
-        failed_runs = total_runs - successful_runs
-        
-        scores = [r.score for r in agent_runs if r.score > 0]
-        average_score = sum(scores) / len(scores) if scores else 0.0
-        best_score = max(scores) if scores else 0.0
-        worst_score = min(scores) if scores else 0.0
-        
-        success_rate = (successful_runs / total_runs * 100) if total_runs > 0 else 0.0
-        
-        durations = [r.duration for r in agent_runs if r.duration > 0]
-        average_duration = sum(durations) / len(durations) if durations else 0.0
-        
-        total_tasks = sum(r.totalTasks for r in agent_runs)
-        completed_tasks = sum(r.completedTasks for r in agent_runs)
-        task_completion_rate = (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0.0
-        
-        # Score distribution
-        excellent = len([s for s in scores if s >= 0.9])
-        good = len([s for s in scores if 0.7 <= s < 0.9])
-        average = len([s for s in scores if 0.5 <= s < 0.7])
-        poor = len([s for s in scores if s < 0.5])
-        
-        score_distribution = ScoreDistribution(
-            excellent=excellent,
-            good=good,
-            average=average,
-            poor=poor
-        )
-        
-        # Performance trend (simplified)
-        performance_trend = self._generate_performance_trend(
-            agent_runs, start_date, end_date, query.granularity
-        )
-        
-        return AgentPerformanceMetrics(
-            agentId=agent_id,
-            timeRange={"start": start_date.isoformat(), "end": end_date.isoformat()},
-            totalRuns=total_runs,
-            successfulRuns=successful_runs,
-            failedRuns=failed_runs,
-            averageScore=average_score,
-            bestScore=best_score,
-            worstScore=worst_score,
-            successRate=success_rate,
-            averageDuration=average_duration,
-            totalTasks=total_tasks,
-            completedTasks=completed_tasks,
-            taskCompletionRate=task_completion_rate,
-            scoreDistribution=score_distribution,
-            performanceTrend=performance_trend
+    def _calculate_current_rank(self, miner) -> int:
+        """Calculate current rank based on average score."""
+        # Mock calculation - in real implementation, this would be based on current leaderboard
+        if miner.averageScore >= 0.9:
+            return random.randint(1, 5)
+        elif miner.averageScore >= 0.8:
+            return random.randint(6, 15)
+        elif miner.averageScore >= 0.7:
+            return random.randint(16, 30)
+        else:
+            return random.randint(31, 50)
+    
+    def _calculate_best_rank_ever(self, miner) -> int:
+        """Calculate best rank ever achieved."""
+        # Mock calculation - best rank should be better than or equal to current rank
+        current_rank = self._calculate_current_rank(miner)
+        return random.randint(1, max(1, current_rank - 1))
+    
+    def _calculate_alpha_prizes(self, miner) -> float:
+        """Calculate alpha won in prizes."""
+        # Mock calculation based on performance
+        base_prize = 100.0
+        performance_multiplier = miner.averageScore
+        rounds_multiplier = min(miner.totalRuns / 100, 2.0)  # Cap at 2x for rounds
+        return round(base_prize * performance_multiplier * rounds_multiplier, 2)
+    
+    
+    
+    def _convert_miner_run_to_agent_run(self, miner_run: MinerRun) -> AgentRun:
+        """Convert miner run to agent run format."""
+        return AgentRun(
+            runId=miner_run.runId,
+            agentId=miner_run.agentId,
+            validatorId=miner_run.validatorId,
+            roundId=miner_run.roundId,
+            score=miner_run.score,
+            ranking=miner_run.ranking,
+            status=RunStatus.COMPLETED if miner_run.status.value == "completed" else RunStatus.FAILED,
+            duration=miner_run.duration,
+            completedTasks=miner_run.completedTasks,
+            totalTasks=miner_run.totalTasks,
+            startTime=datetime.fromisoformat(miner_run.startTime.replace('Z', '+00:00')),
+            endTime=datetime.fromisoformat(miner_run.endTime.replace('Z', '+00:00')) if miner_run.endTime else None,
+            createdAt=datetime.fromisoformat(miner_run.createdAt.replace('Z', '+00:00'))
         )
     
     def get_agent_runs(self, agent_id: str, query: AgentRunsQuery) -> Tuple[List[AgentRun], int]:
         """Get paginated list of agent runs."""
-        runs = [r for r in self._mock_runs if r.agentId == agent_id]
+        # Get agent to find UID
+        agent = self.get_agent_by_id(agent_id)
+        if not agent:
+            return [], 0
         
-        # Apply filters
-        if query.roundId:
-            runs = [r for r in runs if r.roundId == query.roundId]
-        
-        if query.validatorId:
-            runs = [r for r in runs if r.validatorId == query.validatorId]
-        
-        if query.status:
-            runs = [r for r in runs if r.status == query.status]
-        
-        if query.startDate:
-            runs = [r for r in runs if r.startTime >= query.startDate]
-        
-        if query.endDate:
-            runs = [r for r in runs if r.startTime <= query.endDate]
-        
-        # Apply sorting
-        reverse = query.sortOrder == "desc"
-        if query.sortBy == "startTime":
-            runs.sort(key=lambda x: x.startTime, reverse=reverse)
-        elif query.sortBy == "score":
-            runs.sort(key=lambda x: x.score, reverse=reverse)
-        elif query.sortBy == "duration":
-            runs.sort(key=lambda x: x.duration, reverse=reverse)
-        elif query.sortBy == "ranking":
-            runs.sort(key=lambda x: x.ranking or 0, reverse=reverse)
-        
-        # Apply pagination
-        total = len(runs)
-        start = (query.page - 1) * query.limit
-        end = start + query.limit
-        runs = runs[start:end]
-        
-        return runs, total
+        # Use miners service to get runs data
+        try:
+            uid = agent.uid
+            
+            # Convert AgentRunsQuery to MinerRunsQuery
+            miner_query = MinerRunsQuery(
+                page=query.page,
+                limit=query.limit,
+                roundId=query.roundId,
+                validatorId=query.validatorId,
+                status=query.status,
+                startDate=query.startDate,
+                endDate=query.endDate,
+                sortBy=query.sortBy,
+                sortOrder=query.sortOrder
+            )
+            
+            miner_runs = self._miners_service.get_miner_runs(uid, miner_query)
+            
+            if not miner_runs:
+                return [], 0
+            
+            # Convert miner runs to agent runs format
+            agent_runs = []
+            for miner_run in miner_runs[0]:  # miner_runs is (runs, total)
+                agent_run = self._convert_miner_run_to_agent_run(miner_run)
+                agent_runs.append(agent_run)
+            
+            return agent_runs, miner_runs[1]  # Return runs and total
+        except Exception as e:
+            print(f"Error getting miner runs: {e}")
+            return [], 0
     
     def get_agent_run_by_id(self, agent_id: str, run_id: str) -> Optional[AgentRun]:
         """Get agent run by ID."""
@@ -458,15 +462,15 @@ class AgentsService:
         successful_runs = sum(a.successfulRuns for a in self._mock_agents)
         average_success_rate = (successful_runs / total_runs * 100) if total_runs > 0 else 0.0
         
-        scores = [a.averageScore for a in self._mock_agents if a.averageScore > 0]
+        scores = [a.currentScore for a in self._mock_agents if a.currentScore > 0]
         average_score = sum(scores) / len(scores) if scores else 0.0
         
         # Top performing agent
-        top_agent = max(self._mock_agents, key=lambda x: x.averageScore)
+        top_agent = max(self._mock_agents, key=lambda x: x.currentScore)
         top_performing_agent = TopAgent(
             id=top_agent.id,
             name=top_agent.name,
-            score=top_agent.averageScore
+            score=top_agent.currentScore
         )
         
         # Most active agent
@@ -478,10 +482,10 @@ class AgentsService:
         )
         
         # Performance distribution
-        excellent = len([a for a in self._mock_agents if a.averageScore >= 0.9])
-        good = len([a for a in self._mock_agents if 0.7 <= a.averageScore < 0.9])
-        average = len([a for a in self._mock_agents if 0.5 <= a.averageScore < 0.7])
-        poor = len([a for a in self._mock_agents if a.averageScore < 0.5])
+        excellent = len([a for a in self._mock_agents if a.currentScore >= 0.9])
+        good = len([a for a in self._mock_agents if 0.7 <= a.currentScore < 0.9])
+        average = len([a for a in self._mock_agents if 0.5 <= a.currentScore < 0.7])
+        poor = len([a for a in self._mock_agents if a.currentScore < 0.5])
         
         performance_distribution = PerformanceDistribution(
             excellent=excellent,
@@ -511,15 +515,18 @@ class AgentsService:
                 id="autoppia-bittensor",
                 name="Autoppia Bittensor",
                 type=AgentType.AUTOPPIA,
-                imageUrl="/icons/bittensor.webp",
+                imageUrl="https://autoppia.com/icons/bittensor.webp",
                 description="Autoppia's native Bittensor agent for web automation tasks",
                 version="7.0.0",
                 status=AgentStatus.ACTIVE,
                 totalRuns=1247,
                 successfulRuns=1089,
-                averageScore=0.87,
-                bestScore=0.95,
-                successRate=87.3,
+                currentScore=0.87,
+                currentTopScore=0.95,
+                currentRank=3,
+                bestRankEver=1,
+                roundsParticipated=1247,
+                alphaWonInPrizes=108.5,
                 averageDuration=32.5,
                 totalTasks=12470,
                 completedTasks=10890,
@@ -531,15 +538,18 @@ class AgentsService:
                 id="openai-cua",
                 name="OpenAI CUA",
                 type=AgentType.OPENAI,
-                imageUrl="/icons/openai.webp",
+                imageUrl="https://openai.com/icons/openai.webp",
                 description="OpenAI's Computer Use Agent for web automation",
                 version="1.0.0",
                 status=AgentStatus.ACTIVE,
                 totalRuns=892,
                 successfulRuns=756,
-                averageScore=0.82,
-                bestScore=0.91,
-                successRate=84.8,
+                currentScore=0.82,
+                currentTopScore=0.91,
+                currentRank=7,
+                bestRankEver=2,
+                roundsParticipated=892,
+                alphaWonInPrizes=73.1,
                 averageDuration=28.3,
                 totalTasks=8920,
                 completedTasks=7560,
@@ -551,15 +561,18 @@ class AgentsService:
                 id="anthropic-cua",
                 name="Anthropic CUA",
                 type=AgentType.ANTHROPIC,
-                imageUrl="/icons/anthropic.webp",
+                imageUrl="https://anthropic.com/icons/anthropic.webp",
                 description="Anthropic's Computer Use Agent",
                 version="2.1.0",
                 status=AgentStatus.ACTIVE,
                 totalRuns=654,
                 successfulRuns=567,
-                averageScore=0.79,
-                bestScore=0.88,
-                successRate=86.7,
+                currentScore=0.79,
+                currentTopScore=0.88,
+                currentRank=12,
+                bestRankEver=5,
+                roundsParticipated=654,
+                alphaWonInPrizes=51.7,
                 averageDuration=35.2,
                 totalTasks=6540,
                 completedTasks=5670,
@@ -571,15 +584,18 @@ class AgentsService:
                 id="browser-use-agent",
                 name="Browser Use Agent",
                 type=AgentType.BROWSER_USE,
-                imageUrl="/icons/browser-use.webp",
+                imageUrl="https://browser-use.com/icons/browser-use.webp",
                 description="Browser Use framework agent",
                 version="0.3.0",
                 status=AgentStatus.ACTIVE,
                 totalRuns=423,
                 successfulRuns=345,
-                averageScore=0.74,
-                bestScore=0.85,
-                successRate=81.6,
+                currentScore=0.74,
+                currentTopScore=0.85,
+                currentRank=18,
+                bestRankEver=8,
+                roundsParticipated=423,
+                alphaWonInPrizes=31.3,
                 averageDuration=42.1,
                 totalTasks=4230,
                 completedTasks=3450,
@@ -591,15 +607,18 @@ class AgentsService:
                 id="custom-agent-1",
                 name="Custom Agent Alpha",
                 type=AgentType.CUSTOM,
-                imageUrl="/icons/stagehand.webp",
+                imageUrl="https://stagehand.com/icons/stagehand.webp",
                 description="Custom implementation for specialized tasks",
                 version="1.2.0",
                 status=AgentStatus.MAINTENANCE,
                 totalRuns=234,
                 successfulRuns=198,
-                averageScore=0.71,
-                bestScore=0.82,
-                successRate=84.6,
+                currentScore=0.71,
+                currentTopScore=0.82,
+                currentRank=25,
+                bestRankEver=12,
+                roundsParticipated=234,
+                alphaWonInPrizes=16.6,
                 averageDuration=38.7,
                 totalTasks=2340,
                 completedTasks=1980,
