@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # MongoDB service
@@ -24,7 +24,7 @@ services:
     container_name: leaderboard-api
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8000:8000"
     environment:
       MONGO_URI: mongodb://admin:password@mongodb:27017/leaderboard?authSource=admin
       MONGO_DB: leaderboard
@@ -35,7 +35,7 @@ services:
     networks:
       - leaderboard-network
     volumes:
-      - ./app:/app/app:ro  # Mount app code for development
+      - ./app:/app/app:ro # Mount app code for development
 
 volumes:
   mongodb_data:

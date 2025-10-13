@@ -27,9 +27,9 @@ if [ ! -f ".env" ]; then
 fi
 
 # Start the API server
-echo "Starting API server on http://localhost:8080"
-echo "API documentation available at http://localhost:8080/docs"
+echo "Starting API server on http://localhost:8000"
+echo "API documentation available at http://localhost:8000/docs"
 echo "Press Ctrl+C to stop the server"
 echo ""
 
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
