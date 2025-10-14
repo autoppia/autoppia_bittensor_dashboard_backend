@@ -244,6 +244,8 @@ class TaskSolution(BaseModel):
     actions: list[Action] = Field(default_factory=list)
     web_agent_id: str | None = None
     recording: Any | None = Field(default=None, description="Optional recording data associated with the task solution.")
+    
+    model_config = {"extra": "allow"}
 
     def nested_model_dump(self, *args, **kwargs) -> dict[str, Any]:
         base_dump = super().model_dump(*args, **kwargs)

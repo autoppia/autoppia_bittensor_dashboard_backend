@@ -23,6 +23,7 @@ from app.api.routes.ui.miner_list import router as miner_list_router
 from app.api.routes.ui.optimized_ui import router as optimized_ui_router
 from app.api.routes.ui.optimized_rounds_post import router as optimized_rounds_post_router
 from app.api.routes.validator_rounds import router as validator_rounds_router
+from app.api.routes.subnets import router as subnets_router
 from app.services.idempotency import get_cache_stats
 
 # Configure logging
@@ -93,6 +94,7 @@ app.include_router(miner_list_router)  # Optimized miner list endpoints
 app.include_router(optimized_ui_router)  # Optimized UI endpoints
 app.include_router(optimized_rounds_post_router)  # Optimized POST endpoints
 app.include_router(validator_rounds_router)  # Progressive validator ingestion endpoints
+app.include_router(subnets_router)  # Subnet timeline endpoints
 
 
 # Health check endpoint
