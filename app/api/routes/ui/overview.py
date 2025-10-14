@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from datetime import datetime, timezone
 import logging
 
-from app.models.overview import (
+from app.models.ui.overview import (
     OverviewMetricsResponse, ValidatorsListResponse, ValidatorDetailResponse,
     CurrentRoundResponse, RoundsListResponse, RoundDetailResponse,
     LeaderboardResponse, StatisticsResponse, NetworkStatusResponse,

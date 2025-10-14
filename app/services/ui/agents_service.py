@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import math
 import random
 from app.utils.score_formatter import format_score_as_percentage_float, format_score_round_data
-from app.models.agents import (
+from app.models.ui.agents import (
     Agent, AgentRun, AgentActivity, 
     AgentStatistics, AgentComparison, AgentComparisonResponse,
     AgentListQuery, AgentRunsQuery, 
@@ -13,8 +13,8 @@ from app.models.agents import (
     TopAgent, MostActiveAgent, PerformanceDistribution,
     ComparisonMetrics, AgentComparisonMetrics, ScoreRoundDataPoint
 )
-from app.models.miners import Miner, MinerRun, MinerStatus, MinerPerformanceQuery, MinerRunsQuery
-from app.services.miners_service import MinersService
+from app.models.ui.miners import Miner, MinerRun, MinerStatus, MinerPerformanceQuery, MinerRunsQuery
+from app.services.ui.miners_service import MinersService
 
 
 class AgentsService:
@@ -656,7 +656,7 @@ class AgentsService:
                 if task_status == TaskStatus.COMPLETED:
                     completed_tasks += 1
                 
-                from app.models.agents import Task
+                from app.models.ui.agents import Task
                 task = Task(
                     taskId=f"task_{i}_{j}",
                     website=random.choice(websites),

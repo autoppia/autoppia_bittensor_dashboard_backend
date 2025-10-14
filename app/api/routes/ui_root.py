@@ -4,9 +4,17 @@ UI endpoints for dashboard and frontend data.
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
 from app.models.ui import (
-    OverviewResponse, LeaderboardResponse, AgentsListResponse, 
-    MinerDetailsResponse, AgentRunDetailsResponse, TaskDetailsResponse,
-    AnalyticsResponse
+    OverviewResponse,
+    LeaderboardResponse,
+    AgentsListResponse,
+    MinerDetailsResponse,
+    AgentRunDetailsResponse,
+    TaskDetailsResponse,
+    AnalyticsResponse,
+    AgentsListData,
+    MinerDetailsData,
+    AgentRunDetailsData,
+    TaskDetailsData,
 )
 from app.services.data_builder import DataBuilder
 from app.db.mock_mongo import get_mock_db
@@ -15,6 +23,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/ui", tags=["ui"])
+
+
+def _primary_validator(round_data):
+    validators = getattr(round_data, "validators", None)
+    if validators:
+        return validators[0]
+    return None
 
 
 @router.get("/overview", response_model=OverviewResponse)
@@ -30,8 +45,12 @@ async def get_overview():
         
         # Calculate overview metrics
         total_rounds = len(rounds)
-        active_validators = len(set(round.validator_info.uid for round in rounds))
-        registered_miners = len(set(miner.uid for round in rounds for miner in round.miners))
+        active_validators = len(
+            set(validator.uid for round in rounds for validator in getattr(round, "validators", []))
+        )
+        registered_miners = len(
+            set(miner.uid for round in rounds for miner in getattr(round, "miners", []))
+        )
         
         # Get current top score from latest round
         current_top_score = 0.0
@@ -52,23 +71,26 @@ async def get_overview():
         live_events = []
         if rounds:
             latest_round = rounds[0]
+            primary_validator = _primary_validator(latest_round)
             live_events.append({
                 "type": "round_completed",
                 "round_id": latest_round.round_id,
                 "top_miner_uid": latest_round.winners[0].get('miner_uid', 0) if latest_round.winners else 0,
                 "top_score": current_top_score,
                 "timestamp": latest_round.ended_at or latest_round.started_at,
-                "validator_uid": latest_round.validator_info.uid,
+                "validator_uid": primary_validator.uid if primary_validator else 0,
                 "message": f"Round {latest_round.round_id} completed with top score {current_top_score:.2f}"
             })
-        
+
         # Generate validator cards
         validator_cards = []
         for round_data in rounds[:3]:  # Top 3 validators
-            validator = round_data.validator_info
+            validator = _primary_validator(round_data)
+            if validator is None:
+                continue
             validator_cards.append({
                 "validator_uid": validator.uid,
-                "name": f"Validator {validator.uid}",
+                "name": validator.name or f"Validator {validator.uid}",
                 "hotkey": validator.hotkey,
                 "logo_url": None,
                 "status_label": "Active",
@@ -77,7 +99,7 @@ async def get_overview():
                 "metrics": {"rounds_completed": 1, "avg_score": current_top_score},
                 "stake": {"amount": validator.stake, "currency": "TAO"},
                 "vtrust": validator.vtrust,
-                "version": 1,
+                "version": validator.version or 1,
                 "last_activity": round_data.ended_at or round_data.started_at,
                 "uptime": 99.9
             })
@@ -122,10 +144,11 @@ async def get_leaderboard(
             # Round leaderboard
             round_entries = []
             for round_data in rounds[skip:skip+limit]:
+                validator = _primary_validator(round_data)
                 round_entries.append({
                     "round_id": round_data.round_id,
-                    "validator_uid": round_data.validator_info.uid,
-                    "validator_hotkey": round_data.validator_info.hotkey,
+                    "validator_uid": validator.uid if validator else 0,
+                    "validator_hotkey": validator.hotkey if validator else "",
                     "started_at": round_data.started_at,
                     "ended_at": round_data.ended_at,
                     "n_tasks": round_data.n_tasks,
@@ -173,11 +196,12 @@ async def get_leaderboard(
             # Validator leaderboard
             validator_stats = {}
             for round_data in rounds:
-                validator_uid = round_data.validator_info.uid
-                if validator_uid not in validator_stats:
-                    validator_stats[validator_uid] = {"rounds": 0, "total_miners": 0}
-                validator_stats[validator_uid]["rounds"] += 1
-                validator_stats[validator_uid]["total_miners"] += round_data.n_miners
+                validator = _primary_validator(round_data)
+                if validator is None:
+                    continue
+                stats = validator_stats.setdefault(validator.uid, {"rounds": 0, "total_miners": 0})
+                stats["rounds"] += 1
+                stats["total_miners"] += round_data.n_miners
             
             validator_entries = []
             for validator_uid, stats in sorted(validator_stats.items(), key=lambda x: x[1]["rounds"], reverse=True)[skip:skip+limit]:
@@ -322,7 +346,9 @@ async def get_miner_details(miner_uid: int):
         for round_data in rounds:
             for miner in round_data.miners:
                 if miner.uid == miner_uid:
-                    validator = round_data.validator_info
+                    validator = _primary_validator(round_data)
+                    if validator is None:
+                        continue
                     validator_cards.append({
                         "validator_uid": validator.uid,
                         "hotkey": validator.hotkey,
@@ -470,15 +496,18 @@ async def get_task_details(task_id: str):
             "specifications": task_doc["specifications"]
         }
         
+        validators = round_doc.get("validators", [])
+        validator_meta = validators[0] if validators else {}
+
         round_info = {
             "round_id": round_doc["round_id"],
-            "validator_uid": round_doc["validator_info"]["uid"],
-            "validator_hotkey": round_doc["validator_info"]["hotkey"],
-            "started_at": round_doc["started_at"],
-            "ended_at": round_doc["ended_at"],
-            "n_tasks": round_doc["n_tasks"],
-            "n_miners": round_doc["n_miners"],
-            "status": round_doc["status"]
+            "validator_uid": validator_meta.get("uid", 0),
+            "validator_hotkey": validator_meta.get("hotkey", ""),
+            "started_at": round_doc.get("started_at"),
+            "ended_at": round_doc.get("ended_at"),
+            "n_tasks": round_doc.get("n_tasks", 0),
+            "n_miners": round_doc.get("n_miners", 0),
+            "status": round_doc.get("status", "unknown")
         }
         
         return TaskDetailsResponse(

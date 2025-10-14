@@ -7,12 +7,12 @@ from fastapi import APIRouter, HTTPException, Query, Path
 from datetime import datetime, timezone
 import logging
 
-from app.models.agent_runs import (
+from app.models.ui.agent_runs import (
     AgentRunDetailResponse, PersonasResponse, StatisticsResponse, SummaryResponse,
     TasksResponse, AgentRunsListResponse, ComparisonRequest, ComparisonResponse,
     TimelineResponse, LogsResponse, MetricsResponse
 )
-from app.services.agent_runs_service import AgentRunsService
+from app.services.ui.agent_runs_service import AgentRunsService
 from app.services.cache import cached, CACHE_TTL
 
 logger = logging.getLogger(__name__)

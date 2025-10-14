@@ -8,7 +8,7 @@ import random
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.utils.score_formatter import format_score_as_percentage_float
-from app.models.agent_runs import (
+from app.models.ui.agent_runs import (
     AgentRun, Personas, Statistics, Summary, Task, Action, Website,
     RoundInfo, ValidatorInfo, AgentInfo, ScoreDistribution,
     PerformanceByWebsite, PerformanceByUseCase, TopPerformingWebsite,

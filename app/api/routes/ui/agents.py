@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends, status
 from typing import Optional, List
 from datetime import datetime
 
-from app.models.agents import (
+from app.models.ui.agents import (
     AgentListQuery, AgentRunsQuery, 
     AgentActivityQuery, AllAgentActivityQuery, AgentCompareRequest,
     AgentListResponse, AgentDetailResponse,
@@ -10,7 +10,7 @@ from app.models.agents import (
     AgentStatisticsResponse, AgentComparisonResponse, APIResponse,
     TimeRange, Granularity, AgentType, AgentStatus, RunStatus, ActivityType
 )
-from app.services.agents_service import AgentsService
+from app.services.ui.agents_service import AgentsService
 
 # Create router
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])

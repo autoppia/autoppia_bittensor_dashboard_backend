@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, status
 from typing import Optional
-from app.models.miner_list import MinerListResponse, MinerDetailResponse, MinerListItem, MinerDetail
-from app.services.miners_service import MinersService
+from app.models.ui.miner_list import MinerListResponse, MinerDetailResponse, MinerListItem, MinerDetail
+from app.services.ui.miners_service import MinersService
 from app.services.cache import cached, CACHE_TTL
 
 # Create router

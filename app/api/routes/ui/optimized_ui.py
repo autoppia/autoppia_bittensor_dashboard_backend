@@ -8,7 +8,7 @@ from app.models.ui import (
     MinerDetailsResponse, AgentRunDetailsResponse, TaskDetailsResponse,
     AnalyticsResponse
 )
-from app.services.optimized_data_builder import OptimizedDataBuilder
+from app.services.ui.optimized_data_builder import OptimizedDataBuilder
 from app.services.cache import cached, CACHE_TTL
 import logging
 import time

@@ -2,13 +2,13 @@ from fastapi import APIRouter, HTTPException, Query, Depends, status
 from typing import Optional, List
 from datetime import datetime
 
-from app.models.miners import (
+from app.models.ui.miners import (
     MinerListQuery, MinerPerformanceQuery, MinerRunsQuery,
     MinerListResponse, MinerPerformanceResponse, MinerRunsResponse, APIResponse,
     TimeRange, Granularity, MinerStatus, RunStatus
 )
-from app.models.miner_update import MinerImageUpdateRequest, MinerImageUpdateResponse
-from app.services.miners_service import MinersService
+from app.models.ui.miner_update import MinerImageUpdateRequest, MinerImageUpdateResponse
+from app.services.ui.miners_service import MinersService
 
 # Create router
 router = APIRouter(prefix="/api/v1/miners", tags=["miners"])
@@ -28,7 +28,7 @@ def create_api_response(data: any, success: bool = True) -> APIResponse:
 
 def create_error_response(error_code: str, message: str, details: dict = None) -> APIResponse:
     """Create error response."""
-    from app.models.miners import ErrorDetail
+    from app.models.ui.miners import ErrorDetail
     return APIResponse(
         success=False,
         error=ErrorDetail(
@@ -325,5 +325,3 @@ async def update_miner_image(uid: int, request: MinerImageUpdateRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=create_error_response("INTERNAL_SERVER_ERROR", f"Failed to update miner image: {str(e)}").dict()
         )
-
-

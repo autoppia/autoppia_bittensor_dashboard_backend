@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import math
 import random
 from app.utils.score_formatter import format_score_as_percentage_float
-from app.models.miners import (
+from app.models.ui.miners import (
     Miner, MinerRun, MinerActivity,
     MinerListQuery, MinerPerformanceQuery, MinerRunsQuery,
     MinerStatus, RunStatus, TaskStatus, ActivityType,
@@ -371,7 +371,7 @@ class MinersService:
                 if task_status == TaskStatus.COMPLETED:
                     completed_tasks += 1
                 
-                from app.models.miners import Task
+                from app.models.ui.miners import Task
                 task = Task(
                     taskId=f"task_{i}_{j}",
                     website=random.choice(websites),

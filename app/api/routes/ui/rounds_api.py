@@ -1,7 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Path
-from app.models.rounds import (
+from app.models.ui.rounds import (
     RoundsListResponse, RoundDetailResponse, RoundStatisticsResponse,
     RoundMinersResponse, RoundValidatorsResponse, RoundActivityResponse,
     RoundProgressResponse, RoundSummaryResponse, RoundComparisonRequest,
