@@ -10,6 +10,7 @@ from app.models.schemas import (
     Round, AgentEvaluationRun, Task, TaskSolution, EvaluationResult
 )
 from app.db.mock_mongo import get_mock_db
+from app.data import get_validator_metadata
 import logging
 
 logger = logging.getLogger(__name__)
@@ -27,13 +28,13 @@ class OptimizedDataBuilder:
         db = get_mock_db()
         
         # Get all rounds and filter fields in Python (mock DB doesn't support projection)
-        rounds_docs = await db.rounds.find({}).sort("round_id", -1).skip(skip).limit(limit).to_list()
+        rounds_docs = await db.rounds.find({}).sort("validator_round_id", -1).skip(skip).limit(limit).to_list()
         
         # Filter to essential fields
         filtered_rounds = []
         for doc in rounds_docs:
             filtered_doc = {
-                "round_id": doc.get("round_id"),
+                "validator_round_id": doc.get("validator_round_id"),
                 "started_at": doc.get("started_at"),
                 "ended_at": doc.get("ended_at"),
                 "n_tasks": doc.get("n_tasks"),
@@ -52,18 +53,18 @@ class OptimizedDataBuilder:
         return rounds_docs
     
     @staticmethod
-    async def get_round_summary(round_id: str) -> Optional[Dict[str, Any]]:
+    async def get_round_summary(validator_round_id: str) -> Optional[Dict[str, Any]]:
         """
         Get lightweight round summary for a specific round.
         """
         db = get_mock_db()
         
-        round_doc = await db.rounds.find_one({"round_id": round_id})
+        round_doc = await db.rounds.find_one({"validator_round_id": validator_round_id})
         
         if round_doc:
             # Filter to essential fields
             round_doc = {
-                "round_id": round_doc.get("round_id"),
+                "validator_round_id": round_doc.get("validator_round_id"),
                 "started_at": round_doc.get("started_at"),
                 "ended_at": round_doc.get("ended_at"),
                 "n_tasks": round_doc.get("n_tasks"),
@@ -79,14 +80,14 @@ class OptimizedDataBuilder:
         return round_doc
     
     @staticmethod
-    async def get_round_miners_summary(round_id: str, limit: int = 20, skip: int = 0) -> List[Dict[str, Any]]:
+    async def get_round_miners_summary(validator_round_id: str, limit: int = 20, skip: int = 0) -> List[Dict[str, Any]]:
         """
         Get lightweight miner summaries for a round.
         """
         db = get_mock_db()
         
         # Get round to access winners data
-        round_doc = await db.rounds.find_one({"round_id": round_id})
+        round_doc = await db.rounds.find_one({"validator_round_id": validator_round_id})
         
         if not round_doc:
             return []
@@ -114,23 +115,26 @@ class OptimizedDataBuilder:
         return miners_summary[skip:skip + limit]
     
     @staticmethod
-    async def get_round_validators_summary(round_id: str) -> List[Dict[str, Any]]:
+    async def get_round_validators_summary(validator_round_id: str) -> List[Dict[str, Any]]:
         """
         Get lightweight validator summaries for a round.
         """
         db = get_mock_db()
         
-        round_doc = await db.rounds.find_one({"round_id": round_id})
+        round_doc = await db.rounds.find_one({"validator_round_id": validator_round_id})
         
         if not round_doc:
             return []
         
         validators_summary = []
         for validator in round_doc.get('validators', []):
+            metadata = get_validator_metadata(validator['uid'])
             validators_summary.append({
                 "uid": validator['uid'],
-                "name": validator.get('name', f"Validator {validator['uid']}"),
-                "hotkey": validator['hotkey'],
+                "name": metadata.get("name") or validator.get('name', f"Validator {validator['uid']}"),
+                "hotkey": metadata.get("hotkey") or validator['hotkey'],
+                "coldkey": metadata.get("coldkey") or validator.get('coldkey'),
+                "image": metadata.get("image"),
                 "stake": validator['stake'],
                 "vtrust": validator['vtrust'],
                 "version": validator.get('version', '1.0.0'),
@@ -140,13 +144,13 @@ class OptimizedDataBuilder:
         return validators_summary
     
     @staticmethod
-    async def get_agent_runs_summary(round_id: str, limit: int = 20, skip: int = 0) -> List[Dict[str, Any]]:
+    async def get_agent_runs_summary(validator_round_id: str, limit: int = 20, skip: int = 0) -> List[Dict[str, Any]]:
         """
         Get lightweight agent run summaries for a round.
         """
         db = get_mock_db()
         
-        agent_runs_docs = await db.agent_evaluation_runs.find({"round_id": round_id}).skip(skip).limit(limit).to_list()
+        agent_runs_docs = await db.agent_evaluation_runs.find({"validator_round_id": validator_round_id}).skip(skip).limit(limit).to_list()
         
         # Filter to essential fields
         filtered_agent_runs = []
@@ -213,7 +217,7 @@ class OptimizedDataBuilder:
         for doc in tasks_docs:
             filtered_doc = {
                 "task_id": doc.get("task_id"),
-                "round_id": doc.get("round_id"),
+                "validator_round_id": doc.get("validator_round_id"),
                 "agent_run_id": doc.get("agent_run_id"),
                 "url": doc.get("url"),
                 "prompt": doc.get("prompt"),
@@ -255,7 +259,7 @@ class OptimizedDataBuilder:
             filtered_doc = {
                 "solution_id": doc.get("solution_id"),
                 "task_id": doc.get("task_id"),
-                "round_id": doc.get("round_id"),
+                "validator_round_id": doc.get("validator_round_id"),
                 "agent_run_id": doc.get("agent_run_id"),
                 "miner_uid": doc.get("miner_uid"),
                 "validator_uid": doc.get("validator_uid"),
@@ -286,7 +290,7 @@ class OptimizedDataBuilder:
                 "evaluation_id": doc.get("evaluation_id"),
                 "task_id": doc.get("task_id"),
                 "task_solution_id": doc.get("task_solution_id"),
-                "round_id": doc.get("round_id"),
+                "validator_round_id": doc.get("validator_round_id"),
                 "agent_run_id": doc.get("agent_run_id"),
                 "miner_uid": doc.get("miner_uid"),
                 "validator_uid": doc.get("validator_uid"),

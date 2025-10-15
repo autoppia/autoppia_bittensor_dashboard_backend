@@ -1,5 +1,5 @@
 from typing import List, Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from app.utils.validation import validate_miner_image_url
 
 
@@ -12,10 +12,11 @@ class MinerListItem(BaseModel):
     isSota: bool = Field(..., description="Whether miner is SOTA (company agent)")
     imageUrl: str = Field(..., description="Miner image URL (must be valid URL or empty string)")
 
-    @validator('imageUrl')
-    def validate_image_url(cls, v):
+    @field_validator('imageUrl')
+    @classmethod
+    def validate_image_url(cls, value: str) -> str:
         """Validate that imageUrl is a valid URL or empty string."""
-        return validate_miner_image_url(v)
+        return validate_miner_image_url(value)
 
 
 class MinerListResponse(BaseModel):
@@ -49,10 +50,11 @@ class MinerDetail(BaseModel):
     createdAt: str = Field(..., description="Creation timestamp (ISO 8601)")
     updatedAt: str = Field(..., description="Last update timestamp (ISO 8601)")
 
-    @validator('imageUrl')
-    def validate_image_url(cls, v):
+    @field_validator('imageUrl')
+    @classmethod
+    def validate_detail_image_url(cls, value: str) -> str:
         """Validate that imageUrl is a valid URL or empty string."""
-        return validate_miner_image_url(v)
+        return validate_miner_image_url(value)
 
 
 class MinerDetailResponse(BaseModel):

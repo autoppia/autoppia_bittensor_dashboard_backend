@@ -18,6 +18,7 @@ from app.models.ui.agent_runs import (
 from app.db.mock_mongo import get_mock_db
 from app.models.schemas import Round, AgentEvaluationRun, Task as SchemaTask, TaskSolution, EvaluationResult
 from pydantic import ValidationError
+from app.data import get_validator_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class AgentRunsService:
         self, 
         page: int = 1, 
         limit: int = 20,
-        round_id: Optional[int] = None,
+        validator_round_id: Optional[int] = None,
         validator_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         status: Optional[str] = None,
@@ -45,8 +46,8 @@ class AgentRunsService:
             
             # Build query
             query = {}
-            if round_id:
-                query["round_id"] = f"round_{round_id:03d}"
+            if validator_round_id:
+                query["validator_round_id"] = f"round_{validator_round_id:03d}"
             if validator_id:
                 validator_uid = int(validator_id.split('-')[1]) if '-' in validator_id else int(validator_id)
                 query["validator_uid"] = validator_uid
@@ -63,7 +64,7 @@ class AgentRunsService:
                 agent_run = AgentEvaluationRun(**doc)
                 
                 # Get round data
-                round_doc = await self.db.rounds.find_one({"round_id": agent_run.round_id})
+                round_doc = await self.db.rounds.find_one({"validator_round_id": agent_run.validator_round_id})
                 if not round_doc:
                     continue
                 
@@ -97,7 +98,7 @@ class AgentRunsService:
                 agent_runs.append({
                     "runId": agent_run.agent_run_id,
                     "agentId": f"agent-{miner.uid}",
-                    "roundId": int(agent_run.round_id.split('_')[1]) if '_' in agent_run.round_id else 20,
+                    "roundId": int(agent_run.validator_round_id.split('_')[1]) if '_' in agent_run.validator_round_id else 20,
                     "validatorId": f"validator-{validator.uid}",
                     "status": "completed" if agent_run.ended_at else "running",
                     "startTime": datetime.fromtimestamp(agent_run.started_at, tz=timezone.utc).isoformat(),
@@ -169,7 +170,7 @@ class AgentRunsService:
             tasks_data_full = await self._build_tasks_data(agent_run, tasks, task_solutions, evaluation_results)
 
             # Get round data for context
-            round_doc = await self.db.rounds.find_one({"round_id": agent_run.round_id})
+            round_doc = await self.db.rounds.find_one({"validator_round_id": agent_run.validator_round_id})
             if not round_doc:
                 return None
             
@@ -224,13 +225,15 @@ class AgentRunsService:
                 }
             }
             
+            validator_meta = get_validator_metadata(validator.uid)
+
             return AgentRun(
                 runId=run_id,
                 agentId=f"agent-{agent_run.miner_uid}",
-                roundId=int(agent_run.round_id.split('_')[1]) if '_' in agent_run.round_id else 20,
+                roundId=int(agent_run.validator_round_id.split('_')[1]) if '_' in agent_run.validator_round_id else 20,
                 validatorId=f"validator-{validator.uid}",
-                validatorName=validator.name or f"Validator {validator.uid}",
-                validatorImage=f"https://autoppia.com/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
+                validatorName=validator_meta.get("name") or validator.name or f"Validator {validator.uid}",
+                validatorImage=validator_meta.get("image"),
                 startTime=datetime.fromtimestamp(agent_run.started_at, tz=timezone.utc).isoformat(),
                 endTime=datetime.fromtimestamp(agent_run.ended_at, tz=timezone.utc).isoformat() if agent_run.ended_at else None,
                 status=RunStatus.COMPLETED if agent_run.ended_at else RunStatus.RUNNING,
@@ -264,7 +267,7 @@ class AgentRunsService:
             agent_run = AgentEvaluationRun(**agent_run_doc)
             
             # Get round data
-            round_doc = await self.db.rounds.find_one({"round_id": agent_run.round_id})
+            round_doc = await self.db.rounds.find_one({"validator_round_id": agent_run.validator_round_id})
             if not round_doc:
                 return None
             
@@ -277,10 +280,12 @@ class AgentRunsService:
             if not validator or not miner:
                 return None
             
+            validator_meta = get_validator_metadata(validator.uid)
+            
             # Build round info
             round_info = RoundInfo(
-                id=int(agent_run.round_id.split('_')[1]) if '_' in agent_run.round_id else 20,
-                name=f"Round {int(agent_run.round_id.split('_')[1]) if '_' in agent_run.round_id else 20}",
+                id=int(agent_run.validator_round_id.split('_')[1]) if '_' in agent_run.validator_round_id else 20,
+                name=f"Round {int(agent_run.validator_round_id.split('_')[1]) if '_' in agent_run.validator_round_id else 20}",
                 status="active" if not agent_run.ended_at else "completed",
                 startTime=datetime.fromtimestamp(round_data.started_at, tz=timezone.utc).isoformat(),
                 endTime=datetime.fromtimestamp(round_data.ended_at, tz=timezone.utc).isoformat() if round_data.ended_at else None
@@ -289,9 +294,9 @@ class AgentRunsService:
             # Build validator info
             validator_info = ValidatorInfo(
                 id=f"validator-{validator.uid}",
-                name=validator.name or f"Validator {validator.uid}",
-                image=f"https://autoppia.com/images/icons/validators/{validator.name or f'validator_{validator.uid}'}.png",
-                description=f"{validator.name or f'Validator {validator.uid}'} Validator",
+                name=validator_meta.get("name") or validator.name or f"Validator {validator.uid}",
+                image=validator_meta.get("image"),
+                description=f"{validator_meta.get('name') or validator.name or f'Validator {validator.uid}'} Validator",
                 website="https://autoppia.com",
                 github="https://github.com/autoppia"
             )
@@ -428,7 +433,7 @@ class AgentRunsService:
             duration = int((agent_run.ended_at or agent_run.started_at) - agent_run.started_at)
             
             # Get ranking
-            round_doc = await self.db.rounds.find_one({"round_id": agent_run.round_id})
+            round_doc = await self.db.rounds.find_one({"validator_round_id": agent_run.validator_round_id})
             ranking = 1
             if round_doc:
                 round_data = Round(**round_doc)
@@ -488,7 +493,7 @@ class AgentRunsService:
             return Summary(
                 runId=run_id,
                 agentId=f"agent-{agent_run.miner_uid}",
-                roundId=int(agent_run.round_id.split('_')[1]) if '_' in agent_run.round_id else 20,
+                roundId=int(agent_run.validator_round_id.split('_')[1]) if '_' in agent_run.validator_round_id else 20,
                 validatorId=f"validator-{agent_run.validator_uid}",
                 startTime=datetime.fromtimestamp(agent_run.started_at, tz=timezone.utc).isoformat(),
                 endTime=datetime.fromtimestamp(agent_run.ended_at, tz=timezone.utc).isoformat() if agent_run.ended_at else None,
@@ -576,7 +581,7 @@ class AgentRunsService:
         agent_id: str, 
         page: int = 1, 
         limit: int = 20,
-        round_id: Optional[int] = None,
+        validator_round_id: Optional[int] = None,
         validator_id: Optional[str] = None,
         status: Optional[str] = None,
         sort_by: str = "startTime",
@@ -591,8 +596,8 @@ class AgentRunsService:
             
             # Build query
             query = {"miner_uid": miner_uid}
-            if round_id:
-                query["round_id"] = f"round_{round_id:03d}"
+            if validator_round_id:
+                query["validator_round_id"] = f"round_{validator_round_id:03d}"
             if validator_id:
                 validator_uid = int(validator_id.split('-')[1]) if '-' in validator_id else int(validator_id)
                 query["validator_uid"] = validator_uid
@@ -606,7 +611,7 @@ class AgentRunsService:
                 agent_run = AgentEvaluationRun(**doc)
                 
                 # Get round data
-                round_doc = await self.db.rounds.find_one({"round_id": agent_run.round_id})
+                round_doc = await self.db.rounds.find_one({"validator_round_id": agent_run.validator_round_id})
                 if not round_doc:
                     continue
                 
@@ -633,7 +638,7 @@ class AgentRunsService:
                 agent_runs.append({
                     "runId": agent_run.agent_run_id,
                     "agentId": agent_id,
-                    "roundId": int(agent_run.round_id.split('_')[1]) if '_' in agent_run.round_id else 20,
+                    "roundId": int(agent_run.validator_round_id.split('_')[1]) if '_' in agent_run.validator_round_id else 20,
                     "validatorId": f"validator-{validator.uid}",
                     "validatorName": validator.name or f"Validator {validator.uid}",
                     "startTime": datetime.fromtimestamp(agent_run.started_at, tz=timezone.utc).isoformat(),
@@ -677,7 +682,7 @@ class AgentRunsService:
     
     async def get_agent_runs_by_round(
         self, 
-        round_id: int, 
+        validator_round_id: int, 
         page: int = 1, 
         limit: int = 20,
         validator_id: Optional[str] = None,
@@ -687,10 +692,10 @@ class AgentRunsService:
     ) -> Dict[str, Any]:
         """Get all agent runs for a specific round."""
         try:
-            logger.info(f"Fetching agent runs for round {round_id}")
+            logger.info(f"Fetching agent runs for round {validator_round_id}")
             
             # Build query
-            query = {"round_id": f"round_{round_id:03d}"}
+            query = {"validator_round_id": f"round_{validator_round_id:03d}"}
             if validator_id:
                 validator_uid = int(validator_id.split('-')[1]) if '-' in validator_id else int(validator_id)
                 query["validator_uid"] = validator_uid
@@ -704,7 +709,7 @@ class AgentRunsService:
                 agent_run = AgentEvaluationRun(**doc)
                 
                 # Get round data
-                round_doc = await self.db.rounds.find_one({"round_id": agent_run.round_id})
+                round_doc = await self.db.rounds.find_one({"validator_round_id": agent_run.validator_round_id})
                 if not round_doc:
                     continue
                 
@@ -780,7 +785,7 @@ class AgentRunsService:
         validator_id: str, 
         page: int = 1, 
         limit: int = 20,
-        round_id: Optional[int] = None,
+        validator_round_id: Optional[int] = None,
         status: Optional[str] = None,
         sort_by: str = "startTime",
         sort_order: str = "desc"
@@ -794,8 +799,8 @@ class AgentRunsService:
             
             # Build query
             query = {"validator_uid": validator_uid}
-            if round_id:
-                query["round_id"] = f"round_{round_id:03d}"
+            if validator_round_id:
+                query["validator_round_id"] = f"round_{validator_round_id:03d}"
             
             # Get agent runs
             agent_runs_docs = await self.db.agent_evaluation_runs.find(query).to_list(length=100)
@@ -806,7 +811,7 @@ class AgentRunsService:
                 agent_run = AgentEvaluationRun(**doc)
                 
                 # Get round data
-                round_doc = await self.db.rounds.find_one({"round_id": agent_run.round_id})
+                round_doc = await self.db.rounds.find_one({"validator_round_id": agent_run.validator_round_id})
                 if not round_doc:
                     continue
                 
@@ -834,7 +839,7 @@ class AgentRunsService:
                     "runId": agent_run.agent_run_id,
                     "agentId": f"agent-{miner.uid}",
                     "agentName": miner.agent_name or f"Agent {miner.uid}",
-                    "roundId": int(agent_run.round_id.split('_')[1]) if '_' in agent_run.round_id else 20,
+                    "roundId": int(agent_run.validator_round_id.split('_')[1]) if '_' in agent_run.validator_round_id else 20,
                     "startTime": datetime.fromtimestamp(agent_run.started_at, tz=timezone.utc).isoformat(),
                     "endTime": datetime.fromtimestamp(agent_run.ended_at, tz=timezone.utc).isoformat() if agent_run.ended_at else None,
                     "status": "completed" if agent_run.ended_at else "running",
@@ -934,7 +939,7 @@ class AgentRunsService:
                 message="Agent run started",
                 metadata={
                     "agentId": f"agent-{agent_run.miner_uid}",
-                    "roundId": int(agent_run.round_id.split('_')[1]) if '_' in agent_run.round_id else 20
+                    "roundId": int(agent_run.validator_round_id.split('_')[1]) if '_' in agent_run.validator_round_id else 20
                 }
             ))
             
@@ -959,7 +964,7 @@ class AgentRunsService:
                     message="Agent run completed",
                     metadata={
                         "agentId": f"agent-{agent_run.miner_uid}",
-                        "roundId": int(agent_run.round_id.split('_')[1]) if '_' in agent_run.round_id else 20
+                        "roundId": int(agent_run.validator_round_id.split('_')[1]) if '_' in agent_run.validator_round_id else 20
                     }
                 ))
             
@@ -1020,7 +1025,7 @@ class AgentRunsService:
                     message=random.choice(messages),
                     metadata={
                         "agentId": f"agent-{agent_run.miner_uid}",
-                        "roundId": int(agent_run.round_id.split('_')[1]) if '_' in agent_run.round_id else 20
+                        "roundId": int(agent_run.validator_round_id.split('_')[1]) if '_' in agent_run.validator_round_id else 20
                     }
                 ))
             
@@ -1102,11 +1107,11 @@ class AgentRunsService:
             legacy_docs = await self.db.tasks.find().to_list(length=1000)
             tasks_docs = [doc for doc in legacy_docs if doc.get("agentRunId") == run_id]
         
-        round_id = agent_run.round_id if agent_run else None
+        validator_round_id = agent_run.validator_round_id if agent_run else None
         normalized: List[SchemaTask] = []
         for raw_doc in tasks_docs:
             try:
-                normalized_doc = self._normalize_task_document(raw_doc, run_id, round_id)
+                normalized_doc = self._normalize_task_document(raw_doc, run_id, validator_round_id)
                 normalized.append(SchemaTask(**normalized_doc))
             except ValidationError as exc:
                 logger.warning(
@@ -1141,13 +1146,13 @@ class AgentRunsService:
         self,
         raw_doc: Dict[str, Any],
         run_id: str,
-        round_id: Optional[str]
+        validator_round_id: Optional[str]
     ) -> Dict[str, Any]:
         """Normalize legacy task documents into the schema used by the service."""
         doc = dict(raw_doc)
         task_id = doc.get("task_id") or doc.get("taskId")
         agent_run_id = doc.get("agent_run_id") or doc.get("agentRunId") or run_id
-        derived_round_id = doc.get("round_id") or doc.get("roundId") or round_id or "round_000"
+        derived_validator_round_id = doc.get("validator_round_id") or doc.get("roundId") or validator_round_id or "round_000"
         
         url = doc.get("url") or doc.get("URL") or doc.get("websiteUrl")
         if not url:
@@ -1167,7 +1172,7 @@ class AgentRunsService:
         
         normalized = {
             "task_id": task_id,
-            "round_id": derived_round_id,
+            "validator_round_id": derived_validator_round_id,
             "agent_run_id": agent_run_id,
             "scope": doc.get("scope", "local"),
             "is_web_real": doc.get("is_web_real") or doc.get("isWebReal", False),
@@ -1209,7 +1214,7 @@ class AgentRunsService:
         doc["solution_id"] = doc.get("solution_id") or doc.get("task_solution_id")
         doc["task_id"] = doc.get("task_id") or doc.get("taskId")
         doc["agent_run_id"] = doc.get("agent_run_id") or doc.get("agentRunId")
-        doc["round_id"] = doc.get("round_id") or doc.get("roundId")
+        doc["validator_round_id"] = doc.get("validator_round_id") or doc.get("roundId")
         if "actions" not in doc or not doc["actions"]:
             # Legacy datasets may only have logs; convert them into placeholder actions.
             logs = doc.get("logs") or []

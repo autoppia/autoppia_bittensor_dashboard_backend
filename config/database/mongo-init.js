@@ -26,32 +26,32 @@ db.createCollection('round_results');
 
 // Create indexes
 db.rounds.createIndex(
-  { "validator_uid": 1, "round_id": 1 },
+  { "validator_uid": 1, "validator_round_id": 1 },
   { unique: true, name: "u_round" }
 );
 
 db.events.createIndex(
-  { "validator_uid": 1, "round_id": 1, "ts": 1 },
+  { "validator_uid": 1, "validator_round_id": 1, "ts": 1 },
   { name: "e_vr_ts" }
 );
 
 db.task_runs.createIndex(
-  { "validator_uid": 1, "round_id": 1, "task_id": 1, "miner_uid": 1 },
+  { "validator_uid": 1, "validator_round_id": 1, "task_id": 1, "miner_uid": 1 },
   { unique: true, name: "u_task_run" }
 );
 
 db.agent_runs.createIndex(
-  { "validator_uid": 1, "round_id": 1, "miner_uid": 1 },
+  { "validator_uid": 1, "validator_round_id": 1, "miner_uid": 1 },
   { unique: true, name: "u_agent_run" }
 );
 
 db.weights.createIndex(
-  { "validator_uid": 1, "round_id": 1 },
+  { "validator_uid": 1, "validator_round_id": 1 },
   { unique: true, name: "u_weights" }
 );
 
 db.round_results.createIndex(
-  { "validator_uid": 1, "round_id": 1 },
+  { "validator_uid": 1, "validator_round_id": 1 },
   { unique: true, name: "u_round_results" }
 );
 

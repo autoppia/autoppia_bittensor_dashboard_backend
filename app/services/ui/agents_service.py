@@ -35,16 +35,28 @@ class AgentsService:
         # Convert miners to agents
         agents = []
         for miner in miners:
+            is_sota = getattr(miner, "isSota", False)
+            agent_uid = None if is_sota else miner.uid
+            agent_hotkey = None if is_sota else miner.hotkey
+            taostats_url = None if is_sota else miner.taostatsUrl
+            agent_identifier = miner.id
+            if is_sota:
+                agent_identifier = miner.name.lower().replace(" ", "-")
+
+            current_rank = 0 if is_sota else self._calculate_current_rank(miner)
+            best_rank = 0 if is_sota else self._calculate_best_rank_ever(miner)
+            alpha_prizes = 0.0 if is_sota else self._calculate_alpha_prizes(miner)
+
             agent = Agent(
-                id=miner.id,
-                uid=miner.uid,
+                id=agent_identifier,
+                uid=agent_uid,
                 name=miner.name,
-                hotkey=miner.hotkey,
+                hotkey=agent_hotkey,
                 type=self._get_agent_type_from_miner(miner),
                 imageUrl=miner.imageUrl,
                 githubUrl=miner.githubUrl,
-                taostatsUrl=miner.taostatsUrl,
-                isSota=miner.isSota,
+                taostatsUrl=taostats_url,
+                isSota=is_sota,
                 description=miner.description,
                 version="1.0.0",
                 status=self._convert_miner_status_to_agent_status(miner.status),
@@ -52,10 +64,10 @@ class AgentsService:
                 successfulRuns=miner.successfulRuns,
                 currentScore=miner.averageScore,  # Already in percentage format
                 currentTopScore=miner.bestScore,  # Already in percentage format
-                currentRank=self._calculate_current_rank(miner),
-                bestRankEver=self._calculate_best_rank_ever(miner),
+                currentRank=current_rank,
+                bestRankEver=best_rank,
                 roundsParticipated=miner.totalRuns,  # Using totalRuns as rounds participated
-                alphaWonInPrizes=self._calculate_alpha_prizes(miner),
+                alphaWonInPrizes=alpha_prizes,
                 averageDuration=miner.averageDuration,
                 totalTasks=miner.totalTasks,
                 completedTasks=miner.completedTasks,
@@ -137,27 +149,35 @@ class AgentsService:
             return None
         
         # Convert miner to agent
+        is_sota = getattr(miner, "isSota", False)
+        agent_uid = None if is_sota else miner.uid
+        agent_hotkey = None if is_sota else miner.hotkey
+        taostats_url = None if is_sota else miner.taostatsUrl
+        agent_identifier = miner.id
+        if is_sota:
+            agent_identifier = miner.name.lower().replace(" ", "-")
+
         agent = Agent(
-            id=miner.id,
-            uid=miner.uid,
+            id=agent_identifier,
+            uid=agent_uid,
             name=miner.name,
-            hotkey=miner.hotkey,
+            hotkey=agent_hotkey,
             type=self._get_agent_type_from_miner(miner),
             imageUrl=miner.imageUrl,
             githubUrl=miner.githubUrl,
-            taostatsUrl=miner.taostatsUrl,
-            isSota=miner.isSota,
+            taostatsUrl=taostats_url,
+            isSota=is_sota,
             description=miner.description,
             version="1.0.0",
             status=self._convert_miner_status_to_agent_status(miner.status),
             totalRuns=miner.totalRuns,
             successfulRuns=miner.successfulRuns,
-            currentScore=miner.averageScore,  # Renamed from averageScore
-            currentTopScore=miner.bestScore,  # Renamed from bestScore
-            currentRank=self._calculate_current_rank(miner),
-            bestRankEver=self._calculate_best_rank_ever(miner),
-            roundsParticipated=miner.totalRuns,  # Using totalRuns as rounds participated
-            alphaWonInPrizes=self._calculate_alpha_prizes(miner),
+            currentScore=miner.averageScore,
+            currentTopScore=miner.bestScore,
+            currentRank=0 if is_sota else self._calculate_current_rank(miner),
+            bestRankEver=0 if is_sota else self._calculate_best_rank_ever(miner),
+            roundsParticipated=miner.totalRuns,
+            alphaWonInPrizes=0.0 if is_sota else self._calculate_alpha_prizes(miner),
             averageDuration=miner.averageDuration,
             totalTasks=miner.totalTasks,
             completedTasks=miner.completedTasks,
@@ -176,7 +196,7 @@ class AgentsService:
         # Use miners service to get runs data
         try:
             uid = agent.uid
-            if not uid:
+            if uid is None:
                 return []
             
             # Get miner runs to extract score vs round data
@@ -187,26 +207,31 @@ class AgentsService:
                 sortOrder="desc"
             )
             
-            miner_runs = self._miners_service.get_miner_runs(uid, miner_runs_query)
+            miner_runs, _ = self._miners_service.get_miner_runs(uid, miner_runs_query)
             
             if not miner_runs:
                 return []
-            
+
+            validator_round_ids = [run.roundId for run in miner_runs]
+            top_scores_by_round = self._miners_service.get_round_top_scores(validator_round_ids)
+
             # Convert miner runs to score round data points
             score_round_data = []
-            for miner_run in miner_runs[0]:  # miner_runs is (runs, total)
+            for miner_run in miner_runs:
                 if miner_run.score is not None:
+                    top_score = top_scores_by_round.get(miner_run.roundId)
                     data_point = ScoreRoundDataPoint(
-                        round_id=miner_run.roundId,
-                        score=miner_run.score,  # Already in percentage format
+                        validator_round_id=miner_run.roundId,
+                        score=format_score_as_percentage_float(miner_run.score),
                         rank=miner_run.ranking,
+                        top_score=format_score_as_percentage_float(top_score) if top_score is not None else None,
                         reward=0.0,  # Default reward, could be enhanced later
                         timestamp=datetime.fromisoformat(miner_run.startTime.replace('Z', '+00:00'))
                     )
                     score_round_data.append(data_point)
             
-            # Sort by round_id descending (most recent first)
-            score_round_data.sort(key=lambda x: x.round_id, reverse=True)
+            # Sort by validator_round_id descending (most recent first)
+            score_round_data.sort(key=lambda x: x.validator_round_id, reverse=True)
             
             return score_round_data
         except Exception as e:
@@ -297,6 +322,8 @@ class AgentsService:
         # Use miners service to get runs data
         try:
             uid = agent.uid
+            if uid is None:
+                return [], 0
             
             # Convert AgentRunsQuery to MinerRunsQuery
             miner_query = MinerRunsQuery(
@@ -536,12 +563,14 @@ class AgentsService:
             ),
             Agent(
                 id="openai-cua",
+                uid=None,
                 name="OpenAI CUA",
                 type=AgentType.OPENAI,
                 imageUrl="https://openai.com/icons/openai.webp",
                 description="OpenAI's Computer Use Agent for web automation",
                 version="1.0.0",
                 status=AgentStatus.ACTIVE,
+                isSota=True,
                 totalRuns=892,
                 successfulRuns=756,
                 currentScore=0.82,
@@ -559,12 +588,14 @@ class AgentsService:
             ),
             Agent(
                 id="anthropic-cua",
+                uid=None,
                 name="Anthropic CUA",
                 type=AgentType.ANTHROPIC,
                 imageUrl="https://anthropic.com/icons/anthropic.webp",
                 description="Anthropic's Computer Use Agent",
                 version="2.1.0",
                 status=AgentStatus.ACTIVE,
+                isSota=True,
                 totalRuns=654,
                 successfulRuns=567,
                 currentScore=0.79,
@@ -582,12 +613,14 @@ class AgentsService:
             ),
             Agent(
                 id="browser-use-agent",
+                uid=None,
                 name="Browser Use Agent",
                 type=AgentType.BROWSER_USE,
                 imageUrl="https://browser-use.com/icons/browser-use.webp",
                 description="Browser Use framework agent",
                 version="0.3.0",
                 status=AgentStatus.ACTIVE,
+                isSota=True,
                 totalRuns=423,
                 successfulRuns=345,
                 currentScore=0.74,

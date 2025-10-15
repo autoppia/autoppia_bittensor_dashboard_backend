@@ -16,12 +16,12 @@ class DataBuilder:
     """Service for building complete objects with all related data."""
     
     @staticmethod
-    async def build_round_with_details(round_id: str) -> Optional[RoundWithDetails]:
+    async def build_round_with_details(validator_round_id: str) -> Optional[RoundWithDetails]:
         """
         Build a complete Round object with all its AgentEvaluationRuns and related data.
         
         Args:
-            round_id: The ID of the round to build
+            validator_round_id: The ID of the round to build
             
         Returns:
             RoundWithDetails object with all related data, or None if not found
@@ -29,16 +29,16 @@ class DataBuilder:
         db = get_mock_db()
         
         # Get the base round
-        round_doc = await db.rounds.find_one({"round_id": round_id})
+        round_doc = await db.rounds.find_one({"validator_round_id": validator_round_id})
         if not round_doc:
-            logger.warning(f"Round {round_id} not found")
+            logger.warning(f"Round {validator_round_id} not found")
             return None
         
         # Convert to Round object
         round_obj = Round(**round_doc)
         
         # Get all agent evaluation runs for this round
-        agent_runs_docs = await db.agent_evaluation_runs.find({"round_id": round_id}).to_list()
+        agent_runs_docs = await db.agent_evaluation_runs.find({"validator_round_id": validator_round_id}).to_list()
         
         # Build complete agent runs with all their data
         agent_runs_with_details = []
@@ -56,7 +56,7 @@ class DataBuilder:
             agent_evaluation_runs=agent_runs_with_details
         )
         
-        logger.info(f"Built complete round {round_id} with {len(agent_runs_with_details)} agent runs")
+        logger.info(f"Built complete round {validator_round_id} with {len(agent_runs_with_details)} agent runs")
         return round_with_details
     
     @staticmethod
@@ -125,8 +125,8 @@ class DataBuilder:
         # Build complete rounds
         rounds_with_details = []
         for round_doc in rounds_docs:
-            round_id = round_doc["round_id"]
-            round_with_details = await DataBuilder.build_round_with_details(round_id)
+            validator_round_id = round_doc["validator_round_id"]
+            round_with_details = await DataBuilder.build_round_with_details(validator_round_id)
             if round_with_details:
                 rounds_with_details.append(round_with_details)
         
@@ -148,8 +148,8 @@ class DataBuilder:
         """
         db = get_mock_db()
         
-        # Get rounds with pagination - sort by round_id descending to get latest first
-        rounds_docs = await db.rounds.find().sort("round_id", -1).skip(skip).limit(limit).to_list(length=limit)
+        # Get rounds with pagination - sort by validator_round_id descending to get latest first
+        rounds_docs = await db.rounds.find().sort("validator_round_id", -1).skip(skip).limit(limit).to_list(length=limit)
         
         # Convert to Round objects (no agent evaluation runs)
         rounds = []
@@ -158,20 +158,20 @@ class DataBuilder:
                 round_obj = Round(**round_doc)
                 rounds.append(round_obj)
             except Exception as e:
-                logger.warning(f"Failed to parse round {round_doc.get('round_id', 'unknown')}: {e}")
+                logger.warning(f"Failed to parse round {round_doc.get('validator_round_id', 'unknown')}: {e}")
                 continue
         
         logger.info(f"Built {len(rounds)} lightweight rounds (no agent evaluation runs)")
         return rounds
     
     @staticmethod
-    async def get_round_lightweight(round_id: str) -> Optional[Round]:
+    async def get_round_lightweight(validator_round_id: str) -> Optional[Round]:
         """
         Get a single round by ID without building agent evaluation runs.
         This is much faster for basic round information.
         
         Args:
-            round_id: The ID of the round to get
+            validator_round_id: The ID of the round to get
             
         Returns:
             Round object (without agent evaluation runs) or None if not found
@@ -179,26 +179,26 @@ class DataBuilder:
         db = get_mock_db()
         
         # Get the round document
-        round_doc = await db.rounds.find_one({"round_id": round_id})
+        round_doc = await db.rounds.find_one({"validator_round_id": validator_round_id})
         if not round_doc:
-            logger.warning(f"Round {round_id} not found")
+            logger.warning(f"Round {validator_round_id} not found")
             return None
         
         try:
             round_obj = Round(**round_doc)
-            logger.info(f"Retrieved lightweight round {round_id}")
+            logger.info(f"Retrieved lightweight round {validator_round_id}")
             return round_obj
         except Exception as e:
-            logger.error(f"Failed to parse round {round_id}: {e}")
+            logger.error(f"Failed to parse round {validator_round_id}: {e}")
             return None
     
     @staticmethod
-    async def build_agent_runs_list(round_id: Optional[str] = None, limit: int = 100, skip: int = 0) -> List[AgentEvaluationRunWithDetails]:
+    async def build_agent_runs_list(validator_round_id: Optional[str] = None, limit: int = 100, skip: int = 0) -> List[AgentEvaluationRunWithDetails]:
         """
         Build a list of complete AgentEvaluationRun objects with all their related data.
         
         Args:
-            round_id: Optional round ID to filter agent runs
+            validator_round_id: Optional round ID to filter agent runs
             limit: Maximum number of agent runs to return
             skip: Number of agent runs to skip (for pagination)
             
@@ -209,8 +209,8 @@ class DataBuilder:
         
         # Build query
         query = {}
-        if round_id:
-            query["round_id"] = round_id
+        if validator_round_id:
+            query["validator_round_id"] = validator_round_id
         
         # Get agent runs with pagination
         agent_runs_docs = await db.agent_evaluation_runs.find(query).to_list()

@@ -62,13 +62,13 @@ class APIDemo:
         print("🎬 Autoppia Validator Pipeline - Live Demo")
         print("=" * 50)
         
-        round_id = f"demo_round_{int(time.time())}"
-        print(f"🚀 Starting demo round: {round_id}")
+        validator_round_id = f"demo_round_{int(time.time())}"
+        print(f"🚀 Starting demo round: {validator_round_id}")
         
         # Step 1: Start Round
         print("\n📋 Step 1: Starting Round...")
         start_data = {
-            "round_id": round_id,
+            "validator_round_id": validator_round_id,
             "validator_info": self.validator_info,
             "start_block": 1000,
             "start_epoch": 50,
@@ -82,7 +82,7 @@ class APIDemo:
         result = await self.make_request("POST", "/v1/rounds/start", start_data)
         if result["success"]:
             print(f"✅ Round started successfully")
-            print(f"   Round ID: {round_id}")
+            print(f"   Round ID: {validator_round_id}")
             print(f"   Validator: {self.validator_info['validator_uid']}")
             print(f"   Miners: {len(self.miners)}")
         else:
@@ -92,7 +92,7 @@ class APIDemo:
         # Step 2: Generate Tasks
         print("\n🎯 Step 2: Generating Tasks...")
         task_data = {
-            "round_id": round_id,
+            "validator_round_id": validator_round_id,
             "validator_info": self.validator_info,
             "n_tasks": 3,
             "web_projects": ["ecommerce", "blog"],
@@ -100,7 +100,7 @@ class APIDemo:
             "metadata": {"generation_method": "demo"}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{round_id}/generate-tasks", task_data)
+        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/generate-tasks", task_data)
         if result["success"]:
             print(f"✅ Tasks generated successfully")
             print(f"   Tasks created: {result['data']['data']['tasks_generated']}")
@@ -110,11 +110,11 @@ class APIDemo:
         
         # Step 3: Distribute Tasks
         print("\n📤 Step 3: Distributing Tasks...")
-        task_ids = [f"{round_id}_task_{i:04d}" for i in range(3)]
+        task_ids = [f"{validator_round_id}_task_{i:04d}" for i in range(3)]
         miner_uids = [miner["miner_uid"] for miner in self.miners]
         
         dist_data = {
-            "round_id": round_id,
+            "validator_round_id": validator_round_id,
             "validator_info": self.validator_info,
             "task_ids": task_ids,
             "miner_uids": miner_uids,
@@ -123,7 +123,7 @@ class APIDemo:
             "metadata": {"distribution_method": "demo"}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{round_id}/distribute-tasks", dist_data)
+        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/distribute-tasks", dist_data)
         if result["success"]:
             print(f"✅ Tasks distributed successfully")
             print(f"   Task executions created: {result['data']['data']['task_executions_created']}")
@@ -139,8 +139,8 @@ class APIDemo:
             for miner in self.miners:
                 response = {
                     "task_id": task_id,
-                    "agent_run_id": f"{round_id}_{miner['miner_uid']}_{task_id}",
-                    "round_id": round_id,
+                    "agent_run_id": f"{validator_round_id}_{miner['miner_uid']}_{task_id}",
+                    "validator_round_id": validator_round_id,
                     "validator_info": self.validator_info,
                     "miner_info": miner,
                     "response": {
@@ -158,14 +158,14 @@ class APIDemo:
                 responses.append(response)
         
         response_data = {
-            "round_id": round_id,
+            "validator_round_id": validator_round_id,
             "validator_info": self.validator_info,
             "responses": responses,
             "batch_id": f"demo_batch_{int(time.time())}",
             "metadata": {"demo": True}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{round_id}/task-responses", response_data)
+        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/task-responses", response_data)
         if result["success"]:
             print(f"✅ Task responses submitted successfully")
             print(f"   Responses processed: {result['data']['data']['responses_processed']}")
@@ -178,10 +178,10 @@ class APIDemo:
         task_execution_ids = []
         for i in range(3):
             for miner in self.miners:
-                task_execution_ids.append(f"exec_{round_id}_{miner['miner_uid']}_{i}")
+                task_execution_ids.append(f"exec_{validator_round_id}_{miner['miner_uid']}_{i}")
         
         eval_data = {
-            "round_id": round_id,
+            "validator_round_id": validator_round_id,
             "validator_info": self.validator_info,
             "task_execution_ids": task_execution_ids,
             "evaluation_criteria": {
@@ -192,7 +192,7 @@ class APIDemo:
             "metadata": {"evaluation_method": "demo"}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{round_id}/evaluate", eval_data)
+        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/evaluate", eval_data)
         if result["success"]:
             print(f"✅ Tasks evaluated successfully")
             print(f"   Evaluations completed: {result['data']['data']['evaluations_completed']}")
@@ -203,7 +203,7 @@ class APIDemo:
         # Step 6: Calculate Scores
         print("\n📊 Step 6: Calculating Scores...")
         score_data = {
-            "round_id": round_id,
+            "validator_round_id": validator_round_id,
             "validator_info": self.validator_info,
             "scoring_method": "weighted_average",
             "weight_distribution": {
@@ -214,7 +214,7 @@ class APIDemo:
             "metadata": {"scoring_algorithm": "demo"}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{round_id}/score", score_data)
+        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/score", score_data)
         if result["success"]:
             print(f"✅ Scores calculated successfully")
             print(f"   Agent runs scored: {result['data']['data']['agent_runs_scored']}")
@@ -231,7 +231,7 @@ class APIDemo:
         ]
         
         weight_data = {
-            "round_id": round_id,
+            "validator_round_id": validator_round_id,
             "validator_info": self.validator_info,
             "winners": winners,
             "weight_distribution": {
@@ -242,7 +242,7 @@ class APIDemo:
             "metadata": {"assignment_method": "demo"}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{round_id}/assign-weights", weight_data)
+        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/assign-weights", weight_data)
         if result["success"]:
             print(f"✅ Weights assigned successfully")
             weights = result['data']['data']['weights_assigned']
@@ -256,7 +256,7 @@ class APIDemo:
         # Step 8: Complete Round
         print("\n✅ Step 8: Completing Round...")
         complete_data = {
-            "round_id": round_id,
+            "validator_round_id": validator_round_id,
             "validator_info": self.validator_info,
             "final_stats": {
                 "total_tasks": 3,
@@ -268,7 +268,7 @@ class APIDemo:
             "metadata": {"completed_by": "demo_script"}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{round_id}/complete", complete_data)
+        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/complete", complete_data)
         if result["success"]:
             print(f"✅ Round completed successfully")
             print(f"   Status: {result['data']['data']['status']}")
@@ -281,7 +281,7 @@ class APIDemo:
         print("\n🔍 Step 9: Querying Results...")
         
         # Get round status
-        status_result = await self.make_request("GET", f"/v1/rounds/{round_id}/status", 
+        status_result = await self.make_request("GET", f"/v1/rounds/{validator_round_id}/status", 
                                                {"validator_uid": self.validator_info["validator_uid"]})
         if status_result["success"]:
             print(f"✅ Round status retrieved")
@@ -290,7 +290,7 @@ class APIDemo:
             print(f"   Progress: {status_data['progress']}")
         
         # Get round details
-        details_result = await self.make_request("GET", f"/v1/rounds/{round_id}/details",
+        details_result = await self.make_request("GET", f"/v1/rounds/{validator_round_id}/details",
                                                 {"validator_uid": self.validator_info["validator_uid"]})
         if details_result["success"]:
             print(f"✅ Round details retrieved")
@@ -298,10 +298,10 @@ class APIDemo:
             print(f"   Summary: {details_data['summary']}")
         
         print(f"\n🎉 Demo completed successfully!")
-        print(f"📊 Round {round_id} processed {len(task_ids)} tasks with {len(self.miners)} miners")
+        print(f"📊 Round {validator_round_id} processed {len(task_ids)} tasks with {len(self.miners)} miners")
         print(f"🔗 View API docs at: {self.base_url}/docs")
         
-        return round_id
+        return validator_round_id
     
     async def demo_leaderboard(self):
         """Demo the leaderboard endpoints."""
@@ -316,7 +316,7 @@ class APIDemo:
             rounds = result['data']['data']['rounds']
             print(f"✅ Found {len(rounds)} rounds")
             for i, round_data in enumerate(rounds[:3], 1):
-                print(f"   {i}. Round {round_data['round_id']} - Status: {round_data['status']}")
+                print(f"   {i}. Round {round_data['validator_round_id']} - Status: {round_data['status']}")
         else:
             print(f"❌ Failed to get rounds leaderboard: {result['data']}")
         
@@ -344,7 +344,7 @@ async def main():
     async with APIDemo() as demo:
         try:
             # Demo complete pipeline
-            round_id = await demo.demo_complete_pipeline()
+            validator_round_id = await demo.demo_complete_pipeline()
             
             # Demo leaderboard
             await demo.demo_leaderboard()
@@ -352,7 +352,7 @@ async def main():
             print(f"\n🎯 Demo Summary:")
             print(f"   ✅ Complete pipeline tested")
             print(f"   ✅ Leaderboard endpoints tested")
-            print(f"   ✅ Round {round_id} created and processed")
+            print(f"   ✅ Round {validator_round_id} created and processed")
             print(f"   🔗 API Documentation: http://localhost:8000/docs")
             
         except Exception as e:

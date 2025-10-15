@@ -25,11 +25,11 @@ class CollectionOptimizer:
         # Mock database doesn't support indexes, so we'll just log this
         logger.info("Mock database - skipping index creation (not supported)")
         logger.info("In production, the following indexes would be created:")
-        logger.info("- rounds: round_id (unique), started_at, ended_at, status, validators.uid")
-        logger.info("- agent_evaluation_runs: agent_run_id (unique), round_id, miner_uid, validator_uid")
-        logger.info("- tasks: task_id (unique), round_id, agent_run_id, url")
-        logger.info("- task_solutions: solution_id (unique), task_id, round_id, agent_run_id, miner_uid")
-        logger.info("- evaluation_results: evaluation_id (unique), task_id, task_solution_id, round_id, agent_run_id, miner_uid, final_score")
+        logger.info("- rounds: validator_round_id (unique), started_at, ended_at, status, validators.uid")
+        logger.info("- agent_evaluation_runs: agent_run_id (unique), validator_round_id, miner_uid, validator_uid")
+        logger.info("- tasks: task_id (unique), validator_round_id, agent_run_id, url")
+        logger.info("- task_solutions: solution_id (unique), task_id, validator_round_id, agent_run_id, miner_uid")
+        logger.info("- evaluation_results: evaluation_id (unique), task_id, task_solution_id, validator_round_id, agent_run_id, miner_uid, final_score")
     
     @staticmethod
     async def optimize_rounds_collection():
@@ -43,13 +43,13 @@ class CollectionOptimizer:
         
         for round_doc in rounds:
             # Calculate computed fields
-            round_id = round_doc["round_id"]
+            validator_round_id = round_doc["validator_round_id"]
             
             # Count agent runs for this round
-            agent_runs_count = await db.agent_evaluation_runs.count_documents({"round_id": round_id})
+            agent_runs_count = await db.agent_evaluation_runs.count_documents({"validator_round_id": validator_round_id})
             
             # Count tasks for this round
-            tasks_count = await db.tasks.count_documents({"round_id": round_id})
+            tasks_count = await db.tasks.count_documents({"validator_round_id": validator_round_id})
             
             # Calculate average score from winners
             average_score = 0.0
@@ -62,7 +62,7 @@ class CollectionOptimizer:
             
             # Update round with computed fields
             await db.rounds.update_one(
-                {"round_id": round_id},
+                {"validator_round_id": validator_round_id},
                 {
                     "$set": {
                         "agent_runs_count": agent_runs_count,
@@ -191,7 +191,7 @@ class CollectionOptimizer:
         
         # Get rounds with computed fields
         rounds = await db.rounds.find({}, {
-            "round_id": 1,
+            "validator_round_id": 1,
             "started_at": 1,
             "ended_at": 1,
             "n_tasks": 1,

@@ -1,10 +1,10 @@
 """
-Compatibility shim exposing schema models to legacy import paths.
+Compatibility shim exposing core models to legacy import paths.
 """
 from __future__ import annotations
 
-from . import definitions as _definitions
+from .. import core as _core
 
-__all__ = list(getattr(_definitions, "__all__", []))
+__all__ = list(getattr(_core, "__all__", []))
 
-globals().update({name: getattr(_definitions, name) for name in __all__})
+globals().update({name: getattr(_core, name) for name in __all__})

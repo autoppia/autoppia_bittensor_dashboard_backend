@@ -1,6 +1,6 @@
 [
   {
-    "round_id": "round_001",
+    "validator_round_id": "round_001",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -128,7 +128,7 @@
     }
   },
   {
-    "round_id": "round_002",
+    "validator_round_id": "round_002",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -246,7 +246,7 @@
     }
   },
   {
-    "round_id": "round_003",
+    "validator_round_id": "round_003",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -365,7 +365,7 @@
     }
   },
   {
-    "round_id": "round_004",
+    "validator_round_id": "round_004",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -483,7 +483,7 @@
     }
   },
   {
-    "round_id": "round_005",
+    "validator_round_id": "round_005",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -577,7 +577,7 @@
     }
   },
   {
-    "round_id": "round_006",
+    "validator_round_id": "round_006",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -672,7 +672,7 @@
     }
   },
   {
-    "round_id": "round_007",
+    "validator_round_id": "round_007",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -781,7 +781,7 @@
     }
   },
   {
-    "round_id": "round_008",
+    "validator_round_id": "round_008",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -889,7 +889,7 @@
     }
   },
   {
-    "round_id": "round_009",
+    "validator_round_id": "round_009",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -998,7 +998,7 @@
     }
   },
   {
-    "round_id": "round_010",
+    "validator_round_id": "round_010",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -1126,7 +1126,7 @@
     }
   },
   {
-    "round_id": "round_011",
+    "validator_round_id": "round_011",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -1222,7 +1222,7 @@
     }
   },
   {
-    "round_id": "round_012",
+    "validator_round_id": "round_012",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -1300,7 +1300,7 @@
     }
   },
   {
-    "round_id": "round_013",
+    "validator_round_id": "round_013",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -1401,7 +1401,7 @@
     }
   },
   {
-    "round_id": "round_014",
+    "validator_round_id": "round_014",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -1495,7 +1495,7 @@
     }
   },
   {
-    "round_id": "round_015",
+    "validator_round_id": "round_015",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -1588,7 +1588,7 @@
     }
   },
   {
-    "round_id": "round_016",
+    "validator_round_id": "round_016",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -1716,7 +1716,7 @@
     }
   },
   {
-    "round_id": "round_017",
+    "validator_round_id": "round_017",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -1851,7 +1851,7 @@
     }
   },
   {
-    "round_id": "round_018",
+    "validator_round_id": "round_018",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -1965,7 +1965,7 @@
     }
   },
   {
-    "round_id": "round_019",
+    "validator_round_id": "round_019",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -2086,7 +2086,7 @@
     }
   },
   {
-    "round_id": "round_020",
+    "validator_round_id": "round_020",
     "validator_info": {
       "uid": 123,
       "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",

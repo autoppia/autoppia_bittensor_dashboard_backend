@@ -52,7 +52,7 @@ def generate_rounds_1_to_20():
         
         # Create round data
         round_data = {
-            "round_id": f"round_{round_num:03d}",
+            "validator_round_id": f"round_{round_num:03d}",
             "validator_info": {
                 "uid": 123,
                 "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
@@ -99,12 +99,12 @@ def main():
     # Print summary
     print("\n📊 Summary:")
     for round_data in rounds[:5]:  # Show first 5 rounds
-        round_id = round_data["round_id"]
+        validator_round_id = round_data["validator_round_id"]
         n_tasks = round_data["n_tasks"]
         n_miners = round_data["n_miners"]
         n_winners = round_data["n_winners"]
         top_score = round_data["winners"][0]["score"] if round_data["winners"] else 0.0
-        print(f"  {round_id}: {n_tasks} tasks, {n_miners} miners, {n_winners} winners, top score: {top_score}")
+        print(f"  {validator_round_id}: {n_tasks} tasks, {n_miners} miners, {n_winners} winners, top score: {top_score}")
     
     if len(rounds) > 5:
         print(f"  ... and {len(rounds) - 5} more rounds")

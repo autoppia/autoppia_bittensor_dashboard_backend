@@ -139,6 +139,25 @@ class MinersService:
         runs = runs[start:end]
         
         return runs, total
+
+    def get_round_top_scores(self, validator_round_ids: List[int]) -> Dict[int, float]:
+        """Return the top score observed for each round id."""
+        if not validator_round_ids:
+            return {}
+
+        validator_round_id_set = set(validator_round_ids)
+        top_scores: Dict[int, float] = {}
+
+        for run in self._mock_runs:
+            validator_round_id = run.roundId
+            if validator_round_id not in validator_round_id_set:
+                continue
+
+            current_top_score = top_scores.get(validator_round_id)
+            if current_top_score is None or run.score > current_top_score:
+                top_scores[validator_round_id] = run.score
+
+        return top_scores
     
     def get_miner_run_by_id(self, uid: int, run_id: str) -> Optional[MinerRun]:
         """Get miner run by ID."""

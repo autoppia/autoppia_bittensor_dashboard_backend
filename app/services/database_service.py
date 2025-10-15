@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 
 from app.db.mongo import get_db
+from app.data import get_validator_metadata
 from app.models.schemas import (
     Round, AgentEvaluationRun, TaskExecution, Task,
     ValidatorInfo, MinerInfo, RoundStatus, TaskStatus, EvaluationStatus
@@ -33,6 +34,34 @@ class DatabaseService:
         self._cache_ttl = 300  # 5 minutes cache TTL
         self._aggregated_cache = {}
         self._aggregated_cache_ttl = 600  # 10 minutes for aggregated data
+    
+    # -------------------------------------------------------------------------
+    # Helpers
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_miner_info(source: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract miner metadata from either legacy or new document structures."""
+        info = (source or {}).get("miner_info")
+        if info:
+            return dict(info)
+
+        # Fall back to legacy flat fields
+        miner_uid = source.get("miner_uid")
+        hotkey = source.get("miner_hotkey") or source.get("hotkey")
+        agent_name = source.get("agent_name") or (
+            f"Miner {miner_uid}" if miner_uid is not None else "Benchmark Agent"
+        )
+        return {
+            "miner_uid": miner_uid,
+            "miner_hotkey": hotkey,
+            "agent_name": agent_name,
+            "agent_image": source.get("agent_image") or "",
+            "github": source.get("github") or "",
+            "is_sota": source.get("is_sota", False),
+            "description": source.get("description"),
+            "provider": source.get("provider"),
+        }
     
     def _is_cache_valid(self, cache_key: str, ttl: int) -> bool:
         """Check if cache entry is still valid."""
@@ -123,22 +152,32 @@ class DatabaseService:
             
             # Group by miner and create time series
             chart_data = {}
-            miner_data = {}
+            miner_data: Dict[str, List[Dict[str, Any]]] = {}
             
             for run in agent_runs:
-                miner_uid = run["miner_info"]["miner_uid"]
-                if miner_uid not in miner_data:
-                    miner_data[miner_uid] = []
+                miner_info = self._normalize_miner_info(run)
+                miner_uid = miner_info.get("miner_uid")
+                is_sota = miner_info.get("is_sota", False)
                 
-                miner_data[miner_uid].append({
+                if is_sota:
+                    base_name = miner_info.get("agent_name", "Benchmark Agent")
+                    group_key = self._format_agent_name(base_name)
+                else:
+                    if miner_uid is None:
+                        continue
+                    group_key = self._format_agent_name(f"miner_{miner_uid}")
+                
+                if group_key not in miner_data:
+                    miner_data[group_key] = []
+                
+                miner_data[group_key].append({
                     "score": run.get("avg_eval_score", 0.0),
                     "timestamp": run["started_at"],
-                    "round_id": run["round_id"]
+                    "validator_round_id": run["validator_round_id"]
                 })
             
             # Create chart data for each miner
-            for miner_uid, runs in miner_data.items():
-                agent_name = self._format_agent_name(f"miner_{miner_uid}")
+            for agent_name, runs in miner_data.items():
                 data_points = []
                 
                 # Sort by timestamp and create day-based data
@@ -168,8 +207,14 @@ class DatabaseService:
                 "started_at": {"$gte": start_time}
             })
             
-            # Get registered miners count
-            registered_miners = self.db.agent_evaluation_runs.distinct("miner_info.miner_uid")
+            # Get registered miners count (supporting legacy documents without embedded info)
+            registered_miners = {
+                uid for uid in self.db.agent_evaluation_runs.distinct("miner_info.miner_uid")
+                if uid is not None
+            }
+            registered_miners.update(
+                uid for uid in self.db.agent_evaluation_runs.distinct("miner_uid") if uid is not None
+            )
             
             # Get available websites count
             available_websites = self.db.tasks.distinct("website")
@@ -222,11 +267,15 @@ class DatabaseService:
                         "task_id": latest_round["tasks"][0].get("task_id", "")
                     }
                 
+                metadata = get_validator_metadata(validator_uid)
+                hotkey = metadata.get("hotkey") or validator_info.get("validator_hotkey", "")
+                image_path = metadata.get("image")
+
                 validator_cards.append({
                     "validator_uid": validator_info["validator_uid"],
-                    "name": self._get_validator_name(validator_info["validator_uid"]),
-                    "hotkey": validator_info["validator_hotkey"][:20] + "...",
-                    "logo_url": f"https://autoppia.com/logos/validator_{validator_info['validator_uid']}.png",
+                    "name": metadata.get("name") or self._get_validator_name(validator_info["validator_uid"]),
+                    "hotkey": f"{hotkey[:20]}..." if hotkey else "",
+                    "logo_url": image_path,
                     "status": self._get_validator_status(latest_round["status"]),
                     "status_label": self._get_validator_status_label(latest_round["status"]),
                     "status_color": self._get_validator_status_color(latest_round["status"]),
@@ -265,19 +314,25 @@ class DatabaseService:
             for round_doc in completed_rounds:
                 # Get top performer for this round
                 agent_runs = await self.db.agent_evaluation_runs.find({
-                    "round_id": round_doc["round_id"]
+                    "validator_round_id": round_doc["validator_round_id"]
                 }).sort("avg_eval_score", -1).to_list(1)
                 
                 if agent_runs:
                     top_run = agent_runs[0]
+                    miner_info = self._normalize_miner_info(top_run)
+                    if miner_info.get("is_sota"):
+                        continue
+                    top_miner_uid = miner_info.get("miner_uid")
+                    if top_miner_uid is None:
+                        continue
                     events.append({
                         "type": "round_completed",
-                        "round_id": round_doc["round_id"],
-                        "top_miner_uid": top_run["miner_info"]["miner_uid"],
+                        "validator_round_id": round_doc["validator_round_id"],
+                        "top_miner_uid": top_miner_uid,
                         "top_score": top_run["avg_eval_score"],
                         "timestamp": round_doc["ended_at"],
                         "validator_uid": round_doc["validator_info"]["validator_uid"],
-                        "message": f"Round {round_doc['round_id']} completed - Top miner {top_run['miner_info']['miner_uid']} scored {top_run['avg_eval_score']:.3f}"
+                        "message": f"Round {round_doc['validator_round_id']} completed - Top miner {top_miner_uid} scored {top_run['avg_eval_score']:.3f}"
                     })
             
             return events
@@ -304,10 +359,15 @@ class DatabaseService:
             
             miner_stats = {}
             for run in agent_runs:
-                miner_uid = run["miner_info"]["miner_uid"]
+                miner_info = self._normalize_miner_info(run)
+                if miner_info.get("is_sota"):
+                    continue
+                miner_uid = miner_info.get("miner_uid")
+                if miner_uid is None:
+                    continue
                 if miner_uid not in miner_stats:
                     miner_stats[miner_uid] = {
-                        "miner_info": run["miner_info"],
+                        "miner_info": miner_info,
                         "rounds_participated": 0,
                         "scores": [],
                         "last_activity": 0
@@ -327,10 +387,11 @@ class DatabaseService:
                 avg_score = sum(stats["scores"]) / len(stats["scores"]) if stats["scores"] else 0.0
                 best_score = max(stats["scores"]) if stats["scores"] else 0.0
                 
+                miner_info = stats["miner_info"]
                 agents.append({
                     "miner_uid": miner_uid,
-                    "name": f"Miner {miner_uid}",
-                    "hotkey": stats["miner_info"]["miner_hotkey"],
+                    "name": miner_info.get("agent_name", f"Miner {miner_uid}"),
+                    "hotkey": miner_info.get("miner_hotkey"),
                     "current_rank": 0,  # Will be set after sorting
                     "current_score": avg_score,
                     "all_time_best": best_score,
@@ -382,7 +443,10 @@ class DatabaseService:
         try:
             # Get miner info
             miner_run = await self.db.agent_evaluation_runs.find_one({
-                "miner_info.miner_uid": miner_uid
+                "$or": [
+                    {"miner_info.miner_uid": miner_uid},
+                    {"miner_uid": miner_uid}
+                ]
             })
             
             if not miner_run:
@@ -391,7 +455,12 @@ class DatabaseService:
             # Get miner statistics
             pipeline = [
                 {
-                    "$match": {"miner_info.miner_uid": miner_uid}
+                    "$match": {
+                        "$or": [
+                            {"miner_info.miner_uid": miner_uid},
+                            {"miner_uid": miner_uid}
+                        ]
+                    }
                 },
                 {
                     "$group": {
@@ -416,11 +485,13 @@ class DatabaseService:
             # Get validator cards
             validator_cards = await self._get_miner_validator_cards(miner_uid)
             
+            miner_info = self._normalize_miner_info(miner_run)
+
             result = {
                 "miner_info": {
                     "miner_uid": miner_uid,
-                    "name": f"Miner {miner_uid}",
-                    "hotkey": miner_run["miner_info"]["miner_hotkey"],
+                    "name": miner_info.get("agent_name", f"Miner {miner_uid}"),
+                    "hotkey": miner_info.get("miner_hotkey"),
                     "current_rank": stats.get("best_rank", 999),
                     "all_time_best_score": stats.get("best_score", 0.0),
                     "rounds_completed": stats.get("total_rounds", 0),
@@ -465,7 +536,7 @@ class DatabaseService:
             
             # Get round info
             round_info = await self.db.rounds.find_one({
-                "round_id": agent_run["round_id"]
+                "validator_round_id": agent_run["validator_round_id"]
             })
             
             # Get tasks for this run
@@ -478,22 +549,35 @@ class DatabaseService:
             
             # Get tasks data
             tasks_data = await self._format_tasks_data(tasks)
+            miner_info = self._normalize_miner_info(agent_run)
             
+            validator_payload = agent_run.get("validator_info") or {}
+            validator_uid = validator_payload.get("validator_uid") or agent_run.get("validator_uid")
+            validator_meta = get_validator_metadata(validator_uid) if validator_uid is not None else {
+                "uid": validator_uid,
+                "name": f"Validator {validator_uid}",
+                "hotkey": "",
+                "coldkey": "",
+                "image": "images/Autoppia.png",
+            }
+            validator_hotkey = validator_meta.get("hotkey") or validator_payload.get("validator_hotkey", "")
+
             result = {
                 "run_info": {
                     "agent_run_id": agent_run_id,
-                    "round_id": agent_run["round_id"],
-                    "round_number": self._extract_round_number(agent_run["round_id"]),
+                    "validator_round_id": agent_run["validator_round_id"],
+                    "round_number": self._extract_round_number(agent_run["validator_round_id"]),
                     "status": agent_run["status"],
                     "started_at": agent_run["started_at"],
                     "completed_at": agent_run["ended_at"],
                     "elapsed_time": agent_run["elapsed_sec"]
                 },
                 "validator_info": {
-                    "validator_uid": agent_run["validator_info"]["validator_uid"],
-                    "validator_name": self._get_validator_name(agent_run["validator_info"]["validator_uid"]),
-                    "validator_hotkey": agent_run["validator_info"]["validator_hotkey"][:20] + "...",
-                    "validator_image": f"https://autoppia.com/logos/validator_{agent_run['validator_info']['validator_uid']}.png",
+                    "validator_uid": validator_uid,
+                    "validator_name": validator_meta.get("name", self._get_validator_name(validator_uid)),
+                    "validator_hotkey": f"{validator_hotkey[:20]}..." if validator_hotkey else "",
+                    "validator_coldkey": validator_meta.get("coldkey", ""),
+                    "validator_image": validator_meta.get("image"),
                     "version": "v7.2.1",
                     "status": "Running",
                     "stake": 1722000,
@@ -501,10 +585,19 @@ class DatabaseService:
                     "vtrust": 1.0
                 },
                 "miner_info": {
-                    "miner_uid": agent_run["miner_info"]["miner_uid"],
-                    "miner_name": f"Miner {agent_run['miner_info']['miner_uid']}",
-                    "miner_hotkey": agent_run["miner_info"]["miner_hotkey"][:20] + "...",
-                    "miner_image": f"https://autoppia.com/logos/miner_{agent_run['miner_info']['miner_uid']}.png",
+                    "miner_uid": miner_info.get("miner_uid"),
+                    "miner_name": miner_info.get(
+                        "agent_name",
+                        f"Miner {miner_info.get('miner_uid', 'benchmark')}"
+                    ),
+                    "miner_hotkey": (
+                        miner_info["miner_hotkey"][:20] + "..."
+                        if miner_info.get("miner_hotkey") else None
+                    ),
+                    "miner_image": miner_info.get(
+                        "agent_image",
+                        f"https://autoppia.com/logos/miner_{miner_info.get('miner_uid', 'benchmark')}.png"
+                    ),
                     "rank": agent_run["rank"],
                     "status": "active"
                 },
@@ -534,6 +627,29 @@ class DatabaseService:
     # TASKS SCREEN DATA
     # ============================================================================
     
+    def _build_task_miner_info(self, miner_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize miner information for task-centric responses."""
+        info = miner_info or {}
+        miner_uid = info.get("miner_uid")
+        agent_name = info.get(
+            "agent_name",
+            f"Miner {miner_uid}" if miner_uid is not None else "Benchmark Agent"
+        )
+        hotkey = info.get("miner_hotkey")
+        image = info.get(
+            "agent_image",
+            f"/logos/miner_{miner_uid}.png" if miner_uid is not None else "/logos/benchmark_agent.png"
+        )
+        return {
+            "miner_uid": miner_uid,
+            "miner_name": agent_name,
+            "miner_hotkey": f"{hotkey[:20]}..." if hotkey else None,
+            "miner_image": image,
+            "rank": None if miner_uid is None else info.get("rank", 1),
+            "uid": f"{miner_uid:03d}" if miner_uid is not None else None,
+            "status": "benchmark" if miner_uid is None else info.get("status", "active")
+        }
+    
     async def get_task_details(self, task_id: str) -> Dict[str, Any]:
         """Get detailed task information."""
         cache_key = f"task_details_{task_id}"
@@ -553,6 +669,17 @@ class DatabaseService:
             # Get actions performed
             actions_performed = await self._get_task_actions(task_execution)
             
+            validator_payload = task_execution.get("validator_info") or {}
+            validator_uid = validator_payload.get("validator_uid") or task_execution.get("validator_uid")
+            validator_meta = get_validator_metadata(validator_uid) if validator_uid is not None else {
+                "uid": validator_uid,
+                "name": f"Validator {validator_uid}",
+                "hotkey": "",
+                "coldkey": "",
+                "image": "images/Autoppia.png",
+            }
+            validator_hotkey = validator_meta.get("hotkey") or validator_payload.get("validator_hotkey", "")
+
             result = {
                 "task_info": {
                     "task_id": task_id,
@@ -567,32 +694,25 @@ class DatabaseService:
                     "difficulty": task_execution["task"].get("difficulty", "medium")
                 },
                 "round_info": {
-                    "round_number": self._extract_round_number(task_execution["round_id"]),
-                    "round_id": task_execution["round_id"],
+                    "round_number": self._extract_round_number(task_execution["validator_round_id"]),
+                    "validator_round_id": task_execution["validator_round_id"],
                     "round_status": "Current evaluation round",
                     "started_at": time.time() - 7200,
                     "ended_at": time.time() - 300
                 },
                 "validator_info": {
-                    "validator_uid": task_execution["validator_info"]["validator_uid"],
-                    "validator_name": self._get_validator_name(task_execution["validator_info"]["validator_uid"]),
-                    "validator_hotkey": task_execution["validator_info"]["validator_hotkey"][:20] + "...",
-                    "validator_image": f"https://autoppia.com/logos/validator_{task_execution['validator_info']['validator_uid']}.png",
+                    "validator_uid": validator_uid,
+                    "validator_name": validator_meta.get("name", self._get_validator_name(validator_uid)),
+                    "validator_hotkey": f"{validator_hotkey[:20]}..." if validator_hotkey else "",
+                    "validator_coldkey": validator_meta.get("coldkey", ""),
+                    "validator_image": validator_meta.get("image"),
                     "version": "v7.2.1",
                     "status": "Running",
                     "stake": 1722000,
                     "stake_display": "1722K",
                     "vtrust": 1.0
                 },
-                "miner_info": {
-                    "miner_uid": task_execution["miner_info"]["miner_uid"],
-                    "miner_name": f"Miner {task_execution['miner_info']['miner_uid']}",
-                    "miner_hotkey": task_execution["miner_info"]["miner_hotkey"][:20] + "...",
-                    "miner_image": f"/logos/miner_{task_execution['miner_info']['miner_uid']}.png",
-                    "rank": 1,
-                    "uid": f"{task_execution['miner_info']['miner_uid']:03d}",
-                    "status": "active"
-                },
+                "miner_info": self._build_task_miner_info(task_execution["miner_info"]),
                 "actions_performed": actions_performed,
                 "generated_gif": {
                     "gif_url": None,
@@ -651,22 +771,20 @@ class DatabaseService:
         return max_score
     
     def _get_validator_name(self, validator_uid: int) -> str:
-        """Get validator name from UID."""
-        names = {
-            123: "Autoppia",
-            124: "Autoppia",
-            129: "tao5",
-            133: "RoundTable21",
-            135: "Kraken",
-            137: "Yuma",
-            456: "Autoppia",
-            457: "tao5",
-            458: "RoundTable21",
-            459: "Yuma",
-            460: "Kraken",
-            461: "Other"
-        }
-        return names.get(validator_uid, f"Validator {validator_uid}")
+        """Get validator name from UID using the canonical directory."""
+        return get_validator_metadata(validator_uid)["name"]
+
+    def _get_validator_hotkey(self, validator_uid: int) -> str:
+        """Get validator hotkey from UID."""
+        return get_validator_metadata(validator_uid)["hotkey"]
+
+    def _get_validator_coldkey(self, validator_uid: int) -> str:
+        """Get validator coldkey from UID."""
+        return get_validator_metadata(validator_uid)["coldkey"]
+
+    def _get_validator_image(self, validator_uid: int) -> str:
+        """Get validator image from UID."""
+        return get_validator_metadata(validator_uid)["image"]
     
     def _get_validator_status(self, round_status: str) -> str:
         """Get validator status from round status."""
@@ -710,11 +828,11 @@ class DatabaseService:
         }
         return color_map.get(round_status, "blue")
     
-    def _extract_round_number(self, round_id: str) -> int:
+    def _extract_round_number(self, validator_round_id: str) -> int:
         """Extract round number from round ID."""
         try:
-            # Extract number from round_id like "round_1759955216_000"
-            parts = round_id.split("_")
+            # Extract number from validator_round_id like "round_1759955216_000"
+            parts = validator_round_id.split("_")
             if len(parts) >= 3:
                 return int(parts[2])
             return 1
@@ -729,7 +847,10 @@ class DatabaseService:
             pipeline = [
                 {
                     "$match": {
-                        "miner_info.miner_uid": miner_uid,
+                        "$or": [
+                            {"miner_info.miner_uid": miner_uid},
+                            {"miner_uid": miner_uid}
+                        ],
                         "started_at": {"$gte": start_time}
                     }
                 },
@@ -761,7 +882,12 @@ class DatabaseService:
         try:
             pipeline = [
                 {
-                    "$match": {"miner_info.miner_uid": miner_uid}
+                    "$match": {
+                        "$or": [
+                            {"miner_info.miner_uid": miner_uid},
+                            {"miner_uid": miner_uid}
+                        ]
+                    }
                 },
                 {
                     "$sort": {"started_at": -1}
@@ -775,11 +901,22 @@ class DatabaseService:
             
             validator_cards = []
             for result in results:
+                validator_payload = result.get("validator_info") or {}
+                validator_uid = validator_payload.get("validator_uid") or result.get("validator_uid")
+                validator_meta = get_validator_metadata(validator_uid) if validator_uid is not None else {
+                    "uid": validator_uid,
+                    "name": f"Validator {validator_uid}",
+                    "hotkey": "",
+                    "coldkey": "",
+                    "image": "images/Autoppia.png",
+                }
+                validator_hotkey = validator_meta.get("hotkey") or validator_payload.get("validator_hotkey", "")
+
                 validator_cards.append({
-                    "validator_uid": result["validator_info"]["validator_uid"],
-                    "validator_name": self._get_validator_name(result["validator_info"]["validator_uid"]),
-                    "validator_image": f"/logos/validator_{result['validator_info']['validator_uid']}.png",
-                    "validator_hotkey": result["validator_info"]["validator_hotkey"][:20] + "...",
+                    "validator_uid": validator_uid,
+                    "validator_name": validator_meta.get("name", self._get_validator_name(validator_uid)),
+                    "validator_image": validator_meta.get("image"),
+                    "validator_hotkey": f"{validator_hotkey[:20]}..." if validator_hotkey else "",
                     "agent_run_id": result["agent_run_id"],
                     "score": result["avg_eval_score"],
                     "stake": 1000000 + (result["validator_info"]["validator_uid"] * 100000),
@@ -787,7 +924,7 @@ class DatabaseService:
                     "vtrust": 1.0 - (result["validator_info"]["validator_uid"] * 0.01),
                     "miner_uid": miner_uid,
                     "is_winner": result["rank"] == 1 if result["rank"] else False,
-                    "round_id": result["round_id"],
+                    "validator_round_id": result["validator_round_id"],
                     "completed_at": result["ended_at"],
                     "rank": result["rank"]
                 })
@@ -1053,10 +1190,11 @@ class DatabaseService:
     
     def _get_fallback_agent_run_details(self, agent_run_id: str) -> Dict[str, Any]:
         """Fallback agent run details when database fails."""
+        validator_meta = get_validator_metadata(124)
         return {
             "run_info": {
                 "agent_run_id": agent_run_id,
-                "round_id": "round_11",
+                "validator_round_id": "round_11",
                 "round_number": 11,
                 "status": "completed",
                 "started_at": time.time() - 3600,
@@ -1064,10 +1202,11 @@ class DatabaseService:
                 "elapsed_time": 3300
             },
             "validator_info": {
-                "validator_uid": 1,
-                "validator_name": "Autoppia",
-                "validator_hotkey": "5K3mR7pqX2NfHgL9QzVb...",
-                "validator_image": "/logos/autoppia.png",
+                "validator_uid": validator_meta["uid"],
+                "validator_name": validator_meta["name"],
+                "validator_hotkey": validator_meta["hotkey"],
+                "validator_coldkey": validator_meta["coldkey"],
+                "validator_image": validator_meta["image"],
                 "version": "v7.2.1",
                 "status": "Running",
                 "stake": 1722000,
@@ -1099,6 +1238,7 @@ class DatabaseService:
     
     def _get_fallback_task_details(self, task_id: str) -> Dict[str, Any]:
         """Fallback task details when database fails."""
+        validator_meta = get_validator_metadata(124)
         return {
             "task_info": {
                 "task_id": task_id,
@@ -1114,16 +1254,17 @@ class DatabaseService:
             },
             "round_info": {
                 "round_number": 11,
-                "round_id": "round_11",
+                "validator_round_id": "round_11",
                 "round_status": "Current evaluation round",
                 "started_at": time.time() - 7200,
                 "ended_at": time.time() - 300
             },
             "validator_info": {
-                "validator_uid": 1,
-                "validator_name": "Autoppia",
-                "validator_hotkey": "5K3mR7pqX2NfHgL9QzVb...",
-                "validator_image": "/logos/autoppia.png",
+                "validator_uid": validator_meta["uid"],
+                "validator_name": validator_meta["name"],
+                "validator_hotkey": validator_meta["hotkey"],
+                "validator_coldkey": validator_meta["coldkey"],
+                "validator_image": validator_meta["image"],
                 "version": "v7.2.1",
                 "status": "Running",
                 "stake": 1722000,

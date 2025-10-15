@@ -44,9 +44,9 @@ async def ensure_indexes():
         return
     
     try:
-        # Rounds collection - unique constraint on validator_uid + round_id
+        # Rounds collection - unique constraint on validator_uid + validator_round_id
         await db.rounds.create_index(
-            [("validator_info.validator_uid", 1), ("round_id", 1)], 
+            [("validator_info.validator_uid", 1), ("validator_round_id", 1)], 
             unique=True, 
             name="u_round"
         )
@@ -54,22 +54,22 @@ async def ensure_indexes():
 
         # Events collection - compound index for efficient queries
         await db.events.create_index(
-            [("validator_info.validator_uid", 1), ("round_id", 1), ("ts", 1)], 
+            [("validator_info.validator_uid", 1), ("validator_round_id", 1), ("ts", 1)], 
             name="e_vr_ts"
         )
         logger.info("Created index for events collection")
 
-        # Task executions collection - unique constraint on validator_uid + round_id + task_id + miner_uid
+        # Task executions collection - unique constraint on validator_uid + validator_round_id + task_id + miner_uid
         await db.task_executions.create_index(
-            [("validator_info.validator_uid", 1), ("round_id", 1), ("task_id", 1), ("miner_info.miner_uid", 1)],
+            [("validator_info.validator_uid", 1), ("validator_round_id", 1), ("task_id", 1), ("miner_info.miner_uid", 1)],
             unique=True, 
             name="u_task_execution"
         )
         logger.info("Created index for task_executions collection")
 
-        # Agent evaluation runs collection - unique constraint on validator_uid + round_id + miner_uid
+        # Agent evaluation runs collection - unique constraint on validator_uid + validator_round_id + miner_uid
         await db.agent_evaluation_runs.create_index(
-            [("validator_info.validator_uid", 1), ("round_id", 1), ("miner_info.miner_uid", 1)],
+            [("validator_info.validator_uid", 1), ("validator_round_id", 1), ("miner_info.miner_uid", 1)],
             unique=True, 
             name="u_agent_evaluation_run"
         )

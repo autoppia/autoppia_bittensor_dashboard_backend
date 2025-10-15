@@ -34,7 +34,7 @@ Initialize a new round with validator and miner information.
 **Request Body:**
 ```json
 {
-  "round_id": "round_123",
+  "validator_round_id": "round_123",
   "validator_info": {
     "validator_uid": 123,
     "validator_hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
@@ -56,14 +56,14 @@ Initialize a new round with validator and miner information.
 ```
 
 #### 2. Generate Tasks
-**POST** `/v1/rounds/{round_id}/generate-tasks`
+**POST** `/v1/rounds/{validator_round_id}/generate-tasks`
 
 Generate N synthetic tasks for the round.
 
 **Request Body:**
 ```json
 {
-  "round_id": "round_123",
+  "validator_round_id": "round_123",
   "validator_info": {
     "validator_uid": 123,
     "validator_hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
@@ -75,14 +75,14 @@ Generate N synthetic tasks for the round.
 ```
 
 #### 3. Distribute Tasks
-**POST** `/v1/rounds/{round_id}/distribute-tasks`
+**POST** `/v1/rounds/{validator_round_id}/distribute-tasks`
 
 Distribute tasks to miners and create task executions.
 
 **Request Body:**
 ```json
 {
-  "round_id": "round_123",
+  "validator_round_id": "round_123",
   "validator_info": {
     "validator_uid": 123,
     "validator_hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
@@ -95,14 +95,14 @@ Distribute tasks to miners and create task executions.
 ```
 
 #### 4. Submit Task Responses
-**POST** `/v1/rounds/{round_id}/task-responses`
+**POST** `/v1/rounds/{validator_round_id}/task-responses`
 
 Submit task responses from miners.
 
 **Request Body:**
 ```json
 {
-  "round_id": "round_123",
+  "validator_round_id": "round_123",
   "validator_info": {
     "validator_uid": 123,
     "validator_hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
@@ -111,7 +111,7 @@ Submit task responses from miners.
     {
       "task_id": "round_123_task_0000",
       "agent_run_id": "round_123_1_round_123_task_0000",
-      "round_id": "round_123",
+      "validator_round_id": "round_123",
       "validator_info": {...},
       "miner_info": {...},
       "response": {
@@ -128,14 +128,14 @@ Submit task responses from miners.
 ```
 
 #### 5. Evaluate Tasks
-**POST** `/v1/rounds/{round_id}/evaluate`
+**POST** `/v1/rounds/{validator_round_id}/evaluate`
 
 Evaluate task responses and assign scores.
 
 **Request Body:**
 ```json
 {
-  "round_id": "round_123",
+  "validator_round_id": "round_123",
   "validator_info": {
     "validator_uid": 123,
     "validator_hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
@@ -150,14 +150,14 @@ Evaluate task responses and assign scores.
 ```
 
 #### 6. Calculate Scores
-**POST** `/v1/rounds/{round_id}/score`
+**POST** `/v1/rounds/{validator_round_id}/score`
 
 Calculate final scores and rankings for miners.
 
 **Request Body:**
 ```json
 {
-  "round_id": "round_123",
+  "validator_round_id": "round_123",
   "validator_info": {
     "validator_uid": 123,
     "validator_hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
@@ -172,14 +172,14 @@ Calculate final scores and rankings for miners.
 ```
 
 #### 7. Assign Weights
-**POST** `/v1/rounds/{round_id}/assign-weights`
+**POST** `/v1/rounds/{validator_round_id}/assign-weights`
 
 Assign final weights to miners based on rankings.
 
 **Request Body:**
 ```json
 {
-  "round_id": "round_123",
+  "validator_round_id": "round_123",
   "validator_info": {
     "validator_uid": 123,
     "validator_hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
@@ -198,14 +198,14 @@ Assign final weights to miners based on rankings.
 ```
 
 #### 8. Complete Round
-**POST** `/v1/rounds/{round_id}/complete`
+**POST** `/v1/rounds/{validator_round_id}/complete`
 
 Complete a round and finalize all data.
 
 **Request Body:**
 ```json
 {
-  "round_id": "round_123",
+  "validator_round_id": "round_123",
   "validator_info": {
     "validator_uid": 123,
     "validator_hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
@@ -247,7 +247,7 @@ Get leaderboard of miners with performance metrics.
 - `sort_order` (default: "desc"): Sort direction
 
 #### 3. Get Round Details
-**GET** `/v1/rounds/{round_id}/details`
+**GET** `/v1/rounds/{validator_round_id}/details`
 
 Get detailed information about a specific round.
 
@@ -255,7 +255,7 @@ Get detailed information about a specific round.
 - `validator_uid` (required): Validator UID
 
 #### 4. Get Round Status
-**GET** `/v1/rounds/{round_id}/status`
+**GET** `/v1/rounds/{validator_round_id}/status`
 
 Get current status and progress of a round.
 
@@ -269,7 +269,7 @@ Get current status and progress of a round.
 #### Round
 ```python
 class Round(BaseModel):
-    round_id: str
+    validator_round_id: str
     validator_info: ValidatorInfo
     status: RoundStatus
     start_block: int
@@ -310,7 +310,7 @@ class Task(BaseModel):
 ```python
 class AgentEvaluationRun(BaseModel):
     agent_run_id: str
-    round_id: str
+    validator_round_id: str
     validator_info: ValidatorInfo
     miner_info: MinerInfo
     started_at: float
@@ -334,7 +334,7 @@ class AgentEvaluationRun(BaseModel):
 class TaskExecution(BaseModel):
     task_id: str
     agent_run_id: str
-    round_id: str
+    validator_round_id: str
     validator_info: ValidatorInfo
     miner_info: MinerInfo
     task: Task
@@ -398,7 +398,7 @@ import time
 
 # 1. Start round
 start_response = requests.post("/v1/rounds/start", json={
-    "round_id": f"round_{int(time.time())}",
+    "validator_round_id": f"round_{int(time.time())}",
     "validator_info": {"validator_uid": 123, "validator_hotkey": "..."},
     "start_block": 1000,
     "start_epoch": 50,
@@ -409,50 +409,50 @@ start_response = requests.post("/v1/rounds/start", json={
 })
 
 # 2. Generate tasks
-tasks_response = requests.post(f"/v1/rounds/{round_id}/generate-tasks", json={
-    "round_id": round_id,
+tasks_response = requests.post(f"/v1/rounds/{validator_round_id}/generate-tasks", json={
+    "validator_round_id": validator_round_id,
     "validator_info": {"validator_uid": 123, "validator_hotkey": "..."},
     "n_tasks": 5
 })
 
 # 3. Distribute tasks
-dist_response = requests.post(f"/v1/rounds/{round_id}/distribute-tasks", json={
-    "round_id": round_id,
+dist_response = requests.post(f"/v1/rounds/{validator_round_id}/distribute-tasks", json={
+    "validator_round_id": validator_round_id,
     "validator_info": {"validator_uid": 123, "validator_hotkey": "..."},
     "task_ids": ["task_1", "task_2"],
     "miner_uids": [1, 2, 3]
 })
 
 # 4. Submit responses (from miners)
-responses_response = requests.post(f"/v1/rounds/{round_id}/task-responses", json={
-    "round_id": round_id,
+responses_response = requests.post(f"/v1/rounds/{validator_round_id}/task-responses", json={
+    "validator_round_id": validator_round_id,
     "validator_info": {"validator_uid": 123, "validator_hotkey": "..."},
     "responses": [...]
 })
 
 # 5. Evaluate tasks
-eval_response = requests.post(f"/v1/rounds/{round_id}/evaluate", json={
-    "round_id": round_id,
+eval_response = requests.post(f"/v1/rounds/{validator_round_id}/evaluate", json={
+    "validator_round_id": validator_round_id,
     "validator_info": {"validator_uid": 123, "validator_hotkey": "..."},
     "task_execution_ids": [...]
 })
 
 # 6. Calculate scores
-score_response = requests.post(f"/v1/rounds/{round_id}/score", json={
-    "round_id": round_id,
+score_response = requests.post(f"/v1/rounds/{validator_round_id}/score", json={
+    "validator_round_id": validator_round_id,
     "validator_info": {"validator_uid": 123, "validator_hotkey": "..."}
 })
 
 # 7. Assign weights
-weights_response = requests.post(f"/v1/rounds/{round_id}/assign-weights", json={
-    "round_id": round_id,
+weights_response = requests.post(f"/v1/rounds/{validator_round_id}/assign-weights", json={
+    "validator_round_id": validator_round_id,
     "validator_info": {"validator_uid": 123, "validator_hotkey": "..."},
     "winners": [...]
 })
 
 # 8. Complete round
-complete_response = requests.post(f"/v1/rounds/{round_id}/complete", json={
-    "round_id": round_id,
+complete_response = requests.post(f"/v1/rounds/{validator_round_id}/complete", json={
+    "validator_round_id": validator_round_id,
     "validator_info": {"validator_uid": 123, "validator_hotkey": "..."}
 })
 ```
@@ -477,7 +477,7 @@ miners = requests.get("/v1/rounds/leaderboard/miners", params={
 })
 
 # Get specific round details
-round_details = requests.get(f"/v1/rounds/{round_id}/details", params={
+round_details = requests.get(f"/v1/rounds/{validator_round_id}/details", params={
     "validator_uid": 123
 })
 ```

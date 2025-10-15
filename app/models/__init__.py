@@ -1,12 +1,14 @@
 # Models package
 
 # Core models - essential business logic
-from .schemas import (
+from .core import (
     # Core entities
     ValidatorInfo,
     MinerInfo,
     Task,
     Round,
+    ValidatorRound,
+    ValidatorRoundRead,
     AgentEvaluationRun,
     
     # Utilities
@@ -31,4 +33,4 @@ from .schemas import (
 )
 
 # Legacy imports for backward compatibility
-from .schemas import *
+from .core import *

@@ -8,22 +8,22 @@ import os
 
 from app.config import settings
 from app.db.mongo import ensure_indexes, close_client
-from app.api.routes.ui.rounds_get import router as rounds_get_router
-from app.api.routes.rounds_post import router as rounds_post_router
-from app.api.routes.ui_root import router as ui_router
-from app.api.routes.ui.overview import router as overview_router
-from app.api.routes.ui.rounds_api import router as rounds_api_router
-from app.api.routes.cache import router as cache_router
-from app.api.routes.ui.agents import router as agents_router
-from app.api.routes.ui.agent_runs import router as agent_runs_router
-from app.api.routes.ui.tasks import router as tasks_router
-from app.api.routes.ui.miners import router as miners_router
-from app.api.routes.ui.miner_list import router as miner_list_router
+from app.api.ui.rounds_get import router as rounds_get_router
+from app.api.validator.rounds_post import router as rounds_post_router
+from app.api.ui.ui_root import router as ui_router
+from app.api.ui.overview import router as overview_router
+from app.api.ui.rounds_api import router as rounds_api_router
+from app.api.ui.cache import router as cache_router
+from app.api.ui.agents import router as agents_router
+from app.api.ui.agent_runs import router as agent_runs_router
+from app.api.ui.tasks import router as tasks_router
+from app.api.ui.miners import router as miners_router
+from app.api.ui.miner_list import router as miner_list_router
 # Optimized routes
-from app.api.routes.ui.optimized_ui import router as optimized_ui_router
-from app.api.routes.ui.optimized_rounds_post import router as optimized_rounds_post_router
-from app.api.routes.validator_rounds import router as validator_rounds_router
-from app.api.routes.subnets import router as subnets_router
+from app.api.ui.optimized_ui import router as optimized_ui_router
+from app.api.ui.optimized_rounds_post import router as optimized_rounds_post_router
+from app.api.validator.validator_round import router as validator_rounds_router
+from app.api.ui.subnets import router as subnets_router
 from app.services.idempotency import get_cache_stats
 
 # Configure logging

@@ -17,19 +17,19 @@ A FastAPI backend for the Autoppia Bittensor Leaderboard system. This API provid
 ### Round Management
 
 - `POST /v1/rounds/start` - Start a new round
-- `POST /v1/rounds/{round_id}/events` - Post events for a round
-- `POST /v1/rounds/{round_id}/task-runs:batch-upsert` - Batch upsert task runs
-- `POST /v1/rounds/{round_id}/agent-runs:upsert` - Upsert agent runs
-- `POST /v1/rounds/{round_id}/progress` - Post progress updates
-- `PUT /v1/rounds/{round_id}/weights` - Update round weights
-- `POST /v1/rounds/{round_id}/finalize` - Finalize a round
-- `POST /v1/rounds/{round_id}/round-results` - Post complete round results
+- `POST /v1/rounds/{validator_round_id}/events` - Post events for a round
+- `POST /v1/rounds/{validator_round_id}/task-runs:batch-upsert` - Batch upsert task runs
+- `POST /v1/rounds/{validator_round_id}/agent-runs:upsert` - Upsert agent runs
+- `POST /v1/rounds/{validator_round_id}/progress` - Post progress updates
+- `PUT /v1/rounds/{validator_round_id}/weights` - Update round weights
+- `POST /v1/rounds/{validator_round_id}/finalize` - Finalize a round
+- `POST /v1/rounds/{validator_round_id}/round-results` - Post complete round results
 
 ### Utility Endpoints
 
 - `GET /health` - Health check
-- `GET /v1/rounds/{round_id}/status` - Get round status
-- `GET /v1/rounds/{round_id}/weights` - Get round weights
+- `GET /v1/rounds/{validator_round_id}/status` - Get round status
+- `GET /v1/rounds/{validator_round_id}/weights` - Get round weights
 - `GET /debug/idempotency-stats` - Idempotency cache statistics
 
 ## Quick Start
@@ -125,7 +125,7 @@ curl -X POST "http://localhost:8080/v1/rounds/start" \
   -H "Content-Type: application/json" \
   -d '{
     "validator_uid": 12,
-    "round_id": "12-18172-abc",
+    "validator_round_id": "12-18172-abc",
     "version": "iwa-1.3.0",
     "max_epochs": 20,
     "max_blocks": 7200,
@@ -145,7 +145,7 @@ curl -X POST "http://localhost:8080/v1/rounds/12-18172-abc/events" \
   -H "Content-Type: application/json" \
   -d '{
     "validator_uid": 12,
-    "round_id": "12-18172-abc",
+    "validator_round_id": "12-18172-abc",
     "phase": "sending_tasks",
     "message": "Starting task distribution"
   }'
@@ -159,11 +159,11 @@ curl -X POST "http://localhost:8080/v1/rounds/12-18172-abc/task-runs:batch-upser
   -H "Content-Type: application/json" \
   -d '{
     "validator_uid": 12,
-    "round_id": "12-18172-abc",
+    "validator_round_id": "12-18172-abc",
     "task_runs": [
       {
         "validator_uid": 12,
-        "round_id": "12-18172-abc",
+        "validator_round_id": "12-18172-abc",
         "task_id": "books:1",
         "miner_uid": 44,
         "miner_hotkey": "5F...",

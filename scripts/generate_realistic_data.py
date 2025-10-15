@@ -5,8 +5,32 @@ Generate realistic, varied data for the dashboard with different winners and mor
 import json
 import random
 import time
-import uuid
-from datetime import datetime, timedelta
+
+ASSET_BASE = "https://assets.autoppia.com"
+
+SOTA_AGENTS = [
+    {
+        "agent_name": "OpenAI GPT-4o",
+        "agent_image": f"{ASSET_BASE}/agents/sota_openai_gpt4o.png",
+        "github": "https://github.com/openai/gpt-4o",
+        "description": "OpenAI benchmark agent for web computer-use comparisons",
+        "provider": "OpenAI"
+    },
+    {
+        "agent_name": "Claude 3.5 Sonnet",
+        "agent_image": f"{ASSET_BASE}/agents/sota_claude_35_sonnet.png",
+        "github": "https://github.com/anthropic/claude-3-5-sonnet",
+        "description": "Anthropic benchmark agent for complex enterprise workflows",
+        "provider": "Anthropic"
+    },
+    {
+        "agent_name": "Browser Use",
+        "agent_image": f"{ASSET_BASE}/agents/sota_browser_use.png",
+        "github": "https://github.com/browser-use/browser-use",
+        "description": "Community baseline agent for autonomous browsing",
+        "provider": "Community"
+    }
+]
 
 def generate_realistic_rounds_data():
     """Generate realistic data for rounds 1-20 with varied winners and more miners."""
@@ -24,9 +48,6 @@ def generate_realistic_rounds_data():
     # Define a pool of potential top miners with varying performance
     # SOTA agents always get top scores
     top_miners_pool = [
-        {"uid": 0, "name": "OpenAI GPT-4o", "base_score": 0.95, "consistency": 0.98},
-        {"uid": 1, "name": "Claude 3.5 Sonnet", "base_score": 0.93, "consistency": 0.96},
-        {"uid": 2, "name": "Browser-Use", "base_score": 0.91, "consistency": 0.94},
         {"uid": 25, "name": "AutoPPIA Agent", "base_score": 0.88, "consistency": 0.95},
         {"uid": 84, "name": "Browser-Use Pro", "base_score": 0.86, "consistency": 0.90},
         {"uid": 36, "name": "Claude Web Agent", "base_score": 0.84, "consistency": 0.88},
@@ -35,6 +56,8 @@ def generate_realistic_rounds_data():
         {"uid": 91, "name": "Playwright Pro", "base_score": 0.78, "consistency": 0.87},
         {"uid": 15, "name": "WebDriver Elite", "base_score": 0.76, "consistency": 0.89},
         {"uid": 73, "name": "Puppeteer Expert", "base_score": 0.74, "consistency": 0.86},
+        {"uid": 102, "name": "BrowserFox", "base_score": 0.8, "consistency": 0.82},
+        {"uid": 118, "name": "Tao Runner", "base_score": 0.79, "consistency": 0.84},
     ]
     
     for round_num in range(1, 21):
@@ -47,16 +70,9 @@ def generate_realistic_rounds_data():
         n_miners = random.randint(120, 180)  # More miners per round
         n_winners = random.randint(8, 15)  # More winners
         
-        # Always include SOTA agents (UIDs 0, 1, 2) as top performers
-        sota_agents = [miner for miner in top_miners_pool if miner["uid"] in [0, 1, 2]]
-        other_agents = [miner for miner in top_miners_pool if miner["uid"] not in [0, 1, 2]]
-        
-        # Select additional top performers from the rest
-        additional_count = random.randint(2, 5)  # 2-5 additional agents
-        additional_agents = random.sample(other_agents, min(additional_count, len(other_agents)))
-        
-        # Combine SOTA agents with additional top performers
-        round_top_miners = sota_agents + additional_agents
+        # Select elite miners for this round
+        additional_count = random.randint(3, 6)
+        round_top_miners = random.sample(top_miners_pool, min(additional_count, len(top_miners_pool)))
         
         # Generate winners with realistic variation
         winners = []
@@ -105,8 +121,9 @@ def generate_realistic_rounds_data():
                 "hotkey": f"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY{miner['uid']:02d}",
                 "coldkey": None,
                 "agent_name": miner["name"],
-                "agent_image": f"/agents/{miner['name'].lower().replace(' ', '_').replace('-', '_')}.png",
-                "github": f"https://github.com/agents/{miner['name'].lower().replace(' ', '-')}"
+                "agent_image": f"{ASSET_BASE}/agents/{miner['name'].lower().replace(' ', '_').replace('-', '_')}.png",
+                "github": f"https://github.com/agents/{miner['name'].lower().replace(' ', '-')}",
+                "is_sota": False
             })
             used_uids.add(miner["uid"])
         
@@ -125,8 +142,9 @@ def generate_realistic_rounds_data():
                 "hotkey": f"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY{uid:02d}",
                 "coldkey": None,
                 "agent_name": f"Agent {uid}",
-                "agent_image": f"/agents/agent_{uid}.png",
-                "github": f"https://github.com/agents/agent-{uid}"
+                "agent_image": f"{ASSET_BASE}/agents/agent_{uid}.png",
+                "github": f"https://github.com/agents/agent-{uid}",
+                "is_sota": False
             })
         
         # Calculate statistics
@@ -170,10 +188,24 @@ def generate_realistic_rounds_data():
                 "version": template["version"],
                 "performance_tier": template["performance_tier"]  # Add performance tier for API use
             })
+
+        sota_agents = [
+            {
+                "uid": None,
+                "hotkey": None,
+                "agent_name": agent["agent_name"],
+                "agent_image": agent["agent_image"],
+                "github": agent["github"],
+                "is_sota": True,
+                "description": agent["description"],
+                "provider": agent["provider"]
+            }
+            for agent in SOTA_AGENTS
+        ]
         
         # Create round data
         round_data = {
-            "round_id": f"round_{round_num:03d}",
+            "validator_round_id": f"round_{round_num:03d}",
             "validators": validators,
             "start_block": int(round_start),
             "start_epoch": round_num,
@@ -188,6 +220,7 @@ def generate_realistic_rounds_data():
             "n_miners": n_miners,
             "n_winners": n_winners,
             "miners": miners,
+            "sota_agents": sota_agents,
             "winners": winners,
             "winner_scores": [w["score"] for w in winners],
             "weights": {w["miner_uid"]: w["score"] for w in winners},
@@ -199,20 +232,20 @@ def generate_realistic_rounds_data():
         rounds.append(round_data)
         
         # Generate agent evaluation runs for this round
-        for i, miner in enumerate(miners[:n_winners]):  # Only for winners
-            agent_run_id = f"round_{round_num:03d}_{i+1}"
-            
-            # Get miner's score from winners
-            miner_score = 0.0
-            for winner in winners:
-                if winner["miner_uid"] == miner["uid"]:
-                    miner_score = winner["score"]
-                    break
-            
+        miner_lookup = {m["uid"]: m for m in miners}
+        primary_validator = validators[0]
+
+        for winner in winners:
+            miner = miner_lookup.get(winner["miner_uid"])
+            if not miner:
+                continue
+            agent_run_id = f"round_{round_num:03d}_{miner['uid']}"
+            miner_score = winner["score"]
+
             agent_run = {
                 "agent_run_id": agent_run_id,
-                "round_id": f"round_{round_num:03d}",
-                "validator_uid": validators[0]["uid"],
+                "validator_round_id": f"round_{round_num:03d}",
+                "validator_uid": primary_validator["uid"],
                 "miner_uid": miner["uid"],
                 "version": "1.0",
                 "started_at": round_start + random.randint(0, 300),
@@ -221,10 +254,73 @@ def generate_realistic_rounds_data():
                 "avg_eval_score": miner_score,
                 "avg_execution_time": random.uniform(2.5, 8.0),
                 "avg_reward": round(miner_score * 100, 2),
-                "rank": i + 1,
-                "weight": round(miner_score * 1000, 2)
+                "rank": winner["rank"],
+                "weight": round(miner_score * 1000, 2),
+                "is_sota": False,
+                "n_tasks_total": n_tasks,
+                "n_tasks_completed": max(1, int(n_tasks * random.uniform(0.7, 1.0))),
+                "n_tasks_failed": 0,
+                "total_reward": round(miner_score * n_tasks * 10, 2),
+                "metadata": {
+                    "generated_at": time.time(),
+                    "generator": "realistic_data",
+                    "performance_tier": "winner"
+                },
+                "miner_info": {
+                    "uid": miner["uid"],
+                    "hotkey": miner["hotkey"],
+                    "coldkey": miner.get("coldkey"),
+                    "agent_name": miner["agent_name"],
+                    "agent_image": miner["agent_image"],
+                    "github": miner["github"],
+                    "is_sota": False,
+                    "description": miner.get("description"),
+                    "provider": miner.get("provider")
+                }
             }
             
+            agent_evaluation_runs.append(agent_run)
+
+        # Add SOTA benchmark runs (no ranking impact)
+        for index, agent in enumerate(sota_agents):
+            score = round(random.uniform(0.92, 0.98), 3)
+            slug = agent["agent_name"].lower().replace(" ", "-").replace("/", "-")
+            agent_run = {
+                "agent_run_id": f"round_{round_num:03d}_sota_{index+1}_{slug}",
+                "validator_round_id": f"round_{round_num:03d}",
+                "validator_uid": primary_validator["uid"],
+                "miner_uid": None,
+                "version": "1.0",
+                "started_at": round_start + random.randint(0, 120),
+                "ended_at": round_end - random.randint(0, 120),
+                "elapsed_sec": round_end - round_start - random.randint(0, 240),
+                "avg_eval_score": score,
+                "avg_execution_time": random.uniform(2.0, 6.0),
+                "avg_reward": round(score * 110, 2),
+                "rank": None,
+                "weight": None,
+                "is_sota": True,
+                "n_tasks_total": n_tasks,
+                "n_tasks_completed": max(1, int(n_tasks * random.uniform(0.85, 1.0))),
+                "n_tasks_failed": 0,
+                "total_reward": round(score * n_tasks * 12, 2),
+                "metadata": {
+                    "generated_at": time.time(),
+                    "generator": "realistic_data",
+                    "performance_tier": "benchmark"
+                },
+                "miner_info": {
+                    "uid": None,
+                    "hotkey": None,
+                    "coldkey": None,
+                    "agent_name": agent["agent_name"],
+                    "agent_image": agent["agent_image"],
+                    "github": agent["github"],
+                    "is_sota": True,
+                    "description": agent["description"],
+                    "provider": agent["provider"]
+                }
+            }
             agent_evaluation_runs.append(agent_run)
     
     return {

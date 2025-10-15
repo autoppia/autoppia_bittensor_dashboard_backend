@@ -30,35 +30,35 @@
     },
     "scoreRoundData": [
       {
-        "round_id": 25,
+        "validator_round_id": 25,
         "score": 0.716,
         "rank": 34,
         "reward": 0.0,
         "timestamp": "2025-10-12T06:01:46.167710"
       },
       {
-        "round_id": 24,
+        "validator_round_id": 24,
         "score": 0.664,
         "rank": 20,
         "reward": 0.0,
         "timestamp": "2025-10-12T06:01:46.167710"
       },
       {
-        "round_id": 23,
+        "validator_round_id": 23,
         "score": 0.771,
         "rank": 7,
         "reward": 0.0,
         "timestamp": "2025-10-12T06:01:46.167710"
       },
       {
-        "round_id": 22,
+        "validator_round_id": 22,
         "score": 0.680,
         "rank": 20,
         "reward": 0.0,
         "timestamp": "2025-10-12T06:01:46.167710"
       },
       {
-        "round_id": 21,
+        "validator_round_id": 21,
         "score": 0.758,
         "rank": 30,
         "reward": 0.0,

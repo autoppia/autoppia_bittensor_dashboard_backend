@@ -7,7 +7,7 @@ This document outlines the comprehensive optimization of the AutoPPIA Bittensor 
 ## Problems Identified
 
 ### 1. **Massive Data Duplication**
-- `round_id`, `validator_uid`, `miner_uid` duplicated across ALL collections
+- `validator_round_id`, `validator_uid`, `miner_uid` duplicated across ALL collections
 - Large objects like `html`, `screenshot`, `execution_history` stored in every related document
 - `RoundWithDetails` loads ALL agent runs with ALL their tasks, solutions, and evaluation results
 
@@ -42,7 +42,7 @@ This document outlines the comprehensive optimization of the AutoPPIA Bittensor 
 ```python
 # Lightweight summaries
 get_rounds_summary(limit=20, skip=0)
-get_round_summary(round_id)
+get_round_summary(validator_round_id)
 get_miners_summary(limit=20, skip=0)
 get_validators_summary(limit=20, skip=0)
 
@@ -129,10 +129,10 @@ python scripts/optimize_existing_data.py
 Replace existing endpoints with optimized versions:
 ```python
 # Old
-from app.api.routes.ui import router as ui_router
+from app.api.ui import router as ui_router
 
 # New
-from app.api.routes.optimized_ui import router as optimized_ui_router
+from app.api.ui.optimized_ui import router as optimized_ui_router
 ```
 
 ### 3. **Update Data Access**
@@ -165,7 +165,7 @@ CACHE_TTL = {
   "html": "<html>...</html>",           // Large HTML content
   "screenshot": "base64_data...",       // Large screenshot
   "execution_history": [...],           // Large execution data
-  "round_id": "round_001",              // Duplicated
+  "validator_round_id": "round_001",              // Duplicated
   "validator_uid": 124                  // Duplicated
 }
 ```
@@ -175,7 +175,7 @@ CACHE_TTL = {
 // Main collection: Lightweight
 {
   "task_id": "task_001",
-  "round_id": "round_001",
+  "validator_round_id": "round_001",
   "agent_run_id": "run_001",
   "url": "https://example.com",
   "prompt": "Task description",

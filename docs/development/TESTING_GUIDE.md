@@ -76,19 +76,19 @@ mock_data/
 
 ### Validator Pipeline
 - `POST /v1/rounds/start` - Initialize new round
-- `POST /v1/rounds/{round_id}/generate-tasks` - Generate N synthetic tasks
-- `POST /v1/rounds/{round_id}/distribute-tasks` - Distribute tasks to miners
-- `POST /v1/rounds/{round_id}/task-responses` - Submit miner responses
-- `POST /v1/rounds/{round_id}/evaluate` - Evaluate task responses
-- `POST /v1/rounds/{round_id}/score` - Calculate final scores
-- `POST /v1/rounds/{round_id}/assign-weights` - Assign weights to winners
-- `POST /v1/rounds/{round_id}/complete` - Complete the round
+- `POST /v1/rounds/{validator_round_id}/generate-tasks` - Generate N synthetic tasks
+- `POST /v1/rounds/{validator_round_id}/distribute-tasks` - Distribute tasks to miners
+- `POST /v1/rounds/{validator_round_id}/task-responses` - Submit miner responses
+- `POST /v1/rounds/{validator_round_id}/evaluate` - Evaluate task responses
+- `POST /v1/rounds/{validator_round_id}/score` - Calculate final scores
+- `POST /v1/rounds/{validator_round_id}/assign-weights` - Assign weights to winners
+- `POST /v1/rounds/{validator_round_id}/complete` - Complete the round
 
 ### Leaderboard & Queries
 - `GET /v1/rounds/leaderboard/rounds` - Rounds leaderboard
 - `GET /v1/rounds/leaderboard/miners` - Miners performance leaderboard
-- `GET /v1/rounds/{round_id}/status` - Round status and progress
-- `GET /v1/rounds/{round_id}/details` - Detailed round information
+- `GET /v1/rounds/{validator_round_id}/status` - Round status and progress
+- `GET /v1/rounds/{validator_round_id}/details` - Detailed round information
 
 ## 🧪 Test Data Features
 
@@ -113,7 +113,7 @@ curl -X POST "http://localhost:8000/v1/rounds/start" \
   -H "Authorization: Bearer test-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "round_id": "test_round_123",
+    "validator_round_id": "test_round_123",
     "validator_info": {
       "validator_uid": 999,
       "validator_hotkey": "5TestValidatorKey"

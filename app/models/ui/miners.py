@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
 from enum import Enum
@@ -82,7 +82,8 @@ class Miner(BaseModel):
     createdAt: str = Field(..., description="Creation timestamp (ISO 8601)")
     updatedAt: str = Field(..., description="Last update timestamp (ISO 8601)")
 
-    @validator('imageUrl')
+    @field_validator('imageUrl')
+    @classmethod
     def validate_image_url(cls, v):
         """Validate that imageUrl is a valid URL or empty string."""
         return validate_miner_image_url(v)

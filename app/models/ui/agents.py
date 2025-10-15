@@ -158,9 +158,10 @@ class PerformanceTrend(BaseModel):
 
 class ScoreRoundDataPoint(BaseModel):
     """Score vs round data point."""
-    round_id: int = Field(..., description="Round identifier")
+    validator_round_id: int = Field(..., description="Round identifier")
     score: float = Field(..., description="Score achieved in this round")
     rank: Optional[int] = Field(None, description="Rank in this round")
+    top_score: Optional[float] = Field(None, description="Top benchmark score achieved in this round")
     reward: Optional[float] = Field(None, description="Reward received in this round")
     timestamp: datetime = Field(..., description="Round timestamp")
 

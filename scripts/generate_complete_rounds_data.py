@@ -8,6 +8,8 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
+ASSET_BASE = "https://assets.autoppia.com"
+
 def generate_complete_rounds_data():
     """Generate complete data for rounds 1-20."""
     
@@ -31,82 +33,102 @@ def generate_complete_rounds_data():
         n_miners = 30  # Fixed to 30 miners per round
         n_winners = random.randint(5, 10)  # More winners since we have more miners
         
-        # Generate winners with SOTA agents getting top scores
-        winners = []
-        
-        # Add SOTA agents as top winners
+        # Define SOTA benchmark agents (no UID/hotkey)
         sota_agents = [
-            {"name": "OpenAI GPT-4o", "uid": 0, "base_score": 0.95},
-            {"name": "Claude 3.5 Sonnet", "uid": 1, "base_score": 0.93},
-            {"name": "Browser-Use", "uid": 2, "base_score": 0.91}
+            {
+                "agent_name": "OpenAI GPT-4o",
+                "agent_image": f"{ASSET_BASE}/agents/sota_openai_gpt4o.png",
+                "github": "https://github.com/openai/gpt-4o",
+                "description": "OpenAI's flagship multimodal benchmark agent",
+                "provider": "OpenAI",
+                "is_sota": True
+            },
+            {
+                "agent_name": "Claude 3.5 Sonnet",
+                "agent_image": f"{ASSET_BASE}/agents/sota_claude_35_sonnet.png",
+                "github": "https://github.com/anthropic/claude-3-5-sonnet",
+                "description": "Anthropic Claude benchmark agent for enterprise workflows",
+                "provider": "Anthropic",
+                "is_sota": True
+            },
+            {
+                "agent_name": "Browser Use",
+                "agent_image": f"{ASSET_BASE}/agents/sota_browser_use.png",
+                "github": "https://github.com/browser-use/browser-use",
+                "description": "Community browser-use agent for autonomous browsing",
+                "provider": "Community",
+                "is_sota": True
+            }
         ]
-        
-        for i, sota in enumerate(sota_agents):
-            # Add some variance to SOTA scores
-            score = round(sota["base_score"] + random.uniform(-0.02, 0.02), 3)
-            winners.append({
-                "miner_uid": sota["uid"],
-                "score": score,
-                "rank": i + 1,
-                "reward": round(score * 100, 2)
-            })
-        
-        # Add remaining winners with random scores
-        for i in range(len(sota_agents), n_winners):
-            score = round(random.uniform(0.3, 0.88), 3)  # Lower max to keep SOTA on top
-            winners.append({
-                "miner_uid": random.randint(3, 255),  # Avoid SOTA UIDs
-                "score": score,
-                "rank": i + 1,
-                "reward": round(score * 100, 2)
-            })
-        
-        # Sort winners by score (descending)
-        winners.sort(key=lambda x: x["score"], reverse=True)
-        
-        # Reassign ranks after sorting
-        for i, winner in enumerate(winners):
-            winner["rank"] = i + 1
-        
-        # Generate miners list with 30 miners and random UIDs from 0-255
+
+        # Generate miners list with random UIDs from 0-255 (real miners only)
         miners = []
         used_uids = set()
-        
-        # Add SOTA agents with high scores
-        sota_agents = [
-            {"name": "OpenAI GPT-4o", "uid": 0, "base_score": 0.95},
-            {"name": "Claude 3.5 Sonnet", "uid": 1, "base_score": 0.93},
-            {"name": "Browser-Use", "uid": 2, "base_score": 0.91}
-        ]
-        
-        for sota in sota_agents:
-            miners.append({
-                "uid": sota["uid"],
-                "hotkey": f"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY{sota['uid']:02d}",
+
+        featured_miners = [
+            {
+                "uid": 123,
+                "hotkey": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
                 "coldkey": None,
-                "agent_name": sota["name"],
-                "agent_image": f"/agents/sota_{sota['name'].lower().replace(' ', '_').replace('-', '_')}.png",
-                "github": f"https://github.com/sota/{sota['name'].lower().replace(' ', '-')}"
-            })
-            used_uids.add(sota["uid"])
-        
-        # Add 27 more random miners
-        for i in range(27):
-            # Generate random UID from 0-255, avoiding duplicates
-            while True:
-                uid = random.randint(0, 255)
-                if uid not in used_uids:
-                    used_uids.add(uid)
-                    break
-            
+                "agent_name": "Autoppia Bittensor",
+                "agent_image": f"{ASSET_BASE}/agents/autoppia_bittensor.png",
+                "github": "https://github.com/autoppia/bittensor-agent",
+                "is_sota": False
+            },
+            {
+                "uid": 145,
+                "hotkey": "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
+                "coldkey": None,
+                "agent_name": "Tao Labs Alpha",
+                "agent_image": f"{ASSET_BASE}/agents/tao_labs_alpha.png",
+                "github": "https://github.com/taolabs/alpha-agent",
+                "is_sota": False
+            },
+            {
+                "uid": 178,
+                "hotkey": "5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy",
+                "coldkey": None,
+                "agent_name": "RoundTable Automator",
+                "agent_image": f"{ASSET_BASE}/agents/roundtable_automator.png",
+                "github": "https://github.com/roundtable/automator",
+                "is_sota": False
+            }
+        ]
+
+        for miner in featured_miners:
+            miners.append(miner)
+            used_uids.add(miner["uid"])
+
+        while len(miners) < n_miners:
+            uid = random.randint(0, 255)
+            if uid in used_uids:
+                continue
+            used_uids.add(uid)
             miners.append({
                 "uid": uid,
                 "hotkey": f"5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY{uid:02d}",
                 "coldkey": None,
                 "agent_name": f"Agent {uid}",
-                "agent_image": f"/agents/agent_{uid}.png",
-                "github": f"https://github.com/agent{uid}/autoppia-agent"
+                "agent_image": f"{ASSET_BASE}/agents/agent_{uid}.png",
+                "github": f"https://github.com/agent{uid}/autoppia-agent",
+                "is_sota": False
             })
+
+        # Determine winners among real miners only
+        winners = []
+        winner_pool = random.sample(miners, min(n_winners, len(miners)))
+        for miner in winner_pool:
+            base = random.uniform(0.65, 0.95)
+            winners.append({
+                "miner_uid": miner["uid"],
+                "score": round(base, 3),
+                "rank": 0,
+                "reward": round(base * 100, 2)
+            })
+
+        winners.sort(key=lambda x: x["score"], reverse=True)
+        for i, winner in enumerate(winners):
+            winner["rank"] = i + 1
         
         # Create round data with 4 validators per round
         base_validators = [
@@ -164,8 +186,9 @@ def generate_complete_rounds_data():
         # Use the first validator as the primary validator for agent runs
         primary_validator = round_validators[0]
         
+        weight_lookup = {miner["uid"]: round(random.uniform(0.1, 1.0), 3) for miner in miners}
         round_data = {
-            "round_id": f"round_{round_num:03d}",
+            "validator_round_id": f"round_{round_num:03d}",
             "validators": round_validators,
             "start_block": 1000 + (round_num * 100),
             "start_epoch": round_num,
@@ -180,44 +203,71 @@ def generate_complete_rounds_data():
             "n_miners": n_miners,
             "n_winners": n_winners,
             "miners": miners,
+            "sota_agents": sota_agents,
             "winners": winners,
             "winner_scores": [w["score"] for w in winners],
-            "weights": {miner["uid"]: round(random.uniform(0.1, 1.0), 3) for miner in miners},
+            "weights": weight_lookup,
             "average_score": round(sum(w["score"] for w in winners) / len(winners), 3) if winners else 0.0,
             "top_score": max(w["score"] for w in winners) if winners else 0.0,
             "status": "completed" if round_num < 20 else "active"
         }
         rounds.append(round_data)
         
+        winner_lookup = {winner["miner_uid"]: winner for winner in winners}
+        combined_agents = [
+            {"profile": miner, "is_sota": False} for miner in miners
+        ] + [{"profile": agent, "is_sota": True} for agent in sota_agents]
+
         # Generate agent evaluation runs for this round
-        for agent_idx in range(n_miners):
+        for agent_idx, agent_entry in enumerate(combined_agents):
+            agent_profile = agent_entry["profile"]
+            is_sota = agent_entry["is_sota"]
             agent_run_id = f"round_{round_num:03d}_{agent_idx + 1}"
+            miner_uid = agent_profile.get("uid") if not is_sota else None
+            hotkey = agent_profile.get("hotkey") if not is_sota else None
+
+            base_score = random.uniform(0.5, 0.92)
+            if is_sota:
+                base_score = random.uniform(0.9, 0.97)
+
+            winner_info = winner_lookup.get(miner_uid)
             agent_run = {
                 "agent_run_id": agent_run_id,
-                "round_id": f"round_{round_num:03d}",
-                "validator_uid": primary_validator["uid"],  # Use the primary validator
-                "miner_uid": miners[agent_idx]["uid"],  # Required field
+                "validator_round_id": f"round_{round_num:03d}",
+                "validator_uid": primary_validator["uid"],
+                "miner_uid": miner_uid,
+                "is_sota": is_sota,
+                "miner_info": {
+                    "uid": miner_uid,
+                    "hotkey": hotkey,
+                    "agent_name": agent_profile["agent_name"],
+                    "agent_image": agent_profile.get("agent_image", ""),
+                    "github": agent_profile.get("github", ""),
+                    "is_sota": is_sota,
+                    "description": agent_profile.get("description"),
+                    "provider": agent_profile.get("provider")
+                },
                 "version": "1.0",
                 "started_at": round_start + random.randint(0, 300),
                 "ended_at": round_end - random.randint(0, 300),
-                "elapsed_sec": round_end - round_start - random.randint(0, 300),
-                "avg_eval_score": round(random.uniform(0.5, 0.9), 3),
+                "elapsed_sec": max(60, round_end - round_start - random.randint(0, 300)),
+                "avg_eval_score": round(base_score, 3),
                 "avg_execution_time": round(random.uniform(30, 120), 2),
-                "avg_reward": round(random.uniform(50, 100), 2),
-                "rank": random.randint(1, n_miners),
-                "weight": round(random.uniform(0.1, 1.0), 3)
+                "avg_reward": round(base_score * random.uniform(80, 120), 2),
+                "rank": None if is_sota else (winner_info["rank"] if winner_info else None),
+                "weight": None if is_sota else weight_lookup.get(miner_uid)
             }
             agent_evaluation_runs.append(agent_run)
-            
-            # Generate tasks for this agent run
+
+            # Generate tasks for this agent run (SOTA agents included for comparison)
             for task_idx in range(n_tasks):
                 task_id = f"task_{round_num:03d}_{agent_idx + 1}_{task_idx + 1}"
                 task = {
                     "task_id": task_id,
                     "agent_run_id": agent_run_id,
-                    "round_id": f"round_{round_num:03d}",
-                    "url": f"https://example{random.randint(1, 10)}.com",  # Required field
-                    "prompt": f"Task {task_idx + 1} for round {round_num}: {random.choice(['Login to website', 'Fill out form', 'Navigate to page', 'Extract data'])}",  # Required field
+                    "validator_round_id": f"round_{round_num:03d}",
+                    "url": f"https://example{random.randint(1, 10)}.com",
+                    "prompt": f"Task {task_idx + 1} for round {round_num}: {random.choice(['Login to website', 'Fill out form', 'Navigate to page', 'Extract data'])}",
                     "task_type": random.choice(["login", "navigation", "form_filling", "data_extraction"]),
                     "created_at": round_start + random.randint(0, 300),
                     "status": "completed" if random.random() > 0.1 else "failed",
@@ -226,15 +276,14 @@ def generate_complete_rounds_data():
                     "time_limit": random.randint(60, 300)
                 }
                 tasks.append(task)
-                
-                # Generate task solution
+
                 task_solution = {
                     "task_solution_id": f"solution_{task_id}",
                     "task_id": task_id,
                     "agent_run_id": agent_run_id,
-                    "round_id": f"round_{round_num:03d}",
-                    "miner_uid": miners[agent_idx]["uid"],  # Required field
-                    "validator_uid": primary_validator["uid"],  # Required field
+                    "validator_round_id": f"round_{round_num:03d}",
+                    "miner_uid": miner_uid,
+                    "validator_uid": primary_validator["uid"],
                     "actions_taken": random.randint(2, 8),
                     "successful_actions": random.randint(1, task["expected_actions"]),
                     "failed_actions": random.randint(0, 2),
@@ -245,20 +294,19 @@ def generate_complete_rounds_data():
                     "status": "completed" if random.random() > 0.1 else "failed"
                 }
                 task_solutions.append(task_solution)
-                
-                # Generate evaluation result
-                score = round(random.uniform(0.3, 0.95), 3)
+
+                score = round(random.uniform(0.3, 0.95) if not is_sota else random.uniform(0.85, 0.99), 3)
                 evaluation_result = {
                     "evaluation_id": f"eval_{task_id}",
                     "task_id": task_id,
-                    "task_solution_id": task_solution["task_solution_id"],  # Required field
+                    "task_solution_id": task_solution["task_solution_id"],
                     "agent_run_id": agent_run_id,
-                    "round_id": f"round_{round_num:03d}",
-                    "miner_uid": miners[agent_idx]["uid"],  # Required field
-                    "validator_uid": primary_validator["uid"],  # Required field
+                    "validator_round_id": f"round_{round_num:03d}",
+                    "miner_uid": miner_uid,
+                    "validator_uid": primary_validator["uid"],
                     "final_score": score,
-                    "test_results_matrix": [[{"success": random.random() > 0.2, "extra_data": None}] for _ in range(3)],  # Required field
-                    "execution_history": [f"Action {i+1}" for i in range(task_solution["actions_taken"])],  # Required field
+                    "test_results_matrix": [[{"success": random.random() > 0.2, "extra_data": None}] for _ in range(3)],
+                    "execution_history": [f"Action {i+1}" for i in range(task_solution["actions_taken"])],
                     "feedback": {
                         "task_prompt": task["prompt"],
                         "final_score": score,
@@ -271,10 +319,10 @@ def generate_complete_rounds_data():
                         "critical_test_penalty": random.randint(0, 1),
                         "test_results": [
                             {
-                                "success": random.random() > 0.2,  # Required field
+                                "success": random.random() > 0.2,
                                 "extra_data": None
                             }
-                            for i in range(random.randint(3, 7))
+                            for _ in range(random.randint(3, 7))
                         ],
                         "execution_history": [
                             {
@@ -324,7 +372,7 @@ def main():
     
     # Show sample round
     sample_round = data['rounds'][0]
-    print(f"\n🔍 Sample Round ({sample_round['round_id']}):")
+    print(f"\n🔍 Sample Round ({sample_round['validator_round_id']}):")
     print(f"  Tasks: {sample_round['n_tasks']}")
     print(f"  Miners: {sample_round['n_miners']}")
     print(f"  Winners: {sample_round['n_winners']}")
