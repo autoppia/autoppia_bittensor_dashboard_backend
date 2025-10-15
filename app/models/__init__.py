@@ -7,8 +7,6 @@ from .core import (
     MinerInfo,
     Task,
     Round,
-    ValidatorRound,
-    ValidatorRoundRead,
     AgentEvaluationRun,
     
     # Utilities

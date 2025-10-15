@@ -8,7 +8,13 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 
-from app.models.ui.agent_runs import Action, Log, ResponseBase
+from app.models.ui.agent_runs import Action, Log
+
+
+class ResponseBase(BaseModel):
+    success: bool
+    error: Optional[str] = None
+    code: Optional[str] = None
 
 
 class EvaluationStatus(str, Enum):

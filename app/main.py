@@ -7,24 +7,20 @@ import time
 import os
 
 from app.config import settings
-from app.db.mongo import ensure_indexes, close_client
-from app.api.ui.rounds_get import router as rounds_get_router
+from app.db.session import init_db
 from app.api.validator.rounds_post import router as rounds_post_router
-from app.api.ui.ui_root import router as ui_router
-from app.api.ui.overview import router as overview_router
-from app.api.ui.rounds_api import router as rounds_api_router
-from app.api.ui.cache import router as cache_router
-from app.api.ui.agents import router as agents_router
-from app.api.ui.agent_runs import router as agent_runs_router
-from app.api.ui.tasks import router as tasks_router
-from app.api.ui.miners import router as miners_router
-from app.api.ui.miner_list import router as miner_list_router
-# Optimized routes
-from app.api.ui.optimized_ui import router as optimized_ui_router
-from app.api.ui.optimized_rounds_post import router as optimized_rounds_post_router
 from app.api.validator.validator_round import router as validator_rounds_router
-from app.api.ui.subnets import router as subnets_router
+from app.api.ui.cache import router as cache_router
 from app.services.idempotency import get_cache_stats
+from app.api.routes.rounds import router as rounds_router
+from app.api.routes.agent_runs import router as agent_runs_router
+from app.api.routes.evaluations import router as evaluations_router
+from app.api.routes.tasks import router as tasks_router
+from app.api.routes.agents import router as agents_router
+from app.api.routes.miners import router as miners_router
+from app.api.routes.overview import router as overview_router
+from app.api.routes.miner_list import router as miner_list_router
+from app.api.routes.subnets import router as subnets_router
 
 # Configure logging
 logging.basicConfig(
@@ -79,22 +75,18 @@ async def log_requests(request: Request, call_next):
 
 
 # Include routers
-app.include_router(rounds_get_router)  # GET endpoints for data retrieval
 app.include_router(rounds_post_router)  # POST endpoints for data submission
-app.include_router(ui_router)  # UI endpoints for dashboard
-app.include_router(overview_router, prefix="/api")  # Overview section endpoints
-app.include_router(rounds_api_router, prefix="/api")  # Rounds section API endpoints
-app.include_router(cache_router)  # Cache management endpoints
-app.include_router(agents_router)  # Agents API endpoints
-app.include_router(agent_runs_router, prefix="/api")  # Agent runs API endpoints
-app.include_router(tasks_router)  # Tasks API endpoints
-app.include_router(miners_router)  # Miners API endpoints
-app.include_router(miner_list_router)  # Optimized miner list endpoints
-# Optimized routers
-app.include_router(optimized_ui_router)  # Optimized UI endpoints
-app.include_router(optimized_rounds_post_router)  # Optimized POST endpoints
 app.include_router(validator_rounds_router)  # Progressive validator ingestion endpoints
-app.include_router(subnets_router)  # Subnet timeline endpoints
+app.include_router(cache_router)  # Cache management endpoints
+app.include_router(rounds_router)  # rounds endpoints
+app.include_router(agent_runs_router)  # agent run endpoints
+app.include_router(evaluations_router)  # evaluation endpoints
+app.include_router(tasks_router)  # task endpoints
+app.include_router(agents_router)  # agent endpoints
+app.include_router(miners_router)  # miner endpoints
+app.include_router(overview_router)  # overview endpoints
+app.include_router(miner_list_router)  # minimal miner list endpoints
+app.include_router(subnets_router)  # subnet timeline endpoints
 
 
 # Health check endpoint
@@ -154,10 +146,8 @@ async def on_startup():
     logger.info("Starting Autoppia Leaderboard API...")
     
     try:
-        # Skip MongoDB initialization for development with mock data
-        # await ensure_indexes()
-        logger.info("Skipping MongoDB initialization - using mock data")
-        
+        await init_db()
+        logger.info("SQL schema ready")
         logger.info(f"API server ready on {settings.HOST}:{settings.PORT}")
         logger.info(f"API documentation available at /docs")
         
@@ -173,10 +163,7 @@ async def on_shutdown():
     logger.info("Shutting down Autoppia Leaderboard API...")
     
     try:
-        # Skip MongoDB cleanup for development with mock data
-        # await close_client()
-        logger.info("Skipping MongoDB cleanup - using mock data")
-        
+        pass
     except Exception as e:
         logger.error(f"Error during shutdown: {e}")
 

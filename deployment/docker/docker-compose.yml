@@ -1,23 +1,6 @@
 version: "3.8"
 
 services:
-  # MongoDB service
-  mongodb:
-    image: mongo:7.0
-    container_name: leaderboard-mongodb
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: password
-      MONGO_INITDB_DATABASE: leaderboard
-    volumes:
-      - mongodb_data:/data/db
-      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
-    networks:
-      - leaderboard-network
-
   # FastAPI application
   api:
     build: .
@@ -26,19 +9,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      MONGO_URI: mongodb://admin:password@mongodb:27017/leaderboard?authSource=admin
-      MONGO_DB: leaderboard
       API_KEYS: '["dev-token-123","staging-456","prod-789"]'
       DEBUG: "false"
-    depends_on:
-      - mongodb
     networks:
       - leaderboard-network
     volumes:
       - ./app:/app/app:ro # Mount app code for development
-
-volumes:
-  mongodb_data:
 
 networks:
   leaderboard-network:

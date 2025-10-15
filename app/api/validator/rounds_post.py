@@ -2,14 +2,17 @@
 POST endpoints for rounds data submission.
 """
 from fastapi import APIRouter, HTTPException, Depends
-from app.models.schemas import RoundSubmissionRequest, RoundSubmissionResponse
-from app.db.mock_mongo import get_mock_db
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_session
+from app.models.core import RoundSubmissionRequest, RoundSubmissionResponse
+from app.services.validator_storage import RoundPersistenceService
 import logging
 import time
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1/rounds", tags=["rounds-post"])
+router = APIRouter(prefix="/api/v1/rounds", tags=["rounds-post"])
 
 
 def _validate_round_relationships(payload: RoundSubmissionRequest) -> None:
@@ -29,7 +32,8 @@ def _validate_round_relationships(payload: RoundSubmissionRequest) -> None:
     for agent_run in agent_runs:
         # Get tasks for this agent run
         agent_tasks = [task for task in tasks if task.agent_run_id == agent_run.agent_run_id]
-        
+        round_data = payload.round
+
         # Validate agent run relationships
         if not agent_run.validate_task_relationships(agent_tasks):
             raise HTTPException(
@@ -102,7 +106,10 @@ def _validate_round_relationships(payload: RoundSubmissionRequest) -> None:
 
 
 @router.post("/submit", response_model=RoundSubmissionResponse)
-async def submit_round_data(payload: RoundSubmissionRequest):
+async def submit_round_data(
+    payload: RoundSubmissionRequest,
+    session: AsyncSession = Depends(get_session),
+):
     """
     Submit complete round data including Round, AgentEvaluationRuns, Tasks, TaskSolutions, and EvaluationResults.
     This endpoint performs atomic submission with comprehensive validation.
@@ -124,96 +131,22 @@ async def submit_round_data(payload: RoundSubmissionRequest):
         # Validate all relationships before saving
         _validate_round_relationships(payload)
         
-        # Get database connection
-        db = get_mock_db()
-        
-        # Extract validator UID from the round
-        validator_uid = payload.round.validator_info.uid
-        
-        # Track saved entities
-        saved_entities = {
-            "round": None,
-            "agent_evaluation_runs": [],
-            "tasks": [],
-            "task_solutions": [],
-            "evaluation_results": []
-        }
-        
-        # 1. Save Round
         round_data = payload.round
-        round_doc = round_data.model_dump()
-        result = await db.rounds.update_one(
-            {"validator_round_id": round_data.validator_round_id},
-            {"$set": round_doc},
-            upsert=True
+
+        service = RoundPersistenceService(session)
+        async with session.begin():
+            result = await service.upsert_round_submission(payload)
+        
+        validator_uid = result.validator_uid
+        saved_entities = result.saved_entities
+        logger.info(
+            "Saved round submission %s (runs=%d, tasks=%d, solutions=%d, evaluations=%d)",
+            payload.round.validator_round_id,
+            len(saved_entities["agent_evaluation_runs"]),
+            len(saved_entities["tasks"]),
+            len(saved_entities["task_solutions"]),
+            len(saved_entities["evaluation_results"]),
         )
-        saved_entities["round"] = result.upserted_id or result.matched_count
-        logger.info(f"Saved round {round_data.validator_round_id}")
-        
-        # 2. Save Tasks
-        for task in payload.tasks:
-            task_doc = task.model_dump()
-            # Ensure task has proper references
-            task_doc["validator_round_id"] = round_data.validator_round_id
-            # agent_run_id is already set in the task model
-            # validator_uid removed - available via AgentEvaluationRun
-            
-            await db.tasks.update_one(
-                {"task_id": task.task_id},
-                {"$set": task_doc},
-                upsert=True
-            )
-            saved_entities["tasks"].append(task.task_id)
-        
-        logger.info(f"Saved {len(payload.tasks)} tasks")
-        
-        # 3. Save Agent Evaluation Runs
-        for agent_run in payload.agent_evaluation_runs:
-            agent_run_doc = agent_run.model_dump()
-            # Ensure agent run has proper references
-            agent_run_doc["validator_round_id"] = round_data.validator_round_id
-            agent_run_doc["validator_uid"] = validator_uid
-            
-            await db.agent_evaluation_runs.update_one(
-                {"agent_run_id": agent_run.agent_run_id},
-                {"$set": agent_run_doc},
-                upsert=True
-            )
-            saved_entities["agent_evaluation_runs"].append(agent_run.agent_run_id)
-        
-        logger.info(f"Saved {len(payload.agent_evaluation_runs)} agent evaluation runs")
-        
-        # 4. Save Task Solutions
-        for task_solution in payload.task_solutions:
-            task_solution_doc = task_solution.model_dump()
-            # Ensure task solution has proper references
-            task_solution_doc["validator_round_id"] = round_data.validator_round_id
-            task_solution_doc["validator_uid"] = validator_uid
-            
-            await db.task_solutions.update_one(
-                {"solution_id": task_solution.solution_id},
-                {"$set": task_solution_doc},
-                upsert=True
-            )
-            saved_entities["task_solutions"].append(task_solution.solution_id)
-        
-        logger.info(f"Saved {len(payload.task_solutions)} task solutions")
-        
-        # 5. Save Evaluation Results
-        for eval_result in payload.evaluation_results:
-            eval_result_doc = eval_result.model_dump()
-            # Ensure evaluation result has proper references
-            eval_result_doc["validator_round_id"] = round_data.validator_round_id
-            eval_result_doc["validator_uid"] = validator_uid
-            
-            await db.evaluation_results.update_one(
-                {"evaluation_id": eval_result.evaluation_id},
-                {"$set": eval_result_doc},
-                upsert=True
-            )
-            saved_entities["evaluation_results"].append(eval_result.evaluation_id)
-        
-        logger.info(f"Saved {len(payload.evaluation_results)} evaluation results")
         
         # Calculate processing time
         processing_time = time.time() - start_time
@@ -240,6 +173,9 @@ async def submit_round_data(payload: RoundSubmissionRequest):
         
     except HTTPException:
         raise
+    except ValueError as e:
+        logger.error(f"Validation error during round submission: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         processing_time = time.time() - start_time
         logger.error(f"Error submitting round data: {str(e)}")

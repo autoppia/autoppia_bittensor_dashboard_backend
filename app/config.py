@@ -3,12 +3,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     APP_NAME: str = "Autoppia Leaderboard API"
-    API_V1_PREFIX: str = "/v1"
+    API_V1_PREFIX: str = "/api/v1"
     DEBUG: bool = False
 
-    # MongoDB Configuration
-    MONGO_URI: str = "mongodb://localhost:27017"
-    MONGO_DB: str = "leaderboard"
+    # SQL Database Configuration
+    DATABASE_URL: str = "sqlite+aiosqlite:///./autoppia.db"
 
     # Authentication
     API_KEYS: list[str] = ["dev-token-123"]  # replace with real keys or load from vault

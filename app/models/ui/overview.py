@@ -62,6 +62,20 @@ class ValidatorDetailResponse(BaseResponse):
     data: Optional[Dict[str, ValidatorInfo]] = None
 
 
+class ValidatorFilterItem(BaseModel):
+    """Simplified validator info for dropdown filters."""
+    id: str
+    name: str
+    hotkey: Optional[str] = None
+    icon: Optional[str] = None
+    status: Optional[str] = None
+
+
+class ValidatorsFilterResponse(BaseResponse):
+    """Response model for validator filter endpoint."""
+    data: Optional[Dict[str, List[ValidatorFilterItem]]] = None
+
+
 # --- Round Models ---
 class RoundInfo(BaseModel):
     """Round information for overview section."""
@@ -115,6 +129,7 @@ class SubnetStatistics(BaseModel):
     totalStake: int
     totalEmission: int
     averageTrust: float
+    networkUptime: float
     activeValidators: int
     registeredMiners: int
     totalTasksCompleted: int

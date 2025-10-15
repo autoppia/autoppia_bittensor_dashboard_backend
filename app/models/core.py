@@ -86,7 +86,10 @@ class MinerInfo(BaseModel):
 class Round(BaseModel):
     """Round definition with all necessary information."""
     validator_round_id: str  # Unique validator round identifier (UUID)
-    validators: List[ValidatorInfo]  # Multiple validators participating in this round
+    validators: List[ValidatorInfo] = Field(default_factory=list, description="Validators participating in this round")
+    validator_info: Optional[ValidatorInfo] = Field(
+        default=None, description="Primary validator information (for backwards compatibility)"
+    )
     
     # Bittensor timing information
     start_block: int
@@ -120,51 +123,15 @@ class Round(BaseModel):
     top_score: Optional[float] = None  # Highest score achieved
     status: str = "active"  # Round status: active, completed, pending
 
+    model_config = {"extra": "allow"}
 
-# --- Validator Round ---
-class ValidatorRound(BaseModel):
-    """Validator round with nested entities."""
-
-    validator_round_id: str = Field(..., description="Unique validator round identifier")
-    round: int = 0
-    validator: ValidatorInfo
-    start_block: Optional[int] = None
-    start_epoch: Optional[int] = None
-    end_block: Optional[int] = None
-    end_epoch: Optional[int] = None
-    started_at: Optional[float] = None
-    ended_at: Optional[float] = None
-    round_epochs_length: int = 20
-    n_tasks: int
-    n_winners: int
-    tasks: List["Task"] = Field(default_factory=list)
-    agent_runs: List["AgentEvaluationRun"] = Field(default_factory=list)
-    sota_agents: List[MinerInfo] = Field(default_factory=list)
-    winners: Optional[List[Dict[str, Any]]] = None
-    winner_scores: List[float] = Field(default_factory=list)
-    weights: Optional[Dict[str, float]] = None
-    average_score: Optional[float] = None
-    top_score: Optional[float] = None
-    status: str = "active"
-    extra: Dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("validator_round_id")
-    @classmethod
-    def _ensure_uuid(cls, value: str) -> str:
-        from uuid import UUID
-        try:
-            UUID(str(value))
-        except (ValueError, TypeError):
-            raise ValueError("validator_round_id must be a valid UUID string")
-        return str(value)
-
-
-class ValidatorRoundRead(ValidatorRound):
-    """Validator round retrieved from persistent storage."""
-
-    created_at: float = Field(default_factory=now_ts)
-    tasks: List["Task"] = Field(default_factory=list)
-    agent_runs: List["AgentEvaluationRun"] = Field(default_factory=list)
+    @model_validator(mode="after")
+    def _synchronize_validator_info(cls, values: "Round") -> "Round":  # type: ignore[override]
+        if values.validator_info and not values.validators:
+            values.validators = [values.validator_info]
+        elif values.validators and not values.validator_info:
+            values.validator_info = values.validators[0]
+        return values
 
 
 # --- Agent Evaluation Run ---
@@ -560,8 +527,6 @@ __all__ = [
     "ValidatorInfo",
     "MinerInfo",
     "Round",
-    "ValidatorRound",
-    "ValidatorRoundRead",
     "AgentEvaluationRun",
     "BaseTaskTest",
     "CheckUrlTest",

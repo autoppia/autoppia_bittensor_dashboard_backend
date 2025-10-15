@@ -79,7 +79,7 @@ class APIDemo:
             "metadata": {"demo": True, "purpose": "api_demonstration"}
         }
         
-        result = await self.make_request("POST", "/v1/rounds/start", start_data)
+        result = await self.make_request("POST", "/api/v1/rounds/start", start_data)
         if result["success"]:
             print(f"✅ Round started successfully")
             print(f"   Round ID: {validator_round_id}")
@@ -100,7 +100,7 @@ class APIDemo:
             "metadata": {"generation_method": "demo"}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/generate-tasks", task_data)
+        result = await self.make_request("POST", f"/api/v1/rounds/{validator_round_id}/generate-tasks", task_data)
         if result["success"]:
             print(f"✅ Tasks generated successfully")
             print(f"   Tasks created: {result['data']['data']['tasks_generated']}")
@@ -123,7 +123,7 @@ class APIDemo:
             "metadata": {"distribution_method": "demo"}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/distribute-tasks", dist_data)
+        result = await self.make_request("POST", f"/api/v1/rounds/{validator_round_id}/distribute-tasks", dist_data)
         if result["success"]:
             print(f"✅ Tasks distributed successfully")
             print(f"   Task executions created: {result['data']['data']['task_executions_created']}")
@@ -165,7 +165,7 @@ class APIDemo:
             "metadata": {"demo": True}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/task-responses", response_data)
+        result = await self.make_request("POST", f"/api/v1/rounds/{validator_round_id}/task-responses", response_data)
         if result["success"]:
             print(f"✅ Task responses submitted successfully")
             print(f"   Responses processed: {result['data']['data']['responses_processed']}")
@@ -192,7 +192,7 @@ class APIDemo:
             "metadata": {"evaluation_method": "demo"}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/evaluate", eval_data)
+        result = await self.make_request("POST", f"/api/v1/rounds/{validator_round_id}/evaluate", eval_data)
         if result["success"]:
             print(f"✅ Tasks evaluated successfully")
             print(f"   Evaluations completed: {result['data']['data']['evaluations_completed']}")
@@ -214,7 +214,7 @@ class APIDemo:
             "metadata": {"scoring_algorithm": "demo"}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/score", score_data)
+        result = await self.make_request("POST", f"/api/v1/rounds/{validator_round_id}/score", score_data)
         if result["success"]:
             print(f"✅ Scores calculated successfully")
             print(f"   Agent runs scored: {result['data']['data']['agent_runs_scored']}")
@@ -242,7 +242,7 @@ class APIDemo:
             "metadata": {"assignment_method": "demo"}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/assign-weights", weight_data)
+        result = await self.make_request("POST", f"/api/v1/rounds/{validator_round_id}/assign-weights", weight_data)
         if result["success"]:
             print(f"✅ Weights assigned successfully")
             weights = result['data']['data']['weights_assigned']
@@ -268,7 +268,7 @@ class APIDemo:
             "metadata": {"completed_by": "demo_script"}
         }
         
-        result = await self.make_request("POST", f"/v1/rounds/{validator_round_id}/complete", complete_data)
+        result = await self.make_request("POST", f"/api/v1/rounds/{validator_round_id}/complete", complete_data)
         if result["success"]:
             print(f"✅ Round completed successfully")
             print(f"   Status: {result['data']['data']['status']}")
@@ -281,7 +281,7 @@ class APIDemo:
         print("\n🔍 Step 9: Querying Results...")
         
         # Get round status
-        status_result = await self.make_request("GET", f"/v1/rounds/{validator_round_id}/status", 
+        status_result = await self.make_request("GET", f"/api/v1/rounds/{validator_round_id}/status", 
                                                {"validator_uid": self.validator_info["validator_uid"]})
         if status_result["success"]:
             print(f"✅ Round status retrieved")
@@ -290,7 +290,7 @@ class APIDemo:
             print(f"   Progress: {status_data['progress']}")
         
         # Get round details
-        details_result = await self.make_request("GET", f"/v1/rounds/{validator_round_id}/details",
+        details_result = await self.make_request("GET", f"/api/v1/rounds/{validator_round_id}/details",
                                                 {"validator_uid": self.validator_info["validator_uid"]})
         if details_result["success"]:
             print(f"✅ Round details retrieved")
@@ -310,7 +310,7 @@ class APIDemo:
         
         # Get rounds leaderboard
         print("\n🏆 Rounds Leaderboard:")
-        result = await self.make_request("GET", "/v1/rounds/leaderboard/rounds", 
+        result = await self.make_request("GET", "/api/v1/rounds/leaderboard/rounds", 
                                         {"limit": 5, "sort_by": "started_at", "sort_order": "desc"})
         if result["success"]:
             rounds = result['data']['data']['rounds']
@@ -322,7 +322,7 @@ class APIDemo:
         
         # Get miners leaderboard
         print("\n⛏️ Miners Leaderboard:")
-        result = await self.make_request("GET", "/v1/rounds/leaderboard/miners",
+        result = await self.make_request("GET", "/api/v1/rounds/leaderboard/miners",
                                         {"limit": 5, "sort_by": "avg_score", "sort_order": "desc"})
         if result["success"]:
             miners = result['data']['data']['miners']
