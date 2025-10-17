@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import re
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-import re
-
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -107,6 +109,36 @@ class AgentAggregate:
     rounds: set = field(default_factory=set)
     first_seen: float = field(default_factory=lambda: float("inf"))
     last_seen: float = field(default_factory=lambda: 0.0)
+
+
+_CACHE_TTL_ENV = "AGENTS_CACHE_TTL_SECONDS"
+_DEFAULT_CACHE_TTL = 30
+try:
+    _CACHE_TTL_SECONDS = max(int(os.getenv(_CACHE_TTL_ENV, str(_DEFAULT_CACHE_TTL))), 0)
+except ValueError:
+    _CACHE_TTL_SECONDS = _DEFAULT_CACHE_TTL
+_AGGREGATE_CACHE: Optional[Dict[str, AgentAggregate]] = None
+_AGGREGATE_CACHE_TIMESTAMP: float = 0.0
+_AGGREGATE_CACHE_BENCHMARKS: Dict[int, Dict[str, Dict[str, Any]]] = {}
+_AGGREGATE_CACHE_SIGNATURE: Optional[Tuple[int, Optional[datetime]]] = None
+_AGGREGATE_CACHE_LOCK = asyncio.Lock()
+
+
+def _clone_round_benchmark_cache(
+    cache: Dict[int, Dict[str, Dict[str, Any]]]
+) -> Dict[int, Dict[str, Dict[str, Any]]]:
+    return {
+        round_id: {key: dict(entry) for key, entry in entries.items()}
+        for round_id, entries in cache.items()
+    }
+
+
+def _cache_valid(now: float) -> bool:
+    if _AGGREGATE_CACHE is None:
+        return False
+    if _CACHE_TTL_SECONDS <= 0:
+        return False
+    return (now - _AGGREGATE_CACHE_TIMESTAMP) <= _CACHE_TTL_SECONDS
 
 
 class AgentsService:
@@ -632,6 +664,54 @@ class AgentsService:
         )
 
     async def _aggregate_agents(self) -> Dict[str, AgentAggregate]:
+        global _AGGREGATE_CACHE, _AGGREGATE_CACHE_TIMESTAMP, _AGGREGATE_CACHE_BENCHMARKS, _AGGREGATE_CACHE_SIGNATURE
+
+        now = time.monotonic()
+        cached = await self._try_get_cached_aggregates(now)
+        if cached is not None:
+            return cached
+
+        async with _AGGREGATE_CACHE_LOCK:
+            now = time.monotonic()
+            cached = await self._try_get_cached_aggregates(now)
+            if cached is not None:
+                return cached
+
+            aggregates, round_benchmark_scores, signature = await self._build_agent_aggregates()
+            round_cache = _clone_round_benchmark_cache(round_benchmark_scores)
+            self._round_benchmark_cache = round_cache
+
+            if _CACHE_TTL_SECONDS > 0:
+                _AGGREGATE_CACHE = aggregates
+                _AGGREGATE_CACHE_TIMESTAMP = now
+                _AGGREGATE_CACHE_BENCHMARKS = round_cache
+                _AGGREGATE_CACHE_SIGNATURE = signature
+
+            return aggregates
+
+    async def _try_get_cached_aggregates(self, now: float) -> Optional[Dict[str, AgentAggregate]]:
+        if not _cache_valid(now):
+            return None
+
+        cached = _AGGREGATE_CACHE
+        signature = _AGGREGATE_CACHE_SIGNATURE
+        if cached is None or signature is None:
+            return None
+
+        current_signature = await self._fetch_current_signature()
+        if current_signature != signature:
+            return None
+
+        self._round_benchmark_cache = _clone_round_benchmark_cache(_AGGREGATE_CACHE_BENCHMARKS)
+        return cached
+
+    async def _build_agent_aggregates(
+        self,
+    ) -> Tuple[
+        Dict[str, AgentAggregate],
+        Dict[int, Dict[str, Dict[str, Any]]],
+        Tuple[int, Optional[datetime]],
+    ]:
         stmt = (
             select(AgentEvaluationRunORM)
             .options(
@@ -642,6 +722,13 @@ class AgentsService:
         )
         result = await self.session.scalars(stmt)
         run_rows = list(result)
+        last_updated = max(
+            (row.updated_at for row in run_rows if getattr(row, "updated_at", None) is not None),
+            default=None,
+        )
+        if last_updated is not None and last_updated.tzinfo is None:
+            last_updated = last_updated.replace(tzinfo=timezone.utc)
+        signature: Tuple[int, Optional[datetime]] = (len(run_rows), last_updated)
         tasks_by_round = await self.rounds_service._load_tasks_for_rounds(  # type: ignore[attr-defined]
             {row.validator_round_id for row in run_rows}
         )
@@ -793,7 +880,6 @@ class AgentsService:
                 reverse=True,
             )
 
-        round_best_scores: Dict[int, float] = {}
         for round_number, entries in round_leaderboards.items():
             sorted_entries = sorted(entries, key=lambda item: item[1], reverse=True)
             if sorted_entries:
@@ -816,11 +902,27 @@ class AgentsService:
             ):
                 aggregate.latest_round_top_score = aggregate.latest_round_score
 
-        self._round_benchmark_cache = {
-            round_id: dict(entries) for round_id, entries in round_benchmark_scores.items()
+        round_cache = {
+            round_id: {key: dict(entry) for key, entry in entries.items()}
+            for round_id, entries in round_benchmark_scores.items()
         }
 
-        return aggregates
+        return aggregates, round_cache, signature
+
+    async def _fetch_current_signature(self) -> Tuple[int, Optional[datetime]]:
+        stmt = select(
+            func.count(AgentEvaluationRunORM.id),
+            func.max(AgentEvaluationRunORM.updated_at),
+        )
+        result = await self.session.execute(stmt)
+        total_runs, last_updated = result.one()
+        total = int(total_runs or 0)
+        if isinstance(last_updated, str):
+            # SQLite may return ISO strings for datetime columns
+            last_updated = datetime.fromisoformat(last_updated.replace(" ", "T"))
+        if isinstance(last_updated, datetime) and last_updated.tzinfo is None:
+            last_updated = last_updated.replace(tzinfo=timezone.utc)
+        return total, last_updated
 
     async def _fetch_agent_contexts(self, agent_id: str) -> List[AgentRunContext]:
         uid = self._extract_uid(agent_id)

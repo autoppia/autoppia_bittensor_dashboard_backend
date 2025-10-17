@@ -243,7 +243,13 @@ class OverviewService:
             unlimited = False
             derived_limit = min(limit, derived_limit) if derived_limit else limit
 
-        rounds = await self._recent_rounds(limit=0 if unlimited else (derived_limit or 30))
+        fetch_limit = 0
+        if not unlimited:
+            # Fetch a wider window than requested so we can collapse multiple validator rounds
+            # for the same logical day into a single aggregated round.
+            fetch_limit = max((derived_limit or 30) * 5, derived_limit or 1)
+
+        rounds = await self._recent_rounds(limit=fetch_limit)
         if not rounds:
             now_iso = datetime.now(timezone.utc).isoformat()
             return [], {"start": now_iso, "end": now_iso}
@@ -277,7 +283,6 @@ class OverviewService:
 
         total_rounds = len(rounds)
         entries: List[LeaderboardEntry] = []
-        timestamps: List[str] = []
         for idx, round_obj in enumerate(rounds):
             round_runs = runs_by_round.get(round_obj.validator_round_id, [])
             run_scores: List[float] = []
@@ -307,7 +312,6 @@ class OverviewService:
                 round_obj.started_at or datetime.now(timezone.utc).timestamp(),
                 tz=timezone.utc,
             ).isoformat()
-            timestamps.append(timestamp)
 
             round_number = round_obj.round_number or _round_id_to_int(round_obj.validator_round_id)
             if not round_number or round_number <= 0:
@@ -324,10 +328,41 @@ class OverviewService:
                 )
             )
 
-        entries.sort(key=lambda entry: entry.timestamp, reverse=True)
-        start = min(timestamps)
-        end = max(timestamps)
-        return entries, {"start": start, "end": end}
+        grouped_entries: Dict[int, List[LeaderboardEntry]] = defaultdict(list)
+        for entry in entries:
+            grouped_entries[entry.round].append(entry)
+
+        aggregated_entries: List[LeaderboardEntry] = []
+        for round_number, round_entries in grouped_entries.items():
+            latest_timestamp = max(entry.timestamp for entry in round_entries)
+            subnet36_values = [entry.subnet36 for entry in round_entries]
+            openai_values = [entry.openai_cua for entry in round_entries]
+            anthropic_values = [entry.anthropic_cua for entry in round_entries]
+            browser_values = [entry.browser_use for entry in round_entries]
+
+            aggregated_entries.append(
+                LeaderboardEntry(
+                    round=round_number,
+                    subnet36=round(max(subnet36_values), 3) if subnet36_values else 0.0,
+                    openai_cua=round(max(openai_values), 3) if openai_values else 0.0,
+                    anthropic_cua=round(max(anthropic_values), 3) if anthropic_values else 0.0,
+                    browser_use=round(max(browser_values), 3) if browser_values else 0.0,
+                    timestamp=latest_timestamp,
+                )
+            )
+
+        aggregated_entries.sort(key=lambda entry: entry.timestamp, reverse=True)
+
+        if not unlimited and derived_limit:
+            aggregated_entries = aggregated_entries[:derived_limit]
+
+        if not aggregated_entries:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            return [], {"start": now_iso, "end": now_iso}
+
+        start = min(entry.timestamp for entry in aggregated_entries)
+        end = max(entry.timestamp for entry in aggregated_entries)
+        return aggregated_entries, {"start": start, "end": end}
 
     async def statistics(self) -> SubnetStatistics:
         validators = await self._aggregate_validators()

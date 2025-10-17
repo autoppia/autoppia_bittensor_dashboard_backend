@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +27,19 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore"
     )
+
+    def model_post_init(self, __context: Any) -> None:  # type: ignore[override]
+        """Ensure required CORS origins are present."""
+        if "*" in self.CORS_ORIGINS:
+            return
+
+        required_origins = {
+            "https://dev-infinitewebarena.autoppia.com",
+            "https://infinitewebarena.autoppia.com",
+        }
+        missing = required_origins.difference(self.CORS_ORIGINS)
+        if missing:
+            self.CORS_ORIGINS.extend(sorted(missing))
 
 
 settings = Settings()
