@@ -50,7 +50,6 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
     round: Mapped["RoundORM"] = relationship(back_populates="agent_runs")
-    tasks: Mapped[list["TaskORM"]] = relationship(back_populates="agent_run", cascade="all, delete-orphan")
     task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(
         back_populates="agent_run", cascade="all, delete-orphan"
     )
@@ -65,12 +64,8 @@ class TaskORM(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     validator_round_id: Mapped[str] = mapped_column(String(128), index=True)
-    agent_run_id: Mapped[Optional[str]] = mapped_column(
-        String(128), ForeignKey("agent_evaluation_runs.agent_run_id", ondelete="SET NULL"), nullable=True
-    )
     data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
-    agent_run: Mapped[Optional["AgentEvaluationRunORM"]] = relationship(back_populates="tasks")
     task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(
         back_populates="task", cascade="all, delete-orphan"
     )

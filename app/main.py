@@ -12,15 +12,16 @@ from app.api.validator.rounds_post import router as rounds_post_router
 from app.api.validator.validator_round import router as validator_rounds_router
 from app.api.ui.cache import router as cache_router
 from app.services.idempotency import get_cache_stats
-from app.api.routes.rounds import router as rounds_router
-from app.api.routes.agent_runs import router as agent_runs_router
-from app.api.routes.evaluations import router as evaluations_router
-from app.api.routes.tasks import router as tasks_router
-from app.api.routes.agents import router as agents_router
-from app.api.routes.miners import router as miners_router
-from app.api.routes.overview import router as overview_router
-from app.api.routes.miner_list import router as miner_list_router
-from app.api.routes.subnets import router as subnets_router
+from app.api.ui.rounds import router as rounds_router
+from app.api.ui.legacy_rounds import legacy_router as legacy_rounds_router
+from app.api.ui.agent_runs import router as agent_runs_router
+from app.api.ui.evaluations import router as evaluations_router
+from app.api.ui.tasks import router as tasks_router
+from app.api.ui.agents import router as agents_router
+from app.api.ui.miners import router as miners_router
+from app.api.ui.overview import router as overview_router
+from app.api.ui.miner_list import router as miner_list_router
+from app.api.ui.subnets import router as subnets_router, legacy_router as subnets_legacy_router
 
 # Configure logging
 logging.basicConfig(
@@ -79,6 +80,7 @@ app.include_router(rounds_post_router)  # POST endpoints for data submission
 app.include_router(validator_rounds_router)  # Progressive validator ingestion endpoints
 app.include_router(cache_router)  # Cache management endpoints
 app.include_router(rounds_router)  # rounds endpoints
+app.include_router(legacy_rounds_router)  # legacy /rounds endpoints
 app.include_router(agent_runs_router)  # agent run endpoints
 app.include_router(evaluations_router)  # evaluation endpoints
 app.include_router(tasks_router)  # task endpoints
@@ -87,6 +89,7 @@ app.include_router(miners_router)  # miner endpoints
 app.include_router(overview_router)  # overview endpoints
 app.include_router(miner_list_router)  # minimal miner list endpoints
 app.include_router(subnets_router)  # subnet timeline endpoints
+app.include_router(subnets_legacy_router)  # legacy subnet endpoint compatibility
 
 
 # Health check endpoint

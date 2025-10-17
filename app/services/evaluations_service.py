@@ -19,7 +19,7 @@ from app.db.models import (
 from app.models.core import (
     AgentEvaluationRun,
     EvaluationResult,
-    Round,
+    ValidatorRound,
     Task,
     TaskSolution,
 )
@@ -52,10 +52,23 @@ def _format_validator_id(validator_uid: Optional[int]) -> str:
 
 
 def _round_id_to_int(round_id: str) -> int:
-    if not round_id or "_" not in round_id:
+    if not round_id:
+        return 0
+    suffix = round_id
+    if round_id.startswith("round_"):
+        suffix = round_id.split("round_", 1)[1]
+    elif "_" in round_id:
+        suffix = round_id.split("_", 1)[1]
+    digits: list[str] = []
+    for char in suffix:
+        if char.isdigit():
+            digits.append(char)
+        else:
+            break
+    if not digits:
         return 0
     try:
-        return int(round_id.split("_", 1)[1])
+        return int("".join(digits))
     except ValueError:
         return 0
 
@@ -70,7 +83,7 @@ def _parse_identifier(identifier: str) -> int:
 
 @dataclass
 class EvaluationContext:
-    round: Round
+    round: ValidatorRound
     agent_run: AgentEvaluationRun
     task: Task
     task_solution: TaskSolution
@@ -97,14 +110,13 @@ class EvaluationsService:
         stmt = (
             select(EvaluationResultORM)
             .options(
-                selectinload(EvaluationResultORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.round),
+                selectinload(EvaluationResultORM.agent_run).selectinload(
+                    AgentEvaluationRunORM.round
+                ),
                 selectinload(EvaluationResultORM.task),
                 selectinload(EvaluationResultORM.task_solution),
             )
             .order_by(EvaluationResultORM.id.desc())
-            .offset(skip)
-            .limit(limit)
         )
 
         if run_id:
@@ -117,8 +129,7 @@ class EvaluationsService:
             )
 
         result = await self.session.scalars(stmt)
-
-        items: List[EvaluationListItem] = []
+        contexts: List[EvaluationContext] = []
         for evaluation_row in result:
             context = self._build_context(evaluation_row)
             if agent_id:
@@ -130,11 +141,15 @@ class EvaluationsService:
                 if context.agent_run.validator_uid != validator_uid:
                     continue
 
-            items.append(self._build_list_item(context))
+            contexts.append(context)
+
+        total = len(contexts)
+        page_contexts = contexts[skip : skip + limit]
+        items = [self._build_list_item(context) for context in page_contexts]
 
         return {
             "evaluations": items,
-            "total": len(items),
+            "total": total,
             "page": page,
             "limit": limit,
         }
@@ -296,7 +311,6 @@ class EvaluationsService:
         data = dict(task_row.data or {})
         data.setdefault("task_id", task_row.task_id)
         data.setdefault("validator_round_id", task_row.validator_round_id)
-        data.setdefault("agent_run_id", task_row.agent_run_id)
         return Task(**data)
 
     @staticmethod

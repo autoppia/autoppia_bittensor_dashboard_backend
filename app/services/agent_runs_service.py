@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -36,6 +37,8 @@ from app.models.ui.agent_runs import (
     Website,
 )
 from app.services.rounds_service import AgentRunContext, RoundsService
+from app.data import get_validator_metadata
+from app.utils.images import resolve_agent_image, resolve_validator_image
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +76,7 @@ class AgentRunsService:
         self,
         page: int = 1,
         limit: int = 20,
-        validator_round_id: Optional[int] = None,
+        round_number: Optional[int] = None,
         validator_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         query: Optional[str] = None,
@@ -83,17 +86,11 @@ class AgentRunsService:
         sort_by: str = "startTime",
         sort_order: str = "desc",
     ) -> Dict[str, object]:
-        skip = (page - 1) * limit
-        round_filter = (
-            f"round_{validator_round_id:03d}"
-            if validator_round_id is not None
-            else None
-        )
-
+        skip = max(0, (page - 1) * limit)
         contexts = await self.rounds_service.list_agent_run_contexts(
-            validator_round_id=round_filter,
-            limit=limit,
-            skip=skip,
+            limit=None,
+            skip=0,
+            include_details=False,
         )
 
         status_filter = status.lower() if status else None
@@ -102,7 +99,12 @@ class AgentRunsService:
         query_lower = query.lower() if query else None
 
         runs = []
+        available_rounds: set[int] = set()
         for context in contexts:
+            round_id_value = context.round.round_number or _round_id_to_int(
+                context.round.validator_round_id
+            )
+
             if validator_id:
                 validator_uid = _parse_identifier(validator_id)
                 if context.run.validator_uid != validator_uid:
@@ -132,16 +134,29 @@ class AgentRunsService:
                 ):
                     continue
 
+            if round_id_value:
+                available_rounds.add(round_id_value)
+
+            if round_number is not None and round_id_value != round_number:
+                continue
+
             run_summary = self._build_run_summary(context)
             runs.append(run_summary)
 
         runs = self._sort_runs(runs, sort_by, sort_order)
+        total = len(runs)
+
+        start = skip
+        end = start + limit
+        paginated_runs = runs[start:end]
 
         return {
-            "runs": runs,
-            "total": len(runs),
+            "runs": paginated_runs,
+            "total": total,
             "page": page,
             "limit": limit,
+            "availableRounds": sorted(available_rounds, reverse=True),
+            "selectedRound": round_number,
         }
 
     async def get_agent_run(self, agent_run_id: str) -> Optional[AgentRun]:
@@ -325,14 +340,14 @@ class AgentRunsService:
         average_score = self._compute_average_score(context.evaluation_results)
         overall_score = _safe_int(average_score * 100)
 
-        validator = self._find_validator(context)
-        validator_name = validator.name if validator and validator.name else f"Validator {context.run.validator_uid}"
-        validator_image = validator.coldkey if validator and validator.coldkey else ""
-
+        validator_name, validator_image = self._resolve_validator_identity(context)
+        round_id_value = context.round.round_number
+        if round_id_value is None:
+            round_id_value = _round_id_to_int(context.round.validator_round_id)
         return AgentRun(
             runId=context.run.agent_run_id,
             agentId=_format_agent_id(context.run.miner_uid),
-            roundId=_round_id_to_int(context.round.validator_round_id),
+            roundId=round_id_value or 0,
             validatorId=_format_validator_id(context.run.validator_uid),
             validatorName=validator_name,
             validatorImage=validator_image,
@@ -353,11 +368,15 @@ class AgentRunsService:
         )
 
     def _build_personas(self, context: AgentRunContext) -> Personas:
-        validator = self._find_validator(context)
         miner = self._find_miner(context)
+        validator_name, validator_image = self._resolve_validator_identity(context)
+
+        round_number_value = context.round.round_number
+        if round_number_value is None:
+            round_number_value = _round_id_to_int(context.round.validator_round_id)
 
         round_info = RoundInfo(
-            id=_round_id_to_int(context.round.validator_round_id),
+            id=round_number_value or 0,
             name=context.round.validator_round_id,
             status=context.round.status,
             startTime=_ts_to_iso(context.round.started_at) or "",
@@ -366,8 +385,8 @@ class AgentRunsService:
 
         validator_info = ValidatorInfo(
             id=_format_validator_id(context.run.validator_uid),
-            name=validator.name if validator and validator.name else f"Validator {context.run.validator_uid}",
-            image=validator.coldkey if validator and validator.coldkey else "",
+            name=validator_name,
+            image=validator_image,
             description="",
             website="",
             github="",
@@ -377,7 +396,7 @@ class AgentRunsService:
             id=_format_agent_id(context.run.miner_uid),
             name=miner.agent_name if miner and miner.agent_name else f"Agent {context.run.miner_uid}",
             type="sota" if context.run.is_sota else "miner",
-            image=miner.agent_image or "" if miner else "",
+            image=resolve_agent_image(miner),
             description=(miner.description or "") if miner else "",
         )
 
@@ -471,10 +490,14 @@ class AgentRunsService:
             )
         ]
 
+        round_id_value = context.round.round_number
+        if round_id_value is None:
+            round_id_value = _round_id_to_int(context.round.validator_round_id)
+
         return Summary(
             runId=context.run.agent_run_id,
             agentId=_format_agent_id(context.run.miner_uid),
-            roundId=_round_id_to_int(context.round.validator_round_id),
+            roundId=round_id_value or 0,
             validatorId=_format_validator_id(context.run.validator_uid),
             startTime=_ts_to_iso(context.run.started_at) or "",
             endTime=_ts_to_iso(context.run.ended_at),
@@ -499,25 +522,52 @@ class AgentRunsService:
         )
 
     def _build_run_summary(self, context: AgentRunContext) -> Dict[str, object]:
-        websites, ui_tasks, success_count = self._build_websites_and_tasks(context)
-        total_tasks = len(ui_tasks)
-        average_score = self._compute_average_score(context.evaluation_results)
+        run_model = context.run
+        total_tasks = run_model.n_tasks_total or len(context.tasks)
+        completed_tasks = run_model.n_tasks_completed or 0
+        if completed_tasks == 0 and context.evaluation_results:
+            completed_tasks = sum(
+                1 for evaluation in context.evaluation_results if evaluation.final_score >= 0.5
+            )
+
+        average_score = (
+            run_model.avg_eval_score
+            if run_model.avg_eval_score is not None
+            else self._compute_average_score(context.evaluation_results)
+        )
+        average_score = float(average_score or 0.0)
+        validator_name, validator_image = self._resolve_validator_identity(context)
+        success_count = completed_tasks if completed_tasks else sum(
+            1 for evaluation in context.evaluation_results if evaluation.final_score >= 0.5
+            )
+        completed_tasks = success_count
+        failed_tasks = max(total_tasks - success_count, 0)
+        overall_score = _safe_int(average_score * 100)
+        success_rate = (success_count / total_tasks * 100.0) if total_tasks else 0.0
+        round_id_value = context.round.round_number
+        if round_id_value is None:
+            round_id_value = _round_id_to_int(context.round.validator_round_id)
 
         return {
-            "runId": context.run.agent_run_id,
-            "agentId": _format_agent_id(context.run.miner_uid),
-            "roundId": _round_id_to_int(context.round.validator_round_id),
-            "validatorId": _format_validator_id(context.run.validator_uid),
+            "runId": run_model.agent_run_id,
+            "agentId": _format_agent_id(run_model.miner_uid),
+            "roundId": round_id_value or 0,
+            "validatorId": _format_validator_id(run_model.validator_uid),
+            "validatorName": validator_name,
+            "validatorImage": validator_image,
             "status": self._run_status(context).value,
-            "startTime": _ts_to_iso(context.run.started_at),
-            "endTime": _ts_to_iso(context.run.ended_at),
+            "startTime": _ts_to_iso(run_model.started_at),
+            "endTime": _ts_to_iso(run_model.ended_at),
             "totalTasks": total_tasks,
-            "completedTasks": success_count,
+            "completedTasks": completed_tasks,
+            "successfulTasks": success_count,
+            "failedTasks": failed_tasks,
             "averageScore": average_score,
-            "successRate": (success_count / total_tasks * 100) if total_tasks else 0.0,
-            "overallScore": _safe_int(average_score * 100),
-            "ranking": context.run.rank or 0,
-            "duration": _safe_int((context.run.ended_at or context.run.started_at or 0) - (context.run.started_at or 0)),
+            "score": average_score,
+            "successRate": success_rate,
+            "overallScore": overall_score,
+            "ranking": run_model.rank or 0,
+            "duration": _safe_int((run_model.ended_at or run_model.started_at or 0) - (run_model.started_at or 0)),
         }
 
     def _sort_runs(self, runs: List[Dict[str, object]], sort_by: str, sort_order: str) -> List[Dict[str, object]]:
@@ -652,6 +702,32 @@ class AgentRunsService:
             return next((miner for miner in context.round.miners if miner.uid == context.run.miner_uid), None)
         return context.run.miner_info
 
+    def _resolve_validator_identity(self, context: AgentRunContext) -> Tuple[str, str]:
+        validator = self._find_validator(context)
+        validator_uid = context.run.validator_uid
+
+        metadata = (
+            get_validator_metadata(validator_uid)
+            if validator_uid is not None
+            else {"name": "Validator", "image": "/validators/default.png"}
+        )
+
+        name_candidates = [
+            getattr(validator, "name", None) if validator else None,
+            metadata.get("name"),
+            f"Validator {validator_uid}" if validator_uid is not None else "Validator",
+        ]
+        validator_name = next((candidate for candidate in name_candidates if candidate), "Validator")
+
+        image_candidates = [
+            metadata.get("image"),
+            getattr(validator, "image", None) if validator else None,
+        ]
+        existing_image = next((candidate for candidate in image_candidates if candidate), None)
+        validator_image = resolve_validator_image(validator_name, existing=existing_image)
+
+        return validator_name, validator_image
+
 
 def _format_agent_id(miner_uid: Optional[int]) -> str:
     return f"agent-{miner_uid}" if miner_uid is not None else "agent-unknown"
@@ -662,10 +738,13 @@ def _format_validator_id(validator_uid: Optional[int]) -> str:
 
 
 def _round_id_to_int(round_id: str) -> int:
-    if not round_id or "_" not in round_id:
+    if not round_id:
+        return 0
+    matches = re.findall(r"\d+", round_id)
+    if not matches:
         return 0
     try:
-        return int(round_id.split("_")[1])
+        return int(matches[-1])
     except ValueError:
         return 0
 

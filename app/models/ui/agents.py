@@ -89,7 +89,7 @@ class Agent(BaseModel):
     bestRankEver: int = Field(default=0, description="Best rank ever achieved")
     roundsParticipated: int = Field(default=0, description="Number of rounds participated")
     alphaWonInPrizes: float = Field(default=0.0, description="Alpha won in prizes")
-    averageDuration: float = Field(default=0.0, description="Average duration in seconds")
+    averageResponseTime: float = Field(default=0.0, description="Average response time in seconds")
     totalTasks: int = Field(default=0, description="Total number of tasks")
     completedTasks: int = Field(default=0, description="Number of completed tasks")
     lastSeen: datetime = Field(..., description="Last seen timestamp")
@@ -153,7 +153,7 @@ class PerformanceTrend(BaseModel):
     period: str = Field(..., description="Time period")
     score: float = Field(..., description="Average score for period")
     successRate: float = Field(..., description="Success rate for period")
-    duration: float = Field(..., description="Average duration for period")
+    responseTime: float = Field(..., description="Average response time for period")
 
 
 class ScoreRoundDataPoint(BaseModel):
@@ -164,6 +164,9 @@ class ScoreRoundDataPoint(BaseModel):
     top_score: Optional[float] = Field(None, description="Top benchmark score achieved in this round")
     reward: Optional[float] = Field(None, description="Reward received in this round")
     timestamp: datetime = Field(..., description="Round timestamp")
+    benchmarks: Optional[List[Dict[str, Any]]] = Field(
+        default=None, description="Benchmark scores recorded during this round"
+    )
 
 
 class AgentPerformanceMetrics(BaseModel):
@@ -177,7 +180,7 @@ class AgentPerformanceMetrics(BaseModel):
     bestScore: float = Field(default=0.0, description="Best score")
     worstScore: float = Field(default=0.0, description="Worst score")
     successRate: float = Field(default=0.0, description="Success rate percentage")
-    averageDuration: float = Field(default=0.0, description="Average duration")
+    averageResponseTime: float = Field(default=0.0, description="Average response time")
     totalTasks: int = Field(default=0, description="Total tasks")
     completedTasks: int = Field(default=0, description="Completed tasks")
     taskCompletionRate: float = Field(default=0.0, description="Task completion rate")
@@ -190,7 +193,7 @@ class AgentComparisonMetrics(BaseModel):
     """Agent comparison metrics model."""
     averageScore: float = Field(default=0.0, description="Average score")
     successRate: float = Field(default=0.0, description="Success rate")
-    averageDuration: float = Field(default=0.0, description="Average duration")
+    averageResponseTime: float = Field(default=0.0, description="Average response time")
     totalRuns: int = Field(default=0, description="Total runs")
     ranking: int = Field(default=0, description="Overall ranking")
 
@@ -281,6 +284,8 @@ class AgentRunsResponse(BaseModel):
     total: int = Field(..., description="Total number of runs")
     page: int = Field(..., description="Current page number")
     limit: int = Field(..., description="Items per page")
+    availableRounds: List[int] = Field(default_factory=list, description="Rounds that include runs for the agent")
+    selectedRound: Optional[int] = Field(default=None, description="Round currently selected")
 
 
 class AgentRunDetailResponse(BaseModel):

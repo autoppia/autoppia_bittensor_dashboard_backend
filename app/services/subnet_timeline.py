@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import AgentEvaluationRunORM, RoundORM
-from app.models.core import AgentEvaluationRun, MinerInfo, Round
+from app.models.core import AgentEvaluationRun, MinerInfo, ValidatorRound
 from app.models.ui.subnets import (
     MinerRosterEntry,
     MinerSnapshot,
@@ -21,6 +21,7 @@ from app.models.ui.subnets import (
     TimelineRound,
 )
 from app.services.rounds_service import AgentRunContext, RoundsService
+from app.utils.images import resolve_agent_image
 
 DEFAULT_ROUND_COUNT = 90
 MAX_ROUND_COUNT = 500
@@ -46,7 +47,7 @@ COLOR_PALETTE = [
 class _RoundSnapshot:
     number: int
     identifier: str
-    round_model: Round
+    round_model: ValidatorRound
     agent_contexts: List[AgentRunContext]
 
     @property
@@ -105,8 +106,9 @@ def _miner_display_name(run: AgentEvaluationRun) -> str:
 
 
 def _miner_avatar(info: Optional[MinerInfo], display_name: str, identifier: str) -> str:
-    if info and info.agent_image:
-        return info.agent_image
+    resolved = resolve_agent_image(info)
+    if resolved:
+        return resolved
     safe = display_name.replace(" ", "+")
     return f"https://placehold.co/256x256?text={safe or identifier}"
 
@@ -238,8 +240,6 @@ class SubnetTimelineService:
             select(RoundORM)
             .options(
                 selectinload(RoundORM.agent_runs)
-                .selectinload(AgentEvaluationRunORM.tasks),
-                selectinload(RoundORM.agent_runs)
                 .selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(RoundORM.agent_runs)
                 .selectinload(AgentEvaluationRunORM.evaluation_results),
@@ -248,6 +248,7 @@ class SubnetTimelineService:
         )
         rows = await self.session.scalars(stmt)
         by_identifier: Dict[str, RoundORM] = {row.validator_round_id: row for row in rows}
+        tasks_by_round = await self.rounds_service._load_tasks_for_rounds(identifiers)  # type: ignore[attr-defined]
 
         snapshots: List[_RoundSnapshot] = []
         for number, identifier in selected:
@@ -255,8 +256,13 @@ class SubnetTimelineService:
             if round_row is None:
                 continue
             round_model = self.rounds_service._deserialize_round(round_row)  # type: ignore[attr-defined]
+            round_tasks = tasks_by_round.get(identifier, {})
             agent_contexts = [
-                self.rounds_service._build_agent_run_context(run_row, parent_round_row=round_row)  # type: ignore[attr-defined]
+                self.rounds_service._build_agent_run_context(
+                    run_row,
+                    parent_round_row=round_row,
+                    tasks_for_round=round_tasks,
+                )  # type: ignore[attr-defined]
                 for run_row in round_row.agent_runs
             ]
             snapshots.append(
@@ -298,6 +304,9 @@ class SubnetTimelineService:
         for snapshot in round_snapshots:
             run_scores: List[Tuple[AgentRunContext, float]] = []
             for context in snapshot.agent_contexts:
+                info = context.run.miner_info
+                if info and getattr(info, "is_sota", False):
+                    continue
                 score = max(0.0, min(1.0, _score_from_run(context)))
                 run_scores.append((context, score))
 
@@ -306,8 +315,9 @@ class SubnetTimelineService:
                 metrics["display_name"] = _miner_display_name(context.run)
                 metrics["info"] = context.run.miner_info
                 metrics["scores"].append(score)
-                if context.run.miner_info and context.run.miner_info.agent_image:
-                    metrics["image"] = context.run.miner_info.agent_image
+                resolved_image = resolve_agent_image(context.run.miner_info)
+                if resolved_image:
+                    metrics["image"] = resolved_image
 
             if not run_scores:
                 continue

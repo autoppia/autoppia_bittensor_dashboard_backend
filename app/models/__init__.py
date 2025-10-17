@@ -6,7 +6,7 @@ from .core import (
     ValidatorInfo,
     MinerInfo,
     Task,
-    Round,
+    ValidatorRound,
     AgentEvaluationRun,
     
     # Utilities

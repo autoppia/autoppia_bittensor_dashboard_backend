@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 from sqlalchemy import func, select
 
@@ -42,6 +44,7 @@ def _make_submission_payload(prefix: str = "001") -> dict:
 
     round_payload = {
         "validator_round_id": validator_round_id,
+        "round": int(prefix),
         "validator_info": validator_info,
         "validators": [validator_info],
         "start_block": 100,
@@ -93,7 +96,6 @@ def _make_submission_payload(prefix: str = "001") -> dict:
     task_payload = {
         "task_id": task_id,
         "validator_round_id": validator_round_id,
-        "agent_run_id": agent_run_id,
         "scope": "local",
         "is_web_real": False,
         "web_project_id": None,
@@ -182,6 +184,69 @@ async def test_round_submission_flow(client, db_session):
 
 
 @pytest.mark.asyncio
+async def test_round_submission_rejects_duplicate_round_numbers(client):
+    base_payload = _make_submission_payload("150")
+    first_response = await client.post("/api/v1/rounds/submit", json=base_payload)
+    assert first_response.status_code == 200
+
+    duplicate_payload = deepcopy(base_payload)
+    duplicate_payload["round"]["validator_round_id"] = "round_150_dup"
+
+    duplicate_payload["agent_evaluation_runs"][0]["validator_round_id"] = "round_150_dup"
+    duplicate_payload["agent_evaluation_runs"][0]["agent_run_id"] = "agent_run_150_dup"
+    duplicate_payload["agent_evaluation_runs"][0]["task_ids"] = [
+        f"{task_id}_dup" for task_id in duplicate_payload["agent_evaluation_runs"][0]["task_ids"]
+    ]
+
+    duplicate_payload["tasks"][0]["validator_round_id"] = "round_150_dup"
+    duplicate_payload["tasks"][0]["task_id"] = "task_150_dup"
+
+    duplicate_payload["task_solutions"][0]["validator_round_id"] = "round_150_dup"
+    duplicate_payload["task_solutions"][0]["agent_run_id"] = "agent_run_150_dup"
+    duplicate_payload["task_solutions"][0]["task_id"] = "task_150_dup"
+    duplicate_payload["task_solutions"][0]["solution_id"] = "solution_150_dup"
+
+    duplicate_payload["evaluation_results"][0]["validator_round_id"] = "round_150_dup"
+    duplicate_payload["evaluation_results"][0]["agent_run_id"] = "agent_run_150_dup"
+    duplicate_payload["evaluation_results"][0]["task_id"] = "task_150_dup"
+    duplicate_payload["evaluation_results"][0]["task_solution_id"] = "solution_150_dup"
+    duplicate_payload["evaluation_results"][0]["evaluation_id"] = "evaluation_150_dup"
+
+    dup_response = await client.post("/api/v1/rounds/submit", json=duplicate_payload)
+    assert dup_response.status_code == 409
+    expected_detail = (
+        f"Validator {base_payload['round']['validator_info']['uid']} already has a round with number {base_payload['round']['round']}"
+    )
+    assert dup_response.json()["detail"] == expected_detail
+
+
+@pytest.mark.asyncio
+async def test_start_round_prevents_duplicate_round_numbers(client):
+    payload = _make_submission_payload("303")
+    round_data = {**payload["round"]}
+    start_payload = {
+        "validator_round_id": round_data["validator_round_id"],
+        "round": round_data,
+    }
+
+    first_start = await client.post("/api/v1/validator-rounds/start", json=start_payload)
+    assert first_start.status_code == 200
+
+    duplicate_round_data = {**round_data, "validator_round_id": "round_303_duplicate"}
+    duplicate_payload = {
+        "validator_round_id": duplicate_round_data["validator_round_id"],
+        "round": duplicate_round_data,
+    }
+
+    duplicate_response = await client.post("/api/v1/validator-rounds/start", json=duplicate_payload)
+    assert duplicate_response.status_code == 409
+    expected_detail = (
+        f"Validator {round_data['validator_info']['uid']} already has a round with number {round_data['round']}"
+    )
+    assert duplicate_response.json()["detail"] == expected_detail
+
+
+@pytest.mark.asyncio
 async def test_progressive_validator_flow(client, db_session):
     payload = _make_submission_payload("202")
     round_data = payload["round"]
@@ -248,7 +313,7 @@ async def test_progressive_validator_flow(client, db_session):
 
     task_row = await db_session.scalar(select(TaskORM).where(TaskORM.task_id == task["task_id"]))
     assert task_row is not None
-    assert task_row.agent_run_id == agent_run["agent_run_id"]
+    assert task_row.validator_round_id == validator_round_id
 
     solution_row = await db_session.scalar(
         select(TaskSolutionORM).where(TaskSolutionORM.solution_id == task_solution["solution_id"])
@@ -273,7 +338,13 @@ async def test_rounds_endpoint_returns_data(client):
     assert response.status_code == 200
     body = response.json()
     assert isinstance(body, list)
-    assert any(item["validator_round_id"] == payload["round"]["validator_round_id"] for item in body)
+    assert any(
+        any(
+            validator_round["validatorRoundId"] == payload["round"]["validator_round_id"]
+            for validator_round in item.get("validatorRounds", [])
+        )
+        for item in body
+    )
 
 
 @pytest.mark.asyncio
@@ -287,10 +358,21 @@ async def test_round_detail_and_agent_run_endpoints(client):
 
     detail_response = await client.get(f"/api/v1/rounds/{validator_round_id}")
     assert detail_response.status_code == 200
-    detail = detail_response.json()
-    assert detail["validator_round_id"] == validator_round_id
-    assert len(detail["agent_evaluation_runs"]) == 1
-    detail_run = detail["agent_evaluation_runs"][0]
+    detail_body = detail_response.json()
+    assert detail_body["success"] is True
+    round_payload = detail_body["data"]["round"]
+    assert round_payload["round"] == payload["round"]["round"]
+    validator_entry = next(
+        (
+            entry
+            for entry in round_payload.get("validatorRounds", [])
+            if entry["validatorRoundId"] == validator_round_id
+        ),
+        None,
+    )
+    assert validator_entry is not None
+    assert len(validator_entry.get("agentEvaluationRuns", [])) == 1
+    detail_run = validator_entry["agentEvaluationRuns"][0]
     assert detail_run["agent_run_id"] == agent_run_id
     assert len(detail_run["tasks"]) == 1
     assert len(detail_run["task_solutions"]) == 1
@@ -308,6 +390,27 @@ async def test_round_detail_and_agent_run_endpoints(client):
     run_detail = run_response.json()
     assert run_detail["agent_run_id"] == agent_run_id
     assert len(run_detail["tasks"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_round_detail_accepts_numeric_identifier(client):
+    payload = _make_submission_payload("606")
+    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    assert submit_response.status_code == 200
+
+    validator_round_id = payload["round"]["validator_round_id"]
+    numeric_identifier = int(validator_round_id.split("_")[1])
+
+    response = await client.get(f"/api/v1/rounds/{numeric_identifier}")
+    assert response.status_code == 200
+    detail_body = response.json()
+    assert detail_body["success"] is True
+    round_payload = detail_body["data"]["round"]
+    assert round_payload["round"] == numeric_identifier
+    assert any(
+        entry["validatorRoundId"] == validator_round_id
+        for entry in round_payload.get("validatorRounds", [])
+    )
 
 
 @pytest.mark.asyncio
@@ -584,6 +687,18 @@ async def test_overview_endpoints(client):
     assert leaderboard["success"] is True
     assert len(leaderboard["data"]["leaderboard"]) >= 1
     assert "timeRange" in leaderboard["data"]
+
+    leaderboard_7d_response = await client.get("/api/v1/overview/leaderboard", params={"timeRange": "7D"})
+    assert leaderboard_7d_response.status_code == 200
+    leaderboard_7d = leaderboard_7d_response.json()
+    assert leaderboard_7d["success"] is True
+    assert len(leaderboard_7d["data"]["leaderboard"]) <= 7
+
+    leaderboard_all_response = await client.get("/api/v1/overview/leaderboard", params={"timeRange": "all"})
+    assert leaderboard_all_response.status_code == 200
+    leaderboard_all = leaderboard_all_response.json()
+    assert leaderboard_all["success"] is True
+    assert len(leaderboard_all["data"]["leaderboard"]) >= len(leaderboard_7d["data"]["leaderboard"])
 
     filter_response = await client.get("/api/v1/overview/validators/filter")
     assert filter_response.status_code == 200

@@ -78,7 +78,7 @@ class MinerListService:
             averageScore=miner.averageScore,
             bestScore=miner.bestScore,
             successRate=miner.successRate,
-            averageDuration=miner.averageDuration,
+            averageResponseTime=miner.averageResponseTime,
             totalTasks=miner.totalTasks,
             completedTasks=miner.completedTasks,
             lastSeen=miner.lastSeen,

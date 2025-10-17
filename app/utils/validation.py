@@ -90,8 +90,14 @@ def validate_miner_image_url(image_url: str) -> str:
     if image_url.strip() == "":
         return ""
     
+    normalized = image_url.strip()
+
+    # Allow root-relative paths (served by frontend assets)
+    if normalized.startswith("/"):
+        return normalized
+
     # Validate the URL
-    if not is_valid_image_url(image_url):
+    if not is_valid_image_url(normalized):
         raise ValueError(f"Invalid image URL: {image_url}. Must be a valid URL or empty string.")
     
-    return image_url.strip()
+    return normalized

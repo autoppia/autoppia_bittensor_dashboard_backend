@@ -8,9 +8,30 @@ class BaseResponse(BaseModel):
     code: Optional[str] = None
 
 # --- Round Models ---
+class ValidatorRoundSummary(BaseModel):
+    """Summary of a single validator's round contribution."""
+    validatorRoundId: str
+    validatorUid: Optional[int] = None
+    validatorName: Optional[str] = None
+    validatorHotkey: Optional[str] = None
+    status: str
+    startTime: str
+    endTime: Optional[str] = None
+    averageScore: float
+    topScore: float
+    totalTasks: int
+    completedTasks: int
+    icon: Optional[str] = None
+    agentEvaluationRuns: Optional[List[Dict[str, Any]]] = None
+    roundData: Optional[Dict[str, Any]] = None
+
+
 class RoundInfo(BaseModel):
     """Round information model."""
     id: int
+    round: Optional[int] = None
+    roundNumber: Optional[int] = None
+    roundKey: Optional[str] = None
     startBlock: int
     endBlock: int
     current: bool
@@ -24,6 +45,7 @@ class RoundInfo(BaseModel):
     currentBlock: int
     blocksRemaining: int
     progress: float
+    validatorRounds: List[ValidatorRoundSummary] = Field(default_factory=list)
 
 class RoundStatistics(BaseModel):
     """Round statistics model."""

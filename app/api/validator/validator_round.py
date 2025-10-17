@@ -8,19 +8,19 @@ import time
 from typing import Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.models.core import (
-    Round,
+    ValidatorRound,
     Task,
     AgentEvaluationRun,
     TaskSolution,
     EvaluationResult,
 )
-from app.services.validator_storage import RoundPersistenceService
+from app.services.validator_storage import RoundConflictError, RoundPersistenceService
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,12 @@ def _require_non_empty(value: str, field_name: str) -> str:
 
 class StartRoundRequest(BaseModel):
     validator_round_id: str = Field(..., description="External validator round identifier")
-    round: Round
+    validator_round: ValidatorRound = Field(
+        ...,
+        description="Validator round metadata",
+        validation_alias=AliasChoices("validator_round", "round"),
+        serialization_alias="validator_round",
+    )
 
     @field_validator("validator_round_id")
     @classmethod
@@ -77,22 +82,42 @@ async def start_round(
     """Register a new validator round."""
     service = RoundPersistenceService(session)
 
-    round_model = payload.round
+    round_model = payload.validator_round
     if round_model.validator_round_id != payload.validator_round_id:
         round_model = round_model.model_copy(update={"validator_round_id": payload.validator_round_id})
 
-    async with session.begin():
-        existing = await service.get_round(payload.validator_round_id)
-        if existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Validator round {payload.validator_round_id} already exists",
-            )
+    round_number = round_model.round_number
+    if round_number is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="round_number is required to start a validator round",
+        )
 
-        try:
+    validator_info = round_model.validator_info or (round_model.validators[0] if round_model.validators else None)
+    if validator_info is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Round payload must include validator information",
+        )
+    validator_uid = validator_info.uid
+
+    try:
+        async with session.begin():
+            existing = await service.get_round(payload.validator_round_id)
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Validator round {payload.validator_round_id} already exists",
+                )
+
+            await service.ensure_unique_round_number(validator_uid, round_number)
             round_row, validator_uid = await service.ensure_round(round_model)
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except RoundConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     logger.info(
         "Started validator round %s for round %s (validator_uid=%s)",
@@ -100,7 +125,10 @@ async def start_round(
         round_model.validator_round_id,
         validator_uid,
     )
-    return {"message": "Validator round created", "validator_round_id": round_model.validator_round_id}
+    return {
+        "message": "Validator round created",
+        "validator_round_id": round_model.validator_round_id,
+    }
 
 
 @router.post("/{validator_round_id}/tasks")
@@ -228,10 +256,12 @@ async def add_evaluation(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Round mismatch in solution or evaluation"
             )
 
-        # Enforce agent run linkage
-        task_agent_run_id = task.agent_run_id or agent_run_id
-        if task_agent_run_id != agent_run_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task agent_run_id mismatch")
+        # Ensure the task being evaluated is part of the agent run plan
+        if agent_run_obj.task_ids and task.task_id not in agent_run_obj.task_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Task {task.task_id} not registered for agent run {agent_run_id}",
+            )
 
         if solution.agent_run_id != agent_run_id or evaluation.agent_run_id != agent_run_id:
             raise HTTPException(
@@ -254,8 +284,7 @@ async def add_evaluation(
         if solution.miner_uid != miner_uid or evaluation.miner_uid != miner_uid:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="miner_uid mismatch")
 
-        task_to_store = task if task.agent_run_id == agent_run_id else task.model_copy(update={"agent_run_id": agent_run_id})
-        await service.upsert_task_entry(task_to_store)
+        await service.upsert_task_entry(task)
         await service.upsert_task_solution_entry(solution)
         await service.upsert_evaluation_entry(evaluation)
 

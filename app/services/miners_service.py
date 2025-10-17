@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,10 +10,16 @@ from app.models.ui.miners import (
     Miner,
     MinerDetailResponse,
     MinerListResponse,
+    MinerPerformanceMetrics,
     MinerStatus,
+    PerformanceTrend,
+    ScoreDistribution,
+    TimeRange,
+    Granularity,
 )
 from app.models.ui.miners import Pagination
 from app.services.agents_service import AgentsService, AgentAggregate
+from app.utils.images import resolve_agent_image
 
 logger = logging.getLogger(__name__)
 
@@ -81,15 +87,48 @@ class MinersService:
                 return MinerDetailResponse(miner=self._aggregate_to_miner(aggregate))
         raise ValueError(f"Miner {uid} not found")
 
+    async def get_miner_performance(
+        self,
+        uid: int,
+        time_range: TimeRange = TimeRange.SEVEN_DAYS,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        granularity: Granularity = Granularity.DAY,
+    ) -> MinerPerformanceMetrics:
+        aggregates = await self.agents_service._aggregate_agents()  # type: ignore[attr-defined]
+        for aggregate in aggregates.values():
+            if aggregate.uid != uid:
+                continue
+
+            start_ts, end_ts = self._compute_time_bounds(time_range, start_date, end_date)
+            filtered = self._filter_aggregate_by_range(aggregate, start_ts, end_ts)
+            performance = self.agents_service._build_performance_metrics(filtered)  # type: ignore[attr-defined]
+
+            # Override the time range to reflect the requested window when bounds were supplied.
+            performance_range = dict(performance.timeRange)
+            if start_ts is not None:
+                performance_range["start"] = _ts_to_iso(start_ts)
+            if end_ts is not None:
+                performance_range["end"] = _ts_to_iso(end_ts)
+
+            return self._convert_performance_metrics(uid, performance, performance_range)
+
+        raise ValueError(f"Miner {uid} not found")
+
     def _aggregate_to_miner(self, aggregate: AgentAggregate) -> Miner:
         miner_info = aggregate.miner
         name = miner_info.agent_name if miner_info and miner_info.agent_name else aggregate.agent_id
         hotkey = miner_info.hotkey if miner_info and miner_info.hotkey else ""
-        image_url = miner_info.agent_image if miner_info and miner_info.agent_image else ""
+        image_url = resolve_agent_image(miner_info)
         github = miner_info.github if miner_info else None
         description = miner_info.description if miner_info else ""
         average_score = (
             aggregate.total_score / aggregate.total_runs if aggregate.total_runs else 0.0
+        )
+        current_score = (
+            aggregate.latest_round_score
+            if aggregate.latest_round_score is not None
+            else average_score
         )
         success_rate = (
             (aggregate.successful_runs / aggregate.total_runs) * 100 if aggregate.total_runs else 0.0
@@ -103,6 +142,7 @@ class MinersService:
         created_iso = _ts_to_iso(
             aggregate.first_seen if aggregate.first_seen != float("inf") else aggregate.last_seen
         )
+        status = self._determine_status(aggregate)
 
         return Miner(
             id=str(aggregate.uid) if aggregate.uid is not None else aggregate.agent_id,
@@ -113,19 +153,167 @@ class MinersService:
             githubUrl=github,
             taostatsUrl=f"https://taostats.io/miner/{aggregate.uid}" if aggregate.uid is not None else "",
             isSota=aggregate.is_sota,
-            status=MinerStatus.ACTIVE,
+            status=status,
             description=description,
             totalRuns=aggregate.total_runs,
             successfulRuns=aggregate.successful_runs,
-            averageScore=average_score,
+            averageScore=current_score,
             bestScore=best_score,
             successRate=success_rate,
-            averageDuration=average_duration,
+            averageResponseTime=average_duration,
             totalTasks=aggregate.total_tasks,
             completedTasks=aggregate.completed_tasks,
             lastSeen=last_seen_iso,
             createdAt=created_iso,
             updatedAt=last_seen_iso,
+        )
+
+    def _determine_status(self, aggregate: AgentAggregate) -> MinerStatus:
+        now_ts = datetime.now(timezone.utc).timestamp()
+        last_seen = aggregate.last_seen or 0.0
+
+        if aggregate.total_runs == 0:
+            return MinerStatus.MAINTENANCE
+
+        if last_seen <= 0.0:
+            return MinerStatus.INACTIVE
+
+        inactivity = now_ts - last_seen
+        if inactivity > 86400:  # 24 hours
+            return MinerStatus.INACTIVE
+
+        if aggregate.successful_runs == 0:
+            return MinerStatus.MAINTENANCE
+
+        return MinerStatus.ACTIVE
+
+    @staticmethod
+    def _dt_to_ts(value: Optional[datetime]) -> Optional[float]:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        else:
+            value = value.astimezone(timezone.utc)
+        return value.timestamp()
+
+    def _compute_time_bounds(
+        self,
+        time_range: TimeRange,
+        start_date: Optional[datetime],
+        end_date: Optional[datetime],
+    ) -> tuple[Optional[float], Optional[float]]:
+        duration_map = {
+            TimeRange.ONE_HOUR: 3600,
+            TimeRange.TWENTY_FOUR_HOURS: 86400,
+            TimeRange.SEVEN_DAYS: 7 * 86400,
+            TimeRange.THIRTY_DAYS: 30 * 86400,
+            TimeRange.NINETY_DAYS: 90 * 86400,
+            TimeRange.ONE_YEAR: 365 * 86400,
+            TimeRange.ALL: None,
+        }
+
+        duration = duration_map[time_range]
+        start_ts = self._dt_to_ts(start_date)
+        end_ts = self._dt_to_ts(end_date)
+
+        now_ts = datetime.now(timezone.utc).timestamp()
+        reference_end = end_ts or now_ts
+
+        if duration is not None:
+            if start_ts is None and end_ts is None:
+                end_ts = reference_end
+                start_ts = end_ts - duration
+            elif start_ts is None and end_ts is not None:
+                start_ts = end_ts - duration
+            elif start_ts is not None and end_ts is None:
+                end_ts = start_ts + duration
+
+        return start_ts, end_ts
+
+    def _filter_aggregate_by_range(
+        self,
+        aggregate: AgentAggregate,
+        start_ts: Optional[float],
+        end_ts: Optional[float],
+    ) -> AgentAggregate:
+        filtered = AgentAggregate(
+            agent_id=aggregate.agent_id,
+            uid=aggregate.uid,
+            miner=aggregate.miner,
+            is_sota=aggregate.is_sota,
+            version=aggregate.version,
+        )
+
+        for context in aggregate.runs:
+            run_start = context.run.started_at or context.round.started_at or 0.0
+            if start_ts is not None and run_start < start_ts:
+                continue
+            if end_ts is not None and run_start > end_ts:
+                continue
+
+            filtered.runs.append(context)
+            filtered.total_runs += 1
+
+            score = self.agents_service._compute_run_score(context)  # type: ignore[attr-defined]
+            filtered.total_score += score
+            filtered.best_score = max(filtered.best_score, score)
+            if score >= 0.5:
+                filtered.successful_runs += 1
+
+            duration = self.agents_service._compute_run_duration(context)  # type: ignore[attr-defined]
+            if duration is not None:
+                filtered.durations.append(duration)
+
+            filtered.total_tasks += len(context.tasks)
+            filtered.completed_tasks += len(
+                [er for er in context.evaluation_results if er.final_score >= 0.5]
+            )
+
+            if context.run.rank is not None:
+                filtered.ranks.append(context.run.rank)
+
+            filtered.rounds.add(context.round.validator_round_id)
+
+            if run_start > filtered.last_seen:
+                filtered.last_seen = run_start
+            if run_start < filtered.first_seen:
+                filtered.first_seen = run_start
+
+        if not filtered.runs:
+            filtered.first_seen = aggregate.first_seen
+            filtered.last_seen = aggregate.last_seen
+
+        return filtered
+
+    def _convert_performance_metrics(
+        self,
+        uid: int,
+        metrics: Any,
+        time_range: Dict[str, str],
+    ) -> MinerPerformanceMetrics:
+        score_distribution = ScoreDistribution(**metrics.scoreDistribution.model_dump())
+        trend = [
+            PerformanceTrend(**item.model_dump())
+            for item in metrics.performanceTrend
+        ]
+
+        return MinerPerformanceMetrics(
+            uid=uid,
+            timeRange=time_range,
+            totalRuns=metrics.totalRuns,
+            successfulRuns=metrics.successfulRuns,
+            failedRuns=metrics.failedRuns,
+            averageScore=metrics.averageScore,
+            bestScore=metrics.bestScore,
+            worstScore=metrics.worstScore,
+            successRate=metrics.successRate,
+            averageResponseTime=metrics.averageResponseTime,
+            totalTasks=metrics.totalTasks,
+            completedTasks=metrics.completedTasks,
+            taskCompletionRate=metrics.taskCompletionRate,
+            scoreDistribution=score_distribution,
+            performanceTrend=trend,
         )
 
     def _sort_miners(self, miners: List[Miner], sort_by: str, sort_order: str) -> List[Miner]:

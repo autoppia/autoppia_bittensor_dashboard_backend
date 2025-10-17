@@ -11,6 +11,7 @@ async def test_progressive_validator_flow(client, db_session):
     base_payload = {
         "round": {
             "validator_round_id": "round_progressive",
+            "round": 301,
             "validators": [
                 {
                     "uid": 1001,
@@ -66,7 +67,6 @@ async def test_progressive_validator_flow(client, db_session):
         task_payload = {
             "task_id": task_id,
             "validator_round_id": base_payload["round"]["validator_round_id"],
-            "agent_run_id": base_payload["agent_run"]["agent_run_id"],
             "scope": "local",
             "is_web_real": False,
             "web_project_id": None,

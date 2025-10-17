@@ -75,7 +75,7 @@ class Miner(BaseModel):
     averageScore: float = Field(..., description="Average score")
     bestScore: float = Field(..., description="Best score achieved")
     successRate: float = Field(..., description="Success rate percentage")
-    averageDuration: float = Field(..., description="Average duration in seconds")
+    averageResponseTime: float = Field(..., description="Average response time in seconds")
     totalTasks: int = Field(..., description="Total number of tasks")
     completedTasks: int = Field(..., description="Number of completed tasks")
     lastSeen: str = Field(..., description="Last seen timestamp (ISO 8601)")
@@ -143,7 +143,7 @@ class PerformanceTrend(BaseModel):
     period: str = Field(..., description="Time period")
     score: float = Field(..., description="Average score for period (0-1)")
     successRate: float = Field(..., description="Success rate for period (0-100)")
-    duration: float = Field(..., description="Average duration for period (seconds)")
+    responseTime: float = Field(..., description="Average response time for period (seconds)")
 
 
 class MinerPerformanceMetrics(BaseModel):
@@ -157,7 +157,7 @@ class MinerPerformanceMetrics(BaseModel):
     bestScore: float = Field(..., description="Best score in period")
     worstScore: float = Field(..., description="Worst score in period")
     successRate: float = Field(..., description="Success rate in period")
-    averageDuration: float = Field(..., description="Average duration in period")
+    averageResponseTime: float = Field(..., description="Average response time in period")
     totalTasks: int = Field(..., description="Total tasks in period")
     completedTasks: int = Field(..., description="Completed tasks in period")
     taskCompletionRate: float = Field(..., description="Task completion rate")
@@ -208,7 +208,7 @@ class MinerComparisonMetrics(BaseModel):
     """Miner comparison metrics model."""
     averageScore: float = Field(..., description="Average score")
     successRate: float = Field(..., description="Success rate")
-    averageDuration: float = Field(..., description="Average duration")
+    averageResponseTime: float = Field(..., description="Average response time")
     totalRuns: int = Field(..., description="Total runs")
     ranking: int = Field(..., description="Ranking")
 

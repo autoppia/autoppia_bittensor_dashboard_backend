@@ -16,8 +16,8 @@ from app.db.models import (
 from app.models.core import (
     AgentEvaluationRun,
     EvaluationResult,
-    Round,
-    RoundSubmissionRequest,
+    ValidatorRound,
+    ValidatorRoundSubmissionRequest,
     Task,
     TaskSolution,
 )
@@ -27,6 +27,12 @@ from app.models.core import (
 class PersistenceResult:
     validator_uid: int
     saved_entities: Dict[str, List[str] | str]
+
+
+class RoundConflictError(ValueError):
+    """Raised when a validator attempts to register the same round twice."""
+
+    pass
 
 
 class RoundPersistenceService:
@@ -40,8 +46,36 @@ class RoundPersistenceService:
         stmt = select(RoundORM).where(RoundORM.validator_round_id == validator_round_id)
         return await self.session.scalar(stmt)
 
+    async def ensure_unique_round_number(
+        self,
+        validator_uid: int,
+        round_number: int,
+        *,
+        exclude_round_id: Optional[str] = None,
+    ) -> None:
+        """
+        Guard against duplicate round numbers for the same validator.
+
+        Raises:
+            RoundConflictError: When another validator round with the same logical round number exists.
+        """
+        if round_number is None:
+            return
+
+        stmt = select(RoundORM).where(RoundORM.validator_uid == validator_uid)
+        if exclude_round_id is not None:
+            stmt = stmt.where(RoundORM.validator_round_id != exclude_round_id)
+
+        existing_rounds = await self.session.scalars(stmt)
+        for round_row in existing_rounds:
+            existing_round_number = self._extract_round_number(round_row.data)
+            if existing_round_number == round_number:
+                raise RoundConflictError(
+                    f"Validator {validator_uid} already has a round with number {round_number}"
+                )
+
     async def ensure_round(
-        self, round_model: Round, agent_runs: Optional[List[AgentEvaluationRun]] = None
+        self, round_model: ValidatorRound, agent_runs: Optional[List[AgentEvaluationRun]] = None
     ) -> tuple[RoundORM, int]:
         """Create or update a round and return its row and validator UID."""
         validator_uid = self._derive_validator_uid(round_model, agent_runs or [])
@@ -105,7 +139,7 @@ class RoundPersistenceService:
         round_row.data = data
         return round_row
 
-    async def upsert_round_submission(self, payload: RoundSubmissionRequest) -> PersistenceResult:
+    async def upsert_round_submission(self, payload: ValidatorRoundSubmissionRequest) -> PersistenceResult:
         """Persist the entire round submission payload."""
         round_model = payload.round
         agent_runs = payload.agent_evaluation_runs
@@ -136,16 +170,26 @@ class RoundPersistenceService:
 
         return PersistenceResult(validator_uid=validator_uid, saved_entities=saved_entities)
 
-    async def _upsert_round(self, model: Round, validator_uid: Optional[int]) -> RoundORM:
+    async def _upsert_round(self, model: ValidatorRound, validator_uid: Optional[int]) -> RoundORM:
         stmt = select(RoundORM).where(RoundORM.validator_round_id == model.validator_round_id)
         existing = await self.session.scalar(stmt)
 
         data = model.model_dump(mode="json", exclude_none=True)
 
         if existing:
+            target_validator_uid = validator_uid if validator_uid is not None else existing.validator_uid
+            if model.round_number is not None and target_validator_uid is not None:
+                await self.ensure_unique_round_number(
+                    target_validator_uid,
+                    model.round_number,
+                    exclude_round_id=existing.validator_round_id,
+                )
             existing.validator_uid = validator_uid
             existing.data = data
             return existing
+
+        if validator_uid is not None and model.round_number is not None:
+            await self.ensure_unique_round_number(validator_uid, model.round_number)
 
         round_row = RoundORM(
             validator_round_id=model.validator_round_id,
@@ -193,14 +237,12 @@ class RoundPersistenceService:
 
             if existing:
                 existing.validator_round_id = task.validator_round_id
-                existing.agent_run_id = task.agent_run_id
                 existing.data = data
             else:
                 self.session.add(
                     TaskORM(
                         task_id=task.task_id,
                         validator_round_id=task.validator_round_id,
-                        agent_run_id=task.agent_run_id,
                         data=data,
                     )
                 )
@@ -264,7 +306,7 @@ class RoundPersistenceService:
                 )
 
     @staticmethod
-    def _derive_validator_uid(round_model: Round, agent_runs: List[AgentEvaluationRun]) -> int:
+    def _derive_validator_uid(round_model: ValidatorRound, agent_runs: List[AgentEvaluationRun]) -> int:
         if round_model.validator_info:
             return round_model.validator_info.uid
 
@@ -273,3 +315,16 @@ class RoundPersistenceService:
                 return run.validator_uid
 
         raise ValueError("Unable to determine validator UID from submission payload")
+
+    @staticmethod
+    def _extract_round_number(data: Dict[str, Any] | None) -> Optional[int]:
+        if not data:
+            return None
+        for key in ("round_number", "roundNumber", "round"):
+            value = data.get(key)
+            if value is not None:
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return None
+        return None

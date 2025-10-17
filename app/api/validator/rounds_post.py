@@ -5,8 +5,11 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.models.core import RoundSubmissionRequest, RoundSubmissionResponse
-from app.services.validator_storage import RoundPersistenceService
+from app.models.core import (
+    ValidatorRoundSubmissionRequest,
+    ValidatorRoundSubmissionResponse,
+)
+from app.services.validator_storage import RoundConflictError, RoundPersistenceService
 import logging
 import time
 
@@ -15,9 +18,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/rounds", tags=["rounds-post"])
 
 
-def _validate_round_relationships(payload: RoundSubmissionRequest) -> None:
+def _validate_round_relationships(payload: ValidatorRoundSubmissionRequest) -> None:
     """Validate that all entity relationships are properly maintained."""
-    round_data = payload.round
     tasks = payload.tasks
     agent_runs = payload.agent_evaluation_runs
     task_solutions = payload.task_solutions
@@ -26,13 +28,20 @@ def _validate_round_relationships(payload: RoundSubmissionRequest) -> None:
     # Create lookup maps for validation
     task_map = {task.task_id: task for task in tasks}
     task_solution_map = {ts.solution_id: ts for ts in task_solutions}
-    evaluation_result_map = {er.evaluation_id: er for er in evaluation_results}
-    
     # Validate each agent run
     for agent_run in agent_runs:
-        # Get tasks for this agent run
-        agent_tasks = [task for task in tasks if task.agent_run_id == agent_run.agent_run_id]
-        round_data = payload.round
+        agent_task_ids = set(agent_run.task_ids or [])
+        if agent_task_ids:
+            missing_tasks = agent_task_ids.difference(task_map)
+            if missing_tasks:
+                missing_id = next(iter(missing_tasks))
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Task {missing_id} referenced by agent run {agent_run.agent_run_id} was not provided",
+                )
+            agent_tasks = [task_map[task_id] for task_id in agent_task_ids]
+        else:
+            agent_tasks = []
 
         # Validate agent run relationships
         if not agent_run.validate_task_relationships(agent_tasks):
@@ -105,9 +114,9 @@ def _validate_round_relationships(payload: RoundSubmissionRequest) -> None:
             )
 
 
-@router.post("/submit", response_model=RoundSubmissionResponse)
+@router.post("/submit", response_model=ValidatorRoundSubmissionResponse)
 async def submit_round_data(
-    payload: RoundSubmissionRequest,
+    payload: ValidatorRoundSubmissionRequest,
     session: AsyncSession = Depends(get_session),
 ):
     """
@@ -118,7 +127,7 @@ async def submit_round_data(
         payload: Complete round data including all related entities
         
     Returns:
-        RoundSubmissionResponse with submission details and processing time
+        ValidatorRoundSubmissionResponse with submission details and processing time
         
     Raises:
         HTTPException: 400 for validation errors, 500 for server errors
@@ -152,7 +161,7 @@ async def submit_round_data(
         processing_time = time.time() - start_time
         
         # Create response
-        response = RoundSubmissionResponse(
+        response = ValidatorRoundSubmissionResponse(
             success=True,
             message=f"Successfully submitted round {round_data.validator_round_id}",
             validator_round_id=round_data.validator_round_id,
@@ -173,6 +182,9 @@ async def submit_round_data(
         
     except HTTPException:
         raise
+    except RoundConflictError as e:
+        logger.error(f"Duplicate round submission blocked: {e}")
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         logger.error(f"Validation error during round submission: {e}")
         raise HTTPException(status_code=400, detail=str(e))

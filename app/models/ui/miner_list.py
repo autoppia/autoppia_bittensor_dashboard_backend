@@ -43,7 +43,7 @@ class MinerDetail(BaseModel):
     averageScore: float = Field(..., description="Average score")
     bestScore: float = Field(..., description="Best score achieved")
     successRate: float = Field(..., description="Success rate percentage")
-    averageDuration: float = Field(..., description="Average duration in seconds")
+    averageResponseTime: float = Field(..., description="Average response time in seconds")
     totalTasks: int = Field(..., description="Total number of tasks")
     completedTasks: int = Field(..., description="Number of completed tasks")
     lastSeen: str = Field(..., description="Last seen timestamp (ISO 8601)")

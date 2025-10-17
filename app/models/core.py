@@ -2,11 +2,18 @@
 Core model definitions for the AutoPPIA Bittensor Dashboard Backend.
 
 This module contains all the Pydantic models used throughout the application,
-including core entities like Round, AgentEvaluationRun, Task, etc.
+including core entities like ValidatorRound, AgentEvaluationRun, Task, etc.
 """
 
 from typing import Any, Dict, List, Optional, Annotated, Literal
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 from enum import Enum
 import time
 import uuid
@@ -82,10 +89,16 @@ class MinerInfo(BaseModel):
         return values
 
 
-# --- Round Definition ---
-class Round(BaseModel):
-    """Round definition with all necessary information."""
+# --- Validator Round Definition ---
+class ValidatorRound(BaseModel):
+    """Validator round definition with all necessary information."""
     validator_round_id: str  # Unique validator round identifier (UUID)
+    round_number: Optional[int] = Field(
+        default=None,
+        alias="roundNumber",
+        validation_alias=AliasChoices("roundNumber", "round", "round_number"),
+        description="Logical round index shared across validator rounds",
+    )
     validators: List[ValidatorInfo] = Field(default_factory=list, description="Validators participating in this round")
     validator_info: Optional[ValidatorInfo] = Field(
         default=None, description="Primary validator information (for backwards compatibility)"
@@ -126,7 +139,7 @@ class Round(BaseModel):
     model_config = {"extra": "allow"}
 
     @model_validator(mode="after")
-    def _synchronize_validator_info(cls, values: "Round") -> "Round":  # type: ignore[override]
+    def _synchronize_validator_info(cls, values: "ValidatorRound") -> "ValidatorRound":  # type: ignore[override]
         if values.validator_info and not values.validators:
             values.validators = [values.validator_info]
         elif values.validators and not values.validator_info:
@@ -143,7 +156,7 @@ class AgentEvaluationRun(BaseModel):
     It includes proper relationships to link it to the validator round context.
     
     Key Relationships:
-    - validator_round_id: Links to Round.validator_round_id (UUID identifier)
+    - validator_round_id: Links to ValidatorRound.validator_round_id (UUID identifier)
     - validator_uid: Validator UID for additional context
     - agent_run_id: Unique identifier for this specific run
     
@@ -151,7 +164,7 @@ class AgentEvaluationRun(BaseModel):
     """
     agent_run_id: str  # Unique run ID
     validator_round_id: str
-    validator_uid: int  # Validator UID (validator info available in Round)
+    validator_uid: int  # Validator UID (validator info available in ValidatorRound)
     miner_uid: Optional[int] = Field(default=None, description="Miner UID (None for SOTA agents)")
     miner_info: Optional[MinerInfo] = Field(default=None, description="Embedded miner/agent information")
     is_sota: bool = Field(default=False, description="Whether this run belongs to a SOTA benchmark agent")
@@ -180,14 +193,13 @@ class AgentEvaluationRun(BaseModel):
     
     def validate_task_relationships(self, tasks: List["Task"]) -> bool:
         """Validate that all task relationships are properly maintained."""
-        # Check that all tasks assigned to this agent run have the correct agent_run_id
+        expected_task_ids = set(self.task_ids or [])
         for task in tasks:
-            if task.agent_run_id == self.agent_run_id:
-                # Verify the task belongs to the same round
-                # Note: validator_uid is not stored in Task anymore, it's available via AgentEvaluationRun
-                if task.validator_round_id != self.validator_round_id:
-                    return False
-        
+            if task.validator_round_id != self.validator_round_id:
+                return False
+            if expected_task_ids and task.task_id not in expected_task_ids:
+                return False
+
         return True
 
     @field_validator("agent_run_id")
@@ -249,9 +261,8 @@ class Task(BaseModel):
     Represents a task with associated metadata, specs, tests, etc.
     """
     task_id: str = Field(..., description="Unique identifier for the task")
-    validator_round_id: str  # Reference to the round (validator info available in Round)
-    agent_run_id: Optional[str] = Field(default=None, description="Reference to the agent evaluation run")
-    
+    validator_round_id: str  # Reference to the validator round (validator info available in ValidatorRound)
+
     scope: Literal["global", "local"] = Field(default="local", description="Task scope: 'global' for system-wide tasks, 'local' for specific context tasks")
     is_web_real: bool = Field(default=False, description="Indicates if the task operates on a real web environment versus simulation")
     web_project_id: str | None = Field(default=None, description="Web project ID")
@@ -294,13 +305,6 @@ class Task(BaseModel):
     def _validate_task_id(cls, value: str) -> str:
         return _require_non_empty(value, "task_id")
 
-    @field_validator("agent_run_id")
-    @classmethod
-    def _validate_optional_agent_run_id(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return value
-        return _require_non_empty(value, "agent_run_id")
-
 
 # --- Simple Action Class ---
 class Action(BaseModel):
@@ -315,7 +319,7 @@ class Action(BaseModel):
 class TaskSolution(BaseModel):
     solution_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for the task solution")
     task_id: str  # Reference to the task
-    validator_round_id: str  # Reference to the round (utility field)
+    validator_round_id: str  # Reference to the validator round (utility field)
     agent_run_id: str  # Reference to the agent evaluation run
     miner_uid: Optional[int] = Field(default=None, description="Reference to the miner (None for SOTA agents)")
     validator_uid: int  # Reference to the validator (utility field)
@@ -337,8 +341,7 @@ class TaskSolution(BaseModel):
             self.agent_run_id == agent_run.agent_run_id and
             self.validator_round_id == agent_run.validator_round_id and
             self.miner_uid == agent_run.miner_uid and
-            self.validator_uid == agent_run.validator_uid and
-            task.agent_run_id == agent_run.agent_run_id
+            self.validator_uid == agent_run.validator_uid
         )
 
 
@@ -432,7 +435,7 @@ class EvaluationResult(BaseModel):
     evaluation_id: str = Field(..., description="Unique identifier for the evaluation result")
     task_id: str  # Reference to the task
     task_solution_id: str  # Reference to the task solution
-    validator_round_id: str  # Reference to the round (utility field)
+    validator_round_id: str  # Reference to the validator round (utility field)
     agent_run_id: str  # Reference to the agent evaluation run
     miner_uid: Optional[int] = Field(default=None, description="Reference to the miner (None for SOTA agents)")
     validator_uid: int  # Reference to the validator (utility field)
@@ -463,8 +466,7 @@ class EvaluationResult(BaseModel):
             self.agent_run_id == agent_run.agent_run_id and
             self.validator_round_id == agent_run.validator_round_id and
             self.miner_uid == agent_run.miner_uid and
-            self.validator_uid == agent_run.validator_uid and
-            task.agent_run_id == agent_run.agent_run_id
+            self.validator_uid == agent_run.validator_uid
         )
 
     @field_validator("evaluation_id")
@@ -496,22 +498,22 @@ class AgentEvaluationRunWithDetails(AgentEvaluationRun):
     evaluation_results: List[EvaluationResult] = Field(default_factory=list, description="All evaluation results for this agent run")
 
 
-class RoundWithDetails(Round):
-    """Round with all its related AgentEvaluationRuns and their data."""
+class ValidatorRoundWithDetails(ValidatorRound):
+    """Validator round with all its related AgentEvaluationRuns and their data."""
     agent_evaluation_runs: List[AgentEvaluationRunWithDetails] = Field(default_factory=list, description="All agent evaluation runs for this round with their complete data")
 
 
 # --- API Request/Response Models ---
-class RoundSubmissionRequest(BaseModel):
+class ValidatorRoundSubmissionRequest(BaseModel):
     """Request model for submitting complete round data."""
-    round: Round
+    round: ValidatorRound
     agent_evaluation_runs: List[AgentEvaluationRun]
     tasks: List[Task]
     task_solutions: List[TaskSolution]
     evaluation_results: List[EvaluationResult]
 
 
-class RoundSubmissionResponse(BaseModel):
+class ValidatorRoundSubmissionResponse(BaseModel):
     """Response model for round submission."""
     success: bool
     message: str
@@ -526,7 +528,7 @@ __all__ = [
     "now_ts",
     "ValidatorInfo",
     "MinerInfo",
-    "Round",
+    "ValidatorRound",
     "AgentEvaluationRun",
     "BaseTaskTest",
     "CheckUrlTest",
@@ -543,7 +545,7 @@ __all__ = [
     "EvaluationStats",
     "EvaluationResult",
     "AgentEvaluationRunWithDetails",
-    "RoundWithDetails",
-    "RoundSubmissionRequest",
-    "RoundSubmissionResponse",
+    "ValidatorRoundWithDetails",
+    "ValidatorRoundSubmissionRequest",
+    "ValidatorRoundSubmissionResponse",
 ]
