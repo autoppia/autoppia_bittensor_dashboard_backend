@@ -200,12 +200,12 @@ class AgentsService:
         agent_model = self._aggregate_to_agent(aggregate)
         score_round_data = [
             ScoreRoundDataPoint(
-                validator_round_id=int(
+                round_id=int(
                     context.round.round_number or _round_id_to_int(context.round.validator_round_id)
                 ),
                 score=score,
                 rank=context.run.rank,
-                top_score=self._round_top_score(context),
+                topScore=self._round_top_score(context),
                 reward=0.0,
                 timestamp=datetime.fromtimestamp(
                     context.round.started_at or context.run.started_at or _ts(None),
@@ -333,7 +333,7 @@ class AgentsService:
                     totalRuns=0,
                     successfulRuns=0,
                     averageSuccessRate=0.0,
-                    averageScore=0.0,
+                    averageCurrentScore=0.0,
                     topPerformingAgent=empty_top,
                     mostActiveAgent=empty_active,
                     performanceDistribution=PerformanceDistribution(),
@@ -398,7 +398,7 @@ class AgentsService:
                 totalRuns=total_runs,
                 successfulRuns=successful_runs,
                 averageSuccessRate=round(average_success_rate, 2),
-                averageScore=round(average_score, 3),
+                averageCurrentScore=round(average_score, 3),
                 topPerformingAgent=top_agent,
                 mostActiveAgent=most_active_agent,
                 performanceDistribution=distribution,
@@ -426,17 +426,23 @@ class AgentsService:
             )
             avg_duration = sum(aggregate.durations) / len(aggregate.durations) if aggregate.durations else 0.0
             ranking = min(aggregate.ranks) if aggregate.ranks else 0
+            latest_top_score = (
+                aggregate.latest_round_top_score
+                if aggregate.latest_round_top_score is not None
+                else aggregate.best_score
+            )
 
             comparisons.append(
                 AgentComparison(
                     agentId=aggregate.agent_id,
                     name=self._aggregate_name(aggregate),
                     metrics=AgentComparisonMetrics(
-                        averageScore=round(avg_score, 3),
+                        currentScore=round(avg_score, 3),
+                        currentTopScore=round(latest_top_score or 0.0, 3),
                         successRate=round(success_rate, 2),
                         averageResponseTime=round(avg_duration, 2),
                         totalRuns=aggregate.total_runs,
-                        ranking=ranking,
+                        currentRank=ranking,
                     ),
                 )
             )
@@ -445,7 +451,7 @@ class AgentsService:
             if not comparisons:
                 return default
             key_func = {
-                "averageScore": lambda comp: comp.metrics.averageScore,
+                "currentScore": lambda comp: comp.metrics.currentScore,
                 "successRate": lambda comp: comp.metrics.successRate,
                 "averageResponseTime": lambda comp: comp.metrics.averageResponseTime,
                 "totalRuns": lambda comp: comp.metrics.totalRuns,
@@ -454,7 +460,7 @@ class AgentsService:
             return sorted_items[0].agentId if sorted_items else default
 
         comparison_metrics = ComparisonMetrics(
-            bestPerformer=_select("averageScore"),
+            bestPerformer=_select("currentScore"),
             mostReliable=_select("successRate"),
             fastest=_select("averageResponseTime", reverse=False),
             mostActive=_select("totalRuns"),
@@ -510,10 +516,10 @@ class AgentsService:
                 totalRuns=0,
                 successfulRuns=0,
                 failedRuns=0,
-                averageScore=0.0,
-                bestScore=0.0,
-                worstScore=0.0,
                 successRate=0.0,
+                currentScore=0.0,
+                currentTopScore=0.0,
+                worstScore=0.0,
                 averageResponseTime=0.0,
                 totalTasks=0,
                 completedTasks=0,
@@ -522,11 +528,12 @@ class AgentsService:
                 performanceTrend=[],
             )
 
-        scores = []
-        durations = []
+        scores: List[float] = []
+        durations: List[float] = []
         total_tasks = 0
         completed_tasks = 0
         successes = 0
+        trend_map: Dict[int, Dict[str, Any]] = {}
 
         for context in contexts:
             score = self._compute_run_score(context)
@@ -534,13 +541,38 @@ class AgentsService:
             duration = self._compute_run_duration(context)
             if duration is not None:
                 durations.append(duration)
-            task_count = len(context.tasks)
-            total_tasks += task_count
-            completed_tasks += len(
-                [er for er in context.evaluation_results if er.final_score >= 0.5]
-            )
+            if duration is not None:
+                durations.append(duration)
+
+            task_total = context.run.total_tasks or len(context.tasks)
+            total_tasks += task_total
+
+            completed_from_run = context.run.completed_tasks
+            if completed_from_run is not None:
+                completed_tasks += completed_from_run
+            elif context.evaluation_results:
+                completed_tasks += len(
+                    [er for er in context.evaluation_results if er.final_score >= 0.5]
+                )
+
             if score >= 0.5:
                 successes += 1
+
+            round_number = self._round_number(context)
+            if round_number > 0:
+                data = trend_map.setdefault(
+                    round_number,
+                    {
+                        "scores": [],
+                        "durations": [],
+                        "successes": 0,
+                        "count": 0,
+                    },
+                )
+                data["scores"].append(score)
+                data["durations"].append(duration or 0.0)
+                data["successes"] += 1 if score >= 0.5 else 0
+                data["count"] += 1
 
         total_runs = len(contexts)
         failed_runs = max(total_runs - successes, 0)
@@ -566,64 +598,38 @@ class AgentsService:
             poor=max(poor, 0),
         )
 
-        sorted_runs = sorted(
-            contexts,
-            key=lambda ctx: ctx.run.started_at or ctx.round.started_at or _ts(None),
-        )
-
-        buckets: Dict[datetime, Dict[str, Any]] = {}
-        resolved_granularity = (granularity or "").lower() or "day"
-
-        for context in sorted_runs:
-            start_ts = context.run.started_at or context.round.started_at or _ts(None)
-            start_dt_context = datetime.fromtimestamp(start_ts, tz=timezone.utc)
-            bucket_key = self._truncate_datetime(start_dt_context, resolved_granularity)
-            bucket = buckets.setdefault(
-                bucket_key,
-                {
-                    "scores": [],
-                    "durations": [],
-                    "successes": 0,
-                    "count": 0,
-                },
-            )
-            score = self._compute_run_score(context)
-            duration = self._compute_run_duration(context) or 0.0
-
-            bucket["scores"].append(score)
-            bucket["durations"].append(duration)
-            bucket["successes"] += 1 if score >= 0.5 else 0
-            bucket["count"] += 1
-
         trend: List[PerformanceTrend] = []
-        for bucket_dt in sorted(buckets.keys()):
-            bucket = buckets[bucket_dt]
+        for round_number in sorted(trend_map.keys()):
+            bucket = trend_map[round_number]
             bucket_scores = bucket["scores"]
             bucket_durations = bucket["durations"]
             bucket_successes = bucket["successes"]
             bucket_count = bucket["count"]
 
-            period_label = self._format_trend_period(bucket_dt, resolved_granularity)
-
             trend.append(
                 PerformanceTrend(
-                    period=period_label,
                     score=round(
                         sum(bucket_scores) / len(bucket_scores) if bucket_scores else 0.0,
                         3,
                     ),
-                    successRate=round(
-                        (bucket_successes / bucket_count * 100.0) if bucket_count else 0.0,
-                        2,
-                    ),
+                    round=round_number,
                     responseTime=round(
                         sum(bucket_durations) / len(bucket_durations)
                         if bucket_durations
                         else 0.0,
                         2,
                     ),
+                    successRate=round(
+                        (bucket_successes / bucket_count * 100.0) if bucket_count else 0.0,
+                        2,
+                    ),
                 )
             )
+
+        sorted_runs = sorted(
+            contexts,
+            key=lambda ctx: ctx.run.started_at or ctx.round.started_at or _ts(None),
+        )
 
         first_ts = (
             start_dt.timestamp()
@@ -651,10 +657,10 @@ class AgentsService:
             totalRuns=total_runs,
             successfulRuns=successes,
             failedRuns=failed_runs,
-            averageScore=round(average_score, 3),
-            bestScore=round(best_score, 3),
-            worstScore=round(worst_score, 3),
             successRate=round(success_rate, 2),
+            currentScore=round(average_score, 3),
+            currentTopScore=round(best_score, 3),
+            worstScore=round(worst_score, 3),
             averageResponseTime=round(average_duration, 2),
             totalTasks=total_tasks,
             completedTasks=completed_tasks,
@@ -715,9 +721,12 @@ class AgentsService:
         stmt = (
             select(AgentEvaluationRunORM)
             .options(
-                selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.miner_snapshots)
-                .selectinload(RoundORM.validator_snapshots),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.miner_snapshots
+                ),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.validator_snapshots
+                ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(AgentEvaluationRunORM.evaluation_results),
             )
@@ -802,10 +811,16 @@ class AgentsService:
             if duration is not None:
                 aggregate.durations.append(duration)
 
-            aggregate.total_tasks += len(context.tasks)
-            aggregate.completed_tasks += len(
-                [er for er in context.evaluation_results if er.final_score >= 0.5]
-            )
+            task_total = context.run.total_tasks or len(context.tasks)
+            aggregate.total_tasks += task_total
+
+            completed_from_run = context.run.completed_tasks or None
+            if completed_from_run is not None and completed_from_run > 0:
+                aggregate.completed_tasks += completed_from_run
+            elif context.evaluation_results:
+                aggregate.completed_tasks += len(
+                    [er for er in context.evaluation_results if er.final_score >= 0.5]
+                )
 
             rank_value: Optional[int] = None
             if context.run.agent_run_id in rankings_by_run_id:
@@ -841,15 +856,14 @@ class AgentsService:
 
             if context.run.is_sota:
                 bench_key = self._benchmark_key(context)
+                miner_details = getattr(context.run, "miner_info", None)
                 bench_name = (
-                    context.run.miner_info.agent_name
-                    if context.run.miner_info and context.run.miner_info.agent_name
+                    miner_details.agent_name
+                    if miner_details and miner_details.agent_name
                     else context.run.agent_run_id
                 )
                 bench_provider = (
-                    context.run.miner_info.provider
-                    if context.run.miner_info and context.run.miner_info.provider
-                    else None
+                    miner_details.provider if miner_details and miner_details.provider else None
                 )
                 entry = {
                     "name": bench_name,
@@ -932,9 +946,12 @@ class AgentsService:
         stmt = (
             select(AgentEvaluationRunORM)
             .options(
-                selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.miner_snapshots)
-                .selectinload(RoundORM.validator_snapshots),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.miner_snapshots
+                ),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.validator_snapshots
+                ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(AgentEvaluationRunORM.evaluation_results),
             )
@@ -954,6 +971,7 @@ class AgentsService:
             )
             for row in run_rows
         ]
+        self.rounds_service._assign_ranks(contexts)  # type: ignore[attr-defined]
         contexts.sort(
             key=lambda ctx: ctx.run.started_at or ctx.round.started_at or _ts(None),
             reverse=True,
@@ -1112,14 +1130,32 @@ class AgentsService:
             return agents
 
     def _compute_run_score(self, context: AgentRunContext) -> float:
-        if not context.evaluation_results:
+        candidate = getattr(context.run, "average_score", None)
+        if candidate is not None:
+            try:
+                return float(candidate)
+            except (TypeError, ValueError):
+                pass
+
+        if context.evaluation_results:
+            return (
+                sum(result.final_score for result in context.evaluation_results)
+                / len(context.evaluation_results)
+            )
+
+        fallback = getattr(context.run, "avg_eval_score", None)
+        try:
+            return float(fallback or 0.0)
+        except (TypeError, ValueError):
             return 0.0
-        return (
-            sum(result.final_score for result in context.evaluation_results)
-            / len(context.evaluation_results)
-        )
 
     def _compute_run_duration(self, context: AgentRunContext) -> Optional[float]:
+        elapsed = getattr(context.run, "elapsed_sec", None)
+        if elapsed is not None:
+            try:
+                return float(elapsed)
+            except (TypeError, ValueError):
+                pass
         if context.run.started_at and context.run.ended_at:
             return context.run.ended_at - context.run.started_at
         return None
@@ -1128,14 +1164,15 @@ class AgentsService:
         return [(context, self._compute_run_score(context)) for context in aggregate.runs]
 
     def _benchmark_key(self, context: AgentRunContext) -> str:
+        miner_details = getattr(context.run, "miner_info", None)
         provider = ""
-        if context.run.miner_info and context.run.miner_info.provider:
-            provider = context.run.miner_info.provider.strip().lower()
+        if miner_details and miner_details.provider:
+            provider = miner_details.provider.strip().lower()
         if provider:
             return re.sub(r"[^a-z0-9]+", "-", provider).strip("-")
         name = (
-            context.run.miner_info.agent_name
-            if context.run.miner_info and context.run.miner_info.agent_name
+            miner_details.agent_name
+            if miner_details and miner_details.agent_name
             else context.run.agent_run_id
         )
         return re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
@@ -1156,7 +1193,7 @@ class AgentsService:
             except (TypeError, ValueError):
                 pass
         if not benchmark_scores:
-            return 0.0
+            return self._compute_run_score(context)
         return max(benchmark_scores)
 
     def _round_benchmark_entries(self, context: AgentRunContext) -> Optional[List[Dict[str, Any]]]:
@@ -1165,8 +1202,9 @@ class AgentsService:
         return entries or None
 
     def _find_miner_info(self, context: AgentRunContext) -> Optional[MinerInfo]:
-        if context.run.miner_info:
-            return context.run.miner_info
+        miner_info = getattr(context.run, "miner_info", None)
+        if miner_info:
+            return miner_info
 
         if context.round.miners:
             for miner in context.round.miners:

@@ -196,7 +196,7 @@ async def _legacy_to_start_agent_run_request(
 class LegacyAddEvaluationRequest(BaseModel):
     task: Dict[str, Any]
     task_solution: Dict[str, Any]
-    evaluation: Dict[str, Any]
+    evaluation: Dict[str, Any] = Field(default_factory=dict)
     evaluation_result: Dict[str, Any]
 
 
@@ -232,7 +232,25 @@ async def _legacy_to_add_evaluation_request(
         task_solution_data.setdefault("miner_hotkey", miner_hotkey)
     task_solution = TaskSolution(**task_solution_data)
 
-    evaluation_data = dict(payload.evaluation)
+    evaluation_result_data = dict(payload.evaluation_result)
+    evaluation_result_data.setdefault("validator_round_id", validator_round_id)
+    evaluation_result_data.setdefault("validator_uid", validator_uid)
+    evaluation_result_data.setdefault("validator_hotkey", validator_hotkey)
+    if miner_uid is not None:
+        evaluation_result_data.setdefault("miner_uid", miner_uid)
+        evaluation_result_data.setdefault("miner_hotkey", miner_hotkey)
+    evaluation_result = EvaluationResult(**evaluation_result_data)
+
+    evaluation_data = dict(payload.evaluation or {})
+    if not evaluation_data:
+        evaluation_data["evaluation_id"] = evaluation_result.evaluation_id
+        evaluation_data["task_id"] = task.task_id
+        evaluation_data["task_solution_id"] = task_solution.solution_id
+        evaluation_data["agent_run_id"] = agent_run_id
+        evaluation_data["final_score"] = evaluation_result.final_score
+        evaluation_data["raw_score"] = evaluation_result.raw_score
+        evaluation_data["evaluation_time"] = evaluation_result.evaluation_time
+        evaluation_data["summary"] = evaluation_result.meta if hasattr(evaluation_result, "meta") else {}
     evaluation_data.setdefault("validator_round_id", validator_round_id)
     evaluation_data.setdefault("validator_uid", validator_uid)
     evaluation_data.setdefault("validator_hotkey", validator_hotkey)
@@ -241,17 +259,18 @@ async def _legacy_to_add_evaluation_request(
         evaluation_data.setdefault("miner_hotkey", miner_hotkey)
     evaluation = Evaluation(**evaluation_data)
 
-    evaluation_result_data = dict(payload.evaluation_result)
-    evaluation_result_data.setdefault("validator_round_id", validator_round_id)
-    evaluation_result_data.setdefault("validator_uid", validator_uid)
-    evaluation_result = EvaluationResult(**evaluation_result_data)
-
     return AddEvaluationRequest(
         task=task,
         task_solution=task_solution,
         evaluation=evaluation,
         evaluation_result=evaluation_result,
     )
+
+
+class FinishRoundAgentRun(BaseModel):
+    agent_run_id: str
+    rank: int | None = None
+    weight: float | None = None
 
 
 class FinishRoundRequest(BaseModel):
@@ -265,6 +284,7 @@ class FinishRoundRequest(BaseModel):
     summary: Dict[str, int] | None = Field(
         default=None, description="Optional summary metadata"
     )
+    agent_runs: list[FinishRoundAgentRun] = Field(default_factory=list)
 
 
 @router.post("/start")
@@ -562,6 +582,7 @@ async def finish_round(
             weights=payload.weights,
             ended_at=end_timestamp,
             summary=payload.summary,
+            agent_runs=[item.model_dump(exclude_none=True) for item in payload.agent_runs] or None,
         )
 
     logger.info("Finished validator round %s", validator_round_id)

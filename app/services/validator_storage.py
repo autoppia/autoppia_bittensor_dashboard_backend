@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentEvaluationRunORM,
@@ -262,6 +263,7 @@ class ValidatorRoundPersistenceService:
         weights: Dict[str, float],
         ended_at: float,
         summary: Optional[Dict[str, int]],
+        agent_runs: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Mark a validator round as completed."""
         round_row = await self._ensure_round_exists(validator_round_id)
@@ -271,6 +273,57 @@ class ValidatorRoundPersistenceService:
         round_row.ended_at = ended_at
         if summary is not None:
             round_row.summary = summary
+
+        rank_map: Dict[str, Optional[int]] = {}
+        weight_map: Dict[str, Optional[float]] = {}
+        if agent_runs:
+            for agent_run_data in agent_runs:
+                agent_run_id = agent_run_data.get("agent_run_id")
+                if not agent_run_id:
+                    continue
+                rank_map[agent_run_id] = agent_run_data.get("rank")
+                weight_map[agent_run_id] = agent_run_data.get("weight")
+
+        stmt_runs = (
+            select(AgentEvaluationRunORM)
+            .options(
+                selectinload(AgentEvaluationRunORM.task_solutions),
+                selectinload(AgentEvaluationRunORM.evaluation_results),
+            )
+            .where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
+        )
+        run_rows_result = await self.session.scalars(stmt_runs)
+        run_rows = list(run_rows_result)
+
+        for run_row in run_rows:
+            if ended_at is not None:
+                run_row.ended_at = ended_at
+                if run_row.started_at is not None:
+                    elapsed = max(0.0, float(ended_at) - float(run_row.started_at))
+                    run_row.elapsed_sec = elapsed
+
+            metrics = self._compute_agent_run_stats(run_row)
+            run_row.total_tasks = metrics["total_tasks"]
+            run_row.completed_tasks = metrics["completed_tasks"]
+            run_row.failed_tasks = metrics["failed_tasks"]
+            run_row.average_score = metrics["average_score"]
+            run_row.average_execution_time = metrics["average_execution_time"]
+            run_row.total_reward = metrics["total_reward"]
+            run_row.average_reward = metrics["average_reward"]
+
+            agent_run_id = run_row.agent_run_id
+            rank_value = rank_map.get(agent_run_id)
+            if rank_value is not None:
+                try:
+                    run_row.rank = int(rank_value)
+                except (TypeError, ValueError):
+                    run_row.rank = run_row.rank
+            weight_value = weight_map.get(agent_run_id)
+            if weight_value is not None:
+                try:
+                    run_row.weight = float(weight_value)
+                except (TypeError, ValueError):
+                    run_row.weight = run_row.weight
 
     async def submit_round(
         self, payload: ValidatorRoundSubmissionRequest
@@ -449,6 +502,87 @@ class ValidatorRoundPersistenceService:
             validator_uid=payload.validator_round.validator_uid,
             saved_entities=saved,
         )
+
+    @staticmethod
+    def _to_float(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _compute_agent_run_stats(self, run_row: AgentEvaluationRunORM) -> Dict[str, Any]:
+        task_solutions = list(getattr(run_row, "task_solutions", []) or [])
+        evaluation_results = list(getattr(run_row, "evaluation_results", []) or [])
+
+        task_ids = {solution.task_id for solution in task_solutions if solution.task_id}
+        if not task_ids:
+            task_ids = {result.task_id for result in evaluation_results if result.task_id}
+
+        total_tasks = len(task_ids)
+        if total_tasks == 0:
+            total_tasks = run_row.total_tasks or len(evaluation_results)
+        total_tasks = int(total_tasks or 0)
+
+        scores: List[float] = []
+        for result in evaluation_results:
+            value = self._to_float(getattr(result, "final_score", None))
+            if value is not None:
+                scores.append(value)
+        average_score = sum(scores) / len(scores) if scores else None
+
+        completed_tasks = sum(1 for score in scores if score >= 0.5)
+        if completed_tasks > total_tasks:
+            completed_tasks = total_tasks
+        failed_tasks = max(total_tasks - completed_tasks, 0)
+
+        evaluation_times: List[float] = []
+        for result in evaluation_results:
+            value = self._to_float(getattr(result, "evaluation_time", None))
+            if value is not None and value >= 0.0:
+                evaluation_times.append(value)
+        average_execution_time = (
+            sum(evaluation_times) / len(evaluation_times) if evaluation_times else None
+        )
+
+        reward_values: List[float] = []
+        reward_keys = (
+            "reward",
+            "total_reward",
+            "final_reward",
+            "wta_reward",
+            "reward_value",
+            "score_reward",
+        )
+        for result in evaluation_results:
+            meta = getattr(result, "meta", {}) or {}
+            reward_candidate: Any = None
+            if isinstance(meta, dict):
+                for key in reward_keys:
+                    if key in meta:
+                        reward_candidate = meta[key]
+                        break
+            if reward_candidate is None:
+                reward_candidate = getattr(result, "raw_score", None)
+            value = self._to_float(reward_candidate)
+            if value is not None:
+                reward_values.append(value)
+
+        total_reward = sum(reward_values) if reward_values else None
+        average_reward = (
+            (total_reward / len(reward_values)) if reward_values and total_reward is not None else None
+        )
+
+        return {
+            "total_tasks": total_tasks,
+            "completed_tasks": completed_tasks,
+            "failed_tasks": failed_tasks,
+            "average_score": average_score,
+            "average_execution_time": average_execution_time,
+            "total_reward": total_reward,
+            "average_reward": average_reward,
+        }
 
     # ------------------------------------------------------------------
     # Helper utilities

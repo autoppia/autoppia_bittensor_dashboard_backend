@@ -179,6 +179,18 @@ class ValidatorRoundORM(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
 
+    @property
+    def data(self) -> dict[str, Any]:
+        """Backwards-compatible accessor for legacy JSON payloads."""
+        legacy_status = self.status or ""
+        if legacy_status == "active":
+            legacy_status = "in_progress"
+        return {
+            "status": legacy_status,
+            "summary": dict(self.summary or {}),
+            "meta": dict(self.meta or {}),
+        }
+
 
 class ValidatorRoundValidatorORM(TimestampMixin, Base):
     """Snapshot of validator information for a given validator_round."""
@@ -384,6 +396,32 @@ class TaskORM(TimestampMixin, Base):
         back_populates="task", cascade="all, delete-orphan"
     )
 
+    @property
+    def data(self) -> dict[str, Any]:
+        """Backwards-compatible accessor for legacy task payloads."""
+        return {
+            "task_id": self.task_id,
+            "validator_round_id": self.validator_round_id,
+            "sequence": self.sequence,
+            "scope": self.scope,
+            "is_web_real": self.is_web_real,
+            "web_project_id": self.web_project_id,
+            "url": self.url,
+            "prompt": self.prompt,
+            "html": self.html,
+            "clean_html": self.clean_html,
+            "interactive_elements": self.interactive_elements,
+            "screenshot": self.screenshot,
+            "screenshot_description": self.screenshot_description,
+            "specifications": dict(self.specifications or {}),
+            "tests": list(self.tests or []),
+            "milestones": list(self.milestones or []) if self.milestones else None,
+            "relevant_data": dict(self.relevant_data or {}),
+            "success_criteria": self.success_criteria,
+            "use_case": dict(self.use_case or {}),
+            "should_record": self.should_record,
+        }
+
 
 class TaskSolutionORM(TimestampMixin, Base):
     """Task solution submitted by an agent."""
@@ -435,6 +473,25 @@ class TaskSolutionORM(TimestampMixin, Base):
     evaluation_results: Mapped[list["EvaluationResultORM"]] = relationship(
         back_populates="task_solution", cascade="all, delete-orphan"
     )
+
+    @property
+    def data(self) -> dict[str, Any]:
+        """Backwards-compatible accessor for legacy task solution payloads."""
+        return {
+            "solution_id": self.solution_id,
+            "task_id": self.task_id,
+            "agent_run_id": self.agent_run_id,
+            "validator_round_id": self.validator_round_id,
+            "validator_uid": self.validator_uid,
+            "validator_hotkey": self.validator_hotkey,
+            "miner_uid": self.miner_uid,
+            "miner_hotkey": self.miner_hotkey,
+            "miner_agent_key": self.miner_agent_key,
+            "actions": list(self.actions or []),
+            "web_agent_id": self.web_agent_id,
+            "recording": dict(self.recording or {}),
+            "meta": dict(self.meta or {}),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -558,6 +615,18 @@ class EvaluationResultORM(TimestampMixin, Base):
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     evaluation: Mapped["EvaluationORM"] = relationship(back_populates="results")
+
+    @property
+    def data(self) -> dict[str, Any]:
+        """Backwards-compatible accessor for legacy JSON payloads."""
+        return {
+            "result_id": self.result_id,
+            "evaluation_id": self.evaluation_id,
+            "final_score": self.final_score,
+            "raw_score": self.raw_score,
+            "evaluation_time": self.evaluation_time,
+            "meta": dict(self.meta or {}),
+        }
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="evaluation_results"
     )

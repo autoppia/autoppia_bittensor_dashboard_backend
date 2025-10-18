@@ -232,7 +232,12 @@ def _build_miner_seed_records(num_miners: int, exclude_uids: set[int]) -> List[M
     metagraph_records = _try_fetch_metagraph()
     records: List[MinerSeedRecord] = []
 
-    for uid, (hotkey, coldkey) in metagraph_records.items():
+    # Skip metagraph UIDs that are not positive or that are explicitly excluded.
+    metagraph_uids = [
+        uid for uid in metagraph_records.keys() if uid > 0 and uid not in exclude_uids
+    ]
+    for uid in sorted(metagraph_uids):
+        hotkey, coldkey = metagraph_records[uid]
         if uid in exclude_uids:
             continue
         records.append(

@@ -160,16 +160,8 @@ class TasksService:
         stmt = (
             select(TaskORM)
             .options(
-                selectinload(TaskORM.task_solutions)
-                .selectinload(TaskSolutionORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.miner_snapshots)
-                .selectinload(RoundORM.validator_snapshots),
-                selectinload(TaskORM.evaluation_results)
-                .selectinload(EvaluationResultORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.miner_snapshots)
-                .selectinload(RoundORM.validator_snapshots),
+                selectinload(TaskORM.task_solutions),
+                selectinload(TaskORM.evaluation_results),
             )
             .order_by(TaskORM.id.desc())
         )
@@ -314,16 +306,8 @@ class TasksService:
         stmt = (
             select(TaskORM)
             .options(
-                selectinload(TaskORM.task_solutions)
-                .selectinload(TaskSolutionORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.miner_snapshots)
-                .selectinload(RoundORM.validator_snapshots),
-                selectinload(TaskORM.evaluation_results)
-                .selectinload(EvaluationResultORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.miner_snapshots)
-                .selectinload(RoundORM.validator_snapshots),
+                selectinload(TaskORM.task_solutions),
+                selectinload(TaskORM.evaluation_results),
             )
             .where(TaskORM.task_id == task_id)
         )
@@ -337,16 +321,8 @@ class TasksService:
         stmt = (
             select(TaskORM)
             .options(
-                selectinload(TaskORM.task_solutions)
-                .selectinload(TaskSolutionORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.miner_snapshots)
-                .selectinload(RoundORM.validator_snapshots),
-                selectinload(TaskORM.evaluation_results)
-                .selectinload(EvaluationResultORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.miner_snapshots)
-                .selectinload(RoundORM.validator_snapshots),
+                selectinload(TaskORM.task_solutions),
+                selectinload(TaskORM.evaluation_results),
             )
         )
         rows = await self.session.scalars(stmt)

@@ -112,8 +112,12 @@ class EvaluationsService:
             .options(
                 selectinload(EvaluationResultORM.agent_run).selectinload(
                     AgentEvaluationRunORM.validator_round
-                )
-                .selectinload(RoundORM.miner_snapshots)
+                ),
+                selectinload(EvaluationResultORM.agent_run)
+                .selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots),
+                selectinload(EvaluationResultORM.agent_run)
+                .selectinload(AgentEvaluationRunORM.validator_round)
                 .selectinload(RoundORM.validator_snapshots),
                 selectinload(EvaluationResultORM.task),
                 selectinload(EvaluationResultORM.task_solution),
@@ -162,7 +166,9 @@ class EvaluationsService:
             .options(
                 selectinload(EvaluationResultORM.agent_run)
                 .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.miner_snapshots)
+                .selectinload(RoundORM.miner_snapshots),
+                selectinload(EvaluationResultORM.agent_run)
+                .selectinload(AgentEvaluationRunORM.validator_round)
                 .selectinload(RoundORM.validator_snapshots),
                 selectinload(EvaluationResultORM.task),
                 selectinload(EvaluationResultORM.task_solution),
@@ -187,7 +193,10 @@ class EvaluationsService:
             )
 
         round_model = self.rounds_service._deserialize_round(round_row)
-        agent_run_model = self.rounds_service._deserialize_agent_run(agent_run_row)
+        agent_run_model = self.rounds_service._deserialize_agent_run(
+            agent_run_row,
+            include_details=False,
+        )
 
         task_row = evaluation_row.task
         if task_row is None:
