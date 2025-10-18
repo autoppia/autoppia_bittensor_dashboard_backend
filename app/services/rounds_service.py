@@ -982,6 +982,7 @@ class RoundsService:
 
         for entry in aggregated.validator_rounds:
             round_obj = entry.round
+            weights = round_obj.weights or {}
             contexts_by_validator: Dict[int, List[AgentRunContext]] = {}
             for ctx in entry.contexts:
                 contexts_by_validator.setdefault(ctx.run.validator_uid, []).append(ctx)
@@ -1054,6 +1055,23 @@ class RoundsService:
                 existing_icon = metadata.get("image")
                 icon = resolve_validator_image(validator_name, existing=existing_icon)
 
+                top_miner_entry: Optional[Dict[str, Any]] = None
+                if runs:
+                    best_run: Optional[AgentRunContext] = None
+                    best_score = float("-inf")
+                    for run in runs:
+                        if run.run.is_sota or run.run.miner_uid is None:
+                            continue
+                        run_score = run.run.avg_eval_score
+                        if run_score is None and run.evaluation_results:
+                            run_score = sum(er.final_score for er in run.evaluation_results) / len(run.evaluation_results)
+                        run_score = run_score or 0.0
+                        if run_score > best_score:
+                            best_score = run_score
+                            best_run = run
+                    if best_run is not None:
+                        top_miner_entry = self._build_miner_performance(best_run, round_obj, weights)
+
                 key = f"{entry.validator_round_id}:{validator.uid}"
                 validator_map[key] = {
                     "id": f"validator-{validator.uid}",
@@ -1075,6 +1093,7 @@ class RoundsService:
                     "emission": int(weight * 0.05),
                     "lastSeen": last_seen,
                     "uptime": round(min(100.0, completion_rate * 100.0), 2),
+                    **({"topMiner": top_miner_entry} if top_miner_entry else {}),
                 }
 
         validators = list(validator_map.values())
@@ -1253,15 +1272,45 @@ class RoundsService:
         round_identifier: Union[str, int],
         limit: int,
     ) -> Dict[str, Any]:
-        data = await self.get_round_miners(round_identifier, page=1, limit=limit, sort_by="score", sort_order="desc")
-        miners = data.get("miners", [])[:limit]
-        benchmarks = (data.get("benchmarks") or [])[:limit]
+        aggregated = await self._fetch_aggregated_round(round_identifier)
+        miner_entries: List[Dict[str, Any]] = []
+        best_by_validator: Dict[str, Dict[str, Any]] = {}
+
+        for validator_round in aggregated.validator_rounds:
+            round_obj = validator_round.round
+            weights = round_obj.weights or {}
+            for context in validator_round.contexts:
+                if context.run.is_sota or context.run.miner_uid is None:
+                    continue
+                performance = self._build_miner_performance(context, round_obj, weights)
+                miner_entries.append(performance)
+
+                validator_id = performance.get("validatorId")
+                if validator_id:
+                    current_best = best_by_validator.get(validator_id)
+                    if current_best is None or performance.get("score", 0.0) > current_best.get("score", 0.0):
+                        best_by_validator[validator_id] = performance
+
+        miner_entries.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+
+        effective_limit = max(limit, len(best_by_validator))
+        selected: List[Dict[str, Any]] = miner_entries[:effective_limit]
+
+        seen_keys = {(entry.get("validatorId"), entry.get("uid")) for entry in selected}
+        for performance in best_by_validator.values():
+            key = (performance.get("validatorId"), performance.get("uid"))
+            if key not in seen_keys:
+                selected.append(performance)
+                seen_keys.add(key)
+
+        selected.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+
         return {
-            "miners": miners,
-            "benchmarks": benchmarks,
-            "total": len(miners),
+            "miners": selected,
+            "benchmarks": [],
+            "total": len(selected),
             "page": 1,
-            "limit": limit,
+            "limit": len(selected),
         }
 
     async def get_round_miner(

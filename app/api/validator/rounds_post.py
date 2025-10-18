@@ -494,10 +494,22 @@ def _validate_round_relationships(payload: ValidatorRoundSubmissionRequest) -> N
                     f"unknown agent run {result.agent_run_id}"
                 ),
             )
-        if not result.validate_relationships(agent_run, task, task_solution):
+        mismatches: List[str] = []
+        if result.task_id != task.task_id:
+            mismatches.append("task_id")
+        if result.task_solution_id != task_solution.solution_id:
+            mismatches.append("task_solution_id")
+        if result.agent_run_id != agent_run.agent_run_id:
+            mismatches.append("agent_run_id")
+        if result.evaluation_id != evaluation.evaluation_id:
+            mismatches.append("evaluation_id")
+        if mismatches:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid relationships in evaluation result {result.result_id}",
+                detail=(
+                    f"Invalid relationships in evaluation result {result.result_id}: "
+                    + ", ".join(mismatches)
+                ),
             )
 
 

@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -9,7 +10,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # SQL Database Configuration
-    DATABASE_URL: str = "sqlite+aiosqlite:///./autoppia.db"
+    DATABASE_URL: str = ""
 
     # Authentication
     API_KEYS: list[str] = ["dev-token-123"]  # replace with real keys or load from vault
@@ -30,6 +31,11 @@ class Settings(BaseSettings):
 
     def model_post_init(self, __context: Any) -> None:  # type: ignore[override]
         """Ensure required CORS origins are present."""
+        if not self.DATABASE_URL:
+            project_root = Path(__file__).resolve().parents[2]
+            db_path = project_root / "autoppia.db"
+            self.DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+
         if "*" in self.CORS_ORIGINS:
             return
 

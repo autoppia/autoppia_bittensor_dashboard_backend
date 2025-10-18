@@ -746,6 +746,13 @@ class ValidatorRoundPersistenceService:
         *,
         miner_id: Optional[int],
     ) -> Dict[str, Any]:
+        summary = _non_empty_dict(model.summary)
+        if "test_results" in summary:
+            try:
+                summary["test_results"] = _test_results_dump(summary["test_results"])
+            except Exception:
+                pass
+
         return {
             "evaluation_id": model.evaluation_id,
             "validator_round_id": model.validator_round_id,
@@ -761,7 +768,7 @@ class ValidatorRoundPersistenceService:
             "final_score": model.final_score,
             "raw_score": model.raw_score,
             "evaluation_time": model.evaluation_time,
-            "summary": _non_empty_dict(model.summary),
+            "summary": summary,
         }
 
     def _evaluation_result_kwargs(
