@@ -523,30 +523,54 @@ class AgentRunsService:
 
     def _build_run_summary(self, context: AgentRunContext) -> Dict[str, object]:
         run_model = context.run
-        total_tasks = run_model.n_tasks_total or len(context.tasks)
-        completed_tasks = run_model.n_tasks_completed or 0
+
+        total_tasks = (
+            getattr(run_model, "n_tasks_total", None)
+            or run_model.total_tasks
+            or len(context.tasks)
+        )
+
+        completed_tasks = (
+            getattr(run_model, "n_tasks_completed", None)
+            or run_model.completed_tasks
+            or 0
+        )
+        failed_tasks = (
+            getattr(run_model, "n_tasks_failed", None)
+            or run_model.failed_tasks
+            or 0
+        )
+
         if completed_tasks == 0 and context.evaluation_results:
             completed_tasks = sum(
                 1 for evaluation in context.evaluation_results if evaluation.final_score >= 0.5
             )
 
+        if failed_tasks == 0 and total_tasks:
+            failed_tasks = max(total_tasks - completed_tasks, 0)
+
         average_score = (
-            run_model.avg_eval_score
-            if run_model.avg_eval_score is not None
-            else self._compute_average_score(context.evaluation_results)
+            getattr(run_model, "avg_eval_score", None)
+            or run_model.average_score
         )
+        if average_score is None:
+            average_score = self._compute_average_score(context.evaluation_results)
         average_score = float(average_score or 0.0)
+
         validator_name, validator_image = self._resolve_validator_identity(context)
-        success_count = completed_tasks if completed_tasks else sum(
-            1 for evaluation in context.evaluation_results if evaluation.final_score >= 0.5
-            )
-        completed_tasks = success_count
-        failed_tasks = max(total_tasks - success_count, 0)
-        overall_score = _safe_int(average_score * 100)
+        success_count = completed_tasks
         success_rate = (success_count / total_tasks * 100.0) if total_tasks else 0.0
+        overall_score = _safe_int(average_score * 100)
+
         round_id_value = context.round.round_number
         if round_id_value is None:
             round_id_value = _round_id_to_int(context.round.validator_round_id)
+
+        duration_sec = None
+        if getattr(run_model, "elapsed_sec", None) not in (None, 0):
+            duration_sec = run_model.elapsed_sec
+        if duration_sec is None:
+            duration_sec = (run_model.ended_at or run_model.started_at or 0) - (run_model.started_at or 0)
 
         return {
             "runId": run_model.agent_run_id,
@@ -558,16 +582,16 @@ class AgentRunsService:
             "status": self._run_status(context).value,
             "startTime": _ts_to_iso(run_model.started_at),
             "endTime": _ts_to_iso(run_model.ended_at),
-            "totalTasks": total_tasks,
-            "completedTasks": completed_tasks,
-            "successfulTasks": success_count,
-            "failedTasks": failed_tasks,
+            "totalTasks": int(total_tasks),
+            "completedTasks": int(completed_tasks),
+            "successfulTasks": int(success_count),
+            "failedTasks": int(failed_tasks),
             "averageScore": average_score,
             "score": average_score,
             "successRate": success_rate,
             "overallScore": overall_score,
             "ranking": run_model.rank or 0,
-            "duration": _safe_int((run_model.ended_at or run_model.started_at or 0) - (run_model.started_at or 0)),
+            "duration": _safe_int(duration_sec),
         }
 
     def _sort_runs(self, runs: List[Dict[str, object]], sort_by: str, sort_order: str) -> List[Dict[str, object]]:
@@ -706,22 +730,21 @@ class AgentRunsService:
         validator = self._find_validator(context)
         validator_uid = context.run.validator_uid
 
-        metadata = (
-            get_validator_metadata(validator_uid)
-            if validator_uid is not None
-            else {"name": "Validator", "image": "/validators/default.png"}
-        )
+        validator_info = getattr(context.round, "validator_info", None)
+        metadata = get_validator_metadata(validator_uid) if validator_uid is not None else {}
 
         name_candidates = [
             getattr(validator, "name", None) if validator else None,
+            getattr(validator_info, "name", None) if validator_info else None,
             metadata.get("name"),
             f"Validator {validator_uid}" if validator_uid is not None else "Validator",
         ]
         validator_name = next((candidate for candidate in name_candidates if candidate), "Validator")
 
         image_candidates = [
+            getattr(validator, "image_url", None) if validator else None,
+            getattr(validator_info, "image_url", None) if validator_info else None,
             metadata.get("image"),
-            getattr(validator, "image", None) if validator else None,
         ]
         existing_image = next((candidate for candidate in image_candidates if candidate), None)
         validator_image = resolve_validator_image(validator_name, existing=existing_image)

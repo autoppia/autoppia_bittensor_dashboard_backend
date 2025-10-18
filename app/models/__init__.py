@@ -2,17 +2,14 @@
 
 # Core models - essential business logic
 from .core import (
-    # Core entities
-    ValidatorInfo,
-    MinerInfo,
-    Task,
-    ValidatorRound,
-    AgentEvaluationRun,
-    
-    # Utilities
     now_ts,
-    
-    # Validator classes
+    Validator,
+    Miner,
+    ValidatorRound,
+    ValidatorRoundValidator,
+    ValidatorRoundMiner,
+    AgentEvaluationRun,
+    Task,
     Action,
     TaskSolution,
     BaseTaskTest,
@@ -22,13 +19,16 @@ from .core import (
     JudgeBaseOnHTML,
     JudgeBaseOnScreenshot,
     TestUnion,
-    
-    # Evaluation classes
+    Evaluation,
     TestResult,
     Feedback,
     EvaluationStats,
     EvaluationResult,
+    ValidatorRoundSubmissionRequest,
+    ValidatorRoundSubmissionResponse,
+    AgentEvaluationRunWithDetails,
+    ValidatorRoundWithDetails,
 )
 
-# Legacy imports for backward compatibility
-from .core import *
+# Re-export everything for backwards compatibility where feasible
+from .core import *  # noqa: F401,F403

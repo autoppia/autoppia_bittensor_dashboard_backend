@@ -5,7 +5,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import select, func
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.data import get_validator_metadata
@@ -22,6 +23,7 @@ from app.models.ui.overview import (
     SubnetStatistics,
     ValidatorInfo,
 )
+from app.services.rounds_service import AgentRunContext, RoundRecord, RoundsService
 from app.utils.images import resolve_validator_image
 
 logger = logging.getLogger(__name__)
@@ -63,10 +65,11 @@ class OverviewService:
 
     def __init__(self, session: AsyncSession):
         self.session = session
+        self.rounds_service = RoundsService(session)
 
     async def overview_metrics(self) -> OverviewMetrics:
-        rounds = await self._recent_rounds()
-        if not rounds:
+        records_with_contexts = await self._recent_round_records(limit=20, include_details=False)
+        if not records_with_contexts:
             now_iso = datetime.now(timezone.utc).isoformat()
             return OverviewMetrics(
                 topScore=0.0,
@@ -81,25 +84,40 @@ class OverviewService:
         top_score = 0.0
         validators: set[int] = set()
         miners: set[int] = set()
-        current_round = max(_round_id_to_int(round.validator_round_id) for round in rounds)
-        subnet_version = "1.0.0"
+        current_round = 0
+        version_candidates: List[str] = []
 
-        active_rounds: List[ValidatorRound] = []
-        completed_rounds: List[ValidatorRound] = []
-        for round_obj in rounds:
-            if round_obj.ended_at:
-                completed_rounds.append(round_obj)
-            else:
-                active_rounds.append(round_obj)
-            validators.update(validator.uid for validator in round_obj.validators)
-            miners.update(miner.uid for miner in round_obj.miners if miner.uid is not None)
-            if round_obj.winners:
+        for record, contexts in records_with_contexts:
+            round_obj = record.model
+            round_number = round_obj.round_number or _round_id_to_int(round_obj.validator_round_id)
+            current_round = max(current_round, round_number or 0)
+
+            if round_obj.validator_uid:
+                validators.add(round_obj.validator_uid)
+
+            for validator_snapshot in getattr(round_obj, "validators", []) or []:
+                if getattr(validator_snapshot, "uid", None) is not None:
+                    validators.add(validator_snapshot.uid)
+                version = getattr(validator_snapshot, "version", None)
+                if version:
+                    version_candidates.append(version)
+
+            validator_info = getattr(round_obj, "validator_info", None)
+            if validator_info and validator_info.version:
+                version_candidates.append(validator_info.version)
+
+            for ctx in contexts:
+                if ctx.run.miner_uid is not None:
+                    miners.add(ctx.run.miner_uid)
+                score = self.rounds_service._context_score(ctx)
+                top_score = max(top_score, score)
+
+            if not contexts and round_obj.winners:
                 round_top = max(winner.get("score", 0.0) for winner in round_obj.winners)
-                top_score = max(top_score, round_top)
-            if round_obj.validators and round_obj.validators[0].version:
-                subnet_version = round_obj.validators[0].version
+                top_score = max(top_score, round(round_top, 6))
 
         total_websites = await self._total_websites()
+        subnet_version = version_candidates[0] if version_candidates else "1.0.0"
 
         return OverviewMetrics(
             topScore=round(top_score, 3),
@@ -249,51 +267,35 @@ class OverviewService:
             # for the same logical day into a single aggregated round.
             fetch_limit = max((derived_limit or 30) * 5, derived_limit or 1)
 
-        rounds = await self._recent_rounds(limit=fetch_limit)
-        if not rounds:
+        records_with_contexts = await self._recent_round_records(
+            limit=fetch_limit or 0,
+            include_details=False,
+        )
+        if not records_with_contexts:
             now_iso = datetime.now(timezone.utc).isoformat()
             return [], {"start": now_iso, "end": now_iso}
 
-        round_ids = [round_obj.validator_round_id for round_obj in rounds]
-        stmt = select(AgentEvaluationRunORM).where(
-            AgentEvaluationRunORM.validator_round_id.in_(round_ids)
-        )
-        run_rows = await self.session.scalars(stmt)
-
-        runs_by_round: Dict[str, List[AgentEvaluationRunORM]] = defaultdict(list)
-        for run_row in run_rows:
-            runs_by_round[run_row.validator_round_id].append(run_row)
-
         def _scores_for_provider(
-            run_list: List[AgentEvaluationRunORM], provider_tokens: List[str]
+            contexts: List[AgentRunContext],
+            provider_tokens: List[str],
         ) -> List[float]:
             scores: List[float] = []
-            for row in run_list:
-                data = row.data or {}
-                miner_info = data.get("miner_info") or {}
-                provider = str(miner_info.get("provider") or miner_info.get("agent_name") or "").lower()
+            for ctx in contexts:
+                miner_info = ctx.run.miner_info
+                provider = ""
+                if miner_info:
+                    provider = str(
+                        miner_info.provider or miner_info.agent_name or ""
+                    ).lower()
                 if provider and any(token in provider for token in provider_tokens):
-                    score = data.get("avg_eval_score") or data.get("average_score")
-                    if score is not None:
-                        try:
-                            scores.append(float(score))
-                        except (TypeError, ValueError):
-                            continue
+                    scores.append(self.rounds_service._context_score(ctx))
             return scores
 
-        total_rounds = len(rounds)
+        total_rounds = len(records_with_contexts)
         entries: List[LeaderboardEntry] = []
-        for idx, round_obj in enumerate(rounds):
-            round_runs = runs_by_round.get(round_obj.validator_round_id, [])
-            run_scores: List[float] = []
-            for row in round_runs:
-                data = row.data or {}
-                score = data.get("avg_eval_score") or data.get("average_score")
-                if score is not None:
-                    try:
-                        run_scores.append(float(score))
-                    except (TypeError, ValueError):
-                        continue
+        for idx, (record, contexts) in enumerate(records_with_contexts):
+            round_obj = record.model
+            run_scores = [self.rounds_service._context_score(ctx) for ctx in contexts]
 
             average_score = (
                 round_obj.average_score
@@ -301,9 +303,9 @@ class OverviewService:
                 else (sum(run_scores) / len(run_scores) if run_scores else 0.0)
             )
 
-            openai_scores = _scores_for_provider(round_runs, ["openai"])
-            anthropic_scores = _scores_for_provider(round_runs, ["anthropic"])
-            browser_scores = _scores_for_provider(round_runs, ["browser"])
+            openai_scores = _scores_for_provider(contexts, ["openai"])
+            anthropic_scores = _scores_for_provider(contexts, ["anthropic"])
+            browser_scores = _scores_for_provider(contexts, ["browser"])
 
             def _avg(values: List[float]) -> float:
                 return round(sum(values) / len(values), 3) if values else 0.0
@@ -531,26 +533,60 @@ class OverviewService:
         trends.sort(key=lambda t: t.date)
         return trends
 
-    async def _recent_rounds(self, limit: int = 20) -> List[ValidatorRound]:
-        stmt = select(RoundORM).order_by(RoundORM.id.desc())
+    async def _recent_round_records(
+        self,
+        limit: int = 20,
+        include_details: bool = False,
+    ) -> List[Tuple[RoundRecord, List[AgentRunContext]]]:
+        stmt = (
+            select(RoundORM)
+            .options(
+                selectinload(RoundORM.validator_snapshots),
+                selectinload(RoundORM.miner_snapshots),
+            )
+            .order_by(RoundORM.id.desc())
+        )
         if limit:
             stmt = stmt.limit(limit)
         rows = await self.session.scalars(stmt)
-        rounds: List[ValidatorRound] = []
+        records: List[Tuple[RoundRecord, List[AgentRunContext]]] = []
         for row in rows:
-            data = dict(row.data or {})
-            data.setdefault("validator_round_id", row.validator_round_id)
-            if data.get("started_at") is None:
+            try:
+                round_model = self.rounds_service._deserialize_round(row)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to parse round %s: %s", row.validator_round_id, exc)
+                continue
+
+            if round_model.started_at is None:
                 logger.debug(
                     "Skipping round %s due to missing started_at timestamp",
                     row.validator_round_id,
                 )
                 continue
+
+            record = RoundRecord(row=row, model=round_model)
+            contexts: List[AgentRunContext] = []
             try:
-                rounds.append(ValidatorRound(**data))
+                contexts = await self.rounds_service.list_agent_run_contexts(
+                    validator_round_id=row.validator_round_id,
+                    include_details=include_details,
+                    limit=None,
+                    skip=0,
+                )
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to parse round %s: %s", row.validator_round_id, exc)
-        return rounds
+                logger.warning(
+                    "Failed to load agent run contexts for %s: %s",
+                    row.validator_round_id,
+                    exc,
+                )
+            if contexts:
+                self.rounds_service._recalculate_round_from_contexts(record, contexts)
+            records.append((record, contexts))
+        return records
+
+    async def _recent_rounds(self, limit: int = 20) -> List[ValidatorRound]:
+        records = await self._recent_round_records(limit=limit, include_details=False)
+        return [record.model for record, _ in records]
 
     async def _total_websites(self) -> int:
         stmt = select(TaskORM)
@@ -582,124 +618,145 @@ class OverviewService:
                     continue
         return sum(scores) / len(scores) if scores else 0.0
 
-    async def _count_tasks(self, validator_round_id: str) -> int:
-        stmt = select(func.count(TaskORM.id)).where(TaskORM.validator_round_id == validator_round_id)
-        result = await self.session.execute(stmt)
-        return int(result.scalar_one())
-
-    async def _count_agent_runs(self, validator_round_id: str) -> int:
-        stmt = select(func.count(AgentEvaluationRunORM.id)).where(
-            AgentEvaluationRunORM.validator_round_id == validator_round_id
-        )
-        result = await self.session.execute(stmt)
-        return int(result.scalar_one())
-
-    async def _count_evaluations(self, validator_round_id: str) -> int:
-        stmt = select(func.count(EvaluationResultORM.id)).where(
-            EvaluationResultORM.validator_round_id == validator_round_id
-        )
-        result = await self.session.execute(stmt)
-        return int(result.scalar_one())
-
     async def _aggregate_validators(self) -> Dict[str, Dict[str, Any]]:
-        rounds = await self._recent_rounds(limit=100)
+        records_with_contexts = await self._recent_round_records(limit=100, include_details=False)
         aggregates: Dict[str, Dict[str, Any]] = {}
-        validator_rounds: Dict[str, List[ValidatorRound]] = defaultdict(list)
+        validator_rounds: Dict[int, List[Tuple[RoundRecord, List[AgentRunContext]]]] = defaultdict(list)
 
-        for round_obj in rounds:
-            for validator in round_obj.validators:
-                key = f"validator_{validator.uid}"
-                validator_rounds[key].append(round_obj)
-
-        for key, round_list in validator_rounds.items():
-            if not round_list:
+        for record, contexts in records_with_contexts:
+            validator_uid = record.model.validator_uid or record.validator_uid
+            if validator_uid is None:
                 continue
-            first_round = round_list[0]
-            validator_meta = None
-            validator_uid = int(key.split("_", 1)[1])
+            validator_rounds[validator_uid].append((record, contexts))
 
-            for validator in first_round.validators:
-                if validator.uid == validator_uid:
-                    validator_meta = validator
-                    break
+        now_ts = datetime.now(timezone.utc).timestamp()
+        status_labels = {
+            "Starting": "Validator connected – awaiting task upload",
+            "Sending Tasks": "Distributing tasks to agent runs",
+            "Evaluating": "Evaluating miner submissions",
+            "Waiting": "Awaiting next action",
+            "Offline": "No activity detected recently",
+            "Finished": "Round completed",
+        }
 
+        for validator_uid, entries in validator_rounds.items():
+            if not entries:
+                continue
+
+            entries.sort(
+                key=lambda item: (
+                    item[0].model.started_at or 0.0,
+                    item[0].model.ended_at or 0.0,
+                ),
+                reverse=True,
+            )
+            latest_record, latest_contexts = entries[0]
+            round_obj = latest_record.model
+
+            validator_info = getattr(round_obj, "validator_info", None)
             metadata = get_validator_metadata(validator_uid)
-            total_tasks = sum(round_obj.n_tasks for round_obj in round_list)
-            completed_tasks = sum(len(round_obj.winners or []) for round_obj in round_list)
-            stake_from_round = validator_meta.stake if validator_meta else None
-            weight = (
-                stake_from_round
-                if stake_from_round not in (None, 0, 0.0)
-                else float(metadata.get("stake") or 0.0)
-            )
-            trust_from_round = validator_meta.vtrust if validator_meta else None
-            trust = (
-                trust_from_round
-                if trust_from_round not in (None, 0, 0.0)
-                else float(metadata.get("vtrust") or 0.0)
-            )
-            version = validator_meta.version if validator_meta and validator_meta.version else "1.0.0"
-            last_round = max(round_list, key=lambda r: r.ended_at or r.started_at or 0)
-            last_seen = _timestamp(last_round.ended_at or last_round.started_at)
-            validator_round_id = getattr(last_round, "validator_round_id", None)
 
-            now_ts = datetime.now(timezone.utc).timestamp()
-            completion_rate = (completed_tasks / total_tasks) if total_tasks else 0.0
-            last_activity_ts = last_round.ended_at or last_round.started_at
-            seconds_since_activity = (
-                max(0.0, now_ts - last_activity_ts) if last_activity_ts else None
-            )
+            name_candidates = [
+                validator_info.name if validator_info else None,
+                metadata.get("name"),
+                f"Validator {validator_uid}",
+            ]
+            display_name = next((candidate for candidate in name_candidates if candidate), f"Validator {validator_uid}")
 
-            tasks_recorded = await self._count_tasks(validator_round_id) if validator_round_id else 0
-            agent_runs_recorded = await self._count_agent_runs(validator_round_id) if validator_round_id else 0
-            evaluations_recorded = await self._count_evaluations(validator_round_id) if validator_round_id else 0
+            hotkey_candidates = [
+                validator_info.hotkey if validator_info else None,
+                metadata.get("hotkey"),
+                round_obj.validator_hotkey,
+            ]
+            hotkey = next((candidate for candidate in hotkey_candidates if candidate), "")
 
-            status = "Finished"
-            round_state = (last_round.status or "").lower()
-            if not last_round.ended_at and round_state != "completed":
-                status = "Starting"
-                if tasks_recorded > 0:
-                    status = "Sending Tasks"
-                if agent_runs_recorded > 0:
-                    status = "Evaluating"
-                if seconds_since_activity is not None and seconds_since_activity > 86400:
-                    status = "Offline"
-                elif (
-                    seconds_since_activity is not None
-                    and seconds_since_activity > 3600
-                    and tasks_recorded == 0
-                ):
-                    status = "Waiting"
-
-            current_task = {
-                "Starting": "Validator connected – awaiting task upload",
-                "Sending Tasks": "Distributing tasks to agent runs",
-                "Evaluating": "Evaluating miner submissions",
-                "Waiting": "Awaiting next action",
-                "Offline": "No activity detected recently",
-                "Finished": "Round completed",
-            }.get(status, "Validator activity")
-
-            display_name = metadata.get("name") or (validator_meta.name if validator_meta else f"Validator {validator_uid}")
-            existing_icon = metadata.get("image")
+            existing_icon = getattr(validator_info, "image_url", None) if validator_info else metadata.get("image")
             icon = resolve_validator_image(display_name, existing=existing_icon)
 
+            stake_value = (
+                validator_info.stake if validator_info and validator_info.stake not in (None, 0, 0.0)
+                else metadata.get("stake")
+            )
+            stake = float(stake_value or 0.0)
+            trust_value = (
+                validator_info.vtrust if validator_info and validator_info.vtrust not in (None, 0, 0.0)
+                else metadata.get("vtrust")
+            )
+            trust = float(trust_value or 0.0)
+
+            version_text = (
+                validator_info.version if validator_info and validator_info.version else metadata.get("version")
+            )
+            version = 1
+            if version_text:
+                try:
+                    version = int(str(version_text).split(".")[0])
+                except ValueError:
+                    version = 1
+
+            total_tasks = sum(entry[0].model.n_tasks or 0 for entry in entries)
+            completed_tasks = sum(
+                self.rounds_service._estimate_completed_tasks(entry[0].model) for entry in entries
+            )
+
+            contexts_flat: List[AgentRunContext] = [ctx for _, ctx_list in entries for ctx in ctx_list]
+            total_runs = len(contexts_flat)
+            successful_runs = len(
+                [ctx for ctx in contexts_flat if self.rounds_service._context_score(ctx) >= 0.5]
+            )
+            has_scores = any(self.rounds_service._context_score(ctx) > 0.0 for ctx in contexts_flat)
+
+            last_activity_candidates: List[float] = []
+            for record, ctx_list in entries:
+                if record.model.ended_at:
+                    last_activity_candidates.append(record.model.ended_at)
+                elif record.model.started_at:
+                    last_activity_candidates.append(record.model.started_at)
+                for context in ctx_list:
+                    if context.run.ended_at:
+                        last_activity_candidates.append(context.run.ended_at)
+                    elif context.run.started_at:
+                        last_activity_candidates.append(context.run.started_at)
+
+            last_activity_ts = max(last_activity_candidates) if last_activity_candidates else None
+            seconds_since_activity = (
+                max(0.0, now_ts - last_activity_ts) if last_activity_ts is not None else None
+            )
+
+            status = "Finished" if round_obj.ended_at else "Starting"
+            if not round_obj.ended_at:
+                if total_runs > 0:
+                    status = "Sending Tasks"
+                if successful_runs > 0 or has_scores:
+                    status = "Evaluating"
+                if seconds_since_activity is not None:
+                    if seconds_since_activity > 86400:
+                        status = "Offline"
+                    elif seconds_since_activity > 3600 and total_runs == 0:
+                        status = "Waiting"
+
+            current_task = status_labels.get(status, "Validator activity")
+            last_seen = _timestamp(last_activity_ts)
+
+            uptime = round(min(100.0, (completed_tasks / total_tasks * 100.0) if total_tasks else 0.0), 1)
+
+            key = f"validator_{validator_uid}"
             aggregates[key] = {
                 "id": key,
                 "name": display_name,
-                "hotkey": metadata.get("hotkey") or (validator_meta.hotkey if validator_meta else ""),
+                "hotkey": hotkey,
                 "icon": icon,
                 "currentTask": current_task,
                 "status": status,
-                "totalTasks": total_tasks,
-                "weight": weight,
+                "totalTasks": int(total_tasks),
+                "weight": stake,
                 "trust": trust,
-                "version": int(version.split(".")[0]) if version else 1,
+                "version": version,
                 "lastSeen": last_seen,
-                "stake": int(weight),
-                "emission": int(weight * 0.05),
-                "uptime": round(min(100.0, completion_rate * 100), 1) if total_tasks else 0.0,
-                "completedTasks": completed_tasks,
+                "stake": int(stake),
+                "emission": int(stake * 0.05),
+                "uptime": uptime,
+                "completedTasks": int(completed_tasks),
             }
 
         return aggregates

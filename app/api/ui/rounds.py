@@ -36,7 +36,7 @@ async def _service(session: AsyncSession) -> RoundsService:
 async def list_rounds(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(10, ge=1, le=100),
     status: Optional[str] = Query(None),
     sortBy: str = Query("round"),
     sortOrder: str = Query("desc"),

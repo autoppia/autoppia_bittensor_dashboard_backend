@@ -111,8 +111,10 @@ class EvaluationsService:
             select(EvaluationResultORM)
             .options(
                 selectinload(EvaluationResultORM.agent_run).selectinload(
-                    AgentEvaluationRunORM.round
-                ),
+                    AgentEvaluationRunORM.validator_round
+                )
+                .selectinload(RoundORM.miner_snapshots)
+                .selectinload(RoundORM.validator_snapshots),
                 selectinload(EvaluationResultORM.task),
                 selectinload(EvaluationResultORM.task_solution),
             )
@@ -159,7 +161,9 @@ class EvaluationsService:
             select(EvaluationResultORM)
             .options(
                 selectinload(EvaluationResultORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.round),
+                .selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots)
+                .selectinload(RoundORM.validator_snapshots),
                 selectinload(EvaluationResultORM.task),
                 selectinload(EvaluationResultORM.task_solution),
             )
@@ -176,7 +180,7 @@ class EvaluationsService:
             raise ValueError(
                 f"Evaluation {evaluation_row.evaluation_id} missing agent run relationship"
             )
-        round_row = agent_run_row.round
+        round_row = agent_run_row.validator_round
         if round_row is None:
             raise ValueError(
                 f"Agent run {agent_run_row.agent_run_id} missing round relationship"

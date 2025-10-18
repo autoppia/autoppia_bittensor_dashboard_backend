@@ -57,6 +57,7 @@ from app.models.ui.tasks import (
     TaskValidatorSummary,
     WebsitePerformance,
 )
+from app.services.rounds_service import AgentRunContext, RoundsService
 from app.utils.images import resolve_agent_image
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,7 @@ class TaskContext:
 class TasksService:
     def __init__(self, session: AsyncSession):
         self.session = session
+        self.rounds_service = RoundsService(session)
 
     async def list_tasks(
         self,
@@ -160,10 +162,14 @@ class TasksService:
             .options(
                 selectinload(TaskORM.task_solutions)
                 .selectinload(TaskSolutionORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.round),
+                .selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots)
+                .selectinload(RoundORM.validator_snapshots),
                 selectinload(TaskORM.evaluation_results)
                 .selectinload(EvaluationResultORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.round),
+                .selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots)
+                .selectinload(RoundORM.validator_snapshots),
             )
             .order_by(TaskORM.id.desc())
         )
@@ -186,10 +192,11 @@ class TasksService:
             ("0.75-1.0", 0.75, 1.01),
         ]
 
+        context_cache: Dict[str, AgentRunContext] = {}
         items: List[UITask] = []
         for task_row in task_rows:
             try:
-                context = self._build_context(task_row)
+                context = await self._build_context(task_row, context_cache)
             except ValueError as exc:
                 logger.warning(str(exc))
                 continue
@@ -309,17 +316,22 @@ class TasksService:
             .options(
                 selectinload(TaskORM.task_solutions)
                 .selectinload(TaskSolutionORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.round),
+                .selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots)
+                .selectinload(RoundORM.validator_snapshots),
                 selectinload(TaskORM.evaluation_results)
                 .selectinload(EvaluationResultORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.round),
+                .selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots)
+                .selectinload(RoundORM.validator_snapshots),
             )
             .where(TaskORM.task_id == task_id)
         )
         task_row = await self.session.scalar(stmt)
         if not task_row:
             raise ValueError(f"Task {task_id} not found")
-        return self._build_context(task_row)
+        context_cache: Dict[str, AgentRunContext] = {}
+        return await self._build_context(task_row, context_cache)
 
     async def analytics(self) -> TaskAnalytics:
         stmt = (
@@ -327,18 +339,23 @@ class TasksService:
             .options(
                 selectinload(TaskORM.task_solutions)
                 .selectinload(TaskSolutionORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.round),
+                .selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots)
+                .selectinload(RoundORM.validator_snapshots),
                 selectinload(TaskORM.evaluation_results)
                 .selectinload(EvaluationResultORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.round),
+                .selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots)
+                .selectinload(RoundORM.validator_snapshots),
             )
         )
         rows = await self.session.scalars(stmt)
 
+        context_cache: Dict[str, AgentRunContext] = {}
         contexts: List[TaskContext] = []
         for row in rows:
             try:
-                contexts.append(self._build_context(row))
+                contexts.append(await self._build_context(row, context_cache))
             except ValueError:
                 continue
 
@@ -899,53 +916,76 @@ class TasksService:
         base_ts = context.agent_run.started_at or context.round.started_at or 0.0
         return datetime.fromtimestamp(base_ts + offset, tz=timezone.utc)
 
-    def _build_context(self, task_row: TaskORM) -> TaskContext:
-        agent_run_row: Optional[AgentEvaluationRunORM] = None
-        if task_row.evaluation_results:
-            candidate = task_row.evaluation_results[0].agent_run
-            if candidate is not None:
-                agent_run_row = candidate
+    def _resolve_agent_run_id(self, task_row: TaskORM) -> Optional[str]:
+        for evaluation_row in task_row.evaluation_results or []:
+            if evaluation_row.agent_run_id:
+                return evaluation_row.agent_run_id
+        for solution_row in task_row.task_solutions or []:
+            if solution_row.agent_run_id:
+                return solution_row.agent_run_id
+        data = task_row.data or {}
+        agent_run_id = data.get("agent_run_id")
+        if agent_run_id is None:
+            return None
+        return str(agent_run_id)
 
-        if agent_run_row is None and task_row.task_solutions:
-            candidate = task_row.task_solutions[0].agent_run
-            if candidate is not None:
-                agent_run_row = candidate
+    async def _build_context(
+        self,
+        task_row: TaskORM,
+        cache: Optional[Dict[str, AgentRunContext]] = None,
+    ) -> TaskContext:
+        if cache is None:
+            cache = {}
 
-        if agent_run_row is None:
-            raise ValueError(f"Task {task_row.task_id} missing agent run relationship")
-        round_row = agent_run_row.round
-        if round_row is None:
-            raise ValueError(
-                f"Agent run {agent_run_row.agent_run_id} missing round relationship"
-            )
+        agent_run_id = self._resolve_agent_run_id(task_row)
+        if not agent_run_id:
+            raise ValueError(f"Task {task_row.task_id} missing agent run reference")
 
-        round_model = self._deserialize_round(round_row)
-        agent_run_model = self._deserialize_agent_run(agent_run_row)
-        task_model = self._deserialize_task(task_row)
+        context = cache.get(agent_run_id)
+        if context is None:
+            context = await self.rounds_service.get_agent_run_context(agent_run_id)
+            cache[agent_run_id] = context
+
+        task_model = next(
+            (task for task in context.tasks if task.task_id == task_row.task_id),
+            None,
+        )
+        if task_model is None:
+            task_model = self._deserialize_task(task_row)
 
         solution_model = None
-        if task_row.task_solutions:
+        if context.task_solutions:
+            solution_model = next(
+                (solution for solution in context.task_solutions if solution.task_id == task_row.task_id),
+                None,
+            )
+        if solution_model is None and task_row.task_solutions:
             matching_solutions = [
                 solution_row
                 for solution_row in task_row.task_solutions
-                if solution_row.agent_run_id == agent_run_row.agent_run_id
+                if solution_row.agent_run_id == agent_run_id
             ]
             target_solution = matching_solutions[0] if matching_solutions else task_row.task_solutions[0]
             solution_model = self._deserialize_task_solution(target_solution)
 
         evaluation_model = None
-        if task_row.evaluation_results:
+        if context.evaluation_results:
+            evaluation_model = next(
+                (evaluation for evaluation in context.evaluation_results if evaluation.task_id == task_row.task_id),
+                None,
+            )
+        if evaluation_model is None and task_row.evaluation_results:
             matching_evaluations = [
                 evaluation_row
                 for evaluation_row in task_row.evaluation_results
-                if evaluation_row.agent_run_id == agent_run_row.agent_run_id
+                if evaluation_row.agent_run_id == agent_run_id
             ]
             target_evaluation = matching_evaluations[0] if matching_evaluations else task_row.evaluation_results[0]
             evaluation_model = self._deserialize_evaluation(target_evaluation)
 
         return TaskContext(
-            round=round_model,
-            agent_run=agent_run_model,
+            round=context.round,
+            agent_run=context.run,
             task=task_model,
             solution=solution_model,
             evaluation=evaluation_model,
@@ -996,22 +1036,6 @@ class TasksService:
         if isinstance(task.use_case, str):
             return task.use_case
         return None
-
-    @staticmethod
-    def _deserialize_round(round_row: RoundORM) -> ValidatorRound:
-        data = dict(round_row.data or {})
-        data.setdefault("validator_round_id", round_row.validator_round_id)
-        return ValidatorRound(**data)
-
-    @staticmethod
-    def _deserialize_agent_run(run_row: AgentEvaluationRunORM) -> AgentEvaluationRun:
-        data = dict(run_row.data or {})
-        data.setdefault("agent_run_id", run_row.agent_run_id)
-        data.setdefault("validator_round_id", run_row.validator_round_id)
-        data.setdefault("validator_uid", run_row.validator_uid)
-        data.setdefault("miner_uid", run_row.miner_uid)
-        data.setdefault("is_sota", run_row.is_sota)
-        return AgentEvaluationRun(**data)
 
     @staticmethod
     def _deserialize_task(task_row: TaskORM) -> Task:

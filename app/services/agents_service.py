@@ -14,7 +14,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import AgentEvaluationRunORM
+from app.db.models import AgentEvaluationRunORM, RoundORM
 from app.models.core import MinerInfo
 from app.models.ui.agents import (
     Agent,
@@ -715,7 +715,9 @@ class AgentsService:
         stmt = (
             select(AgentEvaluationRunORM)
             .options(
-                selectinload(AgentEvaluationRunORM.round),
+                selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots)
+                .selectinload(RoundORM.validator_snapshots),
                 selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(AgentEvaluationRunORM.evaluation_results),
             )
@@ -930,7 +932,9 @@ class AgentsService:
         stmt = (
             select(AgentEvaluationRunORM)
             .options(
-                selectinload(AgentEvaluationRunORM.round),
+                selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots)
+                .selectinload(RoundORM.validator_snapshots),
                 selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(AgentEvaluationRunORM.evaluation_results),
             )

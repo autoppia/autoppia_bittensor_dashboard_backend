@@ -1,330 +1,857 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     AgentEvaluationRunORM,
+    EvaluationORM,
     EvaluationResultORM,
-    RoundORM,
+    MinerORM,
     TaskORM,
     TaskSolutionORM,
+    ValidatorORM,
+    ValidatorRoundMinerORM,
+    ValidatorRoundORM,
+    ValidatorRoundValidatorORM,
 )
 from app.models.core import (
     AgentEvaluationRun,
+    Evaluation,
     EvaluationResult,
-    ValidatorRound,
-    ValidatorRoundSubmissionRequest,
+    Miner,
+    ValidatorRoundMiner,
     Task,
     TaskSolution,
+    Validator,
+    ValidatorRound,
+    ValidatorRoundSubmissionRequest,
+    ValidatorRoundValidator,
 )
 
 
 @dataclass
 class PersistenceResult:
     validator_uid: int
-    saved_entities: Dict[str, List[str] | str]
+    saved_entities: Dict[str, Any]
 
 
 class RoundConflictError(ValueError):
     """Raised when a validator attempts to register the same round twice."""
 
-    pass
+
+class DuplicateIdentifierError(ValueError):
+    """Raised when an identifier that must be unique already exists."""
 
 
-class RoundPersistenceService:
-    """Handle persisting validator submissions into the SQL database."""
+def _non_empty_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    return value or {}
+
+
+def _non_empty_list(value: Optional[List[Any]]) -> List[Any]:
+    return value or []
+
+
+def _action_dump(actions: Iterable[Any]) -> List[Dict[str, Any]]:
+    dumped: List[Dict[str, Any]] = []
+    for action in actions:
+        if hasattr(action, "model_dump"):
+            dumped.append(action.model_dump(mode="json", exclude_none=True))
+        else:
+            dumped.append(dict(action))
+    return dumped
+
+
+def _test_results_dump(matrix: Iterable[Iterable[Any]]) -> List[List[Dict[str, Any]]]:
+    serialised: List[List[Dict[str, Any]]] = []
+    for row in matrix:
+        row_dump: List[Dict[str, Any]] = []
+        for item in row:
+            if hasattr(item, "model_dump"):
+                row_dump.append(item.model_dump(mode="json", exclude_none=True))
+            else:
+                row_dump.append(dict(item))
+        serialised.append(row_dump)
+    return serialised
+
+
+def _optional_dump(value: Any) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json", exclude_none=True)
+    return value
+
+
+class ValidatorRoundPersistenceService:
+    """Handle persisting validator round submissions into the SQL database."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_round(self, validator_round_id: str) -> Optional[RoundORM]:
-        """Fetch a persisted round by its validator_round_id."""
-        stmt = select(RoundORM).where(RoundORM.validator_round_id == validator_round_id)
-        return await self.session.scalar(stmt)
+    # ------------------------------------------------------------------
+    # Public API used by endpoints
+    # ------------------------------------------------------------------
 
-    async def ensure_unique_round_number(
+    async def start_round(
         self,
-        validator_uid: int,
-        round_number: int,
         *,
-        exclude_round_id: Optional[str] = None,
-    ) -> None:
-        """
-        Guard against duplicate round numbers for the same validator.
-
-        Raises:
-            RoundConflictError: When another validator round with the same logical round number exists.
-        """
-        if round_number is None:
-            return
-
-        stmt = select(RoundORM).where(RoundORM.validator_uid == validator_uid)
-        if exclude_round_id is not None:
-            stmt = stmt.where(RoundORM.validator_round_id != exclude_round_id)
-
-        existing_rounds = await self.session.scalars(stmt)
-        for round_row in existing_rounds:
-            existing_round_number = self._extract_round_number(round_row.data)
-            if existing_round_number == round_number:
-                raise RoundConflictError(
-                    f"Validator {validator_uid} already has a round with number {round_number}"
-                )
-
-    async def ensure_round(
-        self, round_model: ValidatorRound, agent_runs: Optional[List[AgentEvaluationRun]] = None
-    ) -> tuple[RoundORM, int]:
-        """Create or update a round and return its row and validator UID."""
-        validator_uid = self._derive_validator_uid(round_model, agent_runs or [])
-        round_row = await self._upsert_round(round_model, validator_uid)
-        await self.session.flush()
-        return round_row, validator_uid
-
-    async def upsert_agent_run_entry(self, round_row: RoundORM, agent_run: AgentEvaluationRun) -> AgentEvaluationRunORM:
-        """Persist a single agent run."""
-        await self._upsert_agent_runs(round_row, [agent_run])
-        await self.session.flush()
-        stmt = select(AgentEvaluationRunORM).where(
-            AgentEvaluationRunORM.agent_run_id == agent_run.agent_run_id
+        validator_identity: Validator,
+        validator_round: ValidatorRound,
+        validator_snapshot: ValidatorRoundValidator,
+    ) -> ValidatorRoundORM:
+        """Create a new validator round and store the initial snapshot."""
+        await self._ensure_unique_round_number(
+            validator_round.validator_uid,
+            validator_round.round_number,
         )
-        result = await self.session.scalar(stmt)
-        assert result is not None  # Safety: should exist after upsert
-        return result
 
-    async def get_agent_run(self, agent_run_id: str) -> Optional[AgentEvaluationRunORM]:
-        """Fetch an agent run by its identifier."""
-        stmt = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == agent_run_id)
-        return await self.session.scalar(stmt)
+        existing_round = await self._get_round_row(validator_round.validator_round_id)
+        if existing_round is not None:
+            raise DuplicateIdentifierError(
+                f"validator_round_id {validator_round.validator_round_id} is already registered"
+            )
 
-    async def upsert_task_entry(self, task: Task) -> TaskORM:
-        """Persist a single task."""
-        await self._upsert_tasks([task])
-        await self.session.flush()
-        stmt = select(TaskORM).where(TaskORM.task_id == task.task_id)
-        result = await self.session.scalar(stmt)
-        assert result is not None
-        return result
+        validator_row = await self._upsert_validator_identity(validator_identity)
 
-    async def upsert_task_solution_entry(self, solution: TaskSolution) -> TaskSolutionORM:
-        """Persist a single task solution."""
-        await self._upsert_task_solutions([solution])
-        await self.session.flush()
-        stmt = select(TaskSolutionORM).where(TaskSolutionORM.solution_id == solution.solution_id)
-        result = await self.session.scalar(stmt)
-        assert result is not None
-        return result
-
-    async def upsert_evaluation_entry(self, evaluation: EvaluationResult) -> EvaluationResultORM:
-        """Persist a single evaluation result."""
-        await self._upsert_evaluation_results([evaluation])
-        await self.session.flush()
-        stmt = select(EvaluationResultORM).where(
-            EvaluationResultORM.evaluation_id == evaluation.evaluation_id
-        )
-        result = await self.session.scalar(stmt)
-        assert result is not None
-        return result
-
-    async def update_round_fields(self, validator_round_id: str, **fields: Any) -> RoundORM:
-        """Patch JSON payload for an existing round."""
-        round_row = await self.get_round(validator_round_id)
-        if round_row is None:
-            raise ValueError(f"Round {validator_round_id} not found")
-
-        data = dict(round_row.data)
-        data.update(fields)
-        round_row.data = data
-        return round_row
-
-    async def upsert_round_submission(self, payload: ValidatorRoundSubmissionRequest) -> PersistenceResult:
-        """Persist the entire round submission payload."""
-        round_model = payload.round
-        agent_runs = payload.agent_evaluation_runs
-
-        validator_uid = self._derive_validator_uid(round_model, agent_runs)
-
-        round_row = await self._upsert_round(round_model, validator_uid)
-        await self.session.flush()
-
-        await self._upsert_agent_runs(round_row, agent_runs)
-        await self.session.flush()
-
-        await self._upsert_tasks(payload.tasks)
-        await self.session.flush()
-
-        await self._upsert_task_solutions(payload.task_solutions)
-        await self.session.flush()
-
-        await self._upsert_evaluation_results(payload.evaluation_results)
-
-        saved_entities: Dict[str, List[str] | str] = {
-            "round": round_row.validator_round_id,
-            "agent_evaluation_runs": [run.agent_run_id for run in agent_runs],
-            "tasks": [task.task_id for task in payload.tasks],
-            "task_solutions": [solution.solution_id for solution in payload.task_solutions],
-            "evaluation_results": [result.evaluation_id for result in payload.evaluation_results],
-        }
-
-        return PersistenceResult(validator_uid=validator_uid, saved_entities=saved_entities)
-
-    async def _upsert_round(self, model: ValidatorRound, validator_uid: Optional[int]) -> RoundORM:
-        stmt = select(RoundORM).where(RoundORM.validator_round_id == model.validator_round_id)
-        existing = await self.session.scalar(stmt)
-
-        data = model.model_dump(mode="json", exclude_none=True)
-
-        if existing:
-            target_validator_uid = validator_uid if validator_uid is not None else existing.validator_uid
-            if model.round_number is not None and target_validator_uid is not None:
-                await self.ensure_unique_round_number(
-                    target_validator_uid,
-                    model.round_number,
-                    exclude_round_id=existing.validator_round_id,
-                )
-            existing.validator_uid = validator_uid
-            existing.data = data
-            return existing
-
-        if validator_uid is not None and model.round_number is not None:
-            await self.ensure_unique_round_number(validator_uid, model.round_number)
-
-        round_row = RoundORM(
-            validator_round_id=model.validator_round_id,
-            validator_uid=validator_uid,
-            data=data,
+        round_row = ValidatorRoundORM(
+            **self._validator_round_kwargs(validator_round, validator_row.id)
         )
         self.session.add(round_row)
+        await self.session.flush()
+
+        snapshot_row = await self._upsert_validator_snapshot(
+            round_row, validator_snapshot, validator_row.id
+        )
+
         return round_row
 
-    async def _upsert_agent_runs(self, round_row: RoundORM, runs: List[AgentEvaluationRun]) -> None:
-        for agent_run in runs:
-            stmt = select(AgentEvaluationRunORM).where(
-                AgentEvaluationRunORM.agent_run_id == agent_run.agent_run_id
-            )
-            existing = await self.session.scalar(stmt)
-
-            data = agent_run.model_dump(mode="json", exclude_none=True)
-
-            if existing:
-                existing.round_id = round_row.id
-                existing.validator_round_id = agent_run.validator_round_id
-                existing.validator_uid = agent_run.validator_uid
-                existing.miner_uid = agent_run.miner_uid
-                existing.is_sota = agent_run.is_sota
-                existing.data = data
-            else:
-                self.session.add(
-                    AgentEvaluationRunORM(
-                        agent_run_id=agent_run.agent_run_id,
-                        round_id=round_row.id,
-                        validator_round_id=agent_run.validator_round_id,
-                        validator_uid=agent_run.validator_uid,
-                        miner_uid=agent_run.miner_uid,
-                        is_sota=agent_run.is_sota,
-                        data=data,
-                    )
-                )
-
-    async def _upsert_tasks(self, tasks: List[Task]) -> None:
+    async def add_tasks(self, validator_round_id: str, tasks: List[Task], *, allow_existing: bool = False) -> int:
+        """Persist or update tasks associated with a validator round."""
+        round_row = await self._ensure_round_exists(validator_round_id)
+        count = 0
         for task in tasks:
             stmt = select(TaskORM).where(TaskORM.task_id == task.task_id)
             existing = await self.session.scalar(stmt)
 
-            data = task.model_dump(mode="json", exclude_none=True)
+            kwargs = self._task_kwargs(task)
+            kwargs["validator_round_id"] = round_row.validator_round_id
 
             if existing:
-                existing.validator_round_id = task.validator_round_id
-                existing.data = data
-            else:
-                self.session.add(
-                    TaskORM(
-                        task_id=task.task_id,
-                        validator_round_id=task.validator_round_id,
-                        data=data,
+                if existing.validator_round_id != validator_round_id:
+                    raise DuplicateIdentifierError(
+                        f"task_id {task.task_id} already belongs to validator_round {existing.validator_round_id}"
                     )
+                if allow_existing:
+                    continue
+                raise DuplicateIdentifierError(
+                    f"task_id {task.task_id} already exists for validator_round {validator_round_id}"
                 )
 
-    async def _upsert_task_solutions(self, solutions: List[TaskSolution]) -> None:
-        for solution in solutions:
-            stmt = select(TaskSolutionORM).where(TaskSolutionORM.solution_id == solution.solution_id)
-            existing = await self.session.scalar(stmt)
+            self.session.add(TaskORM(**kwargs))
+            count += 1
+        return count
 
-            data = solution.nested_model_dump(mode="json", exclude_none=True)
+    async def start_agent_run(
+        self,
+        *,
+        validator_round_id: str,
+        agent_run: AgentEvaluationRun,
+        miner_identity: Miner,
+        miner_snapshot: ValidatorRoundMiner,
+    ) -> AgentEvaluationRunORM:
+        """Persist the beginning of an agent evaluation run."""
+        round_row = await self._ensure_round_exists(validator_round_id)
 
-            if existing:
-                existing.task_id = solution.task_id
-                existing.agent_run_id = solution.agent_run_id
-                existing.validator_round_id = solution.validator_round_id
-                existing.validator_uid = solution.validator_uid
-                existing.miner_uid = solution.miner_uid
-                existing.data = data
-            else:
-                self.session.add(
-                    TaskSolutionORM(
-                        solution_id=solution.solution_id,
-                        task_id=solution.task_id,
-                        agent_run_id=solution.agent_run_id,
-                        validator_round_id=solution.validator_round_id,
-                        validator_uid=solution.validator_uid,
-                        miner_uid=solution.miner_uid,
-                        data=data,
-                    )
-                )
+        existing_run = await self._get_agent_run_row(agent_run.agent_run_id)
+        if existing_run:
+            raise DuplicateIdentifierError(
+                f"agent_run_id {agent_run.agent_run_id} is already registered"
+            )
 
-    async def _upsert_evaluation_results(self, results: List[EvaluationResult]) -> None:
-        for evaluation in results:
-            stmt = select(EvaluationResultORM).where(
-                EvaluationResultORM.evaluation_id == evaluation.evaluation_id
+        miner_row = await self._upsert_miner_identity(miner_identity)
+        await self._upsert_miner_snapshot(round_row, miner_snapshot, miner_row.id)
+
+        kwargs = self._agent_run_kwargs(
+            agent_run, validator_id=round_row.validator_id, miner_id=miner_row.id
+        )
+
+        row = AgentEvaluationRunORM(**kwargs)
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def add_evaluation(
+        self,
+        *,
+        validator_round_id: str,
+        agent_run_id: str,
+        task: Task,
+        task_solution: TaskSolution,
+        evaluation: Evaluation,
+        evaluation_result: EvaluationResult,
+    ) -> None:
+        """Persist evaluation data (task, solution, evaluation record, and artefact)."""
+        round_row = await self._ensure_round_exists(validator_round_id)
+        agent_run_row = await self._get_agent_run_row(agent_run_id)
+        if not agent_run_row:
+            raise ValueError(f"Agent run {agent_run_id} has not been registered yet")
+        if agent_run_row.validator_round_id != validator_round_id:
+            raise ValueError(
+                f"Agent run {agent_run_id} is not associated with validator_round {validator_round_id}"
+            )
+
+        await self.add_tasks(validator_round_id, [task], allow_existing=True)
+
+        miner_id = await self._resolve_miner_identity_id(
+            task_solution.miner_uid, task_solution.miner_hotkey, task_solution.miner_agent_key
+        )
+
+        # Task solution
+        solution_kwargs = self._task_solution_kwargs(task_solution, miner_id=miner_id)
+        stmt_solution = select(TaskSolutionORM).where(
+            TaskSolutionORM.solution_id == task_solution.solution_id
+        )
+        existing_solution = await self.session.scalar(stmt_solution)
+        if existing_solution:
+            raise DuplicateIdentifierError(
+                f"task_solution_id {task_solution.solution_id} is already registered"
+            )
+        solution_row = TaskSolutionORM(**solution_kwargs)
+        self.session.add(solution_row)
+
+        await self.session.flush()
+
+        evaluation_kwargs = self._evaluation_kwargs(evaluation, miner_id=miner_id)
+        stmt_evaluation = select(EvaluationORM).where(
+            EvaluationORM.evaluation_id == evaluation.evaluation_id
+        )
+        existing_evaluation = await self.session.scalar(stmt_evaluation)
+        if existing_evaluation:
+            raise DuplicateIdentifierError(
+                f"evaluation_id {evaluation.evaluation_id} is already registered"
+            )
+        evaluation_row = EvaluationORM(**evaluation_kwargs)
+        self.session.add(evaluation_row)
+
+        result_kwargs = self._evaluation_result_kwargs(
+            evaluation_row,
+            evaluation_result,
+            miner_id=miner_id,
+        )
+        stmt_result = select(EvaluationResultORM).where(
+            EvaluationResultORM.result_id == evaluation_result.result_id
+        )
+        existing_result = await self.session.scalar(stmt_result)
+        if existing_result:
+            raise DuplicateIdentifierError(
+                f"evaluation_result_id {evaluation_result.result_id} is already registered"
+            )
+        self.session.add(EvaluationResultORM(**result_kwargs))
+
+    async def finish_round(
+        self,
+        *,
+        validator_round_id: str,
+        status: str,
+        winners: List[Dict[str, Any]],
+        winner_scores: List[float],
+        weights: Dict[str, float],
+        ended_at: float,
+        summary: Optional[Dict[str, int]],
+    ) -> None:
+        """Mark a validator round as completed."""
+        round_row = await self._ensure_round_exists(validator_round_id)
+        round_row.status = status
+        round_row.meta = {**round_row.meta, "winners": winners, "winner_scores": winner_scores, "weights": weights}
+        round_row.n_winners = len(winners)
+        round_row.ended_at = ended_at
+        if summary is not None:
+            round_row.summary = summary
+
+    async def submit_round(
+        self, payload: ValidatorRoundSubmissionRequest
+    ) -> PersistenceResult:
+        """Persist the entire round submission payload."""
+        self._assert_unique_payload(payload)
+        # Identities
+        for identity in payload.validator_identities:
+            await self._upsert_validator_identity(identity)
+        for identity in payload.miner_identities:
+            await self._upsert_miner_identity(identity)
+
+        validator_round = payload.validator_round
+        await self._ensure_unique_round_number(
+            validator_round.validator_uid,
+            validator_round.round_number,
+            exclude_round_id=None,
+        )
+
+        existing_round = await self._get_round_row(validator_round.validator_round_id)
+        validator_id = self._find_validator_id(
+            validator_round.validator_uid, validator_round.validator_hotkey
+        )
+        round_kwargs = self._validator_round_kwargs(
+            validator_round, validator_id=validator_id
+        )
+
+        if existing_round:
+            for key, value in round_kwargs.items():
+                setattr(existing_round, key, value)
+            round_row = existing_round
+        else:
+            round_row = ValidatorRoundORM(**round_kwargs)
+            self.session.add(round_row)
+        await self.session.flush()
+
+        # Snapshots
+        validator_snapshot_ids: List[int] = []
+        for snapshot in payload.validator_snapshots:
+            row = await self._upsert_validator_snapshot(
+                round_row,
+                snapshot,
+                self._find_validator_id(snapshot.validator_uid, snapshot.validator_hotkey),
+            )
+            validator_snapshot_ids.append(row.id)
+
+        miner_snapshot_ids: List[int] = []
+        for snapshot in payload.miner_snapshots:
+            miner_id = await self._resolve_miner_identity_id(
+                snapshot.miner_uid,
+                snapshot.miner_hotkey,
+                snapshot.agent_key,
+            )
+            row = await self._upsert_miner_snapshot(round_row, snapshot, miner_id)
+            miner_snapshot_ids.append(row.id)
+
+        # Agent runs
+        agent_run_ids: List[str] = []
+        for agent_run in payload.agent_evaluation_runs:
+            miner_id = await self._resolve_miner_identity_id(
+                agent_run.miner_uid,
+                agent_run.miner_hotkey,
+                agent_run.miner_agent_key,
+            )
+            kwargs = self._agent_run_kwargs(
+                agent_run,
+                validator_id=round_row.validator_id,
+                miner_id=miner_id,
+            )
+            stmt = select(AgentEvaluationRunORM).where(
+                AgentEvaluationRunORM.agent_run_id == agent_run.agent_run_id
             )
             existing = await self.session.scalar(stmt)
-
-            data = evaluation.model_dump(mode="json", exclude_none=True)
-
             if existing:
-                existing.task_id = evaluation.task_id
-                existing.task_solution_id = evaluation.task_solution_id
-                existing.agent_run_id = evaluation.agent_run_id
-                existing.validator_round_id = evaluation.validator_round_id
-                existing.validator_uid = evaluation.validator_uid
-                existing.miner_uid = evaluation.miner_uid
-                existing.data = data
-            else:
-                self.session.add(
-                    EvaluationResultORM(
-                        evaluation_id=evaluation.evaluation_id,
-                        task_id=evaluation.task_id,
-                        task_solution_id=evaluation.task_solution_id,
-                        agent_run_id=evaluation.agent_run_id,
-                        validator_round_id=evaluation.validator_round_id,
-                        validator_uid=evaluation.validator_uid,
-                        miner_uid=evaluation.miner_uid,
-                        data=data,
+                raise DuplicateIdentifierError(
+                    f"agent_run_id {agent_run.agent_run_id} is provided multiple times"
+                )
+            self.session.add(AgentEvaluationRunORM(**kwargs))
+            agent_run_ids.append(agent_run.agent_run_id)
+
+        # Tasks
+        await self.add_tasks(round_row.validator_round_id, payload.tasks)
+        task_ids = [task.task_id for task in payload.tasks]
+
+        # Task solutions
+        task_solution_ids: List[str] = []
+        for solution in payload.task_solutions:
+            miner_id = await self._resolve_miner_identity_id(
+                solution.miner_uid,
+                solution.miner_hotkey,
+                solution.miner_agent_key,
+            )
+            kwargs = self._task_solution_kwargs(solution, miner_id=miner_id)
+            stmt = select(TaskSolutionORM).where(
+                TaskSolutionORM.solution_id == solution.solution_id
+            )
+            existing = await self.session.scalar(stmt)
+            if existing:
+                raise DuplicateIdentifierError(
+                    f"task_solution_id {solution.solution_id} is provided multiple times"
+                )
+            self.session.add(TaskSolutionORM(**kwargs))
+            task_solution_ids.append(solution.solution_id)
+
+        # Evaluations
+        evaluation_ids: List[str] = []
+        evaluation_rows: Dict[str, EvaluationORM] = {}
+        for evaluation in payload.evaluations:
+            miner_id = await self._resolve_miner_identity_id(
+                evaluation.miner_uid,
+                evaluation.miner_hotkey,
+                evaluation.miner_agent_key,
+            )
+            kwargs = self._evaluation_kwargs(evaluation, miner_id=miner_id)
+            stmt = select(EvaluationORM).where(
+                EvaluationORM.evaluation_id == evaluation.evaluation_id
+            )
+            existing = await self.session.scalar(stmt)
+            if existing:
+                raise DuplicateIdentifierError(
+                    f"evaluation_id {evaluation.evaluation_id} is provided multiple times"
+                )
+            evaluation_row = EvaluationORM(**kwargs)
+            self.session.add(evaluation_row)
+            evaluation_ids.append(evaluation.evaluation_id)
+            evaluation_rows[evaluation.evaluation_id] = evaluation_row
+
+        await self.session.flush()
+
+        # Evaluation results
+        evaluation_result_ids: List[str] = []
+        for result in payload.evaluation_results:
+            miner_id = await self._resolve_miner_identity_id(
+                result.miner_uid,
+                None,
+                None,
+            )
+            evaluation_row = evaluation_rows.get(result.evaluation_id)
+            if evaluation_row is None:
+                evaluation_row = await self.session.scalar(
+                    select(EvaluationORM).where(
+                        EvaluationORM.evaluation_id == result.evaluation_id
                     )
                 )
+                if evaluation_row is None:
+                    raise ValueError(
+                        f"Evaluation result {result.result_id} references unknown evaluation {result.evaluation_id}"
+                    )
+            kwargs = self._evaluation_result_kwargs(
+                evaluation_row,
+                result,
+                miner_id=miner_id,
+            )
+            stmt = select(EvaluationResultORM).where(
+                EvaluationResultORM.result_id == result.result_id
+            )
+            existing = await self.session.scalar(stmt)
+            if existing:
+                raise DuplicateIdentifierError(
+                    f"evaluation_result_id {result.result_id} is provided multiple times"
+                )
+            self.session.add(EvaluationResultORM(**kwargs))
+            evaluation_result_ids.append(result.result_id)
 
-    @staticmethod
-    def _derive_validator_uid(round_model: ValidatorRound, agent_runs: List[AgentEvaluationRun]) -> int:
-        if round_model.validator_info:
-            return round_model.validator_info.uid
+        saved = {
+            "validator_round": round_row.validator_round_id,
+            "validator_snapshots": validator_snapshot_ids,
+            "miner_snapshots": miner_snapshot_ids,
+            "agent_evaluation_runs": agent_run_ids,
+            "tasks": task_ids,
+            "task_solutions": task_solution_ids,
+            "evaluations": evaluation_ids,
+            "evaluation_results": evaluation_result_ids,
+        }
+        return PersistenceResult(
+            validator_uid=payload.validator_round.validator_uid,
+            saved_entities=saved,
+        )
 
-        for run in agent_runs:
-            if run.validator_uid is not None:
-                return run.validator_uid
+    # ------------------------------------------------------------------
+    # Helper utilities
+    # ------------------------------------------------------------------
 
-        raise ValueError("Unable to determine validator UID from submission payload")
+    async def _get_round_row(self, validator_round_id: str) -> Optional[ValidatorRoundORM]:
+        stmt = select(ValidatorRoundORM).where(
+            ValidatorRoundORM.validator_round_id == validator_round_id
+        )
+        return await self.session.scalar(stmt)
 
-    @staticmethod
-    def _extract_round_number(data: Dict[str, Any] | None) -> Optional[int]:
-        if not data:
-            return None
-        for key in ("round_number", "roundNumber", "round"):
-            value = data.get(key)
-            if value is not None:
-                try:
-                    return int(value)
-                except (TypeError, ValueError):
-                    return None
+    async def _get_agent_run_row(self, agent_run_id: str) -> Optional[AgentEvaluationRunORM]:
+        stmt = select(AgentEvaluationRunORM).where(
+            AgentEvaluationRunORM.agent_run_id == agent_run_id
+        )
+        return await self.session.scalar(stmt)
+
+    async def _ensure_round_exists(self, validator_round_id: str) -> ValidatorRoundORM:
+        round_row = await self._get_round_row(validator_round_id)
+        if not round_row:
+            raise ValueError(f"Validator round {validator_round_id} not found")
+        return round_row
+
+    async def _ensure_unique_round_number(
+        self,
+        validator_uid: int,
+        round_number: Optional[int],
+        *,
+        exclude_round_id: Optional[str] = None,
+    ) -> None:
+        if round_number is None:
+            return
+
+        stmt = select(ValidatorRoundORM).where(
+            ValidatorRoundORM.validator_uid == validator_uid,
+            ValidatorRoundORM.round_number == round_number,
+        )
+        if exclude_round_id is not None:
+            stmt = stmt.where(ValidatorRoundORM.validator_round_id != exclude_round_id)
+        existing = await self.session.scalar(stmt)
+        if existing:
+            raise RoundConflictError(
+                f"Validator {validator_uid} already has a round with number {round_number}"
+            )
+
+    async def ensure_unique_round_number(
+        self,
+        validator_uid: int,
+        round_number: Optional[int],
+        *,
+        exclude_round_id: Optional[str] = None,
+    ) -> None:
+        """Public wrapper to guard against duplicate round numbers."""
+        await self._ensure_unique_round_number(
+            validator_uid, round_number, exclude_round_id=exclude_round_id
+        )
+
+    async def _upsert_validator_identity(
+        self, identity: Validator
+    ) -> ValidatorORM:
+        stmt = select(ValidatorORM).where(
+            ValidatorORM.uid == identity.uid,
+            ValidatorORM.hotkey == identity.hotkey,
+        )
+        existing = await self.session.scalar(stmt)
+        if existing:
+            existing.coldkey = identity.coldkey
+            return existing
+
+        row = ValidatorORM(
+            uid=identity.uid,
+            hotkey=identity.hotkey,
+            coldkey=identity.coldkey,
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def _upsert_miner_identity(self, identity: Miner) -> MinerORM:
+        stmt = select(MinerORM)
+        if identity.uid is not None and identity.hotkey:
+            stmt = stmt.where(
+                MinerORM.uid == identity.uid, MinerORM.hotkey == identity.hotkey
+            )
+        elif identity.agent_key:
+            stmt = stmt.where(MinerORM.agent_key == identity.agent_key)
+        else:
+            raise ValueError("Miner identity must include either uid/hotkey or agent_key")
+
+        existing = await self.session.scalar(stmt)
+        if existing:
+            existing.coldkey = identity.coldkey
+            return existing
+
+        row = MinerORM(
+            uid=identity.uid,
+            hotkey=identity.hotkey,
+            coldkey=identity.coldkey,
+            agent_key=identity.agent_key,
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def _upsert_validator_snapshot(
+        self,
+        round_row: ValidatorRoundORM,
+        snapshot: ValidatorRoundValidator,
+        validator_id: Optional[int],
+    ) -> ValidatorRoundValidatorORM:
+        stmt = select(ValidatorRoundValidatorORM).where(
+            ValidatorRoundValidatorORM.validator_round_id == round_row.validator_round_id,
+            ValidatorRoundValidatorORM.validator_uid == snapshot.validator_uid,
+            ValidatorRoundValidatorORM.validator_hotkey == snapshot.validator_hotkey,
+        )
+        existing = await self.session.scalar(stmt)
+        kwargs = {
+            "validator_round_id": round_row.validator_round_id,
+            "validator_id": validator_id,
+            "validator_uid": snapshot.validator_uid,
+            "validator_hotkey": snapshot.validator_hotkey,
+            "name": snapshot.name,
+            "stake": snapshot.stake,
+            "vtrust": snapshot.vtrust,
+            "image_url": snapshot.image_url,
+            "version": snapshot.version,
+            "role": snapshot.role,
+            "meta": _non_empty_dict(snapshot.metadata),
+        }
+        if existing:
+            for key, value in kwargs.items():
+                setattr(existing, key, value)
+            return existing
+        row = ValidatorRoundValidatorORM(**kwargs)
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def _upsert_miner_snapshot(
+        self,
+        round_row: ValidatorRoundORM,
+        snapshot: ValidatorRoundMiner,
+        miner_id: Optional[int],
+    ) -> ValidatorRoundMinerORM:
+        stmt = select(ValidatorRoundMinerORM).where(
+            ValidatorRoundMinerORM.validator_round_id == round_row.validator_round_id,
+            ValidatorRoundMinerORM.miner_uid == snapshot.miner_uid,
+            ValidatorRoundMinerORM.miner_hotkey == snapshot.miner_hotkey,
+            ValidatorRoundMinerORM.agent_key == snapshot.agent_key,
+        )
+        existing = await self.session.scalar(stmt)
+        kwargs = {
+            "validator_round_id": round_row.validator_round_id,
+            "miner_id": miner_id,
+            "miner_uid": snapshot.miner_uid,
+            "miner_hotkey": snapshot.miner_hotkey,
+            "miner_coldkey": snapshot.miner_coldkey,
+            "agent_key": snapshot.agent_key,
+            "agent_name": snapshot.agent_name,
+            "image_url": snapshot.image_url,
+            "github_url": snapshot.github_url,
+            "provider": snapshot.provider,
+            "description": snapshot.description,
+            "is_sota": snapshot.is_sota,
+            "first_seen_at": snapshot.first_seen_at,
+            "last_seen_at": snapshot.last_seen_at,
+            "meta": _non_empty_dict(snapshot.metadata),
+        }
+        if existing:
+            for key, value in kwargs.items():
+                setattr(existing, key, value)
+            return existing
+        row = ValidatorRoundMinerORM(**kwargs)
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    def _validator_round_kwargs(
+        self, model: ValidatorRound, validator_id: Optional[int]
+    ) -> Dict[str, Any]:
+        return {
+            "validator_round_id": model.validator_round_id,
+            "validator_id": validator_id,
+            "validator_uid": model.validator_uid,
+            "validator_hotkey": model.validator_hotkey,
+            "validator_coldkey": model.validator_coldkey,
+            "round_number": model.round_number,
+            "start_block": model.start_block,
+            "end_block": model.end_block,
+            "start_epoch": model.start_epoch,
+            "end_epoch": model.end_epoch,
+            "started_at": model.started_at,
+            "ended_at": model.ended_at,
+            "elapsed_sec": model.elapsed_sec,
+            "max_epochs": model.max_epochs,
+            "max_blocks": model.max_blocks,
+            "n_tasks": model.n_tasks,
+            "n_miners": model.n_miners,
+            "n_winners": model.n_winners,
+            "status": model.status,
+            "average_score": model.average_score,
+            "top_score": model.top_score,
+            "summary": _non_empty_dict(model.summary),
+            "meta": _non_empty_dict(model.metadata),
+        }
+
+    def _agent_run_kwargs(
+        self,
+        model: AgentEvaluationRun,
+        *,
+        validator_id: Optional[int],
+        miner_id: Optional[int],
+    ) -> Dict[str, Any]:
+        return {
+            "agent_run_id": model.agent_run_id,
+            "validator_round_id": model.validator_round_id,
+            "validator_id": validator_id,
+            "validator_uid": model.validator_uid,
+            "validator_hotkey": model.validator_hotkey,
+            "miner_id": miner_id,
+            "miner_uid": model.miner_uid,
+            "miner_hotkey": model.miner_hotkey,
+            "miner_agent_key": model.miner_agent_key,
+            "is_sota": model.is_sota,
+            "version": model.version,
+            "started_at": model.started_at,
+            "ended_at": model.ended_at,
+            "elapsed_sec": model.elapsed_sec,
+            "average_score": model.average_score,
+            "average_execution_time": model.average_execution_time,
+            "average_reward": model.average_reward,
+            "total_reward": model.total_reward,
+            "total_tasks": model.total_tasks,
+            "completed_tasks": model.completed_tasks,
+            "failed_tasks": model.failed_tasks,
+            "rank": model.rank,
+            "weight": model.weight,
+            "meta": _non_empty_dict(model.metadata),
+        }
+
+    def _task_kwargs(self, model: Task) -> Dict[str, Any]:
+        return {
+            "task_id": model.task_id,
+            "validator_round_id": model.validator_round_id,
+            "sequence": model.sequence,
+            "scope": model.scope,
+            "is_web_real": model.is_web_real,
+            "web_project_id": model.web_project_id,
+            "url": model.url,
+            "prompt": model.prompt,
+            "html": model.html,
+            "clean_html": model.clean_html,
+            "interactive_elements": model.interactive_elements,
+            "screenshot": model.screenshot,
+            "screenshot_description": model.screenshot_description,
+            "specifications": _non_empty_dict(model.specifications),
+            "tests": [test.model_dump(mode="json", exclude_none=True) for test in model.tests],
+            "milestones": (
+                [milestone.model_dump(mode="json", exclude_none=True) for milestone in model.milestones]
+                if model.milestones
+                else None
+            ),
+            "relevant_data": _non_empty_dict(model.relevant_data),
+            "success_criteria": model.success_criteria,
+            "use_case": model.use_case if isinstance(model.use_case, dict) else _optional_dump(model.use_case),
+            "should_record": model.should_record,
+        }
+
+    def _task_solution_kwargs(
+        self,
+        model: TaskSolution,
+        *,
+        miner_id: Optional[int],
+    ) -> Dict[str, Any]:
+        return {
+            "solution_id": model.solution_id,
+            "task_id": model.task_id,
+            "agent_run_id": model.agent_run_id,
+            "validator_round_id": model.validator_round_id,
+            "validator_uid": model.validator_uid,
+            "validator_hotkey": model.validator_hotkey,
+            "miner_uid": model.miner_uid,
+            "miner_hotkey": model.miner_hotkey,
+            "miner_agent_key": model.miner_agent_key,
+            "miner_id": miner_id,
+            "actions": _action_dump(model.actions),
+            "web_agent_id": model.web_agent_id,
+            "recording": _optional_dump(model.recording),
+            "meta": _non_empty_dict(model.metadata),
+        }
+
+    def _evaluation_kwargs(
+        self,
+        model: Evaluation,
+        *,
+        miner_id: Optional[int],
+    ) -> Dict[str, Any]:
+        return {
+            "evaluation_id": model.evaluation_id,
+            "validator_round_id": model.validator_round_id,
+            "task_id": model.task_id,
+            "task_solution_id": model.task_solution_id,
+            "agent_run_id": model.agent_run_id,
+            "validator_uid": model.validator_uid,
+            "validator_hotkey": model.validator_hotkey,
+            "miner_uid": model.miner_uid,
+            "miner_hotkey": model.miner_hotkey,
+            "miner_agent_key": model.miner_agent_key,
+            "miner_id": miner_id,
+            "final_score": model.final_score,
+            "raw_score": model.raw_score,
+            "evaluation_time": model.evaluation_time,
+            "summary": _non_empty_dict(model.summary),
+        }
+
+    def _evaluation_result_kwargs(
+        self,
+        evaluation_row: EvaluationORM,
+        model: EvaluationResult,
+        *,
+        miner_id: Optional[int],
+    ) -> Dict[str, Any]:
+        return {
+            "result_id": model.result_id,
+            "evaluation_id": evaluation_row.evaluation_id,
+            "validator_round_id": model.validator_round_id,
+            "agent_run_id": model.agent_run_id,
+            "task_id": model.task_id,
+            "task_solution_id": model.task_solution_id,
+            "validator_uid": model.validator_uid,
+            "miner_uid": model.miner_uid,
+            "miner_id": miner_id,
+            "final_score": model.final_score,
+            "test_results_matrix": _test_results_dump(model.test_results_matrix),
+            "execution_history": list(model.execution_history),
+            "feedback": _optional_dump(model.feedback),
+            "web_agent_id": model.web_agent_id,
+            "raw_score": model.raw_score,
+            "evaluation_time": model.evaluation_time,
+            "stats": _optional_dump(model.stats),
+            "gif_recording": model.gif_recording,
+            "meta": _non_empty_dict(model.metadata),
+        }
+
+    def _find_validator_id(self, uid: int, hotkey: str) -> Optional[int]:
+        for instance in self.session.identity_map.values():
+            if isinstance(instance, ValidatorORM):
+                if instance.uid == uid and instance.hotkey == hotkey:
+                    return instance.id
         return None
+
+    async def _resolve_miner_identity_id(
+        self,
+        uid: Optional[int],
+        hotkey: Optional[str],
+        agent_key: Optional[str],
+    ) -> Optional[int]:
+        if uid is None and agent_key is None:
+            return None
+
+        stmt = select(MinerORM)
+        if uid is not None:
+            stmt = stmt.where(MinerORM.uid == uid)
+            if hotkey:
+                stmt = stmt.where(MinerORM.hotkey == hotkey)
+        elif agent_key:
+            stmt = stmt.where(MinerORM.agent_key == agent_key)
+
+        row = await self.session.scalar(stmt)
+        if row:
+            return row.id
+        return None
+
+    @staticmethod
+    def _assert_unique(sequence: Iterable[str], name: str) -> None:
+        seen: set[str] = set()
+        for value in sequence:
+            if value in seen:
+                raise DuplicateIdentifierError(f"Duplicate {name}: {value}")
+            seen.add(value)
+
+    def _assert_unique_payload(self, payload: ValidatorRoundSubmissionRequest) -> None:
+        self._assert_unique(
+            [payload.validator_round.validator_round_id],
+            "validator_round_id",
+        )
+        self._assert_unique(
+            [run.agent_run_id for run in payload.agent_evaluation_runs],
+            "agent_run_id",
+        )
+        self._assert_unique(
+            [task.task_id for task in payload.tasks],
+            "task_id",
+        )
+        self._assert_unique(
+            [solution.solution_id for solution in payload.task_solutions],
+            "task_solution_id",
+        )
+        self._assert_unique(
+            [evaluation.evaluation_id for evaluation in payload.evaluations],
+            "evaluation_id",
+        )
+        self._assert_unique(
+            [result.result_id for result in payload.evaluation_results],
+            "evaluation_result_id",
+        )

@@ -5,6 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
+import json
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 from sqlalchemy import select
@@ -19,11 +20,15 @@ from app.db.models import (
     TaskSolutionORM,
 )
 from app.models.core import (
+    Action,
     AgentEvaluationRun,
     AgentEvaluationRunWithDetails,
     EvaluationResult,
+    TestResult,
     ValidatorRound,
     ValidatorRoundWithDetails,
+    ValidatorInfo,
+    MinerInfo,
     Task,
     TaskSolution,
 )
@@ -180,6 +185,10 @@ class RoundsService:
     async def list_rounds(self, limit: int, skip: int) -> List[ValidatorRoundWithDetails]:
         stmt = (
             select(RoundORM)
+            .options(
+                selectinload(RoundORM.validator_snapshots),
+                selectinload(RoundORM.miner_snapshots),
+            )
             .order_by(RoundORM.validator_round_id.desc())
             .offset(skip)
             .limit(limit)
@@ -258,7 +267,10 @@ class RoundsService:
 
         if include_details:
             stmt = stmt.options(
-                selectinload(AgentEvaluationRunORM.round),
+                selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots),
+                selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.validator_snapshots),
                 selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(AgentEvaluationRunORM.evaluation_results),
             )
@@ -284,7 +296,10 @@ class RoundsService:
         stmt = (
             select(AgentEvaluationRunORM)
             .options(
-                selectinload(AgentEvaluationRunORM.round),
+                selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots),
+                selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.validator_snapshots),
                 selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(AgentEvaluationRunORM.evaluation_results),
             )
@@ -308,7 +323,10 @@ class RoundsService:
         include_details: bool = True,
     ) -> List[AgentRunContext]:
         stmt = select(AgentEvaluationRunORM).options(
-            selectinload(AgentEvaluationRunORM.round),
+            selectinload(AgentEvaluationRunORM.validator_round)
+            .selectinload(RoundORM.miner_snapshots),
+            selectinload(AgentEvaluationRunORM.validator_round)
+            .selectinload(RoundORM.validator_snapshots),
         )
 
         if include_details:
@@ -350,7 +368,10 @@ class RoundsService:
         stmt = (
             select(AgentEvaluationRunORM)
             .options(
-                selectinload(AgentEvaluationRunORM.round),
+                selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.miner_snapshots),
+                selectinload(AgentEvaluationRunORM.validator_round)
+                .selectinload(RoundORM.validator_snapshots),
                 selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(AgentEvaluationRunORM.evaluation_results),
             )
@@ -367,7 +388,14 @@ class RoundsService:
         )
 
     async def _get_all_round_records(self) -> List[RoundRecord]:
-        stmt = select(RoundORM).order_by(RoundORM.id.desc())
+        stmt = (
+            select(RoundORM)
+            .options(
+                selectinload(RoundORM.validator_snapshots),
+                selectinload(RoundORM.miner_snapshots),
+            )
+            .order_by(RoundORM.id.desc())
+        )
         rows = await self.session.scalars(stmt)
         records: List[RoundRecord] = []
         for row in rows:
@@ -451,6 +479,7 @@ class RoundsService:
                 skip=0,
                 include_details=include_details,
             )
+            self._recalculate_round_from_contexts(record, contexts)
             validator_rounds.append(
                 ValidatorRoundAggregate(
                     record=record,
@@ -461,11 +490,15 @@ class RoundsService:
 
     @staticmethod
     def _estimate_completed_tasks(round_obj: ValidatorRound) -> int:
-        completed = len(round_obj.winners or [])
-        if completed == 0 and round_obj.weights:
-            completed = int(round_obj.n_tasks * 0.5)
-        if completed == 0 and getattr(round_obj, "n_winners", None):
-            completed = round_obj.n_winners or 0
+        summary = getattr(round_obj, "summary", {}) or {}
+        completed = summary.get("completed_tasks") or summary.get("completedTasks")
+        if completed is None:
+            completed = summary.get("task_solutions")
+        if completed is None and round_obj.status == "completed":
+            completed = round_obj.n_tasks or 0
+        if completed is None:
+            completed = 0
+        completed = int(completed)
         total_tasks = round_obj.n_tasks or 0
         if total_tasks and completed > total_tasks:
             return total_tasks
@@ -473,14 +506,13 @@ class RoundsService:
 
     def _summarize_validator_round(self, record: RoundRecord) -> Dict[str, Any]:
         round_obj = record.model
-        validator = (
-            round_obj.validator_info
-            or (round_obj.validators[0] if round_obj.validators else None)
+        validator_uid = round_obj.validator_uid or record.validator_uid
+        metadata: Dict[str, Any] = (
+            get_validator_metadata(validator_uid) if validator_uid is not None else {}
         )
-        validator_uid = validator.uid if validator else record.validator_uid
-        metadata: Dict[str, Any] = get_validator_metadata(validator_uid) if validator_uid is not None else {}
 
-        validator_name = validator.name if validator and validator.name else metadata.get("name")
+        validator_name = metadata.get("name")
+        validator_hotkey = round_obj.validator_hotkey or metadata.get("hotkey")
         existing_icon = metadata.get("image")
         icon = resolve_validator_image(validator_name, existing=existing_icon)
 
@@ -488,9 +520,9 @@ class RoundsService:
 
         return {
             "validatorRoundId": record.validator_round_id,
-            "validatorUid": validator.uid if validator else record.validator_uid,
-            "validatorName": validator.name if validator else None,
-            "validatorHotkey": validator.hotkey if validator else None,
+            "validatorUid": validator_uid,
+            "validatorName": validator_name,
+            "validatorHotkey": validator_hotkey,
             "status": (round_obj.status or "completed"),
             "startTime": _iso_timestamp(round_obj.started_at),
             "endTime": _iso_timestamp(round_obj.ended_at) if round_obj.ended_at else None,
@@ -710,10 +742,12 @@ class RoundsService:
 
         self._sort_round_entries(entries, sort_by, sort_order)
 
-        total = len(entries)
+        dataset = entries
+
+        total = len(dataset)
         start = max(0, (page - 1) * limit)
         end = start + limit
-        return entries[start:end], total
+        return dataset[start:end], total
 
     async def get_current_round_overview(self) -> Optional[Dict[str, Any]]:
         records = await self._get_all_round_records()
@@ -749,10 +783,13 @@ class RoundsService:
     async def get_round_statistics(self, round_identifier: Union[str, int]) -> Dict[str, Any]:
         aggregated = await self._fetch_aggregated_round(round_identifier)
         contexts = aggregated.contexts
+        validator_count = len(aggregated.validator_rounds) or 0
 
         miner_ids: set[int] = set()
         completed_tasks = 0
         total_tasks = 0
+        total_validators = validator_count
+        tasks_per_validator: List[float] = []
         scores: List[float] = []
         validator_top_scores: List[float] = []
         durations: List[float] = []
@@ -767,6 +804,20 @@ class RoundsService:
                         miner_ids.add(miner.uid)
 
             per_validator_scores: List[float] = []
+            non_sota_contexts = [ctx for ctx in entry.contexts if not ctx.run.is_sota]
+            if non_sota_contexts:
+                total_tasks_for_contexts = sum(
+                    (ctx.run.n_tasks_total or len(ctx.tasks) or 0)
+                    for ctx in non_sota_contexts
+                )
+                avg_tasks_for_validator = (
+                    total_tasks_for_contexts / len(non_sota_contexts)
+                    if non_sota_contexts
+                    else 0.0
+                )
+                tasks_per_validator.append(avg_tasks_for_validator)
+            elif round_obj.n_tasks is not None:
+                tasks_per_validator.append(float(round_obj.n_tasks))
 
             for ctx in entry.contexts:
                 if ctx.run.is_sota:
@@ -819,6 +870,11 @@ class RoundsService:
         success_rate = (completed_tasks / total_tasks * 100.0) if total_tasks else 0.0
         average_duration = sum(durations) / len(durations) if durations else 0.0
         total_emission = int(total_stake * 0.05) if total_stake else 0
+        average_tasks_per_validator_per_miner = (
+            sum(tasks_per_validator) / len(tasks_per_validator)
+            if tasks_per_validator
+            else 0.0
+        )
 
         return {
             "roundId": aggregated.round_number,
@@ -826,6 +882,8 @@ class RoundsService:
             "activeMiners": len(active_miner_ids),
             "totalTasks": total_tasks,
             "completedTasks": completed_tasks,
+            "totalValidators": total_validators,
+            "averageTasksPerValidator": round(average_tasks_per_validator_per_miner, 2),
             "averageScore": round(average_score, 3),
             "topScore": round(top_score, 3),
             "successRate": round(success_rate, 2),
@@ -932,15 +990,37 @@ class RoundsService:
 
             for validator in round_obj.validators:
                 runs = contexts_by_validator.get(validator.uid, [])
-                total_tasks = sum(
-                    run.run.n_tasks_total or len(run.tasks) for run in runs
-                )
-                completed_tasks = sum(
-                    run.run.n_tasks_completed
-                    or len(
-                        [er for er in run.evaluation_results if er.final_score >= 0.5]
-                    )
+                valid_runs = [run for run in runs if not run.run.is_sota]
+                if valid_runs:
+                    total_tasks_avg = sum(
+                        run.run.n_tasks_total or len(run.tasks) or 0
+                        for run in valid_runs
+                    ) / len(valid_runs)
+                    completed_tasks_avg = sum(
+                        run.run.n_tasks_completed
+                        if run.run.n_tasks_completed is not None
+                        else len([er for er in run.evaluation_results if er.final_score >= 0.5])
+                        for run in valid_runs
+                    ) / len(valid_runs)
+                else:
+                    total_tasks_avg = float(round_obj.n_tasks or 0)
+                    completed_tasks_avg = float(round_obj.n_tasks or 0)
+                total_tasks = int(round(total_tasks_avg))
+                completed_tasks = int(round(completed_tasks_avg))
+                miner_ids = {
+                    run.run.miner_uid
                     for run in runs
+                    if run.run.miner_uid is not None and not run.run.is_sota
+                }
+                total_miners = len(miner_ids)
+                active_miners = len(
+                    [
+                        run
+                        for run in runs
+                        if (run.run.n_tasks_completed or 0) > 0
+                        and not run.run.is_sota
+                        and run.run.miner_uid is not None
+                    ]
                 )
                 scores: List[float] = []
                 for run in runs:
@@ -951,7 +1031,7 @@ class RoundsService:
                         scores.append(score)
                 average_score = sum(scores) / len(scores) if scores else 0.0
                 top_score = max(scores) if scores else 0.0
-                completion_rate = (completed_tasks / total_tasks) if total_tasks else 0.0
+                completion_rate = (completed_tasks_avg / total_tasks_avg) if total_tasks_avg else 0.0
 
                 status = "inactive"
                 if runs:
@@ -984,6 +1064,8 @@ class RoundsService:
                     "status": status,
                     "totalTasks": total_tasks,
                     "completedTasks": completed_tasks,
+                    "totalMiners": total_miners,
+                    "activeMiners": active_miners,
                     "averageScore": round(average_score, 3),
                     "topScore": round(top_score, 3),
                     "weight": int(weight),
@@ -1368,7 +1450,7 @@ class RoundsService:
         include_details: bool = True,
         tasks_for_round: Optional[Dict[str, Task]] = None,
     ) -> AgentRunContext:
-        round_row = parent_round_row or run_row.round
+        round_row = parent_round_row or run_row.validator_round
         if round_row is None:
             raise ValueError(
                 f"Agent run {run_row.agent_run_id} is missing round relationship"
@@ -1376,6 +1458,30 @@ class RoundsService:
 
         round_model = self._deserialize_round(round_row)
         agent_run_model = self._deserialize_agent_run(run_row)
+
+        miner_info = None
+        candidate_uid = agent_run_model.miner_uid
+        candidate_hotkey = agent_run_model.miner_hotkey
+
+        for snapshot in getattr(round_model, "miners", []) or []:
+            if candidate_uid is not None and snapshot.uid == candidate_uid:
+                miner_info = snapshot
+                break
+            if candidate_hotkey and snapshot.hotkey == candidate_hotkey:
+                miner_info = snapshot
+                break
+
+        if miner_info is None:
+            for snapshot in getattr(round_model, "sota_agents", []) or []:
+                if candidate_uid is not None and snapshot.uid == candidate_uid:
+                    miner_info = snapshot
+                    break
+                if candidate_hotkey and snapshot.hotkey == candidate_hotkey:
+                    miner_info = snapshot
+                    break
+
+        agent_run_model.miner_info = miner_info
+
         if include_details and tasks_for_round is not None:
             task_lookup = tasks_for_round
             if agent_run_model.task_ids:
@@ -1399,13 +1505,85 @@ class RoundsService:
             evaluation_results=evaluation_results,
         )
 
+    @staticmethod
+    def _context_score(context: AgentRunContext) -> float:
+        score = getattr(context.run, "average_score", None)
+        if score is None:
+            score = getattr(context.run, "avg_eval_score", None)
+        if score is None and context.evaluation_results:
+            score = sum(er.final_score for er in context.evaluation_results) / len(context.evaluation_results)
+        try:
+            return float(score or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _recalculate_round_from_contexts(
+        self,
+        record: RoundRecord,
+        contexts: List[AgentRunContext],
+    ) -> None:
+        round_model = record.model
+        non_sota_contexts = [
+            ctx for ctx in contexts if not ctx.run.is_sota and ctx.run.miner_uid is not None
+        ]
+
+        all_scores = [self._context_score(ctx) for ctx in non_sota_contexts]
+        average_score = sum(all_scores) / len(all_scores) if all_scores else None
+        top_score = max(all_scores) if all_scores else None
+
+        desired_winners = round_model.n_winners or min(3, len(non_sota_contexts))
+        sorted_contexts = sorted(non_sota_contexts, key=self._context_score, reverse=True)
+        selected_contexts = sorted_contexts[:desired_winners]
+
+        winners: List[Dict[str, Any]] = []
+        for rank, ctx in enumerate(selected_contexts, start=1):
+            score = self._context_score(ctx)
+            winners.append(
+                {
+                    "miner_uid": ctx.run.miner_uid,
+                    "rank": rank,
+                    "score": round(score, 6),
+                    "validator_uid": ctx.run.validator_uid,
+                    "validator_round_id": round_model.validator_round_id,
+                    "agent_run_id": ctx.run.agent_run_id,
+                }
+            )
+
+        winner_scores = [winner["score"] for winner in winners]
+
+        round_model.n_winners = len(winners)
+        round_model.winners = winners
+        round_model.average_score = average_score
+        round_model.top_score = top_score
+
+        metadata = dict(round_model.metadata or {})
+        metadata["winners"] = winners
+        metadata["winner_scores"] = winner_scores
+        round_model.metadata = metadata
+
+        summary = dict(round_model.summary or {})
+        summary["winning_miners"] = len(winners)
+        round_model.summary = summary
+
+        # Keep ORM record in sync for downstream consumers that inspect row metadata directly.
+        if hasattr(record.row, "meta"):
+            row_meta = dict(record.row.meta or {})
+            row_meta["winners"] = winners
+            row_meta["winner_scores"] = winner_scores
+            record.row.meta = row_meta
+            record.row.n_winners = len(winners)
+            if average_score is not None:
+                record.row.average_score = average_score
+            if top_score is not None:
+                record.row.top_score = top_score
+
     def _build_miner_performance(
         self,
         context: AgentRunContext,
         round_obj: ValidatorRound,
         weights: Dict[str, float],
     ) -> Dict[str, Any]:
-        miner_uid = context.run.miner_uid or -1
+        miner_uid = context.run.miner_uid if context.run.miner_uid is not None else -1
         miner_info = self._resolve_miner_info(context, round_obj)
         name = miner_info.agent_name if miner_info and miner_info.agent_name else f"Miner {miner_uid}"
         hotkey = miner_info.hotkey if miner_info else None
@@ -1430,7 +1608,11 @@ class RoundsService:
         success = (context.run.n_tasks_failed or 0) == 0
         if tasks_total:
             success = success and completed_tasks >= tasks_total
-        weight = weights.get(str(miner_uid)) or weights.get(str(context.run.agent_run_id)) or 0.0
+        weight = 0.0
+        if context.run.miner_uid is not None and str(context.run.miner_uid) in weights:
+            weight = weights[str(context.run.miner_uid)]
+        elif str(context.run.agent_run_id) in weights:
+            weight = weights[str(context.run.agent_run_id)]
         stake = int(weight) if weight > 1 else int(weight * 1000)
         emission = int(stake * 0.05)
 
@@ -1467,6 +1649,8 @@ class RoundsService:
                     .selectinload(AgentEvaluationRunORM.task_solutions),
                     selectinload(RoundORM.agent_runs)
                     .selectinload(AgentEvaluationRunORM.evaluation_results),
+                    selectinload(RoundORM.validator_snapshots),
+                    selectinload(RoundORM.miner_snapshots),
                 )
             stmt = stmt.where(RoundORM.validator_round_id == candidate)
             row = await self.session.scalar(stmt)
@@ -1529,28 +1713,170 @@ class RoundsService:
         return None
 
     def _deserialize_round(self, round_row: RoundORM) -> ValidatorRound:
-        payload = dict(round_row.data or {})
-        payload.setdefault("validator_round_id", round_row.validator_round_id)
-        return ValidatorRound(**payload)
+        meta = round_row.meta or {}
+        summary = round_row.summary or {}
+
+        metadata = get_validator_metadata(round_row.validator_uid or 0)
+        validator_info = ValidatorInfo(
+            uid=round_row.validator_uid or metadata.get("uid") or 0,
+            hotkey=round_row.validator_hotkey or metadata.get("hotkey", ""),
+            coldkey=round_row.validator_coldkey or metadata.get("coldkey"),
+            stake=float(metadata.get("stake", 0.0)),
+            vtrust=float(metadata.get("vtrust", 0.0)),
+            name=metadata.get("name"),
+            version=metadata.get("version"),
+        )
+
+        miners: List[MinerInfo] = []
+        for miner_snapshot in getattr(round_row, "miner_snapshots", []) or []:
+            miners.append(
+                MinerInfo(
+                    uid=miner_snapshot.miner_uid,
+                    hotkey=miner_snapshot.miner_hotkey,
+                    coldkey=miner_snapshot.miner_coldkey,
+                    agent_name=miner_snapshot.agent_name or "",
+                    agent_image=miner_snapshot.image_url or "",
+                    github=miner_snapshot.github_url or "",
+                    is_sota=bool(miner_snapshot.is_sota),
+                    description=miner_snapshot.description,
+                    provider=miner_snapshot.provider,
+                )
+            )
+
+        validators = [validator_info]
+        for snapshot in getattr(round_row, "validator_snapshots", []) or []:
+            if snapshot.validator_uid == validator_info.uid:
+                continue
+            validators.append(
+                ValidatorInfo(
+                    uid=snapshot.validator_uid,
+                    hotkey=snapshot.validator_hotkey or "",
+                    coldkey=None,
+                    stake=float(snapshot.stake or 0.0),
+                    vtrust=float(snapshot.vtrust or 0.0),
+                    name=snapshot.name,
+                    version=snapshot.version,
+                )
+            )
+
+        winners = meta.get("winners")
+        winner_scores = meta.get("winner_scores") or summary.get("winner_scores") or []
+        weights = meta.get("weights")
+
+        return ValidatorRound(
+            validator_round_id=round_row.validator_round_id,
+            round_number=round_row.round_number,
+             validator_uid=validator_info.uid,
+             validator_hotkey=validator_info.hotkey,
+            validators=validators,
+            validator_info=validator_info,
+            start_block=round_row.start_block or 0,
+            start_epoch=round_row.start_epoch or 0,
+            end_block=round_row.end_block,
+            end_epoch=round_row.end_epoch,
+            started_at=round_row.started_at or datetime.now(timezone.utc).timestamp(),
+            ended_at=round_row.ended_at,
+            elapsed_sec=round_row.elapsed_sec,
+            max_epochs=round_row.max_epochs or 0,
+            max_blocks=round_row.max_blocks or 0,
+            n_tasks=round_row.n_tasks or 0,
+            n_miners=round_row.n_miners or 0,
+            n_winners=round_row.n_winners or 0,
+            miners=miners,
+            sota_agents=[],
+            winners=winners,
+            winner_scores=list(winner_scores),
+            weights=weights,
+            average_score=round_row.average_score,
+            top_score=round_row.top_score,
+            status=round_row.status or "completed",
+            summary=summary,
+            metadata=meta,
+            model_extra={
+                "meta": meta,
+                "summary": summary,
+            },
+        )
 
     def _deserialize_agent_run(self, run_row: AgentEvaluationRunORM) -> AgentEvaluationRun:
-        payload = dict(run_row.data or {})
-        payload.setdefault("agent_run_id", run_row.agent_run_id)
-        payload.setdefault("validator_round_id", run_row.validator_round_id)
-        payload.setdefault("validator_uid", run_row.validator_uid)
-        payload.setdefault("miner_uid", run_row.miner_uid)
-        payload.setdefault("is_sota", run_row.is_sota)
-        return AgentEvaluationRun(**payload)
+        metadata = dict(run_row.meta or {})
+
+        task_id_set: set[str] = set()
+        for solution in getattr(run_row, "task_solutions", []) or []:
+            task_id = getattr(solution, "task_id", None)
+            if task_id:
+                task_id_set.add(task_id)
+        for evaluation in getattr(run_row, "evaluation_results", []) or []:
+            task_id = getattr(evaluation, "task_id", None)
+            if task_id:
+                task_id_set.add(task_id)
+        task_ids = sorted(task_id_set)
+
+        run_model = AgentEvaluationRun(
+            agent_run_id=run_row.agent_run_id,
+            validator_round_id=run_row.validator_round_id,
+            validator_uid=run_row.validator_uid,
+            validator_hotkey=run_row.validator_hotkey,
+            miner_uid=run_row.miner_uid,
+            miner_hotkey=run_row.miner_hotkey,
+            miner_agent_key=run_row.miner_agent_key,
+            is_sota=bool(run_row.is_sota),
+            version=run_row.version,
+            started_at=run_row.started_at or datetime.now(timezone.utc).timestamp(),
+            ended_at=run_row.ended_at,
+            elapsed_sec=run_row.elapsed_sec,
+            average_score=run_row.average_score,
+            average_execution_time=run_row.average_execution_time,
+            average_reward=run_row.average_reward,
+            total_reward=run_row.total_reward,
+            total_tasks=run_row.total_tasks or len(task_ids),
+            completed_tasks=run_row.completed_tasks or 0,
+            failed_tasks=run_row.failed_tasks or 0,
+            rank=run_row.rank,
+            weight=run_row.weight,
+            metadata=metadata,
+        )
+
+        # Compatibility attributes used throughout UI services
+        run_model.task_ids = task_ids
+        run_model.avg_eval_score = run_row.average_score
+        run_model.avg_execution_time = run_row.average_execution_time
+        run_model.avg_reward = run_row.average_reward
+        run_model.n_tasks_total = run_model.total_tasks
+        run_model.n_tasks_completed = run_model.completed_tasks
+        run_model.n_tasks_failed = run_model.failed_tasks
+        run_model.miner_info = None
+
+        return run_model
 
     @staticmethod
     def _convert_tasks(task_rows: List[TaskORM]) -> List[Task]:
         tasks: List[Task] = []
         for task_row in task_rows:
-            data = dict(task_row.data or {})
-            data.setdefault("task_id", task_row.task_id)
-            data.setdefault("validator_round_id", task_row.validator_round_id)
             try:
-                tasks.append(Task(**data))
+                tasks.append(
+                    Task(
+                        task_id=task_row.task_id,
+                        validator_round_id=task_row.validator_round_id,
+                        scope=task_row.scope or "local",
+                        is_web_real=bool(task_row.is_web_real),
+                        web_project_id=task_row.web_project_id,
+                        url=task_row.url or "",
+                        prompt=task_row.prompt or "",
+                        html=task_row.html or "",
+                        clean_html=task_row.clean_html or task_row.html or "",
+                        interactive_elements=task_row.interactive_elements,
+                        screenshot=task_row.screenshot,
+                        screenshot_description=task_row.screenshot_description,
+                        specifications=task_row.specifications or {},
+                        tests=[],
+                        milestones=None,
+                        relevant_data=task_row.relevant_data or {},
+                        success_criteria=task_row.success_criteria,
+                        use_case=task_row.use_case or {},
+                        should_record=bool(task_row.should_record),
+                    )
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.error("Failed to deserialize task %s: %s", task_row.task_id, exc)
         return tasks
@@ -1561,15 +1887,34 @@ class RoundsService:
     ) -> List[TaskSolution]:
         solutions: List[TaskSolution] = []
         for solution_row in solution_rows:
-            data = dict(solution_row.data or {})
-            data.setdefault("solution_id", solution_row.solution_id)
-            data.setdefault("task_id", solution_row.task_id)
-            data.setdefault("agent_run_id", solution_row.agent_run_id)
-            data.setdefault("validator_round_id", solution_row.validator_round_id)
-            data.setdefault("validator_uid", solution_row.validator_uid)
-            data.setdefault("miner_uid", solution_row.miner_uid)
             try:
-                solutions.append(TaskSolution(**data))
+                actions = []
+                for action_payload in solution_row.actions or []:
+                    action_type = action_payload.get("type", "")
+                    attributes = {
+                        key: value
+                        for key, value in action_payload.items()
+                        if key != "type"
+                    }
+                    actions.append(Action(type=action_type, attributes=attributes))
+
+                solutions.append(
+                    TaskSolution(
+                        solution_id=solution_row.solution_id,
+                        task_id=solution_row.task_id,
+                        validator_round_id=solution_row.validator_round_id,
+                        agent_run_id=solution_row.agent_run_id,
+                        validator_uid=solution_row.validator_uid,
+                        validator_hotkey=solution_row.validator_hotkey,
+                        miner_uid=solution_row.miner_uid,
+                        miner_hotkey=solution_row.miner_hotkey,
+                        miner_agent_key=solution_row.miner_agent_key,
+                        actions=actions,
+                        web_agent_id=solution_row.web_agent_id,
+                        recording=solution_row.recording,
+                        metadata=dict(solution_row.meta or {}),
+                    )
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.error(
                     "Failed to deserialize task solution %s: %s",
@@ -1584,16 +1929,42 @@ class RoundsService:
     ) -> List[EvaluationResult]:
         evaluations: List[EvaluationResult] = []
         for evaluation_row in evaluation_rows:
-            data = dict(evaluation_row.data or {})
-            data.setdefault("evaluation_id", evaluation_row.evaluation_id)
-            data.setdefault("task_id", evaluation_row.task_id)
-            data.setdefault("task_solution_id", evaluation_row.task_solution_id)
-            data.setdefault("agent_run_id", evaluation_row.agent_run_id)
-            data.setdefault("validator_round_id", evaluation_row.validator_round_id)
-            data.setdefault("validator_uid", evaluation_row.validator_uid)
-            data.setdefault("miner_uid", evaluation_row.miner_uid)
             try:
-                evaluations.append(EvaluationResult(**data))
+                matrix = []
+                for row in evaluation_row.test_results_matrix or []:
+                    test_row: List[TestResult] = []
+                    for item in row:
+                        if isinstance(item, dict):
+                            test_row.append(
+                                TestResult(
+                                    success=bool(item.get("success")),
+                                    extra_data=item.get("extra_data"),
+                                )
+                            )
+                        else:
+                            test_row.append(TestResult(success=False, extra_data=None))
+                    matrix.append(test_row)
+
+                evaluations.append(
+                    EvaluationResult(
+                        evaluation_id=evaluation_row.evaluation_id,
+                        task_id=evaluation_row.task_id,
+                        task_solution_id=evaluation_row.task_solution_id,
+                        validator_round_id=evaluation_row.validator_round_id,
+                        agent_run_id=evaluation_row.agent_run_id,
+                        miner_uid=evaluation_row.miner_uid,
+                        validator_uid=evaluation_row.validator_uid,
+                        final_score=evaluation_row.final_score or 0.0,
+                        test_results_matrix=matrix,
+                        execution_history=evaluation_row.execution_history or [],
+                        feedback=evaluation_row.feedback,
+                        web_agent_id=evaluation_row.web_agent_id,
+                        raw_score=evaluation_row.raw_score or 0.0,
+                        evaluation_time=evaluation_row.evaluation_time or 0.0,
+                        stats=evaluation_row.stats,
+                        gif_recording=evaluation_row.gif_recording,
+                    )
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.error(
                     "Failed to deserialize evaluation result %s: %s",

@@ -54,6 +54,8 @@ class RoundStatistics(BaseModel):
     activeMiners: int
     totalTasks: int
     completedTasks: int
+    totalValidators: int = Field(default=0)
+    averageTasksPerValidator: float = Field(default=0.0)
     averageScore: float
     topScore: float
     successRate: float
@@ -86,7 +88,10 @@ class ValidatorPerformance(BaseModel):
     status: str
     totalTasks: int
     completedTasks: int
+    totalMiners: int = Field(default=0)
+    activeMiners: int = Field(default=0)
     averageScore: float
+    topScore: float
     weight: int
     trust: float
     version: int
