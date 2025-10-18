@@ -105,9 +105,105 @@ class Task(BaseModel):
     logs: Optional[List[str]] = Field(None, description="List of log messages")
     metadata: Optional[TaskMetadata] = Field(None, description="Task metadata")
 
+class TaskRoundSummary(BaseModel):
+    """Summary describing the round that owns this task."""
+
+    validatorRoundId: str = Field(..., description="Validator round identifier")
+    roundNumber: Optional[int] = Field(None, description="Logical round number")
+    status: str = Field(..., description="Round lifecycle status")
+    startedAt: datetime = Field(..., description="Round start time")
+    endedAt: Optional[datetime] = Field(None, description="Round end time")
+    startEpoch: Optional[int] = Field(None, description="Starting epoch for the round")
+    endEpoch: Optional[int] = Field(None, description="Ending epoch for the round")
+
+
+class TaskValidatorSummary(BaseModel):
+    """Summary describing the validator that evaluated this task."""
+
+    uid: int = Field(..., description="Validator UID that produced the evaluation")
+    hotkey: str = Field(..., description="Validator hotkey")
+    coldkey: Optional[str] = Field(None, description="Validator coldkey")
+    name: Optional[str] = Field(None, description="Validator display name")
+    stake: float = Field(..., description="Validator stake at evaluation time")
+    vtrust: float = Field(..., description="Validator vtrust score")
+    version: Optional[str] = Field(None, description="Validator software version")
+
+
+class TaskMinerSummary(BaseModel):
+    """Summary describing the miner/agent that attempted the task."""
+
+    uid: Optional[int] = Field(None, description="Miner UID (None if SOTA)")
+    hotkey: Optional[str] = Field(None, description="Miner hotkey")
+    name: str = Field(..., description="Display name for the agent/miner")
+    github: Optional[str] = Field(None, description="Repository or profile URL")
+    provider: Optional[str] = Field(None, description="Agent provider")
+    image: Optional[str] = Field(None, description="Avatar or logo for the miner")
+    isSota: bool = Field(False, description="Whether the run corresponds to a SOTA benchmark")
+
+
+class TaskAgentRunSummary(BaseModel):
+    """Summary describing the agent run that generated this task solution."""
+
+    agentRunId: str = Field(..., description="Associated agent run identifier")
+    validatorUid: int = Field(..., description="Validator UID overseeing the run")
+    minerUid: Optional[int] = Field(None, description="Miner UID executed in the run")
+    isSota: bool = Field(False, description="Indicates if the run is a SOTA benchmark")
+    startedAt: Optional[datetime] = Field(None, description="Agent run start time")
+    endedAt: Optional[datetime] = Field(None, description="Agent run end time")
+    duration: Optional[int] = Field(None, description="Duration of the run in seconds")
+    taskCount: Optional[int] = Field(None, description="Number of tasks executed in the run")
+    completedTasks: Optional[int] = Field(None, description="Number of tasks completed")
+    failedTasks: Optional[int] = Field(None, description="Number of tasks failed")
+    averageScore: Optional[float] = Field(None, description="Average evaluation score across tasks")
+
+
+class TaskEvaluationSummary(BaseModel):
+    """Summary describing the evaluation generated for this task."""
+
+    evaluationId: str = Field(..., description="Evaluation identifier")
+    finalScore: float = Field(..., description="Final score issued by the validator")
+    rawScore: float = Field(..., description="Raw score before adjustments")
+    evaluationTime: float = Field(..., description="Evaluation duration in seconds")
+    status: TaskStatus = Field(..., description="Outcome status for this evaluation")
+    validatorUid: int = Field(..., description="Validator UID that produced the evaluation")
+    minerUid: Optional[int] = Field(None, description="Miner UID evaluated")
+    webAgentId: Optional[str] = Field(None, description="Web agent identifier used during execution")
+    hasFeedback: bool = Field(False, description="Indicates if rich feedback is available")
+    hasRecording: bool = Field(False, description="Indicates if a recording artifact is available")
+
+
+class TaskSolutionSummary(BaseModel):
+    """Summary describing the submitted solution for this task."""
+
+    solutionId: str = Field(..., description="Task solution identifier")
+    agentRunId: str = Field(..., description="Associated agent run identifier")
+    minerUid: Optional[int] = Field(None, description="Miner UID that submitted the solution")
+    validatorUid: int = Field(..., description="Validator UID overseeing the solution")
+    actionsCount: int = Field(..., description="Number of actions in the solution")
+    webAgentId: Optional[str] = Field(None, description="Web agent identifier used during execution")
+    hasRecording: bool = Field(False, description="Indicates if the solution carries a recording")
+
+
+class TaskRelationships(BaseModel):
+    """Aggregated relationships for the task detail view."""
+
+    round: TaskRoundSummary = Field(..., description="Round that owns this task")
+    validator: TaskValidatorSummary = Field(..., description="Validator responsible for the evaluation")
+    miner: TaskMinerSummary = Field(..., description="Miner/agent that executed the task")
+    agentRun: TaskAgentRunSummary = Field(..., description="Agent run context for the task")
+    evaluation: Optional[TaskEvaluationSummary] = Field(
+        None, description="Evaluation summary if the task has been scored"
+    )
+    solution: Optional[TaskSolutionSummary] = Field(
+        None, description="Solution summary if the miner submitted one"
+    )
+
+
 class TaskDetails(Task):
-    """Extended task model with performance metrics"""
+    """Extended task model with performance metrics and relationships"""
+
     performance: Optional[TaskPerformance] = Field(None, description="Performance metrics")
+    relationships: TaskRelationships = Field(..., description="Related entities for the task")
 
 class TaskSummary(BaseModel):
     """Model for task summary statistics"""

@@ -4,7 +4,7 @@ import random
 import re
 import time
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import httpx
 from httpx import ASGITransport, AsyncClient
@@ -49,6 +49,405 @@ class SeededRun:
     evaluations: Dict[str, EvaluationResult]
 
 
+@dataclass(frozen=True)
+class SeedTaskTemplate:
+    website_name: str
+    website_slug: str
+    url: str
+    use_case_label: str
+    use_case_slug: str
+    prompt: str
+    success_criteria: str
+    actions: List[Dict[str, Any]]
+
+
+SEED_TASK_LIBRARY: List[SeedTaskTemplate] = [
+    SeedTaskTemplate(
+        website_name="Autoppia Cinema",
+        website_slug="autocinema",
+        url="http://autocinema.autoppia.com/films",
+        use_case_label="Search Film",
+        use_case_slug="search-film",
+        prompt="Look for the film 'The Shawshank Redemption'.",
+        success_criteria="Results include The Shawshank Redemption in the list.",
+        actions=[
+            {
+                "type": "navigate",
+                "url": "http://autocinema.autoppia.com/films",
+                "status": "completed",
+                "context": "films_catalog",
+            },
+            {
+                "type": "type",
+                "selector": "input[name='search']",
+                "value": "The Shawshank Redemption",
+                "field": "search",
+            },
+            {
+                "type": "click",
+                "selector": "button[type='submit']",
+                "text": "Search",
+                "role": "submit",
+            },
+            {
+                "type": "wait",
+                "for": "results",
+                "durationSeconds": 1.8,
+            },
+            {
+                "type": "screenshot",
+                "path": "/screens/autocinema/search-results.png",
+                "label": "Search results hero",
+            },
+        ],
+    ),
+    SeedTaskTemplate(
+        website_name="Autoppia Cinema",
+        website_slug="autocinema",
+        url="http://autocinema.autoppia.com/films/inception",
+        use_case_label="Add Comment",
+        use_case_slug="add-comment",
+        prompt="Navigate to a movie and add a comment about Inception.",
+        success_criteria="Comment containing the word 'Inception' is visible in the thread.",
+        actions=[
+            {
+                "type": "navigate",
+                "url": "http://autocinema.autoppia.com/films/inception",
+                "status": "completed",
+                "context": "film_detail",
+            },
+            {
+                "type": "scroll",
+                "direction": "down",
+                "amount": 600,
+            },
+            {
+                "type": "type",
+                "selector": "textarea[name='comment']",
+                "value": "Inception is still a masterpiece!",
+                "field": "comment",
+            },
+            {
+                "type": "click",
+                "selector": "button[type='submit']",
+                "text": "Post Comment",
+                "role": "submit",
+            },
+            {
+                "type": "wait",
+                "for": "comment_stream",
+                "durationSeconds": 2.2,
+            },
+        ],
+    ),
+    SeedTaskTemplate(
+        website_name="Autoppia Books",
+        website_slug="autobooks",
+        url="http://autobooks.autoppia.com/admin/books/new",
+        use_case_label="Add Book",
+        use_case_slug="add-book",
+        prompt="Once logged in as 'reader1' with the password 'PASSWORD', add the book 'The Midnight Library' with a page_count under 320 pages.",
+        success_criteria="The book 'The Midnight Library' exists in the catalog with page count under 320.",
+        actions=[
+            {
+                "type": "navigate",
+                "url": "http://autobooks.autoppia.com/admin/books/new",
+                "status": "completed",
+                "context": "admin_books",
+            },
+            {
+                "type": "type",
+                "selector": "input[name='title']",
+                "value": "The Midnight Library",
+                "field": "title",
+            },
+            {
+                "type": "type",
+                "selector": "input[name='author']",
+                "value": "Matt Haig",
+                "field": "author",
+            },
+            {
+                "type": "type",
+                "selector": "input[name='page_count']",
+                "value": "304",
+                "field": "page_count",
+            },
+            {
+                "type": "click",
+                "selector": "button[data-testid='save-book']",
+                "text": "Save Book",
+                "role": "submit",
+            },
+        ],
+    ),
+    SeedTaskTemplate(
+        website_name="Autoppia Books",
+        website_slug="autobooks",
+        url="http://autobooks.autoppia.com/shop/checkout",
+        use_case_label="Purchase Book",
+        use_case_slug="purchase-book",
+        prompt="Log in with username: buyer1 and password: buy123. Then proceed to buy a book in the 'Education' genre with more than 700 pages.",
+        success_criteria="Checkout reflects a purchase in the Education genre with pages greater than 700.",
+        actions=[
+            {
+                "type": "navigate",
+                "url": "http://autobooks.autoppia.com/books/education",
+                "status": "completed",
+                "context": "category_listing",
+            },
+            {
+                "type": "click",
+                "selector": "button[data-testid='add-to-cart']",
+                "text": "Add to Cart",
+                "role": "add_to_cart",
+            },
+            {
+                "type": "navigate",
+                "url": "http://autobooks.autoppia.com/cart",
+                "status": "completed",
+                "context": "cart_overview",
+            },
+            {
+                "type": "click",
+                "selector": "a[href='/shop/checkout']",
+                "text": "Checkout",
+                "role": "checkout",
+            },
+            {
+                "type": "wait",
+                "for": "checkout_page",
+                "durationSeconds": 1.4,
+            },
+        ],
+    ),
+    SeedTaskTemplate(
+        website_name="Autozone",
+        website_slug="autozone",
+        url="http://autozone.autoppia.com/search",
+        use_case_label="Search Product",
+        use_case_slug="search-product",
+        prompt="Find products matching 'Espresso Machine'.",
+        success_criteria="Search results list an Espresso Machine product card.",
+        actions=[
+            {
+                "type": "navigate",
+                "url": "http://autozone.autoppia.com/search",
+                "status": "completed",
+                "context": "search_page",
+            },
+            {
+                "type": "type",
+                "selector": "input[name='query']",
+                "value": "Espresso Machine",
+                "field": "query",
+            },
+            {
+                "type": "click",
+                "selector": "button[type='submit']",
+                "text": "Search",
+                "role": "submit",
+            },
+            {
+                "type": "wait",
+                "for": "product_grid",
+                "durationSeconds": 1.6,
+            },
+        ],
+    ),
+    SeedTaskTemplate(
+        website_name="Autozone",
+        website_slug="autozone",
+        url="http://autozone.autoppia.com/products/espresso-machine",
+        use_case_label="Add to Cart",
+        use_case_slug="add-to-cart",
+        prompt="Add Air Fryer to my cart.",
+        success_criteria="Shopping cart contains the Air Fryer product with quantity 1 or more.",
+        actions=[
+            {
+                "type": "navigate",
+                "url": "http://autozone.autoppia.com/products/espresso-machine",
+                "status": "completed",
+                "context": "product_detail",
+            },
+            {
+                "type": "click",
+                "selector": "button[data-testid='add-to-cart']",
+                "text": "Add to Cart",
+                "role": "add_to_cart",
+            },
+            {
+                "type": "wait",
+                "for": "cart_sidebar",
+                "durationSeconds": 1.0,
+            },
+            {
+                "type": "screenshot",
+                "path": "/screens/autozone/cart.png",
+                "label": "Cart with Espresso Machine",
+            },
+        ],
+    ),
+    SeedTaskTemplate(
+        website_name="AutoDining",
+        website_slug="autodining",
+        url="http://autodining.autoppia.com/restaurants/the-royal-dine",
+        use_case_label="Book Restaurant",
+        use_case_slug="book-restaurant",
+        prompt="I'd like to book a table at the restaurant which name 'The Royal Dine' for 2 people on 2025-05-16 at 1:30 PM.",
+        success_criteria="Reservation confirmation for The Royal Dine at 1:30 PM is displayed.",
+        actions=[
+            {
+                "type": "navigate",
+                "url": "http://autodining.autoppia.com/restaurants/the-royal-dine",
+                "status": "completed",
+                "context": "restaurant_detail",
+            },
+            {
+                "type": "click",
+                "selector": "button[data-testid='open-reservation']",
+                "text": "Book Table",
+                "role": "open_modal",
+            },
+            {
+                "type": "type",
+                "selector": "input[name='reservation_date']",
+                "value": "2025-05-16",
+                "field": "reservation_date",
+            },
+            {
+                "type": "type",
+                "selector": "input[name='reservation_time']",
+                "value": "13:30",
+                "field": "reservation_time",
+            },
+            {
+                "type": "click",
+                "selector": "button[data-testid='confirm-reservation']",
+                "text": "Confirm Reservation",
+                "role": "submit",
+            },
+        ],
+    ),
+    SeedTaskTemplate(
+        website_name="AutoCRM",
+        website_slug="autocrm",
+        url="http://autocrm.autoppia.com/matters/new",
+        use_case_label="Add New Matter",
+        use_case_slug="add-new-matter",
+        prompt="Create a matter named 'New Matter', with client 'Acme Co.' and status 'Active'.",
+        success_criteria="Matter list shows 'New Matter' for client 'Acme Co.' with status Active.",
+        actions=[
+            {
+                "type": "navigate",
+                "url": "http://autocrm.autoppia.com/matters/new",
+                "status": "completed",
+                "context": "matter_form",
+            },
+            {
+                "type": "type",
+                "selector": "input[name='matter_name']",
+                "value": "New Matter",
+                "field": "matter_name",
+            },
+            {
+                "type": "type",
+                "selector": "input[name='client_name']",
+                "value": "Acme Co.",
+                "field": "client_name",
+            },
+            {
+                "type": "click",
+                "selector": "select[name='status'] option[value='active']",
+                "text": "Active",
+                "role": "select",
+            },
+            {
+                "type": "click",
+                "selector": "button[data-testid='save-matter']",
+                "text": "Create Matter",
+                "role": "submit",
+            },
+        ],
+    ),
+    SeedTaskTemplate(
+        website_name="AutoDelivery",
+        website_slug="autodelivery",
+        url="http://autodelivery.autoppia.com/restaurants/pizza-palace",
+        use_case_label="Add to Cart",
+        use_case_slug="add-to-cart-delivery",
+        prompt="Add when item equals 'Margherita Pizza' and size equals 'Large' to my cart.",
+        success_criteria="Cart modal reflects Margherita Pizza (Large) with quantity 1 or more.",
+        actions=[
+            {
+                "type": "navigate",
+                "url": "http://autodelivery.autoppia.com/restaurants/pizza-palace",
+                "status": "completed",
+                "context": "restaurant_menu",
+            },
+            {
+                "type": "click",
+                "selector": "button[data-testid='add-margherita-large']",
+                "text": "Add Margherita Pizza",
+                "role": "open_modal",
+            },
+            {
+                "type": "click",
+                "selector": "button[data-testid='confirm-add-to-cart']",
+                "text": "Add to Cart",
+                "role": "submit",
+            },
+            {
+                "type": "screenshot",
+                "path": "/screens/autodelivery/cart.png",
+                "label": "Delivery cart modal",
+            },
+        ],
+    ),
+    SeedTaskTemplate(
+        website_name="AutoMail",
+        website_slug="automail",
+        url="http://automail.autoppia.com/dashboard/campaigns/new",
+        use_case_label="Create Campaign",
+        use_case_slug="create-campaign",
+        prompt="Compose a new promotional email campaign for the product launch of Atlas.",
+        success_criteria="Campaign draft titled 'Atlas Launch' appears in the dashboard.",
+        actions=[
+            {
+                "type": "navigate",
+                "url": "http://automail.autoppia.com/dashboard/campaigns/new",
+                "status": "completed",
+                "context": "campaign_builder",
+            },
+            {
+                "type": "type",
+                "selector": "input[name='campaign_title']",
+                "value": "Atlas Launch",
+                "field": "campaign_title",
+            },
+            {
+                "type": "type",
+                "selector": "textarea[name='email_body']",
+                "value": "Discover the new Atlas productivity suite launch this week.",
+                "field": "email_body",
+            },
+            {
+                "type": "click",
+                "selector": "button[data-testid='save-draft']",
+                "text": "Save Draft",
+                "role": "submit",
+            },
+        ],
+    ),
+]
+
+
+def _template_for_index(index: int) -> SeedTaskTemplate:
+    if not SEED_TASK_LIBRARY:
+        raise RuntimeError("Seed task library is empty; unable to seed tasks.")
+    return SEED_TASK_LIBRARY[index % len(SEED_TASK_LIBRARY)]
+
+
 def _build_validator_info(validator_uid: int) -> ValidatorInfo:
     """Populate validator metadata using the static directory fallback."""
     metadata = get_validator_metadata(validator_uid)
@@ -89,6 +488,7 @@ def _build_seed_request(
     weights: Dict[str, float] = {}
     base_weight = round(1.0 / num_miners, 4)
     run_scores: List[float] = []
+    template_index = 0
 
     def _slug(value: str) -> str:
         text = value.lower()
@@ -120,28 +520,43 @@ def _build_seed_request(
             task_id = f"{agent_run_id}_task_{task_index:03d}"
             run_task_ids.append(task_id)
 
+            template = _template_for_index(template_index)
+            template_index += 1
+
             task = Task(
                 task_id=task_id,
                 validator_round_id=validator_round_id,
                 scope="local",
                 is_web_real=False,
                 web_project_id=None,
-                url=f"https://example.com/validator/{validator_uid}/task/{task_index}",
-                prompt=f"Seed task {task_index + 1} for miner {miner_uid}",
-                html="<html><body>Seeded Task</body></html>",
-                clean_html="<html><body>Seeded Task</body></html>",
+                url=template.url,
+                prompt=template.prompt,
+                html=f"<html><body>{template.website_name} task - {template.use_case_label}</body></html>",
+                clean_html=f"<html><body>{template.website_name} task - {template.use_case_label}</body></html>",
                 interactive_elements=None,
                 screenshot=None,
                 screenshot_description=None,
-                specifications={"browser": "chromium"},
+                specifications={"browser": "chromium", "website": template.website_slug},
                 tests=[],
                 milestones=None,
-                relevant_data={"validator_uid": validator_uid, "miner_uid": miner_uid},
-                success_criteria="Return the seeded payload.",
-                use_case=None,
+                relevant_data={
+                    "validator_uid": validator_uid,
+                    "miner_uid": miner_uid,
+                    "website": template.website_slug,
+                    "website_name": template.website_name,
+                    "use_case": template.use_case_slug,
+                },
+                success_criteria=template.success_criteria,
+                use_case={"name": template.use_case_label, "slug": template.use_case_slug},
                 should_record=False,
             )
             tasks.append(task)
+
+            action_models: List[Action] = []
+            for action_payload in template.actions:
+                attributes = {key: value for key, value in action_payload.items() if key != "type"}
+                attributes.setdefault("status", "completed")
+                action_models.append(Action(type=action_payload["type"], attributes=attributes))
 
             solution = TaskSolution(
                 solution_id=f"{task_id}_solution",
@@ -150,16 +565,16 @@ def _build_seed_request(
                 agent_run_id=agent_run_id,
                 miner_uid=miner_uid,
                 validator_uid=validator_uid,
-                actions=[
-                    Action(
-                        type="navigate",
-                        attributes={"url": task.url, "status": "completed"},
-                    )
-                ],
+                actions=action_models,
                 web_agent_id=f"seed-agent-{miner_uid}",
                 recording=None,
             )
             task_solutions.append(solution)
+
+            execution_history = [
+                f"{payload['type']} -> {payload.get('selector') or payload.get('url') or payload.get('text') or payload.get('label') or 'completed'}"
+                for payload in template.actions
+            ]
 
             evaluation = EvaluationResult(
                 evaluation_id=f"{task_id}_evaluation",
@@ -170,8 +585,19 @@ def _build_seed_request(
                 miner_uid=miner_uid,
                 validator_uid=validator_uid,
                 final_score=run_score,
-                test_results_matrix=[[TestResult(success=True, extra_data={"task_id": task_id})]],
-                execution_history=["navigate -> completed"],
+                test_results_matrix=[
+                    [
+                        TestResult(
+                            success=True,
+                            extra_data={
+                                "task_id": task_id,
+                                "website": template.website_slug,
+                                "use_case": template.use_case_slug,
+                            },
+                        )
+                    ]
+                ],
+                execution_history=execution_history,
                 feedback=None,
                 web_agent_id=solution.web_agent_id,
                 raw_score=run_score,
@@ -248,28 +674,45 @@ def _build_seed_request(
             task_id = f"{agent_run_id}_task_{task_index:03d}"
             run_task_ids.append(task_id)
 
+            template = _template_for_index(template_index)
+            template_index += 1
+
             task = Task(
                 task_id=task_id,
                 validator_round_id=validator_round_id,
                 scope="local",
                 is_web_real=False,
                 web_project_id=None,
-                url=f"https://example.com/benchmark/{agent.uid}/task/{task_index}",
-                prompt=f"Benchmark task {task_index + 1} for {agent.agent_name}",
-                html="<html><body>Benchmark Task</body></html>",
-                clean_html="<html><body>Benchmark Task</body></html>",
+                url=template.url,
+                prompt=f"{template.prompt} (benchmark run)",
+                html=f"<html><body>{template.website_name} benchmark task - {template.use_case_label}</body></html>",
+                clean_html=f"<html><body>{template.website_name} benchmark task - {template.use_case_label}</body></html>",
                 interactive_elements=None,
                 screenshot=None,
                 screenshot_description=None,
-                specifications={"browser": "chromium"},
+                specifications={"browser": "chromium", "website": template.website_slug},
                 tests=[],
                 milestones=None,
-                relevant_data={"validator_uid": validator_uid, "benchmark": True},
-                success_criteria="Return the seeded benchmark payload.",
-                use_case=None,
+                relevant_data={
+                    "validator_uid": validator_uid,
+                    "benchmark": True,
+                    "website": template.website_slug,
+                    "website_name": template.website_name,
+                    "use_case": template.use_case_slug,
+                },
+                success_criteria=template.success_criteria,
+                use_case={"name": template.use_case_label, "slug": template.use_case_slug},
                 should_record=False,
             )
             tasks.append(task)
+
+            action_models: List[Action] = []
+            for action_payload in template.actions:
+                attributes = {key: value for key, value in action_payload.items() if key != "type"}
+                attributes.setdefault("status", "completed")
+                attributes.setdefault("benchmark", True)
+                attributes.setdefault("source", agent.agent_name or "Benchmark")
+                action_models.append(Action(type=action_payload["type"], attributes=attributes))
 
             solution = TaskSolution(
                 solution_id=f"{task_id}_solution",
@@ -278,16 +721,16 @@ def _build_seed_request(
                 agent_run_id=agent_run_id,
                 miner_uid=agent.uid,
                 validator_uid=validator_uid,
-                actions=[
-                    Action(
-                        type="benchmark",
-                        attributes={"source": agent.agent_name or "Benchmark", "status": "completed"},
-                    )
-                ],
+                actions=action_models,
                 web_agent_id=f"seed-sota-{_slug(agent.agent_name or str(agent.uid))}",
                 recording=None,
             )
             task_solutions.append(solution)
+
+            execution_history = [
+                f"{payload['type']} -> {payload.get('selector') or payload.get('url') or payload.get('text') or payload.get('label') or 'completed'}"
+                for payload in template.actions
+            ]
 
             evaluation = EvaluationResult(
                 evaluation_id=f"{task_id}_evaluation",
@@ -298,8 +741,20 @@ def _build_seed_request(
                 miner_uid=agent.uid,
                 validator_uid=validator_uid,
                 final_score=benchmark_score,
-                test_results_matrix=[[TestResult(success=True, extra_data={"task_id": task_id})]],
-                execution_history=["benchmark -> completed"],
+                test_results_matrix=[
+                    [
+                        TestResult(
+                            success=True,
+                            extra_data={
+                                "task_id": task_id,
+                                "website": template.website_slug,
+                                "use_case": template.use_case_slug,
+                                "benchmark": True,
+                            },
+                        )
+                    ]
+                ],
+                execution_history=execution_history,
                 feedback=None,
                 web_agent_id=solution.web_agent_id,
                 raw_score=benchmark_score,

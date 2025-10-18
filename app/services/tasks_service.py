@@ -32,13 +32,20 @@ from app.models.ui.tasks import (
     RoundInfo,
     Task as UITask,
     TaskAction,
+    ActionType,
     TaskAnalytics,
     TaskDetails,
+    TaskRelationships,
     TaskInfo,
     TaskLog,
     TaskMetadata,
+    TaskAgentRunSummary,
+    TaskEvaluationSummary,
+    TaskMinerSummary,
     TaskPerformance,
+    TaskRoundSummary,
     TaskResults,
+    TaskSolutionSummary,
     TaskSummary,
     TaskScreenshot,
     TaskStatistics,
@@ -47,6 +54,7 @@ from app.models.ui.tasks import (
     LogLevel,
     UseCasePerformance,
     ValidatorInfo,
+    TaskValidatorSummary,
     WebsitePerformance,
 )
 from app.utils.images import resolve_agent_image
@@ -471,9 +479,137 @@ class TasksService:
             },
         )
 
+        round_summary = TaskRoundSummary(
+            validatorRoundId=context.round.validator_round_id,
+            roundNumber=context.round.round_number,
+            status=context.round.status,
+            startedAt=_parse_iso(context.round.started_at),
+            endedAt=_parse_iso(context.round.ended_at) if context.round.ended_at else None,
+            startEpoch=getattr(context.round, "start_epoch", None),
+            endEpoch=getattr(context.round, "end_epoch", None),
+        )
+
+        validator_model: Optional[ValidatorInfo] = None
+        if context.round.validators:
+            validator_model = next(
+                (val for val in context.round.validators if val.uid == context.agent_run.validator_uid),
+                context.round.validators[0],
+            )
+        elif getattr(context.round, "validator_info", None):
+            validator_model = context.round.validator_info
+
+        if validator_model is None:
+            validator_model = ValidatorInfo(
+                uid=context.agent_run.validator_uid,
+                hotkey=_format_validator_id(context.agent_run.validator_uid),
+                coldkey=None,
+                stake=0.0,
+                vtrust=0.0,
+                name=None,
+                version=None,
+            )
+
+        validator_summary = TaskValidatorSummary(
+            uid=validator_model.uid,
+            hotkey=validator_model.hotkey,
+            coldkey=validator_model.coldkey,
+            name=validator_model.name,
+            stake=float(getattr(validator_model, "stake", 0.0) or 0.0),
+            vtrust=float(getattr(validator_model, "vtrust", 0.0) or 0.0),
+            version=getattr(validator_model, "version", None),
+        )
+
+        miner_model = context.agent_run.miner_info
+        miner_summary = TaskMinerSummary(
+            uid=miner_model.uid if miner_model and miner_model.uid is not None else context.agent_run.miner_uid,
+            hotkey=miner_model.hotkey if miner_model else None,
+            name=(
+                miner_model.agent_name
+                if miner_model and miner_model.agent_name
+                else _format_agent_id(context.agent_run.miner_uid)
+            ),
+            github=getattr(miner_model, "github", None) if miner_model else None,
+            provider=getattr(miner_model, "provider", None) if miner_model else None,
+            image=resolve_agent_image(miner_model),
+            isSota=context.agent_run.is_sota,
+        )
+
+        started_at_dt = datetime.fromtimestamp(context.agent_run.started_at, tz=timezone.utc)
+        ended_at_dt = (
+            datetime.fromtimestamp(context.agent_run.ended_at, tz=timezone.utc)
+            if context.agent_run.ended_at
+            else None
+        )
+        if context.agent_run.elapsed_sec is not None:
+            duration = _safe_int(context.agent_run.elapsed_sec)
+        elif ended_at_dt:
+            duration = int((ended_at_dt - started_at_dt).total_seconds())
+        else:
+            duration = None
+
+        if context.evaluation:
+            evaluation_status = (
+                TaskStatus.COMPLETED if context.evaluation.final_score >= 0.5 else TaskStatus.FAILED
+            )
+        elif context.agent_run.ended_at:
+            evaluation_status = TaskStatus.FAILED if task.score < 0.5 else TaskStatus.COMPLETED
+        else:
+            evaluation_status = TaskStatus.RUNNING
+
+        agent_run_summary = TaskAgentRunSummary(
+            agentRunId=context.agent_run.agent_run_id,
+            validatorUid=context.agent_run.validator_uid,
+            minerUid=context.agent_run.miner_uid,
+            isSota=context.agent_run.is_sota,
+            startedAt=started_at_dt,
+            endedAt=ended_at_dt,
+            duration=duration,
+            taskCount=context.agent_run.n_tasks_total or len(context.agent_run.task_ids or []),
+            completedTasks=context.agent_run.n_tasks_completed,
+            failedTasks=context.agent_run.n_tasks_failed,
+            averageScore=context.agent_run.avg_eval_score,
+        )
+
+        evaluation_summary: Optional[TaskEvaluationSummary] = None
+        if context.evaluation:
+            evaluation_summary = TaskEvaluationSummary(
+                evaluationId=context.evaluation.evaluation_id,
+                finalScore=context.evaluation.final_score,
+                rawScore=context.evaluation.raw_score or context.evaluation.final_score,
+                evaluationTime=context.evaluation.evaluation_time,
+                status=evaluation_status,
+                validatorUid=context.evaluation.validator_uid,
+                minerUid=context.evaluation.miner_uid,
+                webAgentId=context.evaluation.web_agent_id,
+                hasFeedback=bool(context.evaluation.feedback),
+                hasRecording=bool(context.evaluation.gif_recording),
+            )
+
+        solution_summary: Optional[TaskSolutionSummary] = None
+        if context.solution:
+            solution_summary = TaskSolutionSummary(
+                solutionId=context.solution.solution_id,
+                agentRunId=context.solution.agent_run_id,
+                minerUid=context.solution.miner_uid,
+                validatorUid=context.solution.validator_uid,
+                actionsCount=len(context.solution.actions or []),
+                webAgentId=context.solution.web_agent_id,
+                hasRecording=bool(context.solution.recording),
+            )
+
+        relationships = TaskRelationships(
+            round=round_summary,
+            validator=validator_summary,
+            miner=miner_summary,
+            agentRun=agent_run_summary,
+            evaluation=evaluation_summary,
+            solution=solution_summary,
+        )
+
         task_payload = task.model_dump()
         task_payload["performance"] = performance
         task_payload["metadata"] = metadata
+        task_payload["relationships"] = relationships
         return TaskDetails(**task_payload)
 
     def build_personas(self, context: TaskContext) -> PersonasData:
@@ -623,16 +759,64 @@ class TasksService:
             return actions
 
         for index, action in enumerate(context.solution.actions):
-            attributes = getattr(action, "attributes", {}) if hasattr(action, "attributes") else action.get("attributes", {})
+            attributes: Dict[str, Any] = {}
+            if hasattr(action, "attributes"):
+                attributes = getattr(action, "attributes", {}) or {}
+            elif isinstance(action, dict):
+                attributes = action.get("attributes", {}) or {}
+
+            raw_type = getattr(action, "type", ActionType.OTHER.value)
+            if isinstance(raw_type, ActionType):
+                raw_type_value = raw_type.value
+            else:
+                raw_type_value = str(raw_type).lower()
+            try:
+                action_type = ActionType(raw_type_value)
+            except ValueError:
+                action_type = ActionType.OTHER
+
+            selector = attributes.get("selector")
+            value = (
+                attributes.get("value")
+                or attributes.get("url")
+                or attributes.get("text")
+                or attributes.get("label")
+                or attributes.get("field")
+                or attributes.get("for")
+            )
+            if value is not None:
+                value = str(value)
+
+            duration_candidate = (
+                attributes.get("durationSeconds")
+                or attributes.get("duration")
+                or getattr(action, "duration", None)
+            )
+            try:
+                duration = float(duration_candidate) if duration_candidate is not None else 0.0
+            except (TypeError, ValueError):
+                duration = 0.0
+
+            status = attributes.get("status")
+            if isinstance(status, str):
+                success_flag = status.lower() not in {"failed", "error"}
+            else:
+                success_flag = bool(getattr(action, "success", True))
+
+            error_message = str(attributes.get("error")) if attributes.get("error") is not None else None
+            metadata = attributes or None
+
             actions.append(
                 TaskAction(
                     id=str(getattr(action, "id", index)),
-                    type=getattr(action, "type", "action"),
-                    selector=attributes.get("selector"),
-                    value=attributes.get("value"),
+                    type=action_type,
+                    selector=selector,
+                    value=value,
                     timestamp=self._action_timestamp(context, index),
-                    duration=float(getattr(action, "duration", 0.0)),
-                    success=bool(getattr(action, "success", True)),
+                    duration=duration,
+                    success=success_flag,
+                    error=error_message,
+                    metadata=metadata,
                 )
             )
         return actions
@@ -773,20 +957,7 @@ class TasksService:
         status = TaskStatus.COMPLETED if score >= 0.5 else TaskStatus.FAILED
         success_rate = int(score * 100)
 
-        actions = []
-        if context.solution and context.solution.actions:
-            for index, action in enumerate(context.solution.actions):
-                actions.append(
-                    TaskAction(
-                        id=str(getattr(action, "id", index)),
-                        type=getattr(action, "type", "action"),
-                        selector=None,
-                        value=None,
-                        timestamp=self._action_timestamp(context, index),
-                        duration=float(getattr(action, "duration", 0.0)),
-                        success=bool(getattr(action, "success", True)),
-                    )
-                )
+        actions = self.build_actions(context)
 
         start_time = context.agent_run.started_at or context.round.started_at
         end_time = context.agent_run.ended_at or start_time
