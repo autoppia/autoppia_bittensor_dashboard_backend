@@ -105,7 +105,11 @@ class ValidatorAuthService:
             raise InvalidSignatureError("Signature verification failed")
 
     def ensure_minimum_stake(self, hotkey: str) -> float:
-        minimum = float(settings.MIN_VALIDATOR_STAKE)
+        try:
+            minimum = float(settings.MIN_VALIDATOR_STAKE)
+        except (TypeError, ValueError):
+            minimum = 0.0
+
         if minimum <= 0:
             return minimum
 
