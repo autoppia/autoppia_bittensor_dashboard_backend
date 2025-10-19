@@ -24,11 +24,17 @@ from app.api.ui.miner_list import router as miner_list_router
 from app.api.ui.subnets import router as subnets_router, legacy_router as subnets_legacy_router
 
 # Configure logging
+# Respect configured debug flag for log level.
+log_level = logging.DEBUG if settings.DEBUG else logging.INFO
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Align uvicorn/access loggers with the same level.
+for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    logging.getLogger(name).setLevel(log_level)
 
 # Create FastAPI app
 app = FastAPI(
