@@ -416,8 +416,10 @@ class OverviewService:
             anthropic_scores = _scores_for_provider(contexts, ["anthropic"])
             browser_scores = _scores_for_provider(contexts, ["browser"])
 
-            def _avg(values: List[float]) -> float:
-                return round(sum(values) / len(values), 3) if values else 0.0
+            def _avg(values: List[float]) -> Optional[float]:
+                if not values:
+                    return None
+                return round(sum(values) / len(values), 3)
 
             timestamp = datetime.fromtimestamp(
                 round_obj.started_at or datetime.now(timezone.utc).timestamp(),
@@ -432,9 +434,9 @@ class OverviewService:
                 LeaderboardEntry(
                     round=round_number,
                     subnet36=round(average_score, 3),
-                    openai_cua=_avg(openai_scores) or round(average_score, 3),
-                    anthropic_cua=_avg(anthropic_scores) or round(average_score, 3),
-                    browser_use=_avg(browser_scores) or round(average_score, 3),
+                    openai_cua=_avg(openai_scores),
+                    anthropic_cua=_avg(anthropic_scores),
+                    browser_use=_avg(browser_scores),
                     timestamp=timestamp,
                 )
             )
@@ -447,17 +449,17 @@ class OverviewService:
         for round_number, round_entries in grouped_entries.items():
             latest_timestamp = max(entry.timestamp for entry in round_entries)
             subnet36_values = [entry.subnet36 for entry in round_entries]
-            openai_values = [entry.openai_cua for entry in round_entries]
-            anthropic_values = [entry.anthropic_cua for entry in round_entries]
-            browser_values = [entry.browser_use for entry in round_entries]
+            openai_values = [value for value in (entry.openai_cua for entry in round_entries) if value is not None]
+            anthropic_values = [value for value in (entry.anthropic_cua for entry in round_entries) if value is not None]
+            browser_values = [value for value in (entry.browser_use for entry in round_entries) if value is not None]
 
             aggregated_entries.append(
                 LeaderboardEntry(
                     round=round_number,
                     subnet36=round(max(subnet36_values), 3) if subnet36_values else 0.0,
-                    openai_cua=round(max(openai_values), 3) if openai_values else 0.0,
-                    anthropic_cua=round(max(anthropic_values), 3) if anthropic_values else 0.0,
-                    browser_use=round(max(browser_values), 3) if browser_values else 0.0,
+                    openai_cua=round(max(openai_values), 3) if openai_values else None,
+                    anthropic_cua=round(max(anthropic_values), 3) if anthropic_values else None,
+                    browser_use=round(max(browser_values), 3) if browser_values else None,
                     timestamp=latest_timestamp,
                 )
             )

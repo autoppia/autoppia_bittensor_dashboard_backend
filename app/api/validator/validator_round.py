@@ -288,6 +288,12 @@ class FinishRoundRequest(BaseModel):
     agent_runs: list[FinishRoundAgentRun] = Field(default_factory=list)
 
 
+@router.post("/auth-check", dependencies=[Depends(require_validator_auth)])
+async def validator_auth_check() -> dict[str, Any]:
+    """Lightweight endpoint validators can call to verify auth headers before starting a round."""
+    return {"message": "Validator authentication verified"}
+
+
 @router.post("/start", dependencies=[Depends(require_validator_auth)])
 async def start_round(
     payload: Union[StartRoundRequest, LegacyStartRoundRequest],

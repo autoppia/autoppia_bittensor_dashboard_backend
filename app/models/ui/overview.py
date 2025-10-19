@@ -116,9 +116,9 @@ class LeaderboardEntry(BaseModel):
     """Leaderboard entry for performance comparison."""
     round: int
     subnet36: float
-    openai_cua: float
-    anthropic_cua: float
-    browser_use: float
+    openai_cua: Optional[float] = None
+    anthropic_cua: Optional[float] = None
+    browser_use: Optional[float] = None
     timestamp: str  # ISO timestamp
 
 
