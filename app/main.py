@@ -18,6 +18,7 @@ from app.api.ui.overview import router as overview_router
 from app.api.ui.rounds import router as rounds_router
 from app.api.ui.subnets import legacy_router as subnets_legacy_router
 from app.api.ui.subnets import router as subnets_router
+from app.api.ui.tasks import router as tasks_router
 from app.api.validator.rounds_post import router as rounds_post_router
 from app.api.validator.validator_round import router as validator_rounds_router
 from app.config import settings
