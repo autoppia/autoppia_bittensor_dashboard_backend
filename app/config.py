@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     SUBTENSOR_NETWORK: Optional[str] = None
     SUBTENSOR_ENDPOINT: Optional[str] = None
     VALIDATOR_AUTH_CACHE_TTL: int = 180
+    LOG_LEVEL: str = "INFO"
 
     # CORS Configuration
     CORS_ORIGINS: list[str] = ["*"]
@@ -61,6 +62,8 @@ class Settings(BaseSettings):
 
         if self.AWS_S3_GIF_PREFIX:
             self.AWS_S3_GIF_PREFIX = self.AWS_S3_GIF_PREFIX.strip("/") or "gifs"
+
+        self.LOG_LEVEL = (self.LOG_LEVEL or "INFO").strip().upper()
 
         if "*" in self.CORS_ORIGINS:
             return

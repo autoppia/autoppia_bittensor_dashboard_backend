@@ -1,31 +1,53 @@
+import logging
+import os
+import time
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-import logging
-import time
-import os
 
-from app.config import settings
-from app.db.session import init_db
-from app.api.validator.rounds_post import router as rounds_post_router
-from app.api.validator.validator_round import router as validator_rounds_router
-from app.api.ui.cache import router as cache_router
-from app.services.idempotency import get_cache_stats
-from app.api.ui.rounds import router as rounds_router
-from app.api.ui.legacy_rounds import legacy_router as legacy_rounds_router
 from app.api.ui.agent_runs import router as agent_runs_router
-from app.api.ui.evaluations import router as evaluations_router
-from app.api.ui.tasks import router as tasks_router
 from app.api.ui.agents import router as agents_router
+from app.api.ui.cache import router as cache_router
+from app.api.ui.evaluations import router as evaluations_router
+from app.api.ui.legacy_rounds import legacy_router as legacy_rounds_router
+from app.api.ui.miner_list import router as miner_list_router
 from app.api.ui.miners import router as miners_router
 from app.api.ui.overview import router as overview_router
-from app.api.ui.miner_list import router as miner_list_router
-from app.api.ui.subnets import router as subnets_router, legacy_router as subnets_legacy_router
+from app.api.ui.rounds import router as rounds_router
+from app.api.ui.subnets import legacy_router as subnets_legacy_router
+from app.api.ui.subnets import router as subnets_router
+from app.api.validator.rounds_post import router as rounds_post_router
+from app.api.validator.validator_round import router as validator_rounds_router
+from app.config import settings
+from app.db.session import init_db
+from app.services.idempotency import get_cache_stats
 
 # Configure logging
-# Respect configured debug flag for log level.
-log_level = logging.DEBUG if settings.DEBUG else logging.INFO
+_KNOWN_LEVELS = {
+    "CRITICAL": logging.CRITICAL,
+    "ERROR": logging.ERROR,
+    "WARNING": logging.WARNING,
+    "INFO": logging.INFO,
+    "DEBUG": logging.DEBUG,
+    "NOTSET": logging.NOTSET,
+}
+
+
+def _parse_log_level(value: str) -> int:
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return _KNOWN_LEVELS.get(value.upper(), logging.INFO)
+    return numeric if numeric in _KNOWN_LEVELS.values() else logging.INFO
+
+
+configured_level_name = settings.LOG_LEVEL or "INFO"
+if settings.DEBUG and configured_level_name == "INFO":
+    configured_level_name = "DEBUG"
+
+log_level = _parse_log_level(configured_level_name)
 logging.basicConfig(
     level=log_level,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"

@@ -64,9 +64,34 @@ class ValidatorAuthService:
         except Exception as exc:  # pragma: no cover - defensive
             raise AuthUnavailableError(f"Unable to fetch metagraph: {exc}") from exc
 
+        hotkeys_raw = getattr(metagraph, "hotkeys", None)
+        if hotkeys_raw is None:
+            hotkeys = []
+        elif hasattr(hotkeys_raw, "tolist"):
+            hotkeys = list(hotkeys_raw.tolist())
+        elif isinstance(hotkeys_raw, (list, tuple)):
+            hotkeys = list(hotkeys_raw)
+        else:
+            try:
+                hotkeys = list(hotkeys_raw)
+            except TypeError:
+                hotkeys = [hotkeys_raw]
+
+        stake_values: list[object]
+        stake_values_raw = getattr(metagraph, "S", None)
+        if stake_values_raw is None:
+            stake_values = []
+        elif hasattr(stake_values_raw, "tolist"):
+            stake_values = list(stake_values_raw.tolist())
+        elif isinstance(stake_values_raw, (list, tuple)):
+            stake_values = list(stake_values_raw)
+        else:
+            try:
+                stake_values = list(stake_values_raw)
+            except TypeError:
+                stake_values = [stake_values_raw]
+
         stakes: Dict[str, float] = {}
-        hotkeys = getattr(metagraph, "hotkeys", []) or []
-        stake_values = getattr(metagraph, "S", []) or []
         for index, hotkey in enumerate(hotkeys):
             raw_value: Optional[float] = None
             if index < len(stake_values):
@@ -74,6 +99,12 @@ class ValidatorAuthService:
                 try:
                     raw_value = float(candidate.item()) if hasattr(candidate, "item") else float(candidate)
                 except Exception:
+                    logger.debug(
+                        "Unable to coerce stake value for hotkey=%s candidate=%r",
+                        hotkey,
+                        candidate,
+                        exc_info=True,
+                    )
                     raw_value = None
             stakes[str(hotkey)] = float(raw_value or 0.0)
         return stakes
