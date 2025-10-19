@@ -45,6 +45,7 @@ from app.models.ui.agents import (
 from app.services.rounds_service import AgentRunContext, RoundsService
 from app.services.agent_runs_service import AgentRunsService
 from app.utils.images import resolve_agent_image
+from app.utils.urls import build_taostats_miner_url
 
 logger = logging.getLogger(__name__)
 
@@ -1093,6 +1094,8 @@ class AgentsService:
             tz=timezone.utc,
         )
 
+        taostats_url = build_taostats_miner_url(hotkey)
+
         return Agent(
             id=aggregate.agent_id,
             uid=aggregate.uid,
@@ -1101,7 +1104,7 @@ class AgentsService:
             type=AgentType.AUTOPPIA,
             imageUrl=image_url,
             githubUrl=github,
-            taostatsUrl=f"https://taostats.io/miner/{aggregate.uid}" if aggregate.uid is not None else None,
+            taostatsUrl=taostats_url,
             isSota=aggregate.is_sota,
             description=description,
             version=aggregate.version,

@@ -20,6 +20,7 @@ from app.models.ui.miners import (
 from app.models.ui.miners import Pagination
 from app.services.agents_service import AgentsService, AgentAggregate
 from app.utils.images import resolve_agent_image
+from app.utils.urls import build_taostats_miner_url
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,7 @@ class MinersService:
         image_url = resolve_agent_image(miner_info)
         github = miner_info.github if miner_info else None
         description = miner_info.description if miner_info else ""
+        taostats_url = build_taostats_miner_url(hotkey) or ""
         average_score = (
             aggregate.total_score / aggregate.total_runs if aggregate.total_runs else 0.0
         )
@@ -151,7 +153,7 @@ class MinersService:
             hotkey=hotkey,
             imageUrl=image_url,
             githubUrl=github,
-            taostatsUrl=f"https://taostats.io/miner/{aggregate.uid}" if aggregate.uid is not None else "",
+            taostatsUrl=taostats_url,
             isSota=aggregate.is_sota,
             status=status,
             description=description,

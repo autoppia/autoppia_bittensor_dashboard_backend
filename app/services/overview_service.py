@@ -84,13 +84,14 @@ class OverviewService:
         top_score = 0.0
         validators: set[int] = set()
         miners: set[int] = set()
-        current_round = 0
+        max_round_number = 0
         version_candidates: List[str] = []
 
         for record, contexts in records_with_contexts:
             round_obj = record.model
             round_number = round_obj.round_number or _round_id_to_int(round_obj.validator_round_id)
-            current_round = max(current_round, round_number or 0)
+            if round_number:
+                max_round_number = max(max_round_number, round_number)
 
             if round_obj.validator_uid:
                 validators.add(round_obj.validator_uid)
@@ -119,12 +120,39 @@ class OverviewService:
         total_websites = await self._total_websites()
         subnet_version = version_candidates[0] if version_candidates else "1.0.0"
 
+        current_round_value = 0
+        try:
+            current_round_overview = await self.rounds_service.get_current_round_overview()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Unable to resolve current round overview: %s", exc)
+            current_round_overview = None
+
+        def _resolve_round_number(payload: Optional[Dict[str, Any]]) -> int:
+            if not payload:
+                return 0
+            candidate = payload.get("round") or payload.get("roundNumber") or payload.get("id")
+            if isinstance(candidate, int):
+                return candidate
+            if isinstance(candidate, float):
+                return int(candidate)
+            if isinstance(candidate, str):
+                parsed = _round_id_to_int(candidate)
+                if parsed:
+                    return parsed
+                if candidate.isdigit():
+                    return int(candidate)
+            return 0
+
+        current_round_value = _resolve_round_number(current_round_overview)
+        if current_round_value <= 0:
+            current_round_value = max_round_number
+
         return OverviewMetrics(
             topScore=round(top_score, 3),
             totalWebsites=total_websites,
             totalValidators=len(validators),
             totalMiners=len(miners),
-            currentRound=current_round,
+            currentRound=current_round_value,
             subnetVersion=subnet_version,
             lastUpdated=datetime.now(timezone.utc).isoformat(),
         )
