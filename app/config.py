@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     def model_post_init(self, __context: Any) -> None:  # type: ignore[override]
         """Ensure required CORS origins are present."""
         if not self.DATABASE_URL:
-            project_root = Path(__file__).resolve().parents[2]
-            db_path = project_root / "autoppia.db"
+            backend_root = Path(__file__).resolve().parents[1]
+            db_path = backend_root / "autoppia.db"
             self.DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
 
         if "*" in self.CORS_ORIGINS:
