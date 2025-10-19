@@ -1,5 +1,6 @@
 # FastAPI and ASGI server
-fastapi>=0.112.0
+# Bittensor pins FastAPI to ~=0.110.1, so keep us on the same minor line.
+fastapi>=0.110.1,<0.111
 uvicorn[standard]>=0.30.0
 
 # Data validation and settings
@@ -20,3 +21,6 @@ httpx>=0.27.0
 
 # AWS integration
 boto3>=1.35.0
+
+# Validator auth dependency (kept optional at install time but required in prod)
+bittensor>=6.9.0,<10.0.0
