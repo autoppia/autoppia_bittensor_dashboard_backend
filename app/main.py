@@ -59,6 +59,14 @@ logger = logging.getLogger(__name__)
 for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
     logging.getLogger(name).setLevel(log_level)
 
+# Quiet noisy dependencies unless explicitly elevated.
+_NOISY_LOGGERS = {
+    "btdecode": max(log_level, logging.INFO),
+    "aiosqlite": max(log_level, logging.INFO),
+}
+for name, level in _NOISY_LOGGERS.items():
+    logging.getLogger(name).setLevel(level)
+
 # Create FastAPI app
 app = FastAPI(
     title=settings.APP_NAME,
