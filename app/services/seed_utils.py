@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 
 METAGRAPH_NETUID = 36
 MAX_FALLBACK_MINERS = 200
+MIN_MINER_UID = 0
+MAX_MINER_UID = 255
 
 
 @lru_cache(maxsize=1)
@@ -203,15 +205,26 @@ def _build_validator_seed_records() -> Dict[int, ValidatorSeedRecord]:
     return records
 
 
-def _fallback_miner_seed_records(count: int, exclude_uids: set[int]) -> List[MinerSeedRecord]:
+def _fallback_miner_seed_records(
+    count: int,
+    exclude_uids: set[int],
+    used_uids: set[int],
+) -> List[MinerSeedRecord]:
     providers = ["TensorOps", "SynapseX", "AutoMiner Labs", "NeuraForge"]
     records: List[MinerSeedRecord] = []
-    start_uid = 10_000
+    available_uids = [
+        uid
+        for uid in range(MIN_MINER_UID, MAX_MINER_UID + 1)
+        if uid not in exclude_uids and uid not in used_uids
+    ]
 
-    for index in range(count):
-        uid = start_uid + index
-        if uid in exclude_uids:
-            continue
+    if len(available_uids) < count:
+        raise ValueError(
+            f"Unable to allocate {count} synthetic miners within UID range "
+            f"[{MIN_MINER_UID}, {MAX_MINER_UID}]"
+        )
+
+    for index, uid in enumerate(available_uids[:count]):
         provider = providers[index % len(providers)]
         records.append(
             MinerSeedRecord(
@@ -225,20 +238,36 @@ def _fallback_miner_seed_records(count: int, exclude_uids: set[int]) -> List[Min
                 description=f"Synthetic miner profile provided by {provider}.",
             )
         )
+        used_uids.add(uid)
     return records
 
 
 def _build_miner_seed_records(num_miners: int, exclude_uids: set[int]) -> List[MinerSeedRecord]:
     metagraph_records = _try_fetch_metagraph()
     records: List[MinerSeedRecord] = []
+    used_uids: set[int] = set()
+
+    def _is_within_range(uid: int) -> bool:
+        return MIN_MINER_UID <= uid <= MAX_MINER_UID
+
+    available_capacity = sum(
+        1 for uid in range(MIN_MINER_UID, MAX_MINER_UID + 1) if uid not in exclude_uids
+    )
+    if num_miners > available_capacity:
+        raise ValueError(
+            f"Cannot seed {num_miners} miners; only {available_capacity} UIDs remain "
+            f"in range [{MIN_MINER_UID}, {MAX_MINER_UID}]."
+        )
 
     # Skip metagraph UIDs that are not positive or that are explicitly excluded.
     metagraph_uids = [
-        uid for uid in metagraph_records.keys() if uid > 0 and uid not in exclude_uids
+        uid
+        for uid in metagraph_records.keys()
+        if uid > 0 and uid not in exclude_uids and _is_within_range(uid)
     ]
     for uid in sorted(metagraph_uids):
         hotkey, coldkey = metagraph_records[uid]
-        if uid in exclude_uids:
+        if uid in exclude_uids or uid in used_uids:
             continue
         records.append(
             MinerSeedRecord(
@@ -252,13 +281,18 @@ def _build_miner_seed_records(num_miners: int, exclude_uids: set[int]) -> List[M
                 description="Miner identity discovered via Bittensor metagraph.",
             )
         )
+        used_uids.add(uid)
         if len(records) >= num_miners:
             break
 
     if len(records) < num_miners:
         fallback_needed = num_miners - len(records)
         records.extend(
-            _fallback_miner_seed_records(fallback_needed, exclude_uids=exclude_uids)
+            _fallback_miner_seed_records(
+                fallback_needed,
+                exclude_uids=exclude_uids,
+                used_uids=used_uids,
+            )
         )
 
     return records[:num_miners]

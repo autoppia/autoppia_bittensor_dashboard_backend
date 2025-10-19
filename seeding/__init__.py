@@ -5,6 +5,7 @@ This package provides convenience helpers that wrap the backend's seeding
 utilities, ensuring we exercise the same REST endpoints a real validator uses.
 """
 
+from .flush import flush_seed_database
 from .validator_round import (
     seed_multiple_rounds,
     seed_round,
@@ -14,6 +15,7 @@ from .validator_round import (
 )
 
 __all__ = [
+    "flush_seed_database",
     "seed_multiple_rounds",
     "seed_round",
     "seed_round_for_validators",
