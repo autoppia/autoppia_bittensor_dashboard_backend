@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import threading
 import time
+import logging
 from typing import Dict, Optional
 
 from fastapi import Depends, HTTPException, Request, status
@@ -11,6 +12,8 @@ from app.config import settings
 
 VALIDATOR_HOTKEY_HEADER = "x-validator-hotkey"
 VALIDATOR_SIGNATURE_HEADER = "x-validator-signature"
+
+logger = logging.getLogger(__name__)
 
 
 class ValidatorAuthError(Exception):
@@ -101,7 +104,13 @@ class ValidatorAuthService:
         except Exception as exc:
             raise InvalidSignatureError(f"Invalid validator hotkey address: {exc}") from exc
 
-        if not keypair.verify(message_bytes, signature):
+        try:
+            is_valid = bool(keypair.verify(message_bytes, signature))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("Validator signature verification failed unexpectedly for hotkey=%s", hotkey)
+            raise AuthUnavailableError(f"Signature verification unavailable: {exc}") from exc
+
+        if not is_valid:
             raise InvalidSignatureError("Signature verification failed")
 
     def ensure_minimum_stake(self, hotkey: str) -> float:
@@ -151,17 +160,32 @@ async def require_validator_auth(
         service.verify_signature(hotkey=hotkey, signature_b64=signature)
         service.ensure_minimum_stake(hotkey)
     except InvalidSignatureError as exc:
+        logger.warning("Validator auth failed: invalid signature for hotkey=%s", hotkey)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(exc),
         ) from exc
     except StakeTooLowError as exc:
+        logger.warning("Validator auth failed: stake too low for hotkey=%s", hotkey)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
     except AuthUnavailableError as exc:
+        logger.error("Validator auth unavailable: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
+        ) from exc
+    except ValidatorAuthError as exc:  # pragma: no cover - defensive
+        logger.exception("Unexpected validator auth error: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception("Unhandled validator auth failure")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Validator authentication failed unexpectedly",
         ) from exc
