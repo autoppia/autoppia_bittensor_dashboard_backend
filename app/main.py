@@ -63,6 +63,7 @@ for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
 _NOISY_LOGGERS = {
     "btdecode": max(log_level, logging.INFO),
     "aiosqlite": max(log_level, logging.INFO),
+    "bittensor": max(log_level, logging.INFO),
 }
 for name, level in _NOISY_LOGGERS.items():
     logging.getLogger(name).setLevel(level)
@@ -185,7 +186,7 @@ async def clear_cache():
 @app.on_event("startup")
 async def on_startup():
     """Initialize the application on startup."""
-    logger.info("Starting Autoppia Leaderboard API...")
+    logger.info("Starting Autoppia IWA Platform API...")
     
     try:
         await init_db()
@@ -202,7 +203,7 @@ async def on_startup():
 @app.on_event("shutdown")
 async def on_shutdown():
     """Clean up resources on shutdown."""
-    logger.info("Shutting down Autoppia Leaderboard API...")
+    logger.info("Shutting down Autoppia IWA Platform API...")
     
     try:
         pass
