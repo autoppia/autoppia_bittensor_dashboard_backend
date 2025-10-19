@@ -192,6 +192,29 @@ class AgentPerformanceMetrics(BaseModel):
     performanceTrend: List[PerformanceTrend] = Field(default_factory=list, description="Performance trend data")
 
 
+class AgentRoundMetrics(BaseModel):
+    """Round-specific metrics for an agent."""
+    roundId: int = Field(..., description="Round identifier")
+    score: float = Field(..., description="Average score achieved in the round")
+    topScore: float = Field(..., description="Top score among agents in the round")
+    rank: Optional[int] = Field(None, description="Agent rank within the round leaderboard")
+    totalRuns: int = Field(default=0, description="Number of validator runs for the agent in the round")
+    totalValidators: int = Field(default=0, description="Number of validators that evaluated the agent in the round")
+    validatorUids: List[int] = Field(default_factory=list, description="Validator UIDs that evaluated the agent")
+    validators: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Validator metadata (uid, hotkey, name) for the round",
+    )
+    totalTasks: int = Field(default=0, description="Total tasks attempted in the round")
+    completedTasks: int = Field(default=0, description="Tasks completed successfully in the round")
+    failedTasks: int = Field(default=0, description="Tasks failed in the round")
+    successRate: float = Field(default=0.0, description="Success rate (0-1) for the round")
+    averageResponseTime: float = Field(
+        default=0.0,
+        description="Average response time across validator runs in the round (seconds)",
+    )
+
+
 # --- Comparison Models ---
 class AgentComparisonMetrics(BaseModel):
     """Agent comparison metrics model."""
@@ -276,6 +299,14 @@ class AgentDetailResponse(BaseModel):
     """Agent detail response model."""
     agent: Agent = Field(..., description="Agent details")
     scoreRoundData: List[ScoreRoundDataPoint] = Field(default_factory=list, description="Score vs round data points")
+    availableRounds: List[int] = Field(
+        default_factory=list,
+        description="Rounds where the agent participated",
+    )
+    roundMetrics: Optional[AgentRoundMetrics] = Field(
+        default=None,
+        description="Round-specific metrics for the selected round",
+    )
 
 
 class AgentPerformanceResponse(BaseModel):

@@ -41,6 +41,7 @@ from app.models.ui.agents import (
     PerformanceDistribution,
     TopAgent,
     ScoreRoundDataPoint,
+    AgentRoundMetrics,
 )
 from app.services.rounds_service import AgentRunContext, RoundsService
 from app.services.agent_runs_service import AgentRunsService
@@ -64,6 +65,12 @@ def _round_id_to_int(round_id: str) -> int:
         return int(matches[-1])
     except ValueError:
         return 0
+
+
+def _context_round_number(context: AgentRunContext) -> int:
+    return int(
+        context.round.round_number or _round_id_to_int(context.round.validator_round_id)
+    )
 
 
 def _ts(value: Optional[float]) -> float:
@@ -110,6 +117,43 @@ class AgentAggregate:
     rounds: set = field(default_factory=set)
     first_seen: float = field(default_factory=lambda: float("inf"))
     last_seen: float = field(default_factory=lambda: 0.0)
+
+
+@dataclass
+class RoundAgentSnapshot:
+    """Aggregated snapshot of an agent's performance within a specific round."""
+
+    aggregate: AgentAggregate
+    round_number: int
+    average_score: float
+    best_score: float
+    total_runs: int
+    total_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    validator_details: List[Dict[str, Any]] = field(default_factory=list)
+    durations: List[float] = field(default_factory=list)
+    rank: int = 0
+
+    @property
+    def average_duration(self) -> float:
+        if not self.durations:
+            return 0.0
+        return sum(self.durations) / len(self.durations)
+
+    @property
+    def success_rate(self) -> float:
+        if self.total_tasks <= 0:
+            return 0.0
+        return self.completed_tasks / self.total_tasks
+
+    @property
+    def validator_uids(self) -> List[int]:
+        return [
+            detail["uid"]
+            for detail in self.validator_details
+            if detail.get("uid") is not None
+        ]
 
 
 _CACHE_TTL_ENV = "AGENTS_CACHE_TTL_SECONDS"
@@ -192,7 +236,11 @@ class AgentsService:
             limit=limit,
         )
 
-    async def get_agent(self, agent_id: str) -> AgentDetailResponse:
+    async def get_agent(
+        self,
+        agent_id: str,
+        round_number: Optional[int] = None,
+    ) -> AgentDetailResponse:
         aggregates = await self._aggregate_agents()
         aggregate = self._resolve_aggregate(aggregates, agent_id)
         if aggregate is None:
@@ -217,7 +265,62 @@ class AgentsService:
             for context, score in self._run_scores(aggregate)
         ]
 
-        return AgentDetailResponse(agent=agent_model, scoreRoundData=score_round_data)
+        available_rounds = sorted(
+            {round_id for round_id in aggregate.rounds if isinstance(round_id, int) and round_id > 0},
+            reverse=True,
+        )
+
+        requested_round = round_number if round_number and round_number > 0 else None
+        snapshot_round = requested_round or (available_rounds[0] if available_rounds else None)
+
+        round_metrics = None
+        if snapshot_round is not None:
+            snapshots = await self.build_round_snapshots(snapshot_round, aggregates)
+            snapshot = next(
+                (item for item in snapshots if item.aggregate.agent_id == aggregate.agent_id),
+                None,
+            )
+            top_score = snapshots[0].average_score if snapshots else 0.0
+
+            if snapshot:
+                round_metrics = AgentRoundMetrics(
+                    roundId=snapshot_round,
+                    score=snapshot.average_score,
+                    topScore=top_score,
+                    rank=snapshot.rank if snapshot.rank > 0 else None,
+                    totalRuns=snapshot.total_runs,
+                    totalValidators=len(snapshot.validator_details),
+                    validatorUids=snapshot.validator_uids,
+                    validators=snapshot.validator_details,
+                    totalTasks=snapshot.total_tasks,
+                    completedTasks=snapshot.completed_tasks,
+                    failedTasks=snapshot.failed_tasks,
+                    successRate=snapshot.success_rate,
+                    averageResponseTime=snapshot.average_duration,
+                )
+            elif requested_round is not None:
+                round_metrics = AgentRoundMetrics(
+                    roundId=requested_round,
+                    score=0.0,
+                    topScore=top_score,
+                    rank=None,
+                    totalRuns=0,
+                    totalValidators=0,
+                    validatorUids=[],
+                    validators=[],
+                    totalTasks=0,
+                    completedTasks=0,
+                    failedTasks=0,
+                    successRate=0.0,
+                    averageResponseTime=0.0,
+                )
+
+        return AgentDetailResponse(
+            agent=agent_model,
+            scoreRoundData=score_round_data,
+            availableRounds=available_rounds,
+            roundMetrics=round_metrics,
+        )
 
     async def get_performance(
         self,
@@ -695,6 +798,98 @@ class AgentsService:
                 _AGGREGATE_CACHE_SIGNATURE = signature
 
             return aggregates
+
+    async def build_round_snapshots(
+        self,
+        round_number: int,
+        aggregates: Optional[Dict[str, AgentAggregate]] = None,
+    ) -> List[RoundAgentSnapshot]:
+        if round_number <= 0:
+            return []
+
+        if aggregates is None:
+            aggregates = await self._aggregate_agents()
+
+        snapshots: List[RoundAgentSnapshot] = []
+        for aggregate in aggregates.values():
+            round_contexts = [
+                context
+                for context in aggregate.runs
+                if _context_round_number(context) == round_number
+            ]
+            if not round_contexts:
+                continue
+
+            scores: List[float] = []
+            durations: List[float] = []
+            total_tasks = 0
+            completed_tasks = 0
+            failed_tasks = 0
+            validator_details: Dict[int, Dict[str, Any]] = {}
+
+            for context in round_contexts:
+                scores.append(self._compute_run_score(context))
+                duration = self._compute_run_duration(context)
+                if duration is not None:
+                    durations.append(duration)
+
+                total_tasks += context.run.total_tasks or len(context.tasks)
+                completed_tasks += context.run.completed_tasks or 0
+                failed_tasks += context.run.failed_tasks or 0
+
+                validator_uid = context.run.validator_uid
+                validator_hotkey = context.run.validator_hotkey
+
+                detail_key = validator_uid if validator_uid is not None else -1
+                entry = validator_details.get(detail_key)
+                if entry is None:
+                    entry = {
+                        "uid": validator_uid,
+                        "hotkey": validator_hotkey,
+                        "name": None,
+                    }
+                    validator_details[detail_key] = entry
+
+                if validator_hotkey and not entry.get("hotkey"):
+                    entry["hotkey"] = validator_hotkey
+
+                round_metadata = getattr(context.round, "metadata", {}) or {}
+                validator_meta = round_metadata.get("validator") or {}
+                validator_name = (
+                    validator_meta.get("name")
+                    or validator_meta.get("validator_name")
+                    or validator_meta.get("display_name")
+                )
+                if validator_name and not entry.get("name"):
+                    entry["name"] = validator_name
+
+            if not scores:
+                continue
+
+            snapshot = RoundAgentSnapshot(
+                aggregate=aggregate,
+                round_number=round_number,
+                average_score=sum(scores) / len(scores),
+                best_score=max(scores),
+                total_runs=len(round_contexts),
+                total_tasks=total_tasks,
+                completed_tasks=completed_tasks,
+                failed_tasks=failed_tasks,
+                validator_details=list(validator_details.values()),
+                durations=durations,
+            )
+            snapshots.append(snapshot)
+
+        snapshots.sort(key=lambda snap: snap.average_score, reverse=True)
+        current_rank = 0
+        last_score: Optional[float] = None
+        for index, snapshot in enumerate(snapshots, start=1):
+            if last_score is None or abs(snapshot.average_score - last_score) > 1e-6:
+                current_rank = index
+                last_score = snapshot.average_score
+            snapshot.rank = current_rank
+
+        return snapshots
 
     async def _try_get_cached_aggregates(self, now: float) -> Optional[Dict[str, AgentAggregate]]:
         if not _cache_valid(now):

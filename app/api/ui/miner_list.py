@@ -26,9 +26,16 @@ async def list_miners(
     limit: int = Query(50, ge=1, le=100),
     isSota: Optional[bool] = Query(None),
     search: Optional[str] = Query(None),
+    round: Optional[int] = Query(None),
 ):
     service = await _service(session)
-    response = await service.list_miners(page=page, limit=limit, is_sota=isSota, search=search)
+    response = await service.list_miners(
+        page=page,
+        limit=limit,
+        is_sota=isSota,
+        search=search,
+        round_number=round,
+    )
     return response
 
 

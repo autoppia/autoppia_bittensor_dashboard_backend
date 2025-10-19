@@ -3,6 +3,7 @@ from __future__ import annotations
 from hashlib import sha256
 from typing import Optional
 
+from app.config import settings
 from app.models.core import MinerInfo
 
 DEFAULT_VALIDATOR_IMAGE = "/validators/Other.png"
@@ -35,6 +36,26 @@ def _slugify(value: str) -> str:
     )
 
 
+def _ensure_absolute_url(candidate: Optional[str]) -> str:
+    """
+    Convert relative asset paths into fully qualified URLs using the configured asset base.
+    """
+    if not candidate:
+        return ""
+    candidate = candidate.strip()
+    if not candidate:
+        return ""
+    if candidate.startswith(("http://", "https://", "data:")):
+        return candidate
+    if candidate.startswith("//"):
+        return f"https:{candidate}"
+    base = settings.ASSET_BASE_URL.rstrip("/") if settings.ASSET_BASE_URL else ""
+    normalized = candidate.lstrip("/")
+    if base:
+        return f"{base}/{normalized}"
+    return f"/{normalized}"
+
+
 def resolve_agent_image(info: Optional[MinerInfo], existing: Optional[str] = None) -> str:
     """
     Determine the most appropriate image URL for a miner/agent.
@@ -59,27 +80,27 @@ def resolve_agent_image(info: Optional[MinerInfo], existing: Optional[str] = Non
                 continue
             slug = _slugify(candidate)
             if slug in SOTA_IMAGE_OVERRIDES:
-                return SOTA_IMAGE_OVERRIDES[slug]
+                return _ensure_absolute_url(SOTA_IMAGE_OVERRIDES[slug])
             if slug.startswith("sota/"):
                 # already mapped to a sota asset
-                return f"/{slug}"
+                return _ensure_absolute_url(f"/{slug}")
 
         if existing:
             # Preserve explicitly configured assets (e.g., /sota/*.webp)
             if existing.startswith("/"):
-                return existing
+                return _ensure_absolute_url(existing)
             slug = _slugify(existing)
             if slug in SOTA_IMAGE_OVERRIDES:
-                return SOTA_IMAGE_OVERRIDES[slug]
+                return _ensure_absolute_url(SOTA_IMAGE_OVERRIDES[slug])
 
         slug = _slugify(info.agent_name or info.provider or "sota-agent")
-        return f"/sota/{slug}.webp"
+        return _ensure_absolute_url(f"/sota/{slug}.webp")
 
     # Non-SOTA – return the stored image when available
     if info.agent_image:
-        return info.agent_image
+        return _ensure_absolute_url(info.agent_image)
 
-    return _fallback_miner_image(info, existing)
+    return _ensure_absolute_url(_fallback_miner_image(info, existing))
 
 
 def _fallback_miner_image(info: Optional[MinerInfo], existing: Optional[str]) -> str:
@@ -91,7 +112,7 @@ def _fallback_miner_image(info: Optional[MinerInfo], existing: Optional[str]) ->
       (uid, hotkey, agent name, provider) so the same miner keeps the same asset between requests.
     """
     if existing:
-        return existing
+        return _ensure_absolute_url(existing)
 
     identifier = None
     if info:
@@ -124,14 +145,14 @@ def resolve_validator_image(name: Optional[str], existing: Optional[str] = None)
     """
     candidate = (existing or "").strip()
     if candidate and candidate != "/validators/Autoppia.png":
-        return candidate
+        return _ensure_absolute_url(candidate)
 
     if name:
         slug = _slugify(name)
         if slug in VALIDATOR_IMAGE_OVERRIDES:
-            return VALIDATOR_IMAGE_OVERRIDES[slug]
+            return _ensure_absolute_url(VALIDATOR_IMAGE_OVERRIDES[slug])
 
     if candidate:
-        return candidate
+        return _ensure_absolute_url(candidate)
 
-    return DEFAULT_VALIDATOR_IMAGE
+    return _ensure_absolute_url(DEFAULT_VALIDATOR_IMAGE)

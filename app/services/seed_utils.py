@@ -12,6 +12,7 @@ import httpx
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from app.config import settings
 from app.data import VALIDATOR_DIRECTORY
 from app.db.models import ValidatorRoundORM
 from app.db.session import AsyncSessionLocal
@@ -42,6 +43,23 @@ METAGRAPH_NETUID = 36
 MAX_FALLBACK_MINERS = 200
 MIN_MINER_UID = 0
 MAX_MINER_UID = 255
+
+
+def _asset_url(path: Optional[str]) -> Optional[str]:
+    if not path:
+        return None
+    candidate = str(path).strip()
+    if not candidate:
+        return None
+    if candidate.startswith(("http://", "https://", "data:")):
+        return candidate
+    if candidate.startswith("//"):
+        return f"https:{candidate}"
+    base = settings.ASSET_BASE_URL.rstrip("/") if settings.ASSET_BASE_URL else ""
+    normalized = candidate.lstrip("/")
+    if base:
+        return f"{base}/{normalized}"
+    return f"/{normalized}"
 
 
 @lru_cache(maxsize=1)
@@ -185,7 +203,7 @@ def _build_validator_seed_records() -> Dict[int, ValidatorSeedRecord]:
             hotkey=metagraph_hotkey,
             coldkey=metagraph_coldkey,
             name=metadata.get("name"),
-            image=metadata.get("image"),
+            image=_asset_url(metadata.get("image")),
             version=metadata.get("version"),
         )
 
@@ -232,7 +250,7 @@ def _fallback_miner_seed_records(
                 hotkey=f"mock_miner_hotkey_{uid}",
                 coldkey=f"mock_miner_coldkey_{uid}",
                 name=f"Mock Miner {uid}",
-                image=f"/miners/mock_miner_{(index % 8) + 1}.png",
+                image=_asset_url(f"/miners/mock_miner_{(index % 8) + 1}.png"),
                 provider=provider,
                 github=f"https://github.com/autoppia/mock-miner-{uid}",
                 description=f"Synthetic miner profile provided by {provider}.",

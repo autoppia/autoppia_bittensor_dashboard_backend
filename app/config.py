@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     # SQL Database Configuration
     DATABASE_URL: str = ""
 
+    # Asset handling
+    ASSET_BASE_URL: str = "https://dev-infinitewebarena.autoppia.com"
+
     # Authentication
     API_KEYS: list[str] = ["dev-token-123"]  # replace with real keys or load from vault
 
@@ -35,6 +38,9 @@ class Settings(BaseSettings):
             backend_root = Path(__file__).resolve().parents[1]
             db_path = backend_root / "autoppia.db"
             self.DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+
+        if self.ASSET_BASE_URL:
+            self.ASSET_BASE_URL = self.ASSET_BASE_URL.rstrip("/")
 
         if "*" in self.CORS_ORIGINS:
             return

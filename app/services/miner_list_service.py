@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from app.models.ui.miner_list import (
     MinerListResponse as MinimalMinerListResponse,
 )
 from app.services.miners_service import MinersService
+from app.utils.images import resolve_agent_image
 
 
 class MinerListService:
@@ -26,7 +27,61 @@ class MinerListService:
         limit: int,
         is_sota: bool | None = None,
         search: str | None = None,
+        round_number: Optional[int] = None,
     ) -> MinimalMinerListResponse:
+        if round_number is not None and round_number > 0:
+            snapshots = await self.miners_service.agents_service.build_round_snapshots(round_number)
+            items: List[MinerListItem] = []
+
+            for snapshot in snapshots:
+                aggregate = snapshot.aggregate
+
+                if is_sota is not None and aggregate.is_sota != is_sota:
+                    continue
+
+                miner_info = aggregate.miner
+                name = (
+                    miner_info.agent_name
+                    if miner_info and miner_info.agent_name
+                    else aggregate.agent_id
+                )
+                hotkey = miner_info.hotkey if miner_info else ""
+                uid_value = aggregate.uid if aggregate.uid is not None else -1
+
+                if search:
+                    lowered = search.lower()
+                    if (
+                        lowered not in name.lower()
+                        and lowered not in hotkey.lower()
+                        and lowered not in aggregate.agent_id.lower()
+                        and lowered not in str(uid_value)
+                    ):
+                        continue
+
+                image_url = resolve_agent_image(miner_info)
+                items.append(
+                    MinerListItem(
+                        uid=uid_value,
+                        name=name,
+                        ranking=snapshot.rank,
+                        score=snapshot.average_score,
+                        isSota=aggregate.is_sota,
+                        imageUrl=image_url,
+                    )
+                )
+
+            total = len(items)
+            start = (page - 1) * limit
+            end = start + limit
+            paginated = items[start:end]
+
+            return MinimalMinerListResponse(
+                miners=paginated,
+                total=total,
+                page=page,
+                limit=limit,
+            )
+
         # Reuse the full miner aggregation and then project to list items.
         full = await self.miners_service.list_miners(
             page=page,

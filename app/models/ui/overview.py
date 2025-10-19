@@ -24,6 +24,7 @@ class OverviewMetrics(BaseModel):
     totalValidators: int
     totalMiners: int
     currentRound: int
+    metricsRound: int
     subnetVersion: str
     lastUpdated: str  # ISO timestamp
 

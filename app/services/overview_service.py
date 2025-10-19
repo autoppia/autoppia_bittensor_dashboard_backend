@@ -4,6 +4,7 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -68,7 +69,7 @@ class OverviewService:
         self.rounds_service = RoundsService(session)
 
     async def overview_metrics(self) -> OverviewMetrics:
-        records_with_contexts = await self._recent_round_records(limit=20, include_details=False)
+        records_with_contexts = await self._recent_round_records(limit=50, include_details=True)
         if not records_with_contexts:
             now_iso = datetime.now(timezone.utc).isoformat()
             return OverviewMetrics(
@@ -77,23 +78,45 @@ class OverviewService:
                 totalValidators=0,
                 totalMiners=0,
                 currentRound=0,
+                metricsRound=0,
                 subnetVersion="1.0.0",
                 lastUpdated=now_iso,
             )
 
+        def _round_number(record: RoundRecord) -> int:
+            model = record.model
+            return model.round_number or _round_id_to_int(model.validator_round_id)
+
+        latest_completed_round: Optional[int] = None
+        for record, _ in records_with_contexts:
+            if record.model.ended_at:
+                number = _round_number(record)
+                if number:
+                    latest_completed_round = max(latest_completed_round or 0, number)
+
+        target_round_number = latest_completed_round
+        target_records: List[Tuple[RoundRecord, List[AgentRunContext]]] = []
+        if target_round_number is not None:
+            target_records = [
+                (record, contexts)
+                for record, contexts in records_with_contexts
+                if record.model.ended_at and _round_number(record) == target_round_number
+            ]
+
+        if not target_records:
+            # Fall back to the freshest record if there are no completed rounds yet.
+            target_records = [records_with_contexts[0]]
+            target_round_number = _round_number(target_records[0][0])
+
         top_score = 0.0
         validators: set[int] = set()
-        miners: set[int] = set()
-        max_round_number = 0
+        miners: set[str] = set()
         version_candidates: List[str] = []
+        unique_websites: set[str] = set()
 
-        for record, contexts in records_with_contexts:
+        for record, contexts in target_records:
             round_obj = record.model
-            round_number = round_obj.round_number or _round_id_to_int(round_obj.validator_round_id)
-            if round_number:
-                max_round_number = max(max_round_number, round_number)
-
-            if round_obj.validator_uid:
+            if round_obj.validator_uid is not None:
                 validators.add(round_obj.validator_uid)
 
             for validator_snapshot in getattr(round_obj, "validators", []) or []:
@@ -101,24 +124,41 @@ class OverviewService:
                     validators.add(validator_snapshot.uid)
                 version = getattr(validator_snapshot, "version", None)
                 if version:
-                    version_candidates.append(version)
+                    version_candidates.append(str(version))
 
             validator_info = getattr(round_obj, "validator_info", None)
             if validator_info and validator_info.version:
-                version_candidates.append(validator_info.version)
+                version_candidates.append(str(validator_info.version))
 
+            seen_tasks: set[str] = set()
             for ctx in contexts:
+                miner_identifier = None
                 if ctx.run.miner_uid is not None:
-                    miners.add(ctx.run.miner_uid)
+                    miner_identifier = f"uid:{ctx.run.miner_uid}"
+                elif getattr(ctx.run, "miner_agent_key", None):
+                    miner_identifier = f"agent:{ctx.run.miner_agent_key}"
+                elif ctx.run.agent_run_id:
+                    miner_identifier = f"run:{ctx.run.agent_run_id}"
+                if miner_identifier:
+                    miners.add(miner_identifier)
+
                 score = self.rounds_service._context_score(ctx)
                 top_score = max(top_score, score)
+
+                for task in ctx.tasks or []:
+                    if task.task_id in seen_tasks:
+                        continue
+                    seen_tasks.add(task.task_id)
+                    host = urlparse(task.url).netloc or task.url
+                    if host:
+                        unique_websites.add(host.lower())
 
             if not contexts and round_obj.winners:
                 round_top = max(winner.get("score", 0.0) for winner in round_obj.winners)
                 top_score = max(top_score, round(round_top, 6))
 
-        total_websites = await self._total_websites()
         subnet_version = version_candidates[0] if version_candidates else "1.0.0"
+        total_websites = len(unique_websites) if unique_websites else await self._total_websites()
 
         current_round_value = 0
         try:
@@ -145,7 +185,13 @@ class OverviewService:
 
         current_round_value = _resolve_round_number(current_round_overview)
         if current_round_value <= 0:
-            current_round_value = max_round_number
+            current_round_candidates = [
+                _round_number(record)
+                for record, _ in records_with_contexts
+                if _round_number(record)
+            ]
+            if current_round_candidates:
+                current_round_value = max(current_round_candidates)
 
         return OverviewMetrics(
             topScore=round(top_score, 3),
@@ -153,6 +199,7 @@ class OverviewService:
             totalValidators=len(validators),
             totalMiners=len(miners),
             currentRound=current_round_value,
+            metricsRound=target_round_number or 0,
             subnetVersion=subnet_version,
             lastUpdated=datetime.now(timezone.utc).isoformat(),
         )
@@ -646,6 +693,17 @@ class OverviewService:
                     continue
         return sum(scores) / len(scores) if scores else 0.0
 
+    async def _latest_evaluated_task_prompt(self, validator_round_id: str) -> Optional[str]:
+        stmt = (
+            select(TaskORM.prompt)
+            .join(EvaluationResultORM, EvaluationResultORM.task_id == TaskORM.task_id)
+            .where(EvaluationResultORM.validator_round_id == validator_round_id)
+            .order_by(EvaluationResultORM.created_at.desc(), EvaluationResultORM.id.desc())
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def _aggregate_validators(self) -> Dict[str, Dict[str, Any]]:
         records_with_contexts = await self._recent_round_records(limit=100, include_details=False)
         aggregates: Dict[str, Dict[str, Any]] = {}
@@ -666,6 +724,8 @@ class OverviewService:
             "Offline": "No activity detected recently",
             "Finished": "Round completed",
         }
+
+        prompt_cache: Dict[str, Optional[str]] = {}
 
         for validator_uid, entries in validator_rounds.items():
             if not entries:
@@ -752,6 +812,7 @@ class OverviewService:
             )
 
             status = "Finished" if round_obj.ended_at else "Starting"
+            current_task_prompt: Optional[str] = None
             if not round_obj.ended_at:
                 if total_runs > 0:
                     status = "Sending Tasks"
@@ -762,8 +823,17 @@ class OverviewService:
                         status = "Offline"
                     elif seconds_since_activity > 3600 and total_runs == 0:
                         status = "Waiting"
+                cache_key = round_obj.validator_round_id
+                if cache_key not in prompt_cache:
+                    prompt_cache[cache_key] = await self._latest_evaluated_task_prompt(cache_key)
+                current_task_prompt = prompt_cache.get(cache_key)
 
-            current_task = status_labels.get(status, "Validator activity")
+            current_task = ""
+            if not round_obj.ended_at:
+                current_task = current_task_prompt or status_labels.get(status, "Validator activity")
+            elif status == "Finished":
+                current_task = status_labels.get(status, "Round completed")
+
             last_seen = _timestamp(last_activity_ts)
 
             uptime = round(min(100.0, (completed_tasks / total_tasks * 100.0) if total_tasks else 0.0), 1)

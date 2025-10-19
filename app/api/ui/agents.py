@@ -89,10 +89,14 @@ async def compare_agents(payload: dict, session: AsyncSession = Depends(get_sess
 
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: str, session: AsyncSession = Depends(get_session)):
+async def get_agent(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session),
+    round: Optional[int] = Query(None),
+):
     service = await _service(session)
     try:
-        data = await service.get_agent(agent_id)
+        data = await service.get_agent(agent_id, round_number=round)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"success": True, "data": data.model_dump()}

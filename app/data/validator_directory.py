@@ -7,7 +7,12 @@ hotkeys, coldkeys, and image assets regardless of the source round data.
 from typing import Dict, Any
 
 # Known validator metadata keyed by validator UID.
-_BASE_VALIDATOR_IMAGE = "/validators"
+from app.config import settings
+
+if settings.ASSET_BASE_URL:
+    _BASE_VALIDATOR_IMAGE = f"{settings.ASSET_BASE_URL.rstrip('/')}/validators"
+else:
+    _BASE_VALIDATOR_IMAGE = "/validators"
 
 VALIDATOR_DIRECTORY: Dict[int, Dict[str, Any]] = {
     124: {

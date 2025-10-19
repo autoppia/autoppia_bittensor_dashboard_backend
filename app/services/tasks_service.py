@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+import base64
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -59,6 +60,7 @@ from app.models.ui.tasks import (
 )
 from app.services.rounds_service import AgentRunContext, RoundsService
 from app.utils.images import resolve_agent_image
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +124,28 @@ def _format_agent_id(miner_uid: Optional[int]) -> str:
 
 def _format_validator_id(validator_uid: Optional[int]) -> str:
     return f"validator-{validator_uid}" if validator_uid is not None else "validator-unknown"
+
+
+def _normalize_media_url(value: Optional[str], mime: str = "image/gif") -> Optional[str]:
+    if not value:
+        return None
+    candidate = str(value).strip()
+    if not candidate:
+        return None
+    if candidate.startswith(("http://", "https://", "data:")):
+        return candidate
+    if candidate.startswith("//"):
+        return f"https:{candidate}"
+    try:
+        base64.b64decode(candidate, validate=True)
+        return f"data:{mime};base64,{candidate}"
+    except Exception:  # noqa: BLE001
+        pass
+    base = settings.ASSET_BASE_URL.rstrip("/") if settings.ASSET_BASE_URL else ""
+    normalized = candidate.lstrip("/")
+    if base:
+        return f"{base}/{normalized}"
+    return f"/{normalized}"
 
 
 @dataclass
@@ -763,10 +787,27 @@ class TasksService:
                 raw_type_value = raw_type.value
             else:
                 raw_type_value = str(raw_type).lower()
-            try:
-                action_type = ActionType(raw_type_value)
-            except ValueError:
-                action_type = ActionType.OTHER
+            normalized_type_key = raw_type_value.replace("-", "_")
+            alias_map = {
+                "input": ActionType.INPUT,
+                "fill": ActionType.INPUT,
+                "type_text": ActionType.INPUT,
+                "search": ActionType.SEARCH,
+                "extract": ActionType.EXTRACT,
+                "scrape": ActionType.EXTRACT,
+                "submit": ActionType.SUBMIT,
+                "form_submit": ActionType.SUBMIT,
+                "open_tab": ActionType.OPEN_TAB,
+                "open_new_tab": ActionType.OPEN_TAB,
+                "close_tab": ActionType.CLOSE_TAB,
+                "close_current_tab": ActionType.CLOSE_TAB,
+            }
+            action_type = alias_map.get(normalized_type_key)
+            if action_type is None:
+                try:
+                    action_type = ActionType(normalized_type_key)
+                except ValueError:
+                    action_type = ActionType.OTHER
 
             selector = attributes.get("selector")
             value = (
@@ -819,22 +860,28 @@ class TasksService:
         base_ts = context.agent_run.started_at or context.round.started_at or 0.0
         timestamp = _parse_iso(base_ts)
 
-        if getattr(context.task, "screenshot", None):
+        screenshot_url = _normalize_media_url(getattr(context.task, "screenshot", None), mime="image/png")
+        if screenshot_url:
             screenshots.append(
                 TaskScreenshot(
                     id=f"{context.task.task_id}_screenshot",
-                    url=context.task.screenshot,
+                    url=screenshot_url,
                     timestamp=timestamp,
                     actionId=None,
                     description=context.task.screenshot_description,
                 )
             )
 
-        if context.evaluation and getattr(context.evaluation, "gif_recording", None):
+        if context.evaluation:
+            gif_url = _normalize_media_url(getattr(context.evaluation, "gif_recording", None), mime="image/gif")
+        else:
+            gif_url = None
+
+        if gif_url:
             screenshots.append(
                 TaskScreenshot(
                     id=f"{context.task.task_id}_recording",
-                    url=context.evaluation.gif_recording,
+                    url=gif_url,
                     timestamp=timestamp,
                     actionId=None,
                     description="Evaluation recording",
