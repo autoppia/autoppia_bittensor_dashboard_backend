@@ -708,6 +708,36 @@ async def test_overview_endpoints(client):
 
 
 @pytest.mark.asyncio
+async def test_overview_metrics_uses_previous_round_when_current_active(client):
+    # Seed two completed rounds to provide historical context.
+    payload_round_1 = _make_submission_payload("201")
+    response_round_1 = await client.post("/api/v1/rounds/submit", json=payload_round_1)
+    assert response_round_1.status_code == 200
+
+    payload_round_2 = _make_submission_payload("202")
+    response_round_2 = await client.post("/api/v1/rounds/submit", json=payload_round_2)
+    assert response_round_2.status_code == 200
+
+    # Seed a new active round by omitting ended_at so it remains running.
+    payload_round_3 = _make_submission_payload("203")
+    payload_round_3["round"]["ended_at"] = None
+    payload_round_3["round"]["status"] = "active"
+    payload_round_3["agent_evaluation_runs"][0]["ended_at"] = None
+    response_round_3 = await client.post("/api/v1/rounds/submit", json=payload_round_3)
+    assert response_round_3.status_code == 200
+
+    metrics_response = await client.get("/api/v1/overview")
+    assert metrics_response.status_code == 200
+    metrics_payload = metrics_response.json()
+    assert metrics_payload["success"] is True
+
+    metrics = metrics_payload["data"]["metrics"]
+    assert metrics["currentRound"] == 203
+    assert metrics["metricsRound"] == 202
+    assert metrics["metricsRound"] == metrics["currentRound"] - 1
+
+
+@pytest.mark.asyncio
 async def test_miner_list_endpoints(client):
     payload = _make_submission_payload("1111")
     submit_response = await client.post("/api/v1/rounds/submit", json=payload)

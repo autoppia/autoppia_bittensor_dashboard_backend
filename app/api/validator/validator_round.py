@@ -24,6 +24,7 @@ from app.models.core import (
     ValidatorRound,
     ValidatorRoundValidator,
 )
+from app.services.validator_auth import require_validator_auth
 from app.services.validator_storage import (
     RoundConflictError,
     DuplicateIdentifierError,
@@ -287,7 +288,7 @@ class FinishRoundRequest(BaseModel):
     agent_runs: list[FinishRoundAgentRun] = Field(default_factory=list)
 
 
-@router.post("/start")
+@router.post("/start", dependencies=[Depends(require_validator_auth)])
 async def start_round(
     payload: Union[StartRoundRequest, LegacyStartRoundRequest],
     session: AsyncSession = Depends(get_session),
@@ -360,7 +361,10 @@ async def start_round(
     }
 
 
-@router.post("/{validator_round_id}/tasks")
+@router.post(
+    "/{validator_round_id}/tasks",
+    dependencies=[Depends(require_validator_auth)],
+)
 async def set_tasks(
     validator_round_id: str,
     payload: SetTasksRequest,
@@ -394,7 +398,10 @@ async def set_tasks(
     return {"message": "Tasks stored", "count": count}
 
 
-@router.post("/{validator_round_id}/agent-runs/start")
+@router.post(
+    "/{validator_round_id}/agent-runs/start",
+    dependencies=[Depends(require_validator_auth)],
+)
 async def start_agent_run(
     validator_round_id: str,
     payload: Union[StartAgentRunRequest, LegacyStartAgentRunRequest],
@@ -473,7 +480,10 @@ async def start_agent_run(
     return {"message": "Agent run registered", "agent_run_id": agent_run.agent_run_id}
 
 
-@router.post("/{validator_round_id}/agent-runs/{agent_run_id}/evaluations")
+@router.post(
+    "/{validator_round_id}/agent-runs/{agent_run_id}/evaluations",
+    dependencies=[Depends(require_validator_auth)],
+)
 async def add_evaluation(
     validator_round_id: str,
     agent_run_id: str,
@@ -562,7 +572,10 @@ async def add_evaluation(
     return {"message": "Evaluation stored", "evaluation_id": evaluation.evaluation_id}
 
 
-@router.post("/{validator_round_id}/finish")
+@router.post(
+    "/{validator_round_id}/finish",
+    dependencies=[Depends(require_validator_auth)],
+)
 async def finish_round(
     validator_round_id: str,
     payload: FinishRoundRequest,

@@ -38,6 +38,7 @@ class OverviewMetricsResponse(BaseResponse):
 class ValidatorInfo(BaseModel):
     """Validator information for overview section."""
     id: str
+    validatorUid: Optional[int] = None
     name: str
     hotkey: str
     icon: str
@@ -51,6 +52,8 @@ class ValidatorInfo(BaseModel):
     uptime: float
     stake: int
     emission: int
+    validatorRoundId: Optional[str] = None
+    roundNumber: Optional[int] = None
 
 
 class ValidatorsListResponse(BaseResponse):

@@ -703,6 +703,63 @@ class RoundsService:
         except Exception:  # noqa: BLE001
             pass
 
+    @staticmethod
+    def _determine_latest_round_number(grouped: Dict[int, List[RoundRecord]]) -> int:
+        """
+        Identify the most recent logical round from grouped validator rounds.
+
+        Preference order:
+            1. Groups containing an active/pending validator round.
+            2. Newest start timestamp within the group.
+            3. Highest round number as a final tie-breaker.
+        """
+        if not grouped:
+            raise ValueError("Cannot determine latest round from empty grouping")
+
+        active_statuses = {"active", "running", "pending", "in_progress", "evaluating", "waiting"}
+        best_key: Optional[Tuple[int, float, int]] = None
+        best_number: Optional[int] = None
+
+        for number, records in grouped.items():
+            if not records:
+                continue
+
+            has_active = False
+            latest_start = 0.0
+
+            for record in records:
+                status = (record.model.status or "").strip().lower()
+                if status in active_statuses:
+                    has_active = True
+
+                started_at = record.model.started_at
+                if started_at is None:
+                    started_at = getattr(record.row, "started_at", None)
+                if started_at is None:
+                    created_at = getattr(record.row, "created_at", None)
+                    if isinstance(created_at, datetime):
+                        started_at = created_at.timestamp()
+                    else:
+                        try:
+                            started_at = float(created_at) if created_at is not None else None
+                        except (TypeError, ValueError):
+                            started_at = None
+
+                try:
+                    numeric_start = float(started_at) if started_at is not None else 0.0
+                except (TypeError, ValueError):
+                    numeric_start = 0.0
+                latest_start = max(latest_start, numeric_start)
+
+            key = (1 if has_active else 0, latest_start, number)
+            if best_key is None or key > best_key:
+                best_key = key
+                best_number = number
+
+        if best_number is not None:
+            return best_number
+        return max(grouped.keys())
+
     def _compute_aggregated_progress(
         self,
         records: List[RoundRecord],
@@ -810,7 +867,7 @@ class RoundsService:
         if not grouped:
             return [], 0
 
-        latest_round_number = max(grouped.keys())
+        latest_round_number = self._determine_latest_round_number(grouped)
         entries = [
             self._build_round_day_overview_from_records(number, group, latest_round_number)
             for number, group in grouped.items()
@@ -842,7 +899,7 @@ class RoundsService:
             grouped.setdefault(number, []).append(record)
         if not grouped:
             return None
-        latest_round_number = max(grouped.keys())
+        latest_round_number = self._determine_latest_round_number(grouped)
         group = grouped[latest_round_number]
         return self._build_round_day_overview_from_records(
             latest_round_number,

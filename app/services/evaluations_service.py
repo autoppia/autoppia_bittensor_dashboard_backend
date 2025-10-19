@@ -180,6 +180,20 @@ class EvaluationsService:
             raise ValueError(f"Evaluation {evaluation_id} not found")
         return self._build_context(evaluation_row)
 
+    async def update_gif_recording(self, evaluation_id: str, gif_url: str) -> None:
+        stmt = select(EvaluationResultORM).where(
+            EvaluationResultORM.evaluation_id == evaluation_id
+        )
+        result_rows = await self.session.scalars(stmt)
+        rows = list(result_rows)
+        if not rows:
+            raise ValueError(f"No evaluation results found for {evaluation_id}")
+
+        for row in rows:
+            row.gif_recording = gif_url
+
+        await self.session.commit()
+
     def _build_context(self, evaluation_row: EvaluationResultORM) -> EvaluationContext:
         agent_run_row = evaluation_row.agent_run
         if agent_run_row is None:
@@ -347,4 +361,7 @@ class EvaluationsService:
         data.setdefault("validator_round_id", evaluation_row.validator_round_id)
         data.setdefault("validator_uid", evaluation_row.validator_uid)
         data.setdefault("miner_uid", evaluation_row.miner_uid)
-        return EvaluationResult(**data)
+        result = EvaluationResult(**data)
+        if evaluation_row.gif_recording:
+            result.gif_recording = evaluation_row.gif_recording
+        return result

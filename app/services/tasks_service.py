@@ -1088,7 +1088,10 @@ class TasksService:
         data.setdefault("validator_round_id", evaluation_row.validator_round_id)
         data.setdefault("validator_uid", evaluation_row.validator_uid)
         data.setdefault("miner_uid", evaluation_row.miner_uid)
-        return EvaluationResult(**data)
+        result = EvaluationResult(**data)
+        if evaluation_row.gif_recording:
+            result.gif_recording = evaluation_row.gif_recording
+        return result
 
     @staticmethod
     def _sort_tasks(tasks: List[UITask], sort_by: str, sort_order: str) -> List[UITask]:

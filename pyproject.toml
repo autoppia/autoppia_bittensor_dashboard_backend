@@ -12,7 +12,9 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "pydantic>=2.8.0",
     "pydantic-settings>=2.4.0",
-    "python-dotenv>=1.0.0"
+    "python-dotenv>=1.0.0",
+    "boto3>=1.35.0",
+    "bittensor>=6.9.0"
 ]
 
 [project.optional-dependencies]

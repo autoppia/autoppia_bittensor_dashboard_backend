@@ -341,12 +341,16 @@ class AgentRunsService:
         overall_score = _safe_int(average_score * 100)
 
         validator_name, validator_image = self._resolve_validator_identity(context)
+        agent_name, agent_image, agent_uid, agent_hotkey, agent_identifier, agent_description = self._resolve_agent_identity(context)
         round_id_value = context.round.round_number
         if round_id_value is None:
             round_id_value = _round_id_to_int(context.round.validator_round_id)
         return AgentRun(
             runId=context.run.agent_run_id,
-            agentId=_format_agent_id(context.run.miner_uid),
+            agentId=agent_identifier,
+            agentUid=agent_uid,
+            agentHotkey=agent_hotkey,
+            agentName=agent_name,
             roundId=round_id_value or 0,
             validatorId=_format_validator_id(context.run.validator_uid),
             validatorName=validator_name,
@@ -364,12 +368,16 @@ class AgentRunsService:
             overallScore=overall_score,
             websites=websites,
             tasks=ui_tasks,
-            metadata=context.run.metadata or {},
+            metadata={
+                **(context.run.metadata or {}),
+                "agentImage": agent_image,
+                "agentDescription": agent_description,
+            },
         )
 
     def _build_personas(self, context: AgentRunContext) -> Personas:
-        miner = self._find_miner(context)
         validator_name, validator_image = self._resolve_validator_identity(context)
+        agent_name, agent_image, agent_uid, agent_hotkey, agent_identifier, agent_description = self._resolve_agent_identity(context)
 
         round_number_value = context.round.round_number
         if round_number_value is None:
@@ -393,14 +401,53 @@ class AgentRunsService:
         )
 
         agent_info = AgentInfo(
-            id=_format_agent_id(context.run.miner_uid),
-            name=miner.agent_name if miner and miner.agent_name else f"Agent {context.run.miner_uid}",
+            id=agent_identifier,
+            uid=agent_uid,
+            hotkey=agent_hotkey,
+            name=agent_name,
             type="sota" if context.run.is_sota else "miner",
-            image=resolve_agent_image(miner),
-            description=(miner.description or "") if miner else "",
+            image=agent_image,
+            description=agent_description,
         )
 
         return Personas(round=round_info, validator=validator_info, agent=agent_info)
+
+    def _summarize_ui_tasks(
+        self,
+        ui_tasks: List[UITask],
+    ) -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict[str, float]], float]:
+        website_stats: Dict[str, Dict[str, float]] = defaultdict(
+            lambda: {"tasks": 0.0, "successful": 0.0, "score_sum": 0.0, "duration_sum": 0.0}
+        )
+        use_case_stats: Dict[str, Dict[str, float]] = defaultdict(
+            lambda: {"tasks": 0.0, "successful": 0.0, "score_sum": 0.0, "duration_sum": 0.0}
+        )
+        total_duration = 0.0
+
+        for task in ui_tasks:
+            duration = float(getattr(task, "duration", 0) or 0)
+            score = float(getattr(task, "score", 0.0) or 0.0)
+            success = task.status == TaskStatus.COMPLETED
+
+            total_duration += duration
+
+            host = _extract_host(task.website)
+            host_stats = website_stats[host]
+            host_stats["tasks"] += 1
+            host_stats["score_sum"] += score
+            host_stats["duration_sum"] += duration
+            if success:
+                host_stats["successful"] += 1
+
+            use_case = task.useCase or "unknown"
+            use_case_entry = use_case_stats[use_case]
+            use_case_entry["tasks"] += 1
+            use_case_entry["score_sum"] += score
+            use_case_entry["duration_sum"] += duration
+            if success:
+                use_case_entry["successful"] += 1
+
+        return website_stats, use_case_stats, total_duration
 
     def _build_statistics(self, context: AgentRunContext) -> Statistics:
         websites, ui_tasks, success_count = self._build_websites_and_tasks(context)
@@ -408,39 +455,30 @@ class AgentRunsService:
         failed_tasks = max(total_tasks - success_count, 0)
         overall_score = _safe_int(self._compute_average_score(context.evaluation_results) * 100)
 
+        website_stats_map, use_case_stats_map, total_duration = self._summarize_ui_tasks(ui_tasks)
+
         performance_by_website = [
             PerformanceByWebsite(
-                website=website.website,
-                tasks=website.tasks,
-                successful=website.successful,
-                failed=website.failed,
-                averageScore=website.score,
-                averageDuration=0.0,
+                website=website_key,
+                tasks=int(values["tasks"]),
+                successful=int(values["successful"]),
+                failed=int(max(values["tasks"] - values["successful"], 0)),
+                averageScore=(values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0,
+                averageDuration=(values["duration_sum"] / values["tasks"]) if values["tasks"] else 0.0,
             )
-            for website in websites
+            for website_key, values in website_stats_map.items()
         ]
-
-        use_case_counts: Dict[str, Tuple[int, int]] = defaultdict(lambda: (0, 0))
-        for task in context.tasks:
-            use_case_name = _extract_use_case(task)
-            evaluations = [
-                eval_result for eval_result in context.evaluation_results if eval_result.task_id == task.task_id
-            ]
-            successes = len([er for er in evaluations if er.final_score >= 0.5])
-            total = len(evaluations)
-            prev_total, prev_success = use_case_counts[use_case_name]
-            use_case_counts[use_case_name] = (prev_total + total, prev_success + successes)
 
         performance_by_use_case = [
             PerformanceByUseCase(
                 useCase=use_case,
-                tasks=totals,
-                successful=successes,
-                failed=max(totals - successes, 0),
-                averageScore=(successes / totals) if totals else 0.0,
-                averageDuration=0.0,
+                tasks=int(values["tasks"]),
+                successful=int(values["successful"]),
+                failed=int(max(values["tasks"] - values["successful"], 0)),
+                averageScore=(values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0,
+                averageDuration=(values["duration_sum"] / values["tasks"]) if values["tasks"] else 0.0,
             )
-            for use_case, (totals, successes) in use_case_counts.items()
+            for use_case, values in use_case_stats_map.items()
         ]
 
         excellent = len([er for er in context.evaluation_results if er.final_score >= 0.9])
@@ -461,8 +499,8 @@ class AgentRunsService:
             totalTasks=total_tasks,
             successfulTasks=success_count,
             failedTasks=failed_tasks,
-            websites=len(websites),
-            averageTaskDuration=0.0,
+            websites=len(website_stats_map) or len(websites),
+            averageTaskDuration=(total_duration / total_tasks) if total_tasks else 0.0,
             successRate=(success_count / total_tasks * 100) if total_tasks else 0.0,
             scoreDistribution=score_distribution,
             performanceByWebsite=performance_by_website,
@@ -474,13 +512,48 @@ class AgentRunsService:
         total_tasks = len(ui_tasks)
         failed_tasks = max(total_tasks - success_count, 0)
         overall_score = _safe_int(self._compute_average_score(context.evaluation_results) * 100)
+        agent_name, _, agent_uid, agent_hotkey, agent_identifier, _ = self._resolve_agent_identity(context)
 
-        top_website = max(websites, key=lambda w: w.score, default=None)
-        top_use_case = max(
-            [_extract_use_case(task) for task in context.tasks],
-            default="unknown",
+        website_stats_map, use_case_stats_map, _ = self._summarize_ui_tasks(ui_tasks)
+
+        top_website_name = "unknown"
+        top_website_score = 0.0
+        top_website_tasks = 0
+        top_website_entry = max(
+            website_stats_map.items(),
+            key=lambda item: (item[1]["score_sum"] / item[1]["tasks"]) if item[1]["tasks"] else 0.0,
+            default=None,
         )
-        top_use_case_score = 100 if success_count else 0
+        if top_website_entry:
+            name, values = top_website_entry
+            top_website_name = name
+            top_website_score = (values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0
+            top_website_tasks = int(values["tasks"])
+        elif websites:
+            top_candidate = max(websites, key=lambda w: w.score, default=None)
+            if top_candidate:
+                top_website_name = top_candidate.website
+                top_website_score = top_candidate.score
+                top_website_tasks = top_candidate.tasks
+
+        top_use_case_name = "unknown"
+        top_use_case_score = 0.0
+        top_use_case_tasks = 0
+        top_use_case_entry = max(
+            use_case_stats_map.items(),
+            key=lambda item: (item[1]["score_sum"] / item[1]["tasks"]) if item[1]["tasks"] else 0.0,
+            default=None,
+        )
+        if top_use_case_entry:
+            name, values = top_use_case_entry
+            top_use_case_name = name
+            top_use_case_score = (values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0
+            top_use_case_tasks = int(values["tasks"])
+        elif ui_tasks:
+            candidate = ui_tasks[0]
+            top_use_case_name = candidate.useCase or "unknown"
+            top_use_case_score = candidate.score or 0.0
+            top_use_case_tasks = 1
 
         recent_activity = [
             RecentActivity(
@@ -496,7 +569,10 @@ class AgentRunsService:
 
         return Summary(
             runId=context.run.agent_run_id,
-            agentId=_format_agent_id(context.run.miner_uid),
+            agentId=agent_identifier,
+            agentUid=agent_uid,
+            agentHotkey=agent_hotkey,
+            agentName=agent_name,
             roundId=round_id_value or 0,
             validatorId=_format_validator_id(context.run.validator_uid),
             startTime=_ts_to_iso(context.run.started_at) or "",
@@ -509,14 +585,14 @@ class AgentRunsService:
             duration=_safe_int((context.run.ended_at or context.run.started_at or 0) - (context.run.started_at or 0)),
             ranking=context.run.rank or 0,
             topPerformingWebsite=TopPerformingWebsite(
-                website=top_website.website if top_website else "unknown",
-                score=top_website.score if top_website else 0.0,
-                tasks=top_website.tasks if top_website else 0,
+                website=top_website_name,
+                score=top_website_score,
+                tasks=top_website_tasks,
             ),
             topPerformingUseCase=TopPerformingUseCase(
-                useCase=top_use_case,
+                useCase=top_use_case_name,
                 score=top_use_case_score,
-                tasks=total_tasks,
+                tasks=top_use_case_tasks,
             ),
             recentActivity=recent_activity,
         )
@@ -558,6 +634,7 @@ class AgentRunsService:
         average_score = float(average_score or 0.0)
 
         validator_name, validator_image = self._resolve_validator_identity(context)
+        agent_name, _, agent_uid, agent_hotkey, agent_identifier, _ = self._resolve_agent_identity(context)
         success_count = completed_tasks
         success_rate = (success_count / total_tasks * 100.0) if total_tasks else 0.0
         overall_score = _safe_int(average_score * 100)
@@ -574,7 +651,10 @@ class AgentRunsService:
 
         return {
             "runId": run_model.agent_run_id,
-            "agentId": _format_agent_id(run_model.miner_uid),
+            "agentId": agent_identifier,
+            "agentUid": agent_uid,
+            "agentHotkey": agent_hotkey,
+            "agentName": agent_name,
             "roundId": round_id_value or 0,
             "validatorId": _format_validator_id(run_model.validator_uid),
             "validatorName": validator_name,
@@ -610,8 +690,15 @@ class AgentRunsService:
 
         evaluation_map, solution_map, task_map = self._index_results(context)
 
+        relevant_task_ids = set(evaluation_map.keys()) | set(solution_map.keys())
+        if not relevant_task_ids:
+            relevant_task_ids = set(task_map.keys())
+
         ui_tasks: List[UITask] = []
-        for task_id, ui_task in task_map.items():
+        for task_id in sorted(relevant_task_ids):
+            ui_task = task_map.get(task_id)
+            if ui_task is None:
+                continue
             evaluation = evaluation_map.get(task_id)
             success = evaluation is not None and evaluation.final_score >= 0.5
             host = _extract_host(ui_task.website)
@@ -725,6 +812,35 @@ class AgentRunsService:
         if context.round.miners:
             return next((miner for miner in context.round.miners if miner.uid == context.run.miner_uid), None)
         return context.run.miner_info
+
+    def _resolve_agent_identity(
+        self,
+        context: AgentRunContext,
+    ) -> Tuple[str, str, Optional[int], Optional[str], str, str]:
+        miner = self._find_miner(context)
+        agent_uid = getattr(miner, "uid", None)
+        if agent_uid is None:
+            agent_uid = context.run.miner_uid
+
+        agent_hotkey = getattr(miner, "hotkey", None) or getattr(context.run, "miner_hotkey", None)
+        if not agent_hotkey:
+            agent_hotkey = getattr(context.run, "miner_agent_key", None)
+
+        agent_name = getattr(miner, "agent_name", None) or getattr(miner, "name", None)
+        if not agent_name:
+            if agent_hotkey:
+                agent_name = agent_hotkey
+            elif agent_uid is not None:
+                agent_name = f"Agent {agent_uid}"
+            else:
+                agent_name = "Agent"
+
+        agent_image = resolve_agent_image(miner)
+        agent_description = (getattr(miner, "description", "") or "") if miner else ""
+
+        identifier = agent_hotkey or (f"agent-{agent_uid}" if agent_uid is not None else context.run.agent_run_id)
+
+        return agent_name, agent_image, agent_uid, agent_hotkey, identifier, agent_description
 
     def _resolve_validator_identity(self, context: AgentRunContext) -> Tuple[str, str]:
         validator = self._find_validator(context)

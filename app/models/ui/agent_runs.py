@@ -88,6 +88,9 @@ class AgentRun(BaseModel):
     """Agent evaluation run details."""
     runId: str
     agentId: str
+    agentUid: Optional[int] = None
+    agentHotkey: Optional[str] = None
+    agentName: Optional[str] = None
     roundId: int
     validatorId: str
     validatorName: str
@@ -130,6 +133,8 @@ class ValidatorInfo(BaseModel):
 class AgentInfo(BaseModel):
     """Agent information for personas."""
     id: str
+    uid: Optional[int] = None
+    hotkey: Optional[str] = None
     name: str
     type: str
     image: str
@@ -211,6 +216,9 @@ class Summary(BaseModel):
     """Summary information for an agent run."""
     runId: str
     agentId: str
+    agentUid: Optional[int] = None
+    agentHotkey: Optional[str] = None
+    agentName: Optional[str] = None
     roundId: int
     validatorId: str
     startTime: str

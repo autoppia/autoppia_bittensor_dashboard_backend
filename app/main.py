@@ -50,11 +50,13 @@ app.add_middleware(
 
 # Mount static files for images
 images_path = os.path.join(os.path.dirname(__file__), "..", "images")
-if os.path.exists(images_path):
+try:
+    os.makedirs(images_path, exist_ok=True)
+except OSError as exc:
+    logger.warning(f"Unable to prepare images directory at {images_path}: {exc}")
+else:
     app.mount("/images", StaticFiles(directory=images_path), name="images")
     logger.info(f"Mounted static files from {images_path}")
-else:
-    logger.warning(f"Images directory not found at {images_path}")
 
 
 # Add request logging middleware

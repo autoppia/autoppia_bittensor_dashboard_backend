@@ -27,6 +27,7 @@ from app.models.core import (
     ValidatorRoundSubmissionResponse,
     ValidatorRoundValidator,
 )
+from app.services.validator_auth import require_validator_auth
 from app.services.validator_storage import (
     RoundConflictError,
     DuplicateIdentifierError,
@@ -513,7 +514,11 @@ def _validate_round_relationships(payload: ValidatorRoundSubmissionRequest) -> N
             )
 
 
-@router.post("/submit", response_model=ValidatorRoundSubmissionResponse)
+@router.post(
+    "/submit",
+    response_model=ValidatorRoundSubmissionResponse,
+    dependencies=[Depends(require_validator_auth)],
+)
 async def submit_round_data(
     payload: Union[ValidatorRoundSubmissionRequest, LegacyRoundSubmissionPayload],
     session: AsyncSession = Depends(get_session),

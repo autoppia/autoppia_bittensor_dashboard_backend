@@ -78,6 +78,12 @@ class EvaluationDetailResponse(ResponseBase):
     data: Optional[Dict[str, EvaluationDetail]] = None
 
 
+class EvaluationGifUploadResponse(ResponseBase):
+    """Response wrapper for evaluation GIF upload requests."""
+
+    data: Optional[Dict[str, str]] = None
+
+
 __all__ = [
     "EvaluationStatus",
     "EvaluationTaskInfo",
@@ -85,4 +91,5 @@ __all__ = [
     "EvaluationDetail",
     "EvaluationListResponse",
     "EvaluationDetailResponse",
+    "EvaluationGifUploadResponse",
 ]

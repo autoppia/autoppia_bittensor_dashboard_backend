@@ -12,6 +12,22 @@ from httpx import ASGITransport, AsyncClient
 TEST_DB_PATH = (Path(__file__).parent / "test.db").resolve()
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_PATH}"
 TEST_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("TESTING", "true")
+
+# Configure AWS defaults for tests before application settings are loaded
+os.environ.setdefault("AWS_REGION", "eu-west-1")
+os.environ.setdefault("AWS_S3_BUCKET", "autoppia-subnet-test")
+os.environ.setdefault("AWS_S3_GIF_PREFIX", "gifs")
+os.environ.setdefault(
+    "AWS_S3_PUBLIC_BASE_URL",
+    "https://autoppia-subnet-test.s3.eu-west-1.amazonaws.com",
+)
+os.environ.setdefault("AWS_ACCESS_KEY_ID", "test-access-key")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+os.environ.setdefault(
+    "ASSET_BASE_URL",
+    "https://autoppia-subnet-test.s3.eu-west-1.amazonaws.com",
+)
 
 PROJECT_ROOT = TEST_DB_PATH.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
