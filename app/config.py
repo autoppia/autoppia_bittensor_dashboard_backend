@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     VALIDATOR_AUTH_CACHE_TTL: int = 180
     LOG_LEVEL: str = "INFO"
 
+    # Overview / validators list behavior
+    OVERVIEW_VALIDATORS_LOOKBACK_ROUNDS: int = 2
+
     # CORS Configuration
     CORS_ORIGINS: list[str] = ["*"]
 

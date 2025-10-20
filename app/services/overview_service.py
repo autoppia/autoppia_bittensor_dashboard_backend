@@ -25,6 +25,7 @@ from app.models.ui.overview import (
     ValidatorInfo,
 )
 from app.services.rounds_service import AgentRunContext, RoundRecord, RoundsService
+from app.config import settings
 from app.utils.images import resolve_validator_image
 
 logger = logging.getLogger(__name__)
@@ -744,11 +745,14 @@ class OverviewService:
         records_with_contexts = await self._recent_round_records(limit=200, include_details=False)
         aggregates: Dict[str, Dict[str, Any]] = {}
 
-        max_round_number = 0
+        # Determine the current (latest) round number present in DB
+        round_numbers: List[int] = []
         for record, _ in records_with_contexts:
-            round_number = record.model.round_number or _round_id_to_int(record.model.validator_round_id)
-            if round_number:
-                max_round_number = max(max_round_number, round_number)
+            num = record.model.round_number or _round_id_to_int(record.model.validator_round_id)
+            if num:
+                round_numbers.append(num)
+        round_numbers = sorted(set(round_numbers), reverse=True)
+        max_round_number = round_numbers[0] if round_numbers else 0
 
         if max_round_number == 0 and records_with_contexts:
             fallback_record = records_with_contexts[0][0]
@@ -756,18 +760,27 @@ class OverviewService:
                 fallback_record.model.validator_round_id
             )
 
-        # Map validator UID -> latest record for current round
+        # Build helper maps:
+        # - current_round_entries: entries for the latest round (used for live status)
+        # - last_entry_by_uid: last participation for each validator (used for last seen round info)
         current_round_entries: Dict[int, Tuple[RoundRecord, List[AgentRunContext]]] = {}
+        last_entry_by_uid: Dict[int, Tuple[RoundRecord, List[AgentRunContext]]] = {}
         for record, contexts in records_with_contexts:
             round_number = record.model.round_number or _round_id_to_int(record.model.validator_round_id)
-            if round_number != max_round_number:
-                continue
             validator_uid = record.model.validator_uid or record.validator_uid
             if validator_uid is None:
                 continue
-            existing = current_round_entries.get(validator_uid)
-            if existing is None or (record.model.started_at or 0.0) > (existing[0].model.started_at or 0.0):
-                current_round_entries[validator_uid] = (record, contexts)
+            # Track most recent record per validator overall
+            prev_last = last_entry_by_uid.get(validator_uid)
+            prev_ts = (prev_last[0].model.ended_at or prev_last[0].model.started_at or 0.0) if prev_last else -1
+            curr_ts = record.model.ended_at or record.model.started_at or 0.0
+            if prev_last is None or curr_ts >= prev_ts:
+                last_entry_by_uid[validator_uid] = (record, contexts)
+            # Track latest record for the current round only
+            if round_number == max_round_number:
+                existing = current_round_entries.get(validator_uid)
+                if existing is None or (record.model.started_at or 0.0) > (existing[0].model.started_at or 0.0):
+                    current_round_entries[validator_uid] = (record, contexts)
 
         now_ts = datetime.now(timezone.utc).timestamp()
         status_labels = {
@@ -782,10 +795,26 @@ class OverviewService:
 
         prompt_cache: Dict[str, Optional[str]] = {}
 
-        known_validator_uids = set(VALIDATOR_DIRECTORY.keys()) | set(current_round_entries.keys())
+        # Limit expected validators to those who participated in recent rounds instead of a static directory.
+        # Include validators from the current round and the last few completed rounds (configurable).
+        lookback = settings.OVERVIEW_VALIDATORS_LOOKBACK_ROUNDS or 0
+        if lookback < 0:
+            lookback = 0
+        recent_round_numbers = set(round_numbers[: lookback]) if round_numbers else set()
+        recent_participant_uids: set[int] = set()
+        for record, _ in records_with_contexts:
+            rn = record.model.round_number or _round_id_to_int(record.model.validator_round_id)
+            uid = record.model.validator_uid or record.validator_uid
+            if uid is None:
+                continue
+            if rn in recent_round_numbers:
+                recent_participant_uids.add(uid)
+
+        known_validator_uids = set(current_round_entries.keys()) | recent_participant_uids
 
         for validator_uid in sorted(known_validator_uids):
             entry = current_round_entries.get(validator_uid)
+            last_entry = last_entry_by_uid.get(validator_uid)
             metadata = get_validator_metadata(validator_uid)
             validator_record = entry[0] if entry else None
             contexts_flat = entry[1] if entry else []
@@ -793,8 +822,9 @@ class OverviewService:
             validator_round = validator_record.model if validator_record else None
             validator_info = getattr(validator_round, "validator_info", None) if validator_round else None
 
-            if validator_round:
-                round_number = validator_round.round_number or _round_id_to_int(validator_round.validator_round_id)
+            # Use last participation for display of last seen round when not currently running
+            if last_entry is not None:
+                round_number = last_entry[0].model.round_number or _round_id_to_int(last_entry[0].model.validator_round_id)
             else:
                 round_number = max_round_number or None
 
@@ -852,9 +882,11 @@ class OverviewService:
             has_scores = any(self.rounds_service._context_score(ctx) > 0.0 for ctx in contexts_flat)
 
             last_activity_candidates: List[float] = []
-            if entry:
-                record, ctx_list = entry
-                round_model = record.model
+            # Prefer current round activity; otherwise fall back to last participation
+            source_entry = entry or last_entry
+            if source_entry:
+                record_ref, ctx_list = source_entry
+                round_model = record_ref.model
                 if round_model.ended_at:
                     last_activity_candidates.append(round_model.ended_at)
                 if round_model.started_at:
