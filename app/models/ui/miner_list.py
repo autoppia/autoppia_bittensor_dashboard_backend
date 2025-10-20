@@ -25,6 +25,10 @@ class MinerListResponse(BaseModel):
     total: int = Field(..., description="Total number of miners")
     page: int = Field(..., description="Current page")
     limit: int = Field(..., description="Items per page")
+    round: Optional[int] = Field(
+        default=None,
+        description="Round number used to build this list (None when using global aggregates)",
+    )
 
 
 class MinerDetail(BaseModel):

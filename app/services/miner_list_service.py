@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +10,7 @@ from app.models.ui.miner_list import (
     MinerListItem,
     MinerListResponse as MinimalMinerListResponse,
 )
+from app.services.agents_service import AgentAggregate, RoundAgentSnapshot
 from app.services.miners_service import MinersService
 from app.utils.images import resolve_agent_image
 
@@ -29,46 +30,58 @@ class MinerListService:
         search: str | None = None,
         round_number: Optional[int] = None,
     ) -> MinimalMinerListResponse:
+        aggregates = await self.miners_service.agents_service._aggregate_agents()  # type: ignore[attr-defined]
+        round_candidates = self._collect_round_candidates(aggregates)
+        snapshot_cache: Dict[int, List[RoundAgentSnapshot]] = {}
+
+        async def load_snapshots(candidate_round: int) -> List[RoundAgentSnapshot]:
+            if candidate_round in snapshot_cache:
+                return snapshot_cache[candidate_round]
+            snapshots = await self.miners_service.agents_service.build_round_snapshots(
+                candidate_round,
+                aggregates,
+            )
+            snapshot_cache[candidate_round] = snapshots
+            return snapshots
+
+        def has_real_miners(snapshots: Sequence[RoundAgentSnapshot]) -> bool:
+            return any(
+                snapshot.aggregate.uid is not None and not snapshot.aggregate.is_sota
+                for snapshot in snapshots
+            )
+
+        async def resolve_round(preferred_rounds: Iterable[int]) -> Tuple[Optional[int], List[RoundAgentSnapshot]]:
+            tried: List[int] = []
+            for candidate in preferred_rounds:
+                tried.append(candidate)
+                snapshots = await load_snapshots(candidate)
+                if snapshots and has_real_miners(snapshots):
+                    return candidate, snapshots
+            for candidate in tried:
+                snapshots = await load_snapshots(candidate)
+                if snapshots:
+                    return candidate, snapshots
+            return None, []
+
+        preferred_rounds: List[int]
         if round_number is not None and round_number > 0:
-            snapshots = await self.miners_service.agents_service.build_round_snapshots(round_number)
-            items: List[MinerListItem] = []
+            preferred_rounds = [round_number]
+            preferred_rounds.extend(
+                candidate
+                for candidate in round_candidates
+                if candidate < round_number and candidate not in preferred_rounds
+            )
+        else:
+            preferred_rounds = round_candidates
 
-            for snapshot in snapshots:
-                aggregate = snapshot.aggregate
+        resolved_round, snapshots = await resolve_round(preferred_rounds)
 
-                if is_sota is not None and aggregate.is_sota != is_sota:
-                    continue
-
-                miner_info = aggregate.miner
-                name = (
-                    miner_info.agent_name
-                    if miner_info and miner_info.agent_name
-                    else aggregate.agent_id
-                )
-                hotkey = miner_info.hotkey if miner_info else ""
-                uid_value = aggregate.uid if aggregate.uid is not None else -1
-
-                if search:
-                    lowered = search.lower()
-                    if (
-                        lowered not in name.lower()
-                        and lowered not in hotkey.lower()
-                        and lowered not in aggregate.agent_id.lower()
-                        and lowered not in str(uid_value)
-                    ):
-                        continue
-
-                image_url = resolve_agent_image(miner_info)
-                items.append(
-                    MinerListItem(
-                        uid=uid_value,
-                        name=name,
-                        ranking=snapshot.rank,
-                        score=snapshot.average_score,
-                        isSota=aggregate.is_sota,
-                        imageUrl=image_url,
-                    )
-                )
+        if resolved_round is not None and snapshots:
+            items = self._build_items_from_snapshots(
+                snapshots=snapshots,
+                is_sota=is_sota,
+                search=search,
+            )
 
             total = len(items)
             start = (page - 1) * limit
@@ -80,6 +93,7 @@ class MinerListService:
                 total=total,
                 page=page,
                 limit=limit,
+                round=resolved_round,
             )
 
         # Reuse the full miner aggregation and then project to list items.
@@ -112,6 +126,7 @@ class MinerListService:
             total=full.pagination.total,
             page=full.pagination.page,
             limit=full.pagination.limit,
+            round=None,
         )
 
     async def get_miner_detail(self, uid: int) -> MinerDetailResponse:
@@ -142,3 +157,61 @@ class MinerListService:
         )
 
         return MinerDetailResponse(miner=detail)
+
+    @staticmethod
+    def _collect_round_candidates(aggregates: Dict[str, AgentAggregate]) -> List[int]:
+        rounds: set[int] = set()
+        for aggregate in aggregates.values():
+            for round_id in getattr(aggregate, "rounds", set()):
+                if isinstance(round_id, int) and round_id > 0:
+                    rounds.add(round_id)
+        return sorted(rounds, reverse=True)
+
+    def _build_items_from_snapshots(
+        self,
+        snapshots: Sequence[RoundAgentSnapshot],
+        is_sota: Optional[bool],
+        search: Optional[str],
+    ) -> List[MinerListItem]:
+        items: List[MinerListItem] = []
+        lowered = search.lower() if search else None
+
+        for snapshot in snapshots:
+            aggregate = snapshot.aggregate
+
+            if is_sota is not None and aggregate.is_sota != is_sota:
+                continue
+
+            miner_info = aggregate.miner
+            name = (
+                miner_info.agent_name
+                if miner_info and miner_info.agent_name
+                else aggregate.agent_id
+            )
+            hotkey = miner_info.hotkey if miner_info and miner_info.hotkey else ""
+            uid_value = aggregate.uid if aggregate.uid is not None else -1
+
+            if lowered:
+                identifier_candidates = [
+                    name.lower(),
+                    hotkey.lower(),
+                    aggregate.agent_id.lower(),
+                    str(uid_value),
+                ]
+                if not any(lowered in candidate for candidate in identifier_candidates):
+                    continue
+
+            image_url = resolve_agent_image(miner_info)
+
+            items.append(
+                MinerListItem(
+                    uid=uid_value,
+                    name=name,
+                    ranking=snapshot.rank,
+                    score=snapshot.average_score,
+                    isSota=aggregate.is_sota,
+                    imageUrl=image_url,
+                )
+            )
+
+        return items

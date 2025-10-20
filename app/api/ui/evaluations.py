@@ -76,7 +76,18 @@ async def upload_evaluation_gif(
     gif: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
 ) -> EvaluationGifUploadResponse:
+    logger.info(
+        "Received GIF upload request for evaluation %s filename=%s content_type=%s",
+        evaluation_id,
+        gif.filename,
+        gif.content_type,
+    )
     if gif.content_type != "image/gif":
+        logger.warning(
+            "Rejected GIF upload for evaluation %s due to invalid content type %s",
+            evaluation_id,
+            gif.content_type,
+        )
         raise HTTPException(
             status_code=400,
             detail="Only GIF images are supported",
@@ -86,16 +97,29 @@ async def upload_evaluation_gif(
     try:
         await service.get_evaluation(evaluation_id)
     except ValueError as exc:
+        logger.warning("GIF upload requested for unknown evaluation %s", evaluation_id)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     file_data = await gif.read()
+    received_bytes = len(file_data) if file_data else 0
+    logger.info(
+        "Read GIF upload payload for evaluation %s size_bytes=%s",
+        evaluation_id,
+        received_bytes,
+    )
     if not file_data:
+        logger.warning("Rejected GIF upload for evaluation %s because payload is empty", evaluation_id)
         raise HTTPException(status_code=400, detail="Uploaded GIF is empty")
 
     if not file_data.startswith((b"GIF87a", b"GIF89a")):
+        logger.warning(
+            "Rejected GIF upload for evaluation %s because payload is not a GIF header",
+            evaluation_id,
+        )
         raise HTTPException(status_code=400, detail="File is not a valid GIF image")
 
     try:
+        logger.info("Storing GIF for evaluation %s", evaluation_id)
         object_key = await store_gif(evaluation_id, file_data)
     except (GifStorageConfigError, BotoCoreError, ClientError) as exc:
         logger.error("Failed to upload GIF for %s: %s", evaluation_id, exc)
@@ -104,10 +128,17 @@ async def upload_evaluation_gif(
     gif_url = build_public_url(object_key)
 
     try:
+        logger.info("Updating evaluation %s with GIF URL %s", evaluation_id, gif_url)
         await service.update_gif_recording(evaluation_id, gif_url)
     except ValueError as exc:
         logger.error("Unable to update GIF record for %s: %s", evaluation_id, exc)
         raise HTTPException(status_code=500, detail="Failed to update evaluation record") from exc
 
-    logger.info("Uploaded GIF for evaluation %s to key %s", evaluation_id, object_key)
+    logger.info(
+        "Uploaded GIF for evaluation %s to key %s (size_bytes=%s, url=%s)",
+        evaluation_id,
+        object_key,
+        received_bytes,
+        gif_url,
+    )
     return EvaluationGifUploadResponse(success=True, data={"gifUrl": gif_url})

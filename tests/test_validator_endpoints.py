@@ -744,16 +744,35 @@ async def test_miner_list_endpoints(client):
     assert submit_response.status_code == 200
 
     miner_uid = payload["agent_evaluation_runs"][0]["miner_uid"]
+    round_number = payload["round"]["round"]
 
     list_response = await client.get("/api/v1/miner-list")
     assert list_response.status_code == 200
     miner_list = list_response.json()
+    assert miner_list["round"] == round_number
     assert any(item["uid"] == miner_uid for item in miner_list["miners"])
 
     detail_response = await client.get(f"/api/v1/miner-list/{miner_uid}")
     assert detail_response.status_code == 200
     detail = detail_response.json()
     assert detail["miner"]["uid"] == miner_uid
+
+
+@pytest.mark.asyncio
+async def test_miner_list_falls_back_to_latest_round(client):
+    payload = _make_submission_payload("1212")
+    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    assert submit_response.status_code == 200
+
+    miner_uid = payload["agent_evaluation_runs"][0]["miner_uid"]
+    expected_round = payload["round"]["round"]
+
+    list_response = await client.get("/api/v1/miner-list", params={"round": 9999})
+    assert list_response.status_code == 200
+    miner_list = list_response.json()
+
+    assert miner_list["round"] == expected_round
+    assert any(item["uid"] == miner_uid for item in miner_list["miners"])
 
 
 @pytest.mark.asyncio
