@@ -57,6 +57,9 @@ class RoundStatistics(BaseModel):
     totalValidators: int = Field(default=0)
     averageTasksPerValidator: float = Field(default=0.0)
     averageScore: float
+    winnerAverageScore: float = Field(default=0.0)
+    winnerMinerUid: Optional[int] = Field(default=None)
+    validatorAverageTopScore: Optional[float] = Field(default=None)
     topScore: float
     successRate: float
     averageDuration: float

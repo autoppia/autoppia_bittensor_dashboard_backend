@@ -14,6 +14,8 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
+
 from app.db.models import AgentEvaluationRunORM, RoundORM
 from app.models.core import MinerInfo
 from app.models.ui.agents import (
@@ -162,6 +164,9 @@ try:
     _CACHE_TTL_SECONDS = max(int(os.getenv(_CACHE_TTL_ENV, str(_DEFAULT_CACHE_TTL))), 0)
 except ValueError:
     _CACHE_TTL_SECONDS = _DEFAULT_CACHE_TTL
+
+if settings.API_CACHE_DISABLED:
+    _CACHE_TTL_SECONDS = 0
 _AGGREGATE_CACHE: Optional[Dict[str, AgentAggregate]] = None
 _AGGREGATE_CACHE_TIMESTAMP: float = 0.0
 _AGGREGATE_CACHE_BENCHMARKS: Dict[int, Dict[str, Dict[str, Any]]] = {}

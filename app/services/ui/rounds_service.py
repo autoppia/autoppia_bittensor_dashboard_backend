@@ -101,6 +101,124 @@ class AggregatedRound:
         return items
 
 
+@dataclass
+class MinerAggregate:
+    """Aggregated metrics for a miner across all validator runs in a round."""
+
+    uid: int
+    name: str
+    hotkey: Optional[str]
+    image_url: Optional[str]
+    provider: Optional[str]
+    is_sota: bool
+    total_score: float = 0.0
+    score_count: int = 0
+    total_tasks_completed: int = 0
+    total_tasks: int = 0
+    total_duration: float = 0.0
+    duration_count: int = 0
+    total_stake: int = 0
+    total_emission: int = 0
+    success_runs: int = 0
+    total_runs: int = 0
+    last_seen_ts: float = 0.0
+    last_seen_iso: Optional[str] = None
+    best_run_score: float = float("-inf")
+    best_validator_id: Optional[str] = None
+
+    def update(self, performance: Dict[str, Any], evaluation_scores: List[float], tasks_total: int) -> None:
+        """Update aggregate metrics with a new run performance snapshot."""
+        self.total_runs += 1
+        if performance.get("success"):
+            self.success_runs += 1
+
+        name = performance.get("name")
+        if name and (not self.name or self.name.startswith("Miner ")):
+            self.name = name
+
+        hotkey = performance.get("hotkey")
+        if hotkey and not self.hotkey:
+            self.hotkey = hotkey
+
+        provider = performance.get("provider")
+        if provider and not self.provider:
+            self.provider = provider
+
+        image_url = performance.get("imageUrl")
+        if image_url and not self.image_url:
+            self.image_url = image_url
+
+        self.total_tasks_completed += performance.get("tasksCompleted") or 0
+        self.total_tasks += performance.get("tasksTotal") or 0
+
+        duration = performance.get("duration") or 0.0
+        if duration:
+            self.total_duration += float(duration)
+            self.duration_count += 1
+
+        stake = performance.get("stake") or 0
+        self.total_stake += int(stake)
+
+        emission = performance.get("emission")
+        if emission:
+            self.total_emission += int(emission)
+
+        last_seen_str = performance.get("lastSeen")
+        if last_seen_str:
+            ts = _timestamp_from_iso(last_seen_str)
+            if ts >= self.last_seen_ts:
+                self.last_seen_ts = ts
+                self.last_seen_iso = last_seen_str
+
+        if evaluation_scores:
+            self.total_score += sum(float(score) for score in evaluation_scores)
+            self.score_count += len(evaluation_scores)
+        else:
+            weight = int(tasks_total) if tasks_total else 1
+            score_value = performance.get("score") or 0.0
+            self.total_score += float(score_value) * weight
+            if weight:
+                self.score_count += weight
+
+        score = performance.get("score") or 0.0
+        if score > self.best_run_score:
+            self.best_run_score = float(score)
+            self.best_validator_id = performance.get("validatorId")
+
+    @property
+    def average_score(self) -> float:
+        if self.score_count == 0:
+            return 0.0
+        return self.total_score / self.score_count
+
+    @property
+    def average_duration(self) -> float:
+        if self.duration_count == 0:
+            return 0.0
+        return self.total_duration / self.duration_count
+
+    def to_performance(self, ranking: int) -> Dict[str, Any]:
+        emission = self.total_emission or int(self.total_stake * 0.05)
+        return {
+            "uid": self.uid,
+            "name": self.name,
+            "hotkey": self.hotkey,
+            "success": self.success_runs > 0 and self.success_runs == self.total_runs,
+            "score": round(self.average_score, 3),
+            "duration": round(self.average_duration, 2),
+            "ranking": ranking,
+            "tasksCompleted": self.total_tasks_completed,
+            "tasksTotal": self.total_tasks,
+            "stake": self.total_stake,
+            "emission": emission,
+            "lastSeen": self.last_seen_iso or _iso_timestamp(None),
+            "validatorId": self.best_validator_id,
+            "isSota": self.is_sota,
+            "provider": self.provider,
+            "imageUrl": self.image_url,
+        }
+
+
 def _round_id_to_int(value: str) -> int:
     if not value:
         return 0
@@ -120,6 +238,21 @@ def _iso_timestamp(value: Optional[float]) -> str:
         return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
     except Exception:  # noqa: BLE001
         return datetime.now(timezone.utc).isoformat()
+
+
+def _timestamp_from_iso(value: Optional[str]) -> float:
+    if not value:
+        return 0.0
+    normalized = value
+    if value.endswith("Z"):
+        normalized = value[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(normalized).timestamp()
+    except ValueError:
+        try:
+            return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            return 0.0
 
 
 def _time_remaining(seconds: float) -> Dict[str, int]:
@@ -664,6 +797,139 @@ class RoundsService:
             validator_rounds=validator_rounds,
         )
 
+    def _aggregate_round_data(
+        self,
+        aggregated: AggregatedRound,
+    ) -> Tuple[Dict[int, MinerAggregate], Dict[str, Dict[str, Any]], Dict[str, Any]]:
+        miner_aggregates: Dict[int, MinerAggregate] = {}
+        best_by_validator: Dict[str, Dict[str, Any]] = {}
+        miner_ids: set[int] = set()
+        active_miner_ids: set[int] = set()
+        completed_tasks = 0
+        total_tasks = 0
+        tasks_per_validator: List[float] = []
+        scores: List[float] = []
+        validator_top_scores: List[float] = []
+        durations: List[float] = []
+        total_stake = 0.0
+
+        for entry in aggregated.validator_rounds:
+            round_obj = entry.round
+            if round_obj.miners:
+                for miner in round_obj.miners:
+                    if miner.uid is not None:
+                        miner_ids.add(miner.uid)
+
+            contexts = entry.contexts
+            non_sota_contexts = [ctx for ctx in contexts if not ctx.run.is_sota]
+            if non_sota_contexts:
+                total_tasks_for_contexts = sum(
+                    (ctx.run.n_tasks_total or len(ctx.tasks) or 0)
+                    for ctx in non_sota_contexts
+                )
+                avg_tasks_for_validator = (
+                    total_tasks_for_contexts / len(non_sota_contexts)
+                    if non_sota_contexts
+                    else 0.0
+                )
+                tasks_per_validator.append(avg_tasks_for_validator)
+            elif round_obj.n_tasks is not None:
+                tasks_per_validator.append(float(round_obj.n_tasks))
+
+            weights = round_obj.weights or {}
+            per_validator_scores: List[float] = []
+
+            for ctx in contexts:
+                if ctx.run.is_sota:
+                    continue
+
+                miner_uid = ctx.run.miner_uid
+                if miner_uid is not None:
+                    miner_ids.add(miner_uid)
+
+                performance = self._build_miner_performance(ctx, round_obj, weights)
+                uid = performance["uid"]
+
+                aggregate = miner_aggregates.get(uid)
+                if aggregate is None:
+                    aggregate = MinerAggregate(
+                        uid=uid,
+                        name=performance.get("name") or f"Miner {uid}",
+                        hotkey=performance.get("hotkey"),
+                        image_url=performance.get("imageUrl"),
+                        provider=performance.get("provider"),
+                        is_sota=bool(performance.get("isSota")),
+                    )
+                    miner_aggregates[uid] = aggregate
+
+                evaluation_scores = [
+                    er.final_score
+                    for er in ctx.evaluation_results
+                    if er.final_score is not None
+                ]
+                tasks_total = ctx.run.n_tasks_total
+                if tasks_total is None:
+                    tasks_total = len(ctx.tasks)
+                aggregate.update(performance, evaluation_scores, tasks_total or 0)
+
+                validator_id = performance.get("validatorId")
+                if validator_id:
+                    current_best = best_by_validator.get(validator_id)
+                    if current_best is None or performance.get("score", 0.0) > current_best.get("score", 0.0):
+                        best_by_validator[validator_id] = performance
+
+                completed = ctx.run.n_tasks_completed
+                if completed is None:
+                    completed = len(
+                        [
+                            er
+                            for er in ctx.evaluation_results
+                            if er.final_score is not None and er.final_score >= 0.5
+                        ]
+                    )
+                completed_tasks += completed
+
+                total = ctx.run.n_tasks_total
+                if total is None:
+                    total = len(ctx.tasks)
+                total_tasks += total
+
+                score = performance.get("score")
+                if score is not None:
+                    scores.append(score)
+                    per_validator_scores.append(score)
+
+                if ctx.run.started_at and ctx.run.ended_at:
+                    durations.append(ctx.run.ended_at - ctx.run.started_at)
+
+                if completed > 0 and miner_uid is not None:
+                    active_miner_ids.add(miner_uid)
+
+            for value in (round_obj.weights or {}).values():
+                try:
+                    total_stake += float(value)
+                except (TypeError, ValueError):
+                    continue
+
+            top_score_candidate = round_obj.top_score
+            if top_score_candidate is None and per_validator_scores:
+                top_score_candidate = max(per_validator_scores)
+            if top_score_candidate is not None:
+                validator_top_scores.append(top_score_candidate)
+
+        metrics = {
+            "miner_ids": miner_ids,
+            "active_miner_ids": active_miner_ids,
+            "completed_tasks": completed_tasks,
+            "total_tasks": total_tasks,
+            "tasks_per_validator": tasks_per_validator,
+            "scores": scores,
+            "validator_top_scores": validator_top_scores,
+            "durations": durations,
+            "total_stake": total_stake,
+        }
+        return miner_aggregates, best_by_validator, metrics
+
     @staticmethod
     def _estimate_completed_tasks(round_obj: ValidatorRound) -> int:
         summary = getattr(round_obj, "summary", {}) or {}
@@ -1097,93 +1363,33 @@ class RoundsService:
         if self._is_final_round(aggregated):
             cache_key = self._round_cache_key("round:statistics", aggregated.round_number)
             cached_payload = api_cache.get(cache_key)
-            if cached_payload is not None:
+            if cached_payload is not None and "winnerAverageScore" in cached_payload:
                 return cached_payload
-        contexts = aggregated.contexts
-        validator_count = len(aggregated.validator_rounds) or 0
+        miner_aggregates, _, metrics = self._aggregate_round_data(aggregated)
 
-        miner_ids: set[int] = set()
-        completed_tasks = 0
-        total_tasks = 0
-        total_validators = validator_count
-        tasks_per_validator: List[float] = []
-        scores: List[float] = []
-        validator_top_scores: List[float] = []
-        durations: List[float] = []
-        total_stake = 0.0
-        active_miner_ids: set[int] = set()
+        total_validators = len(aggregated.validator_rounds) or 0
+        total_tasks = metrics["total_tasks"]
+        completed_tasks = metrics["completed_tasks"]
+        total_stake = metrics["total_stake"]
+        tasks_per_validator = metrics["tasks_per_validator"]
+        scores = metrics["scores"]
+        validator_top_scores = metrics["validator_top_scores"]
+        durations = metrics["durations"]
 
-        for entry in aggregated.validator_rounds:
-            round_obj = entry.round
-            if round_obj.miners:
-                for miner in round_obj.miners:
-                    if miner.uid is not None:
-                        miner_ids.add(miner.uid)
+        winner_uid: Optional[int] = None
+        winner_average = 0.0
+        for uid, aggregate in miner_aggregates.items():
+            avg_score = aggregate.average_score
+            if avg_score > winner_average:
+                winner_average = avg_score
+                winner_uid = uid
 
-            per_validator_scores: List[float] = []
-            non_sota_contexts = [ctx for ctx in entry.contexts if not ctx.run.is_sota]
-            if non_sota_contexts:
-                total_tasks_for_contexts = sum(
-                    (ctx.run.n_tasks_total or len(ctx.tasks) or 0)
-                    for ctx in non_sota_contexts
-                )
-                avg_tasks_for_validator = (
-                    total_tasks_for_contexts / len(non_sota_contexts)
-                    if non_sota_contexts
-                    else 0.0
-                )
-                tasks_per_validator.append(avg_tasks_for_validator)
-            elif round_obj.n_tasks is not None:
-                tasks_per_validator.append(float(round_obj.n_tasks))
-
-            for ctx in entry.contexts:
-                if ctx.run.is_sota:
-                    continue
-                if ctx.run.miner_uid is not None:
-                    miner_ids.add(ctx.run.miner_uid)
-                completed = ctx.run.n_tasks_completed
-                if completed is None:
-                    completed = len(
-                        [er for er in ctx.evaluation_results if er.final_score >= 0.5]
-                    )
-                completed_tasks += completed
-
-                total = ctx.run.n_tasks_total
-                if total is None:
-                    total = len(ctx.tasks)
-                total_tasks += total
-
-                score = ctx.run.avg_eval_score
-                if score is None and ctx.evaluation_results:
-                    score = sum(er.final_score for er in ctx.evaluation_results) / len(ctx.evaluation_results)
-                if score is not None:
-                    scores.append(score)
-                    per_validator_scores.append(score)
-
-                if ctx.run.started_at and ctx.run.ended_at:
-                    durations.append(ctx.run.ended_at - ctx.run.started_at)
-
-                if completed > 0 and ctx.run.miner_uid is not None:
-                    active_miner_ids.add(ctx.run.miner_uid)
-
-            for value in (round_obj.weights or {}).values():
-                try:
-                    total_stake += float(value)
-                except (TypeError, ValueError):
-                    continue
-
-            top_score_candidate = round_obj.top_score
-            if top_score_candidate is None and per_validator_scores:
-                top_score_candidate = max(per_validator_scores)
-            if top_score_candidate is not None:
-                validator_top_scores.append(top_score_candidate)
-
-        top_score = max(scores) if scores else 0.0
-        average_score = (
+        validator_average_top = (
             sum(validator_top_scores) / len(validator_top_scores)
             if validator_top_scores
             else (sum(scores) / len(scores) if scores else 0.0)
         )
+        top_score = max(scores) if scores else 0.0
         success_rate = (completed_tasks / total_tasks * 100.0) if total_tasks else 0.0
         average_duration = sum(durations) / len(durations) if durations else 0.0
         total_emission = int(total_stake * 0.05) if total_stake else 0
@@ -1195,13 +1401,16 @@ class RoundsService:
 
         payload = {
             "roundId": aggregated.round_number,
-            "totalMiners": len(miner_ids),
-            "activeMiners": len(active_miner_ids),
+            "totalMiners": len(metrics["miner_ids"]),
+            "activeMiners": len(metrics["active_miner_ids"]),
             "totalTasks": total_tasks,
             "completedTasks": completed_tasks,
             "totalValidators": total_validators,
             "averageTasksPerValidator": round(average_tasks_per_validator_per_miner, 2),
-            "averageScore": round(average_score, 3),
+            "averageScore": round(winner_average, 3),
+            "winnerAverageScore": round(winner_average, 3),
+            "winnerMinerUid": winner_uid,
+            "validatorAverageTopScore": round(validator_average_top, 3),
             "topScore": round(top_score, 3),
             "successRate": round(success_rate, 2),
             "averageDuration": round(average_duration, 2),
@@ -1655,37 +1864,43 @@ class RoundsService:
         limit: int,
     ) -> Dict[str, Any]:
         aggregated = await self._fetch_aggregated_round(round_identifier)
-        miner_entries: List[Dict[str, Any]] = []
-        best_by_validator: Dict[str, Dict[str, Any]] = {}
+        miner_aggregates, best_by_validator, _ = self._aggregate_round_data(aggregated)
 
-        for validator_round in aggregated.validator_rounds:
-            round_obj = validator_round.round
-            weights = round_obj.weights or {}
-            for context in validator_round.contexts:
-                if context.run.is_sota or context.run.miner_uid is None:
-                    continue
-                performance = self._build_miner_performance(context, round_obj, weights)
-                miner_entries.append(performance)
+        sorted_aggregates = sorted(
+            miner_aggregates.values(),
+            key=lambda aggregate: aggregate.average_score,
+            reverse=True,
+        )
 
-                validator_id = performance.get("validatorId")
-                if validator_id:
-                    current_best = best_by_validator.get(validator_id)
-                    if current_best is None or performance.get("score", 0.0) > current_best.get("score", 0.0):
-                        best_by_validator[validator_id] = performance
-
-        miner_entries.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+        network_pairs: List[Tuple[Dict[str, Any], str]] = []
+        for idx, aggregate in enumerate(sorted_aggregates, start=1):
+            entry = aggregate.to_performance(idx)
+            network_pairs.append((entry, "network"))
 
         effective_limit = max(limit, len(best_by_validator))
-        selected: List[Dict[str, Any]] = miner_entries[:effective_limit]
+        selected_pairs: List[Tuple[Dict[str, Any], str]] = network_pairs[:effective_limit]
+        seen_keys = {(entry.get("validatorId"), entry.get("uid")) for entry, _ in selected_pairs}
 
-        seen_keys = {(entry.get("validatorId"), entry.get("uid")) for entry in selected}
         for performance in best_by_validator.values():
             key = (performance.get("validatorId"), performance.get("uid"))
             if key not in seen_keys:
-                selected.append(performance)
+                selected_pairs.append((dict(performance), "validator"))
                 seen_keys.add(key)
 
-        selected.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+        selected_pairs.sort(
+            key=lambda pair: (
+                0 if pair[1] == "network" else 1,
+                -pair[0].get("score", 0.0),
+            )
+        )
+
+        selected: List[Dict[str, Any]] = []
+        current_rank = 1
+        for entry, scope in selected_pairs:
+            if scope == "network":
+                entry["ranking"] = current_rank
+                current_rank += 1
+            selected.append(entry)
 
         return {
             "miners": selected,

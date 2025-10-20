@@ -8,6 +8,8 @@ from typing import Any, Callable, Optional, Dict
 from functools import wraps
 import logging
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 class APICache:
@@ -80,11 +82,28 @@ class APICache:
         """Set value in cache with TTL."""
         if ttl is None:
             ttl = self._default_ttl
-        
+
+        try:
+            ttl_value = int(ttl)
+        except (TypeError, ValueError):
+            ttl_value = self._default_ttl
+
+        ttl_value = max(ttl_value, 0)
+
+        if self._disabled or ttl_value == 0:
+            logger.debug(
+                "Skipping cache set for key %s (disabled=%s, ttl=%s)",
+                key,
+                self._disabled,
+                ttl_value,
+            )
+            return
+
+        now = time.time()
         self._cache[key] = {
             "data": value,
-            "expires_at": time.time() + ttl,
-            "created_at": time.time()
+            "expires_at": now + ttl_value,
+            "created_at": now,
         }
         self._stats["sets"] += 1
     
@@ -129,6 +148,14 @@ class APICache:
             "active_entries": len([e for e in self._cache.values() if not self._is_expired(e)]),
             "disabled": self._disabled
         }
+    
+    def set_default_ttl(self, ttl: int) -> None:
+        """Set the default TTL for the cache."""
+        try:
+            ttl_value = int(ttl)
+        except (TypeError, ValueError):
+            ttl_value = 0
+        self._default_ttl = max(ttl_value, 0)
 
 # Global cache instance
 api_cache = APICache()
@@ -226,3 +253,10 @@ CACHE_TTL = {
     "agent_run_logs": 0,          # No caching - logs are real-time
     "agent_run_metrics": 30,      # 30 seconds - metrics change frequently
 }
+
+if settings.API_CACHE_DISABLED:
+    logger.info("API cache disabled via environment configuration")
+    api_cache.disable()
+    api_cache.set_default_ttl(0)
+    for cache_key in CACHE_TTL.keys():
+        CACHE_TTL[cache_key] = 0
