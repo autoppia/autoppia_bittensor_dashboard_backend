@@ -20,7 +20,7 @@ from app.models.ui.subnets import (
     TimelineMetaQuery,
     TimelineRound,
 )
-from app.services.rounds_service import AgentRunContext, RoundsService
+from app.services.ui.rounds_service import AgentRunContext, RoundsService
 from app.utils.images import resolve_agent_image
 
 DEFAULT_ROUND_COUNT = 90

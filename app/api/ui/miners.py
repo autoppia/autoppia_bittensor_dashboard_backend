@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.models.ui.miners import Granularity, MinerStatus, TimeRange
-from app.services.miners_service import MinersService
+from app.services.ui.miners_service import MinersService
 
 logger = logging.getLogger(__name__)
 

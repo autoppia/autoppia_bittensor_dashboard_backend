@@ -1,0 +1,1885 @@
+{
+  "overview": [
+    {
+      "status": 200,
+      "endpoint": "/api/v1/overview",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "metrics": {
+            "topScore": 0.92,
+            "totalWebsites": 1,
+            "totalValidators": 1,
+            "totalMiners": 1,
+            "currentRound": 1003,
+            "metricsRound": 1002,
+            "subnetVersion": "1.0.0",
+            "lastUpdated": "2025-10-20T17:33:10.676353+00:00"
+          }
+        },
+        "error": null,
+        "code": null
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/overview/validators",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "validators": [
+            {
+              "id": "validator-1902",
+              "name": "Validator 1902",
+              "hotkey": "",
+              "icon": "https://assets.example.com/validators/Autoppia.png",
+              "currentTask": "Awaiting round start",
+              "status": "Not Started",
+              "totalTasks": 0,
+              "weight": 350000.0,
+              "trust": 0.85,
+              "version": 1,
+              "lastSeen": "1970-01-01T00:20:00+00:00",
+              "stake": 350000,
+              "emission": 17500,
+              "uptime": 0.0,
+              "completedTasks": 0,
+              "validatorRoundId": null,
+              "roundNumber": 1002,
+              "validatorUid": 1902
+            },
+            {
+              "id": "validator-1903",
+              "name": "Validator 1003",
+              "hotkey": "validator_hotkey_1003",
+              "icon": "https://assets.example.com/validators/Other.png",
+              "currentTask": "Round completed",
+              "status": "Finished",
+              "totalTasks": 1,
+              "weight": 123.45,
+              "trust": 0.98,
+              "version": 1,
+              "lastSeen": "1970-01-01T00:20:00+00:00",
+              "stake": 123,
+              "emission": 6,
+              "uptime": 0.0,
+              "completedTasks": 0,
+              "validatorRoundId": "round_1003",
+              "roundNumber": 1003,
+              "validatorUid": 1903
+            }
+          ],
+          "total": 2,
+          "page": 1,
+          "limit": 10
+        },
+        "error": null,
+        "code": null
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/overview/rounds",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "rounds": [
+            {
+              "id": 1003,
+              "startBlock": 100,
+              "endBlock": 120,
+              "current": false,
+              "startTime": "1970-01-01T00:16:40+00:00",
+              "endTime": "1970-01-01T00:20:00+00:00",
+              "status": "finished",
+              "totalTasks": 1,
+              "completedTasks": 1,
+              "averageScore": 0.0,
+              "topScore": 0.0
+            },
+            {
+              "id": 1002,
+              "startBlock": 100,
+              "endBlock": 120,
+              "current": false,
+              "startTime": "1970-01-01T00:16:40+00:00",
+              "endTime": "1970-01-01T00:20:00+00:00",
+              "status": "finished",
+              "totalTasks": 1,
+              "completedTasks": 1,
+              "averageScore": 0.0,
+              "topScore": 0.0
+            },
+            {
+              "id": 1001,
+              "startBlock": 100,
+              "endBlock": 120,
+              "current": false,
+              "startTime": "1970-01-01T00:16:40+00:00",
+              "endTime": "1970-01-01T00:20:00+00:00",
+              "status": "finished",
+              "totalTasks": 1,
+              "completedTasks": 1,
+              "averageScore": 0.0,
+              "topScore": 0.0
+            }
+          ],
+          "currentRound": {
+            "id": 1003,
+            "startBlock": 100,
+            "endBlock": 120,
+            "current": true,
+            "startTime": "1970-01-01T00:16:40+00:00",
+            "endTime": "1970-01-01T00:20:00+00:00",
+            "status": "finished",
+            "totalTasks": 1,
+            "completedTasks": 1,
+            "averageScore": 0.0,
+            "topScore": 0.0
+          },
+          "total": 3
+        },
+        "error": null,
+        "code": null
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/overview/leaderboard",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "leaderboard": [
+            {
+              "round": 1003,
+              "subnet36": 0.0,
+              "openai_cua": null,
+              "anthropic_cua": null,
+              "browser_use": null,
+              "timestamp": "1970-01-01T00:16:40+00:00"
+            },
+            {
+              "round": 1002,
+              "subnet36": 0.0,
+              "openai_cua": null,
+              "anthropic_cua": null,
+              "browser_use": null,
+              "timestamp": "1970-01-01T00:16:40+00:00"
+            },
+            {
+              "round": 1001,
+              "subnet36": 0.0,
+              "openai_cua": null,
+              "anthropic_cua": null,
+              "browser_use": null,
+              "timestamp": "1970-01-01T00:16:40+00:00"
+            }
+          ],
+          "total": 3,
+          "timeRange": {
+            "start": "1970-01-01T00:16:40+00:00",
+            "end": "1970-01-01T00:16:40+00:00"
+          }
+        },
+        "error": null,
+        "code": null
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/overview/statistics",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "statistics": {
+            "totalStake": 350123,
+            "totalEmission": 17506,
+            "averageTrust": 0.915,
+            "networkUptime": 0.0,
+            "activeValidators": 2,
+            "registeredMiners": 2,
+            "totalTasksCompleted": 0,
+            "averageTaskScore": 0.92,
+            "lastUpdated": "2025-10-20T17:33:10.741953+00:00"
+          }
+        },
+        "error": null,
+        "code": null
+      }
+    }
+  ],
+  "rounds": [
+    {
+      "status": 200,
+      "endpoint": "/api/v1/rounds",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "rounds": [
+            {
+              "id": 1003,
+              "round": 1003,
+              "roundNumber": 1003,
+              "roundKey": "round_1003",
+              "startBlock": 100,
+              "endBlock": 120,
+              "current": true,
+              "startTime": "1970-01-01T00:16:40+00:00",
+              "endTime": "1970-01-01T00:20:00+00:00",
+              "status": "active",
+              "totalTasks": 1,
+              "completedTasks": 0,
+              "averageScore": 0.75,
+              "topScore": 0.9,
+              "currentBlock": 100,
+              "blocksRemaining": 20,
+              "progress": 0.0,
+              "validatorRoundCount": 1,
+              "validatorRounds": [
+                {
+                  "validatorRoundId": "round_1003",
+                  "validatorUid": 1903,
+                  "validatorName": "Validator 1003",
+                  "validatorHotkey": "validator_hotkey_1003",
+                  "status": "active",
+                  "startTime": "1970-01-01T00:16:40+00:00",
+                  "endTime": "1970-01-01T00:20:00+00:00",
+                  "averageScore": 0.75,
+                  "topScore": 0.9,
+                  "totalTasks": 1,
+                  "completedTasks": 0,
+                  "icon": "https://assets.example.com/validators/Other.png"
+                }
+              ]
+            },
+            {
+              "id": 1002,
+              "round": 1002,
+              "roundNumber": 1002,
+              "roundKey": "round_1002",
+              "startBlock": 100,
+              "endBlock": 120,
+              "current": false,
+              "startTime": "1970-01-01T00:16:40+00:00",
+              "endTime": "1970-01-01T00:20:00+00:00",
+              "status": "active",
+              "totalTasks": 1,
+              "completedTasks": 0,
+              "averageScore": 0.75,
+              "topScore": 0.9,
+              "currentBlock": 100,
+              "blocksRemaining": 20,
+              "progress": 0.0,
+              "validatorRoundCount": 1,
+              "validatorRounds": [
+                {
+                  "validatorRoundId": "round_1002",
+                  "validatorUid": 1902,
+                  "validatorName": "Validator 1002",
+                  "validatorHotkey": "validator_hotkey_1002",
+                  "status": "active",
+                  "startTime": "1970-01-01T00:16:40+00:00",
+                  "endTime": "1970-01-01T00:20:00+00:00",
+                  "averageScore": 0.75,
+                  "topScore": 0.9,
+                  "totalTasks": 1,
+                  "completedTasks": 0,
+                  "icon": "https://assets.example.com/validators/Other.png"
+                }
+              ]
+            },
+            {
+              "id": 1001,
+              "round": 1001,
+              "roundNumber": 1001,
+              "roundKey": "round_1001",
+              "startBlock": 100,
+              "endBlock": 120,
+              "current": false,
+              "startTime": "1970-01-01T00:16:40+00:00",
+              "endTime": "1970-01-01T00:20:00+00:00",
+              "status": "active",
+              "totalTasks": 1,
+              "completedTasks": 0,
+              "averageScore": 0.75,
+              "topScore": 0.9,
+              "currentBlock": 100,
+              "blocksRemaining": 20,
+              "progress": 0.0,
+              "validatorRoundCount": 1,
+              "validatorRounds": [
+                {
+                  "validatorRoundId": "round_1001",
+                  "validatorUid": 1901,
+                  "validatorName": "Validator 1001",
+                  "validatorHotkey": "validator_hotkey_1001",
+                  "status": "active",
+                  "startTime": "1970-01-01T00:16:40+00:00",
+                  "endTime": "1970-01-01T00:20:00+00:00",
+                  "averageScore": 0.75,
+                  "topScore": 0.9,
+                  "totalTasks": 1,
+                  "completedTasks": 0,
+                  "icon": "https://assets.example.com/validators/Other.png"
+                }
+              ]
+            }
+          ],
+          "total": 3,
+          "page": 1,
+          "limit": 10,
+          "currentRound": {
+            "id": 1003,
+            "round": 1003,
+            "roundNumber": 1003,
+            "roundKey": "round_1003",
+            "startBlock": 100,
+            "endBlock": 120,
+            "current": true,
+            "startTime": "1970-01-01T00:16:40+00:00",
+            "endTime": "1970-01-01T00:20:00+00:00",
+            "status": "active",
+            "totalTasks": 1,
+            "completedTasks": 0,
+            "averageScore": 0.75,
+            "topScore": 0.9,
+            "currentBlock": 100,
+            "blocksRemaining": 20,
+            "progress": 0.0,
+            "validatorRoundCount": 1,
+            "validatorRounds": [
+              {
+                "validatorRoundId": "round_1003",
+                "validatorUid": 1903,
+                "validatorName": "Validator 1003",
+                "validatorHotkey": "validator_hotkey_1003",
+                "status": "active",
+                "startTime": "1970-01-01T00:16:40+00:00",
+                "endTime": "1970-01-01T00:20:00+00:00",
+                "averageScore": 0.75,
+                "topScore": 0.9,
+                "totalTasks": 1,
+                "completedTasks": 0,
+                "icon": "https://assets.example.com/validators/Other.png"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/rounds/round_1001",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "round": {
+            "id": 1001,
+            "round": 1001,
+            "roundNumber": 1001,
+            "roundKey": "round_1001",
+            "startBlock": 100,
+            "endBlock": 120,
+            "current": false,
+            "startTime": "1970-01-01T00:16:40+00:00",
+            "endTime": "1970-01-01T00:20:00+00:00",
+            "status": "active",
+            "totalTasks": 1,
+            "completedTasks": 0,
+            "averageScore": 0.92,
+            "topScore": 0.92,
+            "currentBlock": 100,
+            "blocksRemaining": 20,
+            "progress": 0.0,
+            "validatorRoundCount": 1,
+            "validatorRounds": [
+              {
+                "validatorRoundId": "round_1001",
+                "validatorUid": 1901,
+                "validatorName": "Validator 1001",
+                "validatorHotkey": "validator_hotkey_1001",
+                "status": "active",
+                "startTime": "1970-01-01T00:16:40+00:00",
+                "endTime": "1970-01-01T00:20:00+00:00",
+                "averageScore": 0.92,
+                "topScore": 0.92,
+                "totalTasks": 1,
+                "completedTasks": 0,
+                "icon": "https://assets.example.com/validators/Other.png",
+                "agentEvaluationRuns": [
+                  {
+                    "agent_run_id": "agent_run_1001",
+                    "validator_round_id": "round_1001",
+                    "validator_uid": 1901,
+                    "validator_hotkey": "validator_hotkey_1001",
+                    "miner_uid": 1701,
+                    "miner_hotkey": null,
+                    "miner_agent_key": null,
+                    "is_sota": false,
+                    "version": "1.0",
+                    "started_at": 1010.0,
+                    "ended_at": 1020.0,
+                    "elapsed_sec": 10.0,
+                    "average_score": null,
+                    "average_execution_time": null,
+                    "average_reward": null,
+                    "total_reward": 1.2,
+                    "total_tasks": 1,
+                    "completed_tasks": 0,
+                    "failed_tasks": 0,
+                    "rank": 1,
+                    "weight": 0.5,
+                    "metadata": {
+                      "notes": "Test run"
+                    },
+                    "tasks": [
+                      {
+                        "task_id": "task_1001",
+                        "validator_round_id": "round_1001",
+                        "sequence": null,
+                        "scope": "local",
+                        "is_web_real": false,
+                        "web_project_id": null,
+                        "url": "https://example.com",
+                        "prompt": "Execute integration test task.",
+                        "html": "<html></html>",
+                        "clean_html": "<html></html>",
+                        "interactive_elements": null,
+                        "screenshot": null,
+                        "screenshot_description": null,
+                        "specifications": {
+                          "browser": "chrome"
+                        },
+                        "tests": [],
+                        "milestones": null,
+                        "relevant_data": {},
+                        "success_criteria": "Complete successfully",
+                        "use_case": {
+                          "name": "Example"
+                        },
+                        "should_record": false
+                      }
+                    ],
+                    "task_solutions": [
+                      {
+                        "solution_id": "solution_1001",
+                        "task_id": "task_1001",
+                        "agent_run_id": "agent_run_1001",
+                        "validator_round_id": "round_1001",
+                        "validator_uid": 1901,
+                        "validator_hotkey": "validator_hotkey_1001",
+                        "miner_uid": 1701,
+                        "miner_hotkey": "miner_hotkey_1001",
+                        "miner_agent_key": null,
+                        "actions": [
+                          {
+                            "type": "click",
+                            "attributes": {
+                              "attributes": {
+                                "selector": "#submit"
+                              }
+                            }
+                          }
+                        ],
+                        "web_agent_id": "agent",
+                        "recording": null,
+                        "metadata": {}
+                      }
+                    ],
+                    "evaluations": [],
+                    "evaluation_results": [
+                      {
+                        "result_id": "5e56eb21-3bdb-419e-811a-a9b4afe579e6",
+                        "evaluation_id": "evaluation_1001",
+                        "validator_round_id": "round_1001",
+                        "agent_run_id": "agent_run_1001",
+                        "task_id": "task_1001",
+                        "task_solution_id": "solution_1001",
+                        "miner_uid": 1701,
+                        "validator_uid": 1901,
+                        "final_score": 0.92,
+                        "test_results_matrix": [
+                          [
+                            {
+                              "success": true,
+                              "extra_data": {
+                                "confidence": 0.99
+                              }
+                            }
+                          ]
+                        ],
+                        "execution_history": [
+                          {
+                            "action": "click",
+                            "selector": "#submit"
+                          }
+                        ],
+                        "feedback": null,
+                        "web_agent_id": "agent",
+                        "raw_score": 0.92,
+                        "evaluation_time": 5.0,
+                        "stats": null,
+                        "gif_recording": null,
+                        "metadata": {}
+                      }
+                    ],
+                    "task_ids": [
+                      "task_1001"
+                    ],
+                    "avg_eval_score": null,
+                    "avg_execution_time": null,
+                    "avg_reward": null,
+                    "n_tasks_total": 1,
+                    "n_tasks_completed": 0,
+                    "n_tasks_failed": 0,
+                    "miner_info": {
+                      "uid": 1701,
+                      "hotkey": "miner_hotkey_1001",
+                      "coldkey": "miner_coldkey_1001",
+                      "agent_name": "Agent 1001",
+                      "agent_image": "",
+                      "github": "https://github.com/agent1001",
+                      "is_sota": false,
+                      "description": null,
+                      "provider": null
+                    }
+                  }
+                ],
+                "roundData": {
+                  "validator_round_id": "round_1001",
+                  "round_number": 1001,
+                  "validator_uid": 1901,
+                  "validator_hotkey": "validator_hotkey_1001",
+                  "validator_coldkey": null,
+                  "start_block": 100,
+                  "end_block": 120,
+                  "start_epoch": 1,
+                  "end_epoch": 2,
+                  "started_at": 1000.0,
+                  "ended_at": 1200.0,
+                  "elapsed_sec": 200.0,
+                  "max_epochs": 20,
+                  "max_blocks": 360,
+                  "n_tasks": 1,
+                  "n_miners": 1,
+                  "n_winners": 1,
+                  "status": "active",
+                  "average_score": 0.92,
+                  "top_score": 0.92,
+                  "summary": {
+                    "winning_miners": 1
+                  },
+                  "metadata": {
+                    "validatorProfile": {
+                      "uid": 1901,
+                      "hotkey": "validator_hotkey_1001",
+                      "name": "Validator 1001",
+                      "stake": 123.45,
+                      "vtrust": 0.98,
+                      "version": null,
+                      "image": null
+                    },
+                    "winners": [
+                      {
+                        "miner_uid": 1701,
+                        "rank": 1,
+                        "score": 0.92,
+                        "validator_uid": 1901,
+                        "validator_round_id": "round_1001",
+                        "agent_run_id": "agent_run_1001"
+                      }
+                    ],
+                    "winner_scores": [
+                      0.92
+                    ]
+                  },
+                  "validators": [
+                    {
+                      "uid": 1901,
+                      "hotkey": "validator_hotkey_1001",
+                      "coldkey": "validator_coldkey_1001",
+                      "stake": 123.45,
+                      "vtrust": 0.98,
+                      "name": "Validator 1001",
+                      "version": null
+                    }
+                  ],
+                  "validator_info": {
+                    "uid": 1901,
+                    "hotkey": "validator_hotkey_1001",
+                    "coldkey": "validator_coldkey_1001",
+                    "stake": 123.45,
+                    "vtrust": 0.98,
+                    "name": "Validator 1001",
+                    "version": null
+                  },
+                  "miners": [
+                    {
+                      "uid": 1701,
+                      "hotkey": "miner_hotkey_1001",
+                      "coldkey": "miner_coldkey_1001",
+                      "agent_name": "Agent 1001",
+                      "agent_image": "",
+                      "github": "https://github.com/agent1001",
+                      "is_sota": false,
+                      "description": null,
+                      "provider": null
+                    }
+                  ],
+                  "sota_agents": [],
+                  "winners": [
+                    {
+                      "miner_uid": 1701,
+                      "rank": 1,
+                      "score": 0.92,
+                      "validator_uid": 1901,
+                      "validator_round_id": "round_1001",
+                      "agent_run_id": "agent_run_1001"
+                    }
+                  ],
+                  "winner_scores": [],
+                  "weights": null,
+                  "model_extra": {
+                    "meta": {
+                      "validatorProfile": {
+                        "uid": 1901,
+                        "hotkey": "validator_hotkey_1001",
+                        "name": "Validator 1001",
+                        "stake": 123.45,
+                        "vtrust": 0.98,
+                        "version": null,
+                        "image": null
+                      }
+                    },
+                    "summary": {}
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/rounds/round_1001/statistics",
+      "params": {},
+      "body": {
+        "success": true,
+        "error": null,
+        "code": null,
+        "data": {
+          "statistics": {
+            "roundId": 1001,
+            "totalMiners": 1,
+            "activeMiners": 0,
+            "totalTasks": 1,
+            "completedTasks": 0,
+            "totalValidators": 1,
+            "averageTasksPerValidator": 1.0,
+            "averageScore": 0.92,
+            "topScore": 0.92,
+            "successRate": 0.0,
+            "averageDuration": 10.0,
+            "totalStake": 0,
+            "totalEmission": 0,
+            "lastUpdated": "2025-10-20T17:33:10.783139+00:00"
+          }
+        }
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/rounds/round_1001/miners",
+      "params": {},
+      "body": {
+        "success": true,
+        "error": null,
+        "code": null,
+        "data": {
+          "miners": [
+            {
+              "uid": 1701,
+              "name": "Agent 1001",
+              "hotkey": "miner_hotkey_1001",
+              "success": false,
+              "score": 0.92,
+              "duration": 10.0,
+              "ranking": 1,
+              "tasksCompleted": 0,
+              "tasksTotal": 1,
+              "stake": 0,
+              "emission": 0,
+              "lastSeen": "1970-01-01T00:17:00+00:00",
+              "validatorId": "validator-1901",
+              "isSota": false,
+              "provider": null,
+              "imageUrl": "https://assets.example.com/miners/3.svg"
+            }
+          ],
+          "benchmarks": [],
+          "total": 1,
+          "page": 1,
+          "limit": 20
+        }
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/rounds/round_1001/validators",
+      "params": {},
+      "body": {
+        "success": true,
+        "error": null,
+        "code": null,
+        "data": {
+          "validators": [
+            {
+              "id": "validator-1901",
+              "validatorRoundId": "round_1001",
+              "name": "Validator 1001",
+              "hotkey": "validator_hotkey_1001",
+              "icon": "https://assets.example.com/validators/Other.png",
+              "status": "inactive",
+              "totalTasks": 1,
+              "completedTasks": 0,
+              "totalMiners": 1,
+              "activeMiners": 0,
+              "averageScore": 0.92,
+              "topScore": 0.92,
+              "weight": 123,
+              "trust": 0.98,
+              "version": 1,
+              "stake": 123,
+              "emission": 6,
+              "lastSeen": "1970-01-01T00:20:00+00:00",
+              "uptime": 0.0,
+              "topMiner": {
+                "uid": 1701,
+                "name": "Agent 1001",
+                "hotkey": "miner_hotkey_1001",
+                "success": false,
+                "score": 0.92,
+                "duration": 10.0,
+                "ranking": 1,
+                "tasksCompleted": 0,
+                "tasksTotal": 1,
+                "stake": 0,
+                "emission": 0,
+                "lastSeen": "1970-01-01T00:17:00+00:00",
+                "validatorId": "validator-1901",
+                "isSota": false,
+                "provider": null,
+                "imageUrl": "https://assets.example.com/miners/3.svg"
+              }
+            }
+          ],
+          "total": 1
+        }
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/rounds/round_1001/activity",
+      "params": {},
+      "body": {
+        "success": true,
+        "error": null,
+        "code": null,
+        "data": {
+          "activities": [
+            {
+              "id": "round_1001_ended",
+              "type": "round_ended",
+              "message": "Round 1001 completed",
+              "timestamp": "1970-01-01T00:20:00+00:00",
+              "metadata": {
+                "roundId": "round_1001"
+              }
+            },
+            {
+              "id": "round_1001_ended",
+              "type": "validator_round_ended",
+              "message": "Validator round round_1001 completed",
+              "timestamp": "1970-01-01T00:20:00+00:00",
+              "metadata": {
+                "roundId": "round_1001",
+                "validatorRoundId": "round_1001"
+              }
+            },
+            {
+              "id": "agent_run_1001_task_1001",
+              "type": "task_completed",
+              "message": "Task task_1001 evaluated",
+              "timestamp": "1970-01-01T00:17:00+00:00",
+              "metadata": {
+                "minerUid": 1701,
+                "validatorId": "validator-1901",
+                "validatorRoundId": "round_1001",
+                "taskId": "task_1001",
+                "score": 0.92
+              }
+            },
+            {
+              "id": "agent_run_1001_completed",
+              "type": "task_completed",
+              "message": "Agent agent_run_1001 completed evaluation",
+              "timestamp": "1970-01-01T00:17:00+00:00",
+              "metadata": {
+                "minerUid": 1701,
+                "validatorId": "validator-1901",
+                "validatorRoundId": "round_1001"
+              }
+            },
+            {
+              "id": "agent_run_1001_started",
+              "type": "task_started",
+              "message": "Agent agent_run_1001 started evaluation",
+              "timestamp": "1970-01-01T00:16:50+00:00",
+              "metadata": {
+                "minerUid": 1701,
+                "validatorId": "validator-1901",
+                "validatorRoundId": "round_1001"
+              }
+            },
+            {
+              "id": "round_1001_started",
+              "type": "round_started",
+              "message": "Round 1001 started",
+              "timestamp": "1970-01-01T00:16:40+00:00",
+              "metadata": {
+                "roundId": "round_1001"
+              }
+            },
+            {
+              "id": "round_1001_started",
+              "type": "validator_round_started",
+              "message": "Validator round round_1001 started",
+              "timestamp": "1970-01-01T00:16:40+00:00",
+              "metadata": {
+                "roundId": "round_1001",
+                "validatorRoundId": "round_1001"
+              }
+            }
+          ],
+          "total": 7
+        }
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/rounds/round_1001/summary",
+      "params": {},
+      "body": {
+        "success": true,
+        "error": null,
+        "code": null,
+        "data": {
+          "roundId": 1001,
+          "status": "active",
+          "progress": 0.0,
+          "totalMiners": 1,
+          "averageScore": 0.92,
+          "topScore": 0.92,
+          "timeRemaining": "0h 0m"
+        }
+      }
+    }
+  ],
+  "agents": [
+    {
+      "status": 200,
+      "endpoint": "/api/v1/agents",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "agents": [
+            {
+              "id": "agent-1701",
+              "uid": 1701,
+              "name": "Agent 1001",
+              "hotkey": "miner_hotkey_1001",
+              "type": "autoppia",
+              "imageUrl": "https://assets.example.com/miners/3.svg",
+              "githubUrl": "https://github.com/agent1001",
+              "taostatsUrl": "https://taostats.io/subnets/36/metagraph?order=stake%3Adesc&filter=miner_hotkey_1001",
+              "isSota": false,
+              "description": null,
+              "version": "1.0",
+              "status": "active",
+              "totalRuns": 1,
+              "successfulRuns": 1,
+              "currentScore": 0.92,
+              "currentTopScore": 0.92,
+              "currentRank": 1,
+              "bestRankEver": 1,
+              "roundsParticipated": 1,
+              "alphaWonInPrizes": 0.0,
+              "averageResponseTime": 10.0,
+              "totalTasks": 1,
+              "completedTasks": 1,
+              "lastSeen": "1970-01-01T00:17:00+00:00",
+              "createdAt": "1970-01-01T00:16:50+00:00",
+              "updatedAt": "1970-01-01T00:17:00+00:00"
+            },
+            {
+              "id": "agent-1702",
+              "uid": 1702,
+              "name": "Agent 1002",
+              "hotkey": "miner_hotkey_1002",
+              "type": "autoppia",
+              "imageUrl": "https://assets.example.com/miners/10.svg",
+              "githubUrl": "https://github.com/agent1002",
+              "taostatsUrl": "https://taostats.io/subnets/36/metagraph?order=stake%3Adesc&filter=miner_hotkey_1002",
+              "isSota": false,
+              "description": null,
+              "version": "1.0",
+              "status": "active",
+              "totalRuns": 1,
+              "successfulRuns": 1,
+              "currentScore": 0.92,
+              "currentTopScore": 0.92,
+              "currentRank": 1,
+              "bestRankEver": 1,
+              "roundsParticipated": 1,
+              "alphaWonInPrizes": 0.0,
+              "averageResponseTime": 10.0,
+              "totalTasks": 1,
+              "completedTasks": 1,
+              "lastSeen": "1970-01-01T00:17:00+00:00",
+              "createdAt": "1970-01-01T00:16:50+00:00",
+              "updatedAt": "1970-01-01T00:17:00+00:00"
+            },
+            {
+              "id": "agent-1703",
+              "uid": 1703,
+              "name": "Agent 1003",
+              "hotkey": "miner_hotkey_1003",
+              "type": "autoppia",
+              "imageUrl": "https://assets.example.com/miners/28.svg",
+              "githubUrl": "https://github.com/agent1003",
+              "taostatsUrl": "https://taostats.io/subnets/36/metagraph?order=stake%3Adesc&filter=miner_hotkey_1003",
+              "isSota": false,
+              "description": null,
+              "version": "1.0",
+              "status": "active",
+              "totalRuns": 1,
+              "successfulRuns": 1,
+              "currentScore": 0.92,
+              "currentTopScore": 0.92,
+              "currentRank": 1,
+              "bestRankEver": 1,
+              "roundsParticipated": 1,
+              "alphaWonInPrizes": 0.0,
+              "averageResponseTime": 10.0,
+              "totalTasks": 1,
+              "completedTasks": 1,
+              "lastSeen": "1970-01-01T00:17:00+00:00",
+              "createdAt": "1970-01-01T00:16:50+00:00",
+              "updatedAt": "1970-01-01T00:17:00+00:00"
+            }
+          ],
+          "total": 3,
+          "page": 1,
+          "limit": 20
+        }
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/agents/statistics",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "statistics": {
+            "totalAgents": 3,
+            "activeAgents": 3,
+            "inactiveAgents": 0,
+            "totalRuns": 3,
+            "successfulRuns": 3,
+            "averageSuccessRate": 100.0,
+            "averageCurrentScore": 0.92,
+            "topPerformingAgent": {
+              "id": "agent-1701",
+              "name": "Agent 1001",
+              "score": 0.92
+            },
+            "mostActiveAgent": {
+              "id": "agent-1701",
+              "name": "Agent 1001",
+              "runs": 1
+            },
+            "performanceDistribution": {
+              "excellent": 3,
+              "good": 0,
+              "average": 0,
+              "poor": 0
+            },
+            "lastUpdated": "1970-01-01T00:17:00+00:00"
+          }
+        }
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/agents/activity",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "activities": [
+            {
+              "id": "agent_run_1001-completed",
+              "type": "run_completed",
+              "agentId": "agent-1701",
+              "agentName": "Agent 1001",
+              "message": "Agent run completed successfully",
+              "timestamp": "1970-01-01T00:17:00+00:00",
+              "metadata": {
+                "runId": "agent_run_1001",
+                "roundId": 1001,
+                "validatorId": "validator-1901",
+                "score": 0.92,
+                "duration": 10.0
+              }
+            },
+            {
+              "id": "agent_run_1002-completed",
+              "type": "run_completed",
+              "agentId": "agent-1702",
+              "agentName": "Agent 1002",
+              "message": "Agent run completed successfully",
+              "timestamp": "1970-01-01T00:17:00+00:00",
+              "metadata": {
+                "runId": "agent_run_1002",
+                "roundId": 1002,
+                "validatorId": "validator-1902",
+                "score": 0.92,
+                "duration": 10.0
+              }
+            },
+            {
+              "id": "agent_run_1003-completed",
+              "type": "run_completed",
+              "agentId": "agent-1703",
+              "agentName": "Agent 1003",
+              "message": "Agent run completed successfully",
+              "timestamp": "1970-01-01T00:17:00+00:00",
+              "metadata": {
+                "runId": "agent_run_1003",
+                "roundId": 1003,
+                "validatorId": "validator-1903",
+                "score": 0.92,
+                "duration": 10.0
+              }
+            },
+            {
+              "id": "agent_run_1001-started",
+              "type": "run_started",
+              "agentId": "agent-1701",
+              "agentName": "Agent 1001",
+              "message": "Agent run started",
+              "timestamp": "1970-01-01T00:16:50+00:00",
+              "metadata": {
+                "runId": "agent_run_1001",
+                "roundId": 1001,
+                "validatorId": "validator-1901",
+                "score": 0.92
+              }
+            },
+            {
+              "id": "agent_run_1002-started",
+              "type": "run_started",
+              "agentId": "agent-1702",
+              "agentName": "Agent 1002",
+              "message": "Agent run started",
+              "timestamp": "1970-01-01T00:16:50+00:00",
+              "metadata": {
+                "runId": "agent_run_1002",
+                "roundId": 1002,
+                "validatorId": "validator-1902",
+                "score": 0.92
+              }
+            },
+            {
+              "id": "agent_run_1003-started",
+              "type": "run_started",
+              "agentId": "agent-1703",
+              "agentName": "Agent 1003",
+              "message": "Agent run started",
+              "timestamp": "1970-01-01T00:16:50+00:00",
+              "metadata": {
+                "runId": "agent_run_1003",
+                "roundId": 1003,
+                "validatorId": "validator-1903",
+                "score": 0.92
+              }
+            }
+          ],
+          "total": 6
+        }
+      }
+    },
+    {
+      "status": 404,
+      "endpoint": "/api/v1/agents/agent_1001",
+      "params": {},
+      "error": "{\"detail\":\"Agent agent_1001 not found\"}"
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/agents/agent_1001/runs",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "runs": [
+            {
+              "runId": "agent_run_1001",
+              "agentId": "miner_hotkey_1001",
+              "roundId": 1001,
+              "validatorId": "validator-1901",
+              "startTime": "1970-01-01T00:16:50+00:00",
+              "endTime": "1970-01-01T00:17:00+00:00",
+              "status": "completed",
+              "totalTasks": 1,
+              "completedTasks": 1,
+              "score": 0.92,
+              "duration": 10,
+              "ranking": 1,
+              "tasks": [
+                {
+                  "taskId": "task_1001",
+                  "website": "https://example.com",
+                  "useCase": "Example",
+                  "status": "completed",
+                  "score": 0.92,
+                  "duration": 5,
+                  "startTime": "1970-01-01T00:16:50+00:00",
+                  "endTime": "1970-01-01T00:17:00+00:00",
+                  "error": null
+                }
+              ],
+              "metadata": {
+                "notes": "Test run",
+                "agentImage": "https://assets.example.com/miners/3.svg",
+                "agentDescription": ""
+              }
+            },
+            {
+              "runId": "agent_run_1002",
+              "agentId": "miner_hotkey_1002",
+              "roundId": 1002,
+              "validatorId": "validator-1902",
+              "startTime": "1970-01-01T00:16:50+00:00",
+              "endTime": "1970-01-01T00:17:00+00:00",
+              "status": "completed",
+              "totalTasks": 1,
+              "completedTasks": 1,
+              "score": 0.92,
+              "duration": 10,
+              "ranking": 1,
+              "tasks": [
+                {
+                  "taskId": "task_1002",
+                  "website": "https://example.com",
+                  "useCase": "Example",
+                  "status": "completed",
+                  "score": 0.92,
+                  "duration": 5,
+                  "startTime": "1970-01-01T00:16:50+00:00",
+                  "endTime": "1970-01-01T00:17:00+00:00",
+                  "error": null
+                }
+              ],
+              "metadata": {
+                "notes": "Test run",
+                "agentImage": "https://assets.example.com/miners/10.svg",
+                "agentDescription": ""
+              }
+            },
+            {
+              "runId": "agent_run_1003",
+              "agentId": "miner_hotkey_1003",
+              "roundId": 1003,
+              "validatorId": "validator-1903",
+              "startTime": "1970-01-01T00:16:50+00:00",
+              "endTime": "1970-01-01T00:17:00+00:00",
+              "status": "completed",
+              "totalTasks": 1,
+              "completedTasks": 1,
+              "score": 0.92,
+              "duration": 10,
+              "ranking": 1,
+              "tasks": [
+                {
+                  "taskId": "task_1003",
+                  "website": "https://example.com",
+                  "useCase": "Example",
+                  "status": "completed",
+                  "score": 0.92,
+                  "duration": 5,
+                  "startTime": "1970-01-01T00:16:50+00:00",
+                  "endTime": "1970-01-01T00:17:00+00:00",
+                  "error": null
+                }
+              ],
+              "metadata": {
+                "notes": "Test run",
+                "agentImage": "https://assets.example.com/miners/28.svg",
+                "agentDescription": ""
+              }
+            }
+          ],
+          "total": 3,
+          "page": 1,
+          "limit": 20,
+          "availableRounds": [
+            1003,
+            1002,
+            1001
+          ],
+          "selectedRound": 1003
+        }
+      }
+    }
+  ],
+  "agent_runs": [
+    {
+      "status": 200,
+      "endpoint": "/api/v1/agent-runs",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "runs": [
+            {
+              "runId": "agent_run_1003",
+              "agentId": "miner_hotkey_1003",
+              "agentUid": 1703,
+              "agentHotkey": "miner_hotkey_1003",
+              "agentName": "Agent 1003",
+              "roundId": 1003,
+              "validatorId": "validator-1903",
+              "validatorName": "Validator 1003",
+              "validatorImage": "https://assets.example.com/validators/Autoppia.png",
+              "status": "completed",
+              "startTime": "1970-01-01T00:16:50+00:00",
+              "endTime": "1970-01-01T00:17:00+00:00",
+              "totalTasks": 0,
+              "completedTasks": 0,
+              "successfulTasks": 0,
+              "failedTasks": 0,
+              "averageScore": 0.0,
+              "score": 0.0,
+              "successRate": 0.0,
+              "overallScore": 0,
+              "ranking": 1,
+              "duration": 10
+            },
+            {
+              "runId": "agent_run_1002",
+              "agentId": "miner_hotkey_1002",
+              "agentUid": 1702,
+              "agentHotkey": "miner_hotkey_1002",
+              "agentName": "Agent 1002",
+              "roundId": 1002,
+              "validatorId": "validator-1902",
+              "validatorName": "Validator 1002",
+              "validatorImage": "https://assets.example.com/validators/Autoppia.png",
+              "status": "completed",
+              "startTime": "1970-01-01T00:16:50+00:00",
+              "endTime": "1970-01-01T00:17:00+00:00",
+              "totalTasks": 0,
+              "completedTasks": 0,
+              "successfulTasks": 0,
+              "failedTasks": 0,
+              "averageScore": 0.0,
+              "score": 0.0,
+              "successRate": 0.0,
+              "overallScore": 0,
+              "ranking": 1,
+              "duration": 10
+            },
+            {
+              "runId": "agent_run_1001",
+              "agentId": "miner_hotkey_1001",
+              "agentUid": 1701,
+              "agentHotkey": "miner_hotkey_1001",
+              "agentName": "Agent 1001",
+              "roundId": 1001,
+              "validatorId": "validator-1901",
+              "validatorName": "Validator 1001",
+              "validatorImage": "https://assets.example.com/validators/Autoppia.png",
+              "status": "completed",
+              "startTime": "1970-01-01T00:16:50+00:00",
+              "endTime": "1970-01-01T00:17:00+00:00",
+              "totalTasks": 0,
+              "completedTasks": 0,
+              "successfulTasks": 0,
+              "failedTasks": 0,
+              "averageScore": 0.0,
+              "score": 0.0,
+              "successRate": 0.0,
+              "overallScore": 0,
+              "ranking": 1,
+              "duration": 10
+            }
+          ],
+          "total": 3,
+          "page": 1,
+          "limit": 20,
+          "availableRounds": [
+            1003,
+            1002,
+            1001
+          ],
+          "selectedRound": null
+        },
+        "error": null,
+        "code": null
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/agent-runs/agent_run_1001",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "run": {
+            "runId": "agent_run_1001",
+            "agentId": "miner_hotkey_1001",
+            "agentUid": 1701,
+            "agentHotkey": "miner_hotkey_1001",
+            "agentName": "Agent 1001",
+            "roundId": 1001,
+            "validatorId": "validator-1901",
+            "validatorName": "Validator 1001",
+            "validatorImage": "https://assets.example.com/validators/Autoppia.png",
+            "startTime": "1970-01-01T00:16:50+00:00",
+            "endTime": "1970-01-01T00:17:00+00:00",
+            "status": "completed",
+            "totalTasks": 1,
+            "completedTasks": 1,
+            "successfulTasks": 1,
+            "failedTasks": 0,
+            "score": 0.92,
+            "ranking": 1,
+            "duration": 10,
+            "overallScore": 92,
+            "websites": [
+              {
+                "website": "example.com",
+                "tasks": 1,
+                "successful": 1,
+                "failed": 0,
+                "score": 0.92
+              }
+            ],
+            "tasks": [
+              {
+                "taskId": "task_1001",
+                "website": "https://example.com",
+                "useCase": "Example",
+                "prompt": "Execute integration test task.",
+                "status": "completed",
+                "score": 0.92,
+                "duration": 5,
+                "startTime": "1970-01-01T00:16:50+00:00",
+                "endTime": "1970-01-01T00:17:00+00:00",
+                "actions": [
+                  {
+                    "id": "task_1001_action_0",
+                    "type": "click",
+                    "selector": null,
+                    "value": null,
+                    "timestamp": "1970-01-01T00:16:50+00:00",
+                    "duration": 0.0,
+                    "success": true
+                  }
+                ],
+                "screenshots": [],
+                "logs": []
+              }
+            ],
+            "metadata": {
+              "notes": "Test run",
+              "agentImage": "https://assets.example.com/miners/3.svg",
+              "agentDescription": ""
+            }
+          }
+        },
+        "error": null,
+        "code": null
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/agent-runs/agent_run_1001/summary",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "summary": {
+            "runId": "agent_run_1001",
+            "agentId": "miner_hotkey_1001",
+            "agentUid": 1701,
+            "agentHotkey": "miner_hotkey_1001",
+            "agentName": "Agent 1001",
+            "roundId": 1001,
+            "validatorId": "validator-1901",
+            "startTime": "1970-01-01T00:16:50+00:00",
+            "endTime": "1970-01-01T00:17:00+00:00",
+            "status": "completed",
+            "overallScore": 92,
+            "totalTasks": 1,
+            "successfulTasks": 1,
+            "failedTasks": 0,
+            "duration": 10,
+            "ranking": 1,
+            "topPerformingWebsite": {
+              "website": "example.com",
+              "score": 0.92,
+              "tasks": 1
+            },
+            "topPerformingUseCase": {
+              "useCase": "Example",
+              "score": 0.92,
+              "tasks": 1
+            },
+            "recentActivity": [
+              {
+                "timestamp": "1970-01-01T00:16:50+00:00",
+                "action": "Run started",
+                "details": "Agent run initiated"
+              }
+            ]
+          }
+        },
+        "error": null,
+        "code": null
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/agent-runs/agent_run_1001/tasks",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "tasks": [
+            {
+              "taskId": "task_1001",
+              "website": "https://example.com",
+              "useCase": "Example",
+              "prompt": "Execute integration test task.",
+              "status": "completed",
+              "score": 0.92,
+              "duration": 5,
+              "startTime": "1970-01-01T00:16:50+00:00",
+              "endTime": "1970-01-01T00:17:00+00:00",
+              "actions": [
+                {
+                  "id": "task_1001_action_0",
+                  "type": "click",
+                  "selector": null,
+                  "value": null,
+                  "timestamp": "1970-01-01T00:16:50+00:00",
+                  "duration": 0.0,
+                  "success": true
+                }
+              ],
+              "screenshots": [],
+              "logs": []
+            }
+          ]
+        },
+        "error": null,
+        "code": null
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/agent-runs/agent_run_1001/metrics",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "metrics": {
+            "cpu": [
+              {
+                "timestamp": "1970-01-01T00:16:50+00:00",
+                "value": 1.0
+              },
+              {
+                "timestamp": "1970-01-01T00:17:00+00:00",
+                "value": 2.0
+              }
+            ],
+            "memory": [
+              {
+                "timestamp": "1970-01-01T00:16:50+00:00",
+                "value": 1.0
+              },
+              {
+                "timestamp": "1970-01-01T00:17:00+00:00",
+                "value": 2.0
+              }
+            ],
+            "network": [
+              {
+                "timestamp": "1970-01-01T00:16:50+00:00",
+                "value": 1.0
+              },
+              {
+                "timestamp": "1970-01-01T00:17:00+00:00",
+                "value": 2.0
+              }
+            ],
+            "duration": 10,
+            "peakCpu": 2.0,
+            "peakMemory": 2.0,
+            "totalNetworkTraffic": 200
+          }
+        },
+        "error": null,
+        "code": null
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "status": 200,
+      "endpoint": "/api/v1/tasks",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "tasks": [
+            {
+              "taskId": "task_1003",
+              "agentRunId": "agent_run_1003",
+              "website": "https://example.com",
+              "useCase": "Example",
+              "prompt": "Execute integration test task.",
+              "status": "completed",
+              "score": 0.92,
+              "successRate": 92,
+              "duration": 5,
+              "startTime": "1970-01-01T00:16:50+00:00",
+              "endTime": "1970-01-01T00:17:00+00:00",
+              "createdAt": "1970-01-01T00:16:50+00:00",
+              "updatedAt": "1970-01-01T00:17:00+00:00",
+              "actions": [
+                {
+                  "id": "0",
+                  "type": "click",
+                  "selector": null,
+                  "value": null,
+                  "timestamp": "1970-01-01T00:16:50+00:00",
+                  "duration": 0.0,
+                  "success": true,
+                  "error": null,
+                  "metadata": {
+                    "attributes": {
+                      "selector": "#submit"
+                    }
+                  },
+                  "screenshot": null
+                }
+              ],
+              "screenshots": [],
+              "logs": [],
+              "metadata": null
+            },
+            {
+              "taskId": "task_1002",
+              "agentRunId": "agent_run_1002",
+              "website": "https://example.com",
+              "useCase": "Example",
+              "prompt": "Execute integration test task.",
+              "status": "completed",
+              "score": 0.92,
+              "successRate": 92,
+              "duration": 5,
+              "startTime": "1970-01-01T00:16:50+00:00",
+              "endTime": "1970-01-01T00:17:00+00:00",
+              "createdAt": "1970-01-01T00:16:50+00:00",
+              "updatedAt": "1970-01-01T00:17:00+00:00",
+              "actions": [
+                {
+                  "id": "0",
+                  "type": "click",
+                  "selector": null,
+                  "value": null,
+                  "timestamp": "1970-01-01T00:16:50+00:00",
+                  "duration": 0.0,
+                  "success": true,
+                  "error": null,
+                  "metadata": {
+                    "attributes": {
+                      "selector": "#submit"
+                    }
+                  },
+                  "screenshot": null
+                }
+              ],
+              "screenshots": [],
+              "logs": [],
+              "metadata": null
+            },
+            {
+              "taskId": "task_1001",
+              "agentRunId": "agent_run_1001",
+              "website": "https://example.com",
+              "useCase": "Example",
+              "prompt": "Execute integration test task.",
+              "status": "completed",
+              "score": 0.92,
+              "successRate": 92,
+              "duration": 5,
+              "startTime": "1970-01-01T00:16:50+00:00",
+              "endTime": "1970-01-01T00:17:00+00:00",
+              "createdAt": "1970-01-01T00:16:50+00:00",
+              "updatedAt": "1970-01-01T00:17:00+00:00",
+              "actions": [
+                {
+                  "id": "0",
+                  "type": "click",
+                  "selector": null,
+                  "value": null,
+                  "timestamp": "1970-01-01T00:16:50+00:00",
+                  "duration": 0.0,
+                  "success": true,
+                  "error": null,
+                  "metadata": {
+                    "attributes": {
+                      "selector": "#submit"
+                    }
+                  },
+                  "screenshot": null
+                }
+              ],
+              "screenshots": [],
+              "logs": [],
+              "metadata": null
+            }
+          ],
+          "total": 3,
+          "page": 1,
+          "limit": 20
+        }
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/tasks/task_1001",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "task": {
+            "taskId": "task_1001",
+            "agentRunId": "agent_run_1001",
+            "website": "https://example.com",
+            "useCase": "Example",
+            "prompt": "Execute integration test task.",
+            "status": "completed",
+            "score": 0.92,
+            "successRate": 92,
+            "duration": 5,
+            "startTime": "1970-01-01T00:16:50Z",
+            "endTime": "1970-01-01T00:17:00Z",
+            "createdAt": "1970-01-01T00:16:50Z",
+            "updatedAt": "1970-01-01T00:17:00Z",
+            "actions": [
+              {
+                "id": "0",
+                "type": "click",
+                "selector": null,
+                "value": null,
+                "timestamp": "1970-01-01T00:16:50Z",
+                "duration": 0.0,
+                "success": true,
+                "error": null,
+                "metadata": {
+                  "attributes": {
+                    "selector": "#submit"
+                  }
+                },
+                "screenshot": null
+              }
+            ],
+            "screenshots": [],
+            "logs": [],
+            "metadata": {
+              "environment": "production",
+              "browser": "chrome",
+              "viewport": {
+                "width": 1920,
+                "height": 1080
+              },
+              "userAgent": "Auto-generated",
+              "resources": {
+                "cpu": 1.0,
+                "memory": 512,
+                "network": 100
+              }
+            },
+            "performance": {
+              "totalActions": 1,
+              "successfulActions": 1,
+              "failedActions": 0,
+              "averageActionDuration": 0.0,
+              "totalWaitTime": 0.0,
+              "totalNavigationTime": 0.0
+            },
+            "relationships": {
+              "round": {
+                "validatorRoundId": "round_1001",
+                "roundNumber": 1001,
+                "status": "active",
+                "startedAt": "1970-01-01T00:16:40Z",
+                "endedAt": "1970-01-01T00:20:00Z",
+                "startEpoch": 1,
+                "endEpoch": 2
+              },
+              "validator": {
+                "uid": 1901,
+                "hotkey": "validator_hotkey_1001",
+                "coldkey": "validator_coldkey_1001",
+                "name": "Validator 1001",
+                "stake": 123.45,
+                "vtrust": 0.98,
+                "version": null
+              },
+              "miner": {
+                "uid": 1701,
+                "hotkey": "miner_hotkey_1001",
+                "name": "Agent 1001",
+                "github": "https://github.com/agent1001",
+                "provider": null,
+                "image": "https://assets.example.com/miners/3.svg",
+                "isSota": false
+              },
+              "agentRun": {
+                "agentRunId": "agent_run_1001",
+                "validatorUid": 1901,
+                "minerUid": 1701,
+                "isSota": false,
+                "startedAt": "1970-01-01T00:16:50Z",
+                "endedAt": "1970-01-01T00:17:00Z",
+                "duration": 10,
+                "taskCount": 1,
+                "completedTasks": 0,
+                "failedTasks": 0,
+                "averageScore": null
+              },
+              "evaluation": {
+                "evaluationId": "evaluation_1001",
+                "finalScore": 0.92,
+                "rawScore": 0.92,
+                "evaluationTime": 5.0,
+                "status": "completed",
+                "validatorUid": 1901,
+                "minerUid": 1701,
+                "webAgentId": "agent",
+                "hasFeedback": false,
+                "hasRecording": false
+              },
+              "solution": {
+                "solutionId": "solution_1001",
+                "agentRunId": "agent_run_1001",
+                "minerUid": 1701,
+                "validatorUid": 1901,
+                "actionsCount": 1,
+                "webAgentId": "agent",
+                "hasRecording": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/tasks/task_1001/statistics",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "statistics": {
+            "totalTasks": 1,
+            "completedTasks": 1,
+            "failedTasks": 0,
+            "runningTasks": 0,
+            "averageScore": 0.92,
+            "averageDuration": 5.0,
+            "successRate": 100.0,
+            "performanceByWebsite": [
+              {
+                "website": "https://example.com",
+                "tasks": 1,
+                "successful": 1,
+                "failed": 0,
+                "averageScore": 0.92,
+                "averageDuration": 5.0
+              }
+            ],
+            "performanceByUseCase": [
+              {
+                "useCase": "Example",
+                "tasks": 1,
+                "successful": 1,
+                "failed": 0,
+                "averageScore": 0.92,
+                "averageDuration": 5.0
+              }
+            ],
+            "recentActivity": [
+              {
+                "timestamp": "1970-01-01T00:16:50+00:00",
+                "action": "task_started",
+                "details": "Task task_1001 started"
+              },
+              {
+                "timestamp": "1970-01-01T00:17:00+00:00",
+                "action": "task_completed",
+                "details": "Task task_1001 completed"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "status": 200,
+      "endpoint": "/api/v1/tasks/task_1001/metrics",
+      "params": {},
+      "body": {
+        "success": true,
+        "data": {
+          "metrics": {
+            "duration": 5,
+            "actionsPerSecond": 0.0,
+            "averageActionDuration": 0.0,
+            "totalWaitTime": 0.0,
+            "totalNavigationTime": 0.0,
+            "memoryUsage": [],
+            "cpuUsage": []
+          }
+        }
+      }
+    }
+  ]
+}

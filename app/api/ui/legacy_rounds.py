@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.services.rounds_service import RoundsService
+from app.services.ui.rounds_service import RoundsService
 
 legacy_router = APIRouter(prefix="/rounds", tags=["legacy-rounds"], include_in_schema=False)
 

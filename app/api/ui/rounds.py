@@ -21,7 +21,7 @@ from app.models.ui.rounds import (
     RoundValidatorsResponse,
     RoundsListResponse,
 )
-from app.services.rounds_service import RoundsService
+from app.services.ui.rounds_service import RoundsService
 
 logger = logging.getLogger(__name__)
 

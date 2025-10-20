@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.services.miner_list_service import MinerListService
+from app.services.ui.miner_list_service import MinerListService
 
 logger = logging.getLogger(__name__)
 

@@ -58,7 +58,7 @@ from app.models.ui.tasks import (
     TaskValidatorSummary,
     WebsitePerformance,
 )
-from app.services.rounds_service import AgentRunContext, RoundsService
+from app.services.ui.rounds_service import AgentRunContext, RoundsService
 from app.utils.images import resolve_agent_image
 from app.config import settings
 

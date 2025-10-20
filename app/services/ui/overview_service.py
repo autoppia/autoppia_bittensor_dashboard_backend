@@ -24,7 +24,7 @@ from app.models.ui.overview import (
     SubnetStatistics,
     ValidatorInfo,
 )
-from app.services.rounds_service import AgentRunContext, RoundRecord, RoundsService
+from app.services.ui.rounds_service import AgentRunContext, RoundRecord, RoundsService
 from app.config import settings
 from app.utils.images import resolve_validator_image
 

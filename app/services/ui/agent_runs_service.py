@@ -36,7 +36,7 @@ from app.models.ui.agent_runs import (
     ValidatorInfo,
     Website,
 )
-from app.services.rounds_service import AgentRunContext, RoundsService
+from app.services.ui.rounds_service import AgentRunContext, RoundsService
 from app.data import get_validator_metadata
 from app.utils.images import resolve_agent_image, resolve_validator_image
 

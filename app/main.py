@@ -64,9 +64,49 @@ _NOISY_LOGGERS = {
     "btdecode": max(log_level, logging.INFO),
     "aiosqlite": max(log_level, logging.INFO),
     "bittensor": max(log_level, logging.INFO),
+    "sqlalchemy": max(log_level, logging.WARNING),
+    "sqlalchemy.engine": max(log_level, logging.WARNING),
+    "sqlalchemy.engine.Engine": max(log_level, logging.WARNING),
 }
 for name, level in _NOISY_LOGGERS.items():
     logging.getLogger(name).setLevel(level)
+
+
+def _configure_bittensor_logging(min_level: int = logging.INFO) -> None:
+    """
+    Ensure bittensor's logging stays at INFO or higher regardless of app log level.
+
+    Bittensor manages its own logging stack, so we explicitly toggle its state here
+    to avoid noisy debug output when the backend runs in DEBUG mode.
+    """
+    target_level = max(log_level, min_level)
+    try:
+        import bittensor as bt  # type: ignore
+    except ImportError:
+        logger.debug("Bittensor not installed; skipping bittensor logging configuration.")
+        return
+    except Exception:  # pragma: no cover - defensive guard for sandboxed envs
+        logger.debug("Unable to import bittensor; skipping logging configuration.", exc_info=True)
+        return
+
+    try:
+        bt.logging.set_debug(False)
+        bt.logging.set_trace(False)
+        bt.logging.set_info(True)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.warning("Unable to adjust bittensor logging verbosity: %s", exc)
+
+    bt_logger = logging.getLogger("bittensor")
+    bt_logger.setLevel(target_level)
+
+    for handler in getattr(bt.logging, "_handlers", []):
+        try:
+            handler.setLevel(target_level)
+        except Exception:  # pragma: no cover - defensive guard
+            logger.debug("Failed to update bittensor handler log level.", exc_info=True)
+
+# Apply at import time so early Bittensor usage stays at INFO.
+_configure_bittensor_logging()
 
 # Create FastAPI app
 app = FastAPI(
@@ -187,6 +227,8 @@ async def clear_cache():
 async def on_startup():
     """Initialize the application on startup."""
     logger.info("Starting Autoppia IWA Platform API...")
+
+    _configure_bittensor_logging()
     
     try:
         await init_db()

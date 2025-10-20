@@ -31,7 +31,7 @@ from app.models.core import (
     ValidatorRoundSubmissionRequest,
     ValidatorRoundValidator,
 )
-from app.services.validator_storage import (
+from app.services.validator.validator_storage import (
     PersistenceResult,
     RoundConflictError,
     ValidatorRoundPersistenceService,

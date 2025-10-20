@@ -20,7 +20,7 @@ from app.models.ui.agent_runs import (
     TasksResponse,
     TimelineResponse,
 )
-from app.services.agent_runs_service import AgentRunsService
+from app.services.ui.agent_runs_service import AgentRunsService
 
 logger = logging.getLogger(__name__)
 

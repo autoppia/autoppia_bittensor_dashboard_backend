@@ -24,8 +24,8 @@ from app.models.core import (
     ValidatorRound,
     ValidatorRoundValidator,
 )
-from app.services.validator_auth import require_validator_auth
-from app.services.validator_storage import (
+from app.services.validator.validator_auth import require_validator_auth
+from app.services.validator.validator_storage import (
     RoundConflictError,
     DuplicateIdentifierError,
     ValidatorRoundPersistenceService,

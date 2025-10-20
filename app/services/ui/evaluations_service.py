@@ -31,7 +31,7 @@ from app.models.ui.evaluations import (
     EvaluationStatus,
     EvaluationTaskInfo,
 )
-from app.services.rounds_service import RoundsService
+from app.services.ui.rounds_service import RoundsService
 
 logger = logging.getLogger(__name__)
 

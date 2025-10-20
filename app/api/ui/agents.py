@@ -13,7 +13,7 @@ from app.models.ui.agents import (
     AgentStatus,
     AgentType,
 )
-from app.services.agents_service import AgentsService
+from app.services.ui.agents_service import AgentsService
 
 logger = logging.getLogger(__name__)
 

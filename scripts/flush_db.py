@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Utility to reset the SQLite database used by the Autoppia backend.
+Utilities to reset the SQLite database used for seeding scenarios.
 
-The script deletes the underlying SQLite file (if it exists) and recreates the
-schema using the project models. By default it honours the DATABASE_URL from
-environment variables or .env files, but you can override it with the
-``--database-url`` flag when needed.
+This module provides functionality to flush and reinitialize the database.
+
+Usage:
+    python -m scripts.flush_db --yes --database-url sqlite+aiosqlite:///autoppia.db
 """
 
 from __future__ import annotations
@@ -15,37 +15,55 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+from typing import Iterable, Optional
 
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
-def parse_args() -> argparse.Namespace:
+
+def _build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Delete and recreate the SQLite database for the Autoppia backend.",
+        description="Reset the Autoppia backend SQLite database used for seeding.",
     )
     parser.add_argument(
         "--database-url",
         dest="database_url",
-        help=(
-            "Database URL to reset. Defaults to DATABASE_URL env var or the backend "
-            "configuration fallback."
-        ),
+        default=None,
+        help="Optional explicit DATABASE_URL override.",
     )
     parser.add_argument(
         "--yes",
         action="store_true",
         help="Skip confirmation prompt.",
     )
-    return parser.parse_args()
+    return parser
 
 
-async def flush_database(database_url: str, assume_yes: bool) -> None:
-    """Remove the SQLite file and recreate the schema."""
+def _resolve_database_url(candidate: str | None) -> str:
+    if candidate:
+        os.environ["DATABASE_URL"] = candidate
+        return candidate
+
+    from app.config import settings  # local import to respect env overrides
+
+    database_url = settings.DATABASE_URL
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is not configured.")
+    return database_url
+
+
+async def flush_database(database_url: str, *, assume_yes: bool) -> None:
+    """
+    Remove the SQLite file backing the service and recreate the schema.
+
+    Args:
+        database_url: SQLAlchemy-compatible database URL pointing at SQLite.
+        assume_yes: Skip confirmation prompt when True.
+    """
     try:
         url = make_url(database_url)
     except ArgumentError as exc:  # pragma: no cover - defensive
@@ -63,8 +81,7 @@ async def flush_database(database_url: str, assume_yes: bool) -> None:
 
     file_path = Path(db_path).expanduser()
     if not file_path.is_absolute():
-        # Resolve relative paths against the backend project root for consistency.
-        project_root = Path(__file__).resolve().parents[1]
+        project_root = BACKEND_DIR
         file_path = (project_root / file_path).resolve()
 
     if not assume_yes:
@@ -73,10 +90,8 @@ async def flush_database(database_url: str, assume_yes: bool) -> None:
             print("Aborted.")
             return
 
-    # Import after potential DATABASE_URL override to reflect the intended target.
-    from app.db.session import engine, init_db  # type: ignore
+    from app.db.session import engine, init_db  # type: ignore  # noqa: E402
 
-    # Ensure there are no open connections before deleting the file.
     await engine.dispose()
 
     if file_path.exists():
@@ -91,21 +106,33 @@ async def flush_database(database_url: str, assume_yes: bool) -> None:
     print("Database schema recreated.")
 
 
-def main() -> int:
-    args = parse_args()
+def flush_seed_database(
+    database_url: str | None = None,
+    *,
+    assume_yes: bool = True,
+) -> None:
+    """
+    Reset the SQLite database backing the backend service.
 
-    if args.database_url:
-        os.environ["DATABASE_URL"] = args.database_url
+    Args:
+        database_url: Optional explicit DATABASE_URL override. If omitted, the
+            application settings (environment/.env) will be used.
+        assume_yes: When True, skips the interactive confirmation prompt.
+    """
+    resolved_url = _resolve_database_url(database_url)
+    asyncio.run(flush_database(resolved_url, assume_yes=assume_yes))
 
-    from app.config import settings  # type: ignore
 
-    database_url = settings.DATABASE_URL
-    if not database_url:
-        raise SystemExit("DATABASE_URL is not configured.")
+def main(argv: Optional[Iterable[str]] = None) -> int:
+    parser = _build_argument_parser()
+    args = parser.parse_args(list(argv) if argv is not None else None)
 
-    asyncio.run(flush_database(database_url, assume_yes=args.yes))
+    flush_seed_database(
+        database_url=args.database_url,
+        assume_yes=args.yes,
+    )
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    raise SystemExit(main())

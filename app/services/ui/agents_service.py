@@ -43,8 +43,8 @@ from app.models.ui.agents import (
     ScoreRoundDataPoint,
     AgentRoundMetrics,
 )
-from app.services.rounds_service import AgentRunContext, RoundsService
-from app.services.agent_runs_service import AgentRunsService
+from app.services.ui.rounds_service import AgentRunContext, RoundsService
+from app.services.ui.agent_runs_service import AgentRunsService
 from app.utils.images import resolve_agent_image
 from app.utils.urls import build_taostats_miner_url
 

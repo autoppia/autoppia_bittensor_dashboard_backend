@@ -13,7 +13,7 @@ from app.models.ui.evaluations import (
     EvaluationGifUploadResponse,
     EvaluationListResponse,
 )
-from app.services.evaluations_service import EvaluationsService
+from app.services.ui.evaluations_service import EvaluationsService
 from app.services.media_storage import (
     GifStorageConfigError,
     build_public_url,

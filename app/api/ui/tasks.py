@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.services.tasks_service import TasksService
+from app.services.ui.tasks_service import TasksService
 
 logger = logging.getLogger(__name__)
 

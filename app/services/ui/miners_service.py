@@ -18,7 +18,7 @@ from app.models.ui.miners import (
     Granularity,
 )
 from app.models.ui.miners import Pagination
-from app.services.agents_service import AgentsService, AgentAggregate
+from app.services.ui.agents_service import AgentsService, AgentAggregate
 from app.utils.images import resolve_agent_image
 from app.utils.urls import build_taostats_miner_url
 

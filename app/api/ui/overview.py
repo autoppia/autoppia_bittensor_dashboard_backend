@@ -21,7 +21,7 @@ from app.models.ui.overview import (
     ValidatorsListResponse,
     ValidatorsFilterResponse,
 )
-from app.services.overview_service import OverviewService
+from app.services.ui.overview_service import OverviewService
 
 logger = logging.getLogger(__name__)
 
