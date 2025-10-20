@@ -458,14 +458,30 @@ async def start_agent_run(
     except DuplicateIdentifierError as exc:
         existing_run = await service._get_agent_run_row(agent_run.agent_run_id)  # type: ignore[attr-defined]
         if existing_run is not None:
-            logger.info(
-                "Agent run %s already registered; treating as idempotent registration",
+            if (
+                existing_run.validator_round_id == validator_round_id
+                and existing_run.validator_uid == agent_run.validator_uid
+                and existing_run.validator_hotkey == agent_run.validator_hotkey
+            ):
+                logger.info(
+                    "Agent run %s already registered; treating as idempotent registration",
+                    agent_run.agent_run_id,
+                )
+                return {
+                    "message": "Agent run registered",
+                    "agent_run_id": agent_run.agent_run_id,
+                }
+            logger.warning(
+                "agent_run_id %s already bound to validator_round %s (requested %s)",
                 agent_run.agent_run_id,
+                existing_run.validator_round_id,
+                validator_round_id,
             )
-            return {
-                "message": "Agent run registered",
-                "agent_run_id": agent_run.agent_run_id,
-            }
+            detail = (
+                f"agent_run_id {agent_run.agent_run_id} is already registered "
+                f"to validator_round {existing_run.validator_round_id}"
+            )
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from exc
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc

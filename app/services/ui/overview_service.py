@@ -327,13 +327,19 @@ class OverviewService:
         else:
             validator_round_id = identifier
 
-        stmt = select(RoundORM).where(RoundORM.validator_round_id == validator_round_id)
+        stmt = (
+            select(RoundORM)
+            .options(
+                selectinload(RoundORM.validator_snapshots),
+                selectinload(RoundORM.miner_snapshots),
+            )
+            .where(RoundORM.validator_round_id == validator_round_id)
+        )
         row = await self.session.scalar(stmt)
         if not row:
             raise ValueError(f"Round {identifier} not found")
-        data = dict(row.data or {})
-        data.setdefault("validator_round_id", row.validator_round_id)
-        return self._round_to_info(ValidatorRound(**data), current=False)
+        round_obj = self.rounds_service._deserialize_round(row)
+        return self._round_to_info(round_obj, current=round_obj.ended_at is None)
 
     async def leaderboard(
         self,
