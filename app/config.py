@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     SUBTENSOR_ENDPOINT: Optional[str] = None
     VALIDATOR_AUTH_CACHE_TTL: int = 180
     API_CACHE_DISABLED: bool = False
+    AUTH_DISABLED: bool = False
 
     # ---------- Logging configuration (all configurable via env) ----------
     # General app log level

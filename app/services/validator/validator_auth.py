@@ -38,6 +38,18 @@ class ValidatorAuthService:
         self._cache_lock = threading.Lock()
         self._stakes_cache: Dict[str, float] = {}
         self._cache_expiry = 0.0
+        self._log_signature_payloads = bool(
+            str(getattr(settings, "LOG_VALIDATOR_SIGNATURES", "")).lower() not in {"", "0", "false", "none"}
+        )
+
+    @staticmethod
+    def _redact_signature(signature_b64: str, *, head: int = 8) -> str:
+        signature_b64 = signature_b64.strip()
+        if not signature_b64:
+            return "<empty>"
+        if len(signature_b64) <= head:
+            return signature_b64
+        return f"{signature_b64[:head]}… ({len(signature_b64)} chars)"
 
     @staticmethod
     def _signature_bytes(signature_b64: str) -> bytes:
@@ -127,6 +139,13 @@ class ValidatorAuthService:
         except Exception as exc:  # pragma: no cover - optional dependency
             raise AuthUnavailableError(f"Bittensor library unavailable: {exc}") from exc
 
+        redacted = self._redact_signature(signature_b64)
+        logger.debug(
+            "Validator signature received for hotkey=%s payload=%s",
+            hotkey,
+            redacted if self._log_signature_payloads else "<redacted>",
+        )
+
         signature = self._signature_bytes(signature_b64)
         message_bytes = settings.VALIDATOR_AUTH_MESSAGE.encode("utf-8")
 
@@ -142,7 +161,9 @@ class ValidatorAuthService:
             raise AuthUnavailableError(f"Signature verification unavailable: {exc}") from exc
 
         if not is_valid:
+            logger.warning("Validator signature did not verify for hotkey=%s", hotkey)
             raise InvalidSignatureError("Signature verification failed")
+        logger.info("Validator signature verified successfully for hotkey=%s", hotkey)
 
     def ensure_minimum_stake(self, hotkey: str) -> float:
         try:
@@ -175,13 +196,18 @@ async def require_validator_auth(
     request: Request,
     service: ValidatorAuthService = Depends(get_validator_auth_service),
 ) -> None:
-    if settings.TESTING:
+    if getattr(settings, "AUTH_DISABLED", False):
         return
 
     hotkey = request.headers.get(VALIDATOR_HOTKEY_HEADER)
     signature = request.headers.get(VALIDATOR_SIGNATURE_HEADER)
 
     if not hotkey or not signature:
+        logger.warning(
+            "Validator auth missing header(s): hotkey_present=%s signature_present=%s",
+            bool(hotkey),
+            bool(signature),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Validator authentication headers are required",
