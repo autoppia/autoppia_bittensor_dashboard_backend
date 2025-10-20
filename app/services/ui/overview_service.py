@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -10,7 +12,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.data import VALIDATOR_DIRECTORY, get_validator_metadata
 from app.db.models import AgentEvaluationRunORM, EvaluationResultORM, RoundORM, TaskORM
 from app.models.core import ValidatorRound
 from app.models.ui.overview import (
@@ -29,6 +30,56 @@ from app.config import settings
 from app.utils.images import resolve_validator_image
 
 logger = logging.getLogger(__name__)
+
+
+class ValidatorState(Enum):
+    NOT_STARTED = "not_started"
+    STARTING = "starting"
+    SENDING_TASKS = "sending_tasks"
+    EVALUATING = "evaluating"
+    WAITING = "waiting"
+    OFFLINE = "offline"
+    FINISHED = "finished"
+
+
+STATUS_DISPLAY: Dict[ValidatorState, str] = {
+    ValidatorState.NOT_STARTED: "Not Started",
+    ValidatorState.STARTING: "Starting",
+    ValidatorState.SENDING_TASKS: "Sending Tasks",
+    ValidatorState.EVALUATING: "Evaluating",
+    ValidatorState.WAITING: "Waiting",
+    ValidatorState.OFFLINE: "Offline",
+    ValidatorState.FINISHED: "Finished",
+}
+
+STATUS_DEFAULT_TASK: Dict[ValidatorState, str] = {
+    ValidatorState.NOT_STARTED: "Awaiting round start",
+    ValidatorState.STARTING: "Validator connected – awaiting task upload",
+    ValidatorState.SENDING_TASKS: "Distributing tasks to agent runs",
+    ValidatorState.EVALUATING: "Evaluating miner submissions",
+    ValidatorState.WAITING: "Awaiting next action",
+    ValidatorState.OFFLINE: "No activity detected recently",
+    ValidatorState.FINISHED: "Round completed",
+}
+
+
+@dataclass(frozen=True)
+class ValidatorStatusInfo:
+    """Normalized validator activity status for overview displays."""
+
+    state: ValidatorState
+    label: str
+    default_task: str
+    requires_prompt: bool
+
+    @classmethod
+    def from_state(cls, state: ValidatorState) -> "ValidatorStatusInfo":
+        return cls(
+            state=state,
+            label=STATUS_DISPLAY[state],
+            default_task=STATUS_DEFAULT_TASK[state],
+            requires_prompt=state not in {ValidatorState.NOT_STARTED, ValidatorState.FINISHED},
+        )
 
 
 def _round_id_to_int(round_id: str) -> int:
@@ -177,6 +228,7 @@ class OverviewService:
         miners: set[str] = set()
         version_candidates: List[str] = []
         unique_websites: set[str] = set()
+        miner_score_tracker: Dict[str, List[float]] = {}
 
         for record, contexts in target_records:
             round_obj = record.model
@@ -207,7 +259,9 @@ class OverviewService:
                     miners.add(miner_identifier)
 
                 score = self.rounds_service._context_score(ctx)
-                top_score = max(top_score, score)
+                if miner_identifier:
+                    tracker = miner_score_tracker.setdefault(miner_identifier, [])
+                    tracker.append(score)
 
                 for task in ctx.tasks or []:
                     if task.task_id in seen_tasks:
@@ -220,6 +274,18 @@ class OverviewService:
             if not contexts and round_obj.winners:
                 round_top = max(winner.get("score", 0.0) for winner in round_obj.winners)
                 top_score = max(top_score, round(round_top, 6))
+
+        if miner_score_tracker:
+            averaged_scores = [
+                sum(scores) / len(scores)
+                for scores in miner_score_tracker.values()
+                if scores
+            ]
+            if averaged_scores:
+                top_score = max(top_score, max(averaged_scores))
+        else:
+            # If we have no context data, fall back to best single score captured earlier.
+            top_score = max(top_score, 0.0)
 
         subnet_version = version_candidates[0] if version_candidates else "1.0.0"
         total_websites = len(unique_websites) if unique_websites else await self._total_websites()
@@ -486,18 +552,28 @@ class OverviewService:
 
     async def statistics(self) -> SubnetStatistics:
         validators = await self._aggregate_validators()
-        total_stake = sum(int(entry["stake"]) for entry in validators.values())
-        total_emission = sum(int(entry["emission"]) for entry in validators.values())
+        def _to_float(value: Any) -> float:
+            if value is None:
+                return 0.0
+            if isinstance(value, (int, float)):
+                return float(value)
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return 0.0
+
+        total_stake = int(sum(_to_float(entry.get("stake")) for entry in validators.values()))
+        total_emission = int(sum(_to_float(entry.get("emission")) for entry in validators.values()))
         total_runs = await self._total_runs()
         success_total = int(total_runs * 0.85)
 
         average_trust = (
-            sum(float(entry["trust"]) for entry in validators.values()) / len(validators)
+            sum(_to_float(entry.get("trust")) for entry in validators.values()) / len(validators)
             if validators
             else 0.0
         )
         average_uptime = (
-            sum(float(entry.get("uptime", 0.0)) for entry in validators.values()) / len(validators)
+            sum(_to_float(entry.get("uptime", 0.0)) for entry in validators.values()) / len(validators)
             if validators
             else 0.0
         )
@@ -722,6 +798,36 @@ class OverviewService:
         rows = await self.session.scalars(stmt)
         return len(list(rows))
 
+    def _derive_validator_status(
+        self,
+        current_record: Optional[RoundRecord],
+        *,
+        total_runs: int,
+        successful_runs: int,
+        has_scores: bool,
+        seconds_since_activity: Optional[float],
+    ) -> ValidatorStatusInfo:
+        if current_record is None:
+            return ValidatorStatusInfo.from_state(ValidatorState.NOT_STARTED)
+
+        validator_round = current_record.model
+        if validator_round.ended_at:
+            return ValidatorStatusInfo.from_state(ValidatorState.FINISHED)
+
+        state = ValidatorState.STARTING
+        if total_runs > 0:
+            state = ValidatorState.SENDING_TASKS
+        if successful_runs > 0 or has_scores:
+            state = ValidatorState.EVALUATING
+
+        if seconds_since_activity is not None:
+            if seconds_since_activity > 86400:
+                state = ValidatorState.OFFLINE
+            elif seconds_since_activity > 3600 and total_runs == 0:
+                state = ValidatorState.WAITING
+
+        return ValidatorStatusInfo.from_state(state)
+
     async def _average_score(self) -> float:
         stmt = select(EvaluationResultORM)
         rows = await self.session.scalars(stmt)
@@ -789,16 +895,6 @@ class OverviewService:
                     current_round_entries[validator_uid] = (record, contexts)
 
         now_ts = datetime.now(timezone.utc).timestamp()
-        status_labels = {
-            "Starting": "Validator connected – awaiting task upload",
-            "Sending Tasks": "Distributing tasks to agent runs",
-            "Evaluating": "Evaluating miner submissions",
-            "Waiting": "Awaiting next action",
-            "Offline": "No activity detected recently",
-            "Finished": "Round completed",
-            "Not Started": "Awaiting round start",
-        }
-
         prompt_cache: Dict[str, Optional[str]] = {}
 
         # Limit expected validators to those who participated in recent rounds instead of a static directory.
@@ -821,12 +917,15 @@ class OverviewService:
         for validator_uid in sorted(known_validator_uids):
             entry = current_round_entries.get(validator_uid)
             last_entry = last_entry_by_uid.get(validator_uid)
-            metadata = get_validator_metadata(validator_uid)
-            validator_record = entry[0] if entry else None
-            contexts_flat = entry[1] if entry else []
 
-            validator_round = validator_record.model if validator_record else None
-            validator_info = getattr(validator_round, "validator_info", None) if validator_round else None
+            current_record = entry[0] if entry else None
+            current_contexts = entry[1] if entry else []
+
+            display_record = current_record or (last_entry[0] if last_entry else None)
+            display_round = display_record.model if display_record else None
+            validator_info = getattr(display_round, "validator_info", None) if display_round else None
+
+            contexts_flat = current_contexts
 
             # Use last participation for display of last seen round when not currently running
             if last_entry is not None:
@@ -834,48 +933,43 @@ class OverviewService:
             else:
                 round_number = max_round_number or None
 
-            name_candidates = [
-                validator_info.name if validator_info else None,
-                metadata.get("name"),
-                f"Validator {validator_uid}",
-            ]
-            display_name = next((candidate for candidate in name_candidates if candidate), f"Validator {validator_uid}")
+            display_name = validator_info.name if validator_info and validator_info.name else None
+            if not display_name and display_round:
+                display_name = getattr(display_round, "metadata", {}).get("validator_name") or None
+            if not display_name:
+                display_name = f"Validator {validator_uid}"
 
-            hotkey_candidates = [
-                validator_info.hotkey if validator_info else None,
-                metadata.get("hotkey"),
-                validator_round.validator_hotkey if validator_round else None,
-            ]
-            hotkey = next((candidate for candidate in hotkey_candidates if candidate), "") or ""
+            hotkey_candidates = []
+            if validator_info and validator_info.hotkey:
+                hotkey_candidates.append(validator_info.hotkey)
+            if display_round and display_round.validator_hotkey:
+                hotkey_candidates.append(display_round.validator_hotkey)
+            if current_record and current_record.model.validator_hotkey:
+                hotkey_candidates.append(current_record.model.validator_hotkey)
+            hotkey = next((candidate for candidate in hotkey_candidates if candidate), None)
 
-            existing_icon = getattr(validator_info, "image_url", None) if validator_info else metadata.get("image")
+            existing_icon = getattr(validator_info, "image_url", None) if validator_info else None
             icon = resolve_validator_image(display_name, existing=existing_icon)
 
-            stake_value = (
-                validator_info.stake if validator_info and validator_info.stake not in (None, 0, 0.0)
-                else metadata.get("stake")
-            )
-            stake = float(stake_value or 0.0)
-            trust_value = (
-                validator_info.vtrust if validator_info and validator_info.vtrust not in (None, 0, 0.0)
-                else metadata.get("vtrust")
-            )
-            trust = float(trust_value or 0.0)
+            stake_value = None
+            if validator_info and validator_info.stake not in (None, 0, 0.0):
+                stake_value = float(validator_info.stake)
 
-            version_text = (
-                validator_info.version if validator_info and validator_info.version else metadata.get("version")
-            )
-            version = 1
-            if version_text:
+            trust_value = None
+            if validator_info and validator_info.vtrust not in (None, 0, 0.0):
+                trust_value = float(validator_info.vtrust)
+
+            version = None
+            if validator_info and validator_info.version:
                 try:
-                    version = int(str(version_text).split(".")[0])
+                    version = int(str(validator_info.version).split(".")[0])
                 except ValueError:
-                    version = 1
+                    version = None
 
-            if validator_round:
-                total_tasks = validator_round.n_tasks or 0
-                completed_tasks = self.rounds_service._estimate_completed_tasks(validator_round)
-                validator_round_id = validator_round.validator_round_id
+            if display_round:
+                total_tasks = display_round.n_tasks or 0
+                completed_tasks = self.rounds_service._estimate_completed_tasks(display_round)
+                validator_round_id = display_round.validator_round_id
             else:
                 total_tasks = 0
                 completed_tasks = 0
@@ -908,37 +1002,33 @@ class OverviewService:
                 max(0.0, now_ts - last_activity_ts) if last_activity_ts is not None else None
             )
 
-            if not validator_round:
-                status = "Not Started"
-                current_task = status_labels[status]
-            else:
-                if validator_round.ended_at:
-                    status = "Finished"
-                else:
-                    status = "Starting"
-                    if total_runs > 0:
-                        status = "Sending Tasks"
-                    if successful_runs > 0 or has_scores:
-                        status = "Evaluating"
-                    if seconds_since_activity is not None:
-                        if seconds_since_activity > 86400:
-                            status = "Offline"
-                        elif seconds_since_activity > 3600 and total_runs == 0:
-                            status = "Waiting"
+            validator_round = current_record.model if current_record else None
 
-                cache_key = validator_round.validator_round_id if validator_round else None
-                current_task_prompt: Optional[str] = None
-                if cache_key and status not in {"Finished", "Not Started"}:
-                    if cache_key not in prompt_cache:
-                        prompt_cache[cache_key] = await self._latest_evaluated_task_prompt(cache_key)
-                    current_task_prompt = prompt_cache.get(cache_key)
+            status_info = self._derive_validator_status(
+                current_record,
+                total_runs=total_runs,
+                successful_runs=successful_runs,
+                has_scores=has_scores,
+                seconds_since_activity=seconds_since_activity,
+            )
+            status = status_info.label
+            current_task = status_info.default_task
 
-                if status == "Finished":
-                    current_task = status_labels.get(status, "Round completed")
-                else:
-                    current_task = current_task_prompt or status_labels.get(status, "Validator activity")
+            cache_key = validator_round.validator_round_id if validator_round else None
+            current_task_prompt: Optional[str] = None
+            if cache_key and status_info.requires_prompt:
+                if cache_key not in prompt_cache:
+                    prompt_cache[cache_key] = await self._latest_evaluated_task_prompt(cache_key)
+                current_task_prompt = prompt_cache.get(cache_key)
+
+            if current_task_prompt:
+                current_task = current_task_prompt
 
             uptime = round(min(100.0, (completed_tasks / total_tasks * 100.0) if total_tasks else 0.0), 1)
+
+            emission_value: Optional[int] = None
+            if isinstance(stake_value, (int, float)):
+                emission_value = int(float(stake_value) * 0.05)
 
             key = f"validator-{validator_uid}"
             aggregates[key] = {
@@ -948,13 +1038,14 @@ class OverviewService:
                 "icon": icon,
                 "currentTask": current_task,
                 "status": status,
+                "statusCode": status_info.state.value,
                 "totalTasks": int(total_tasks),
-                "weight": stake,
-                "trust": trust,
+                "weight": stake_value,
+                "trust": trust_value,
                 "version": version,
                 "lastSeen": _timestamp(last_activity_ts),
-                "stake": int(stake),
-                "emission": int(stake * 0.05),
+                "stake": stake_value,
+                "emission": emission_value,
                 "uptime": uptime,
                 "completedTasks": int(completed_tasks),
                 "validatorRoundId": validator_round_id,

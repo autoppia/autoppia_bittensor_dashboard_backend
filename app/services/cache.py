@@ -203,6 +203,10 @@ CACHE_TTL = {
     "round_miners": 120,          # 2 minutes - miner data changes more frequently
     "round_validators": 300,      # 5 minutes - validator data per round
     "round_statistics": 180,      # 3 minutes - statistics change moderately
+    "round_detail_final": 86400,      # 24 hours - finalised rounds are immutable
+    "round_miners_final": 86400,      # 24 hours - finalised miner stats are immutable
+    "round_validators_final": 86400,  # 24 hours - finalised validator stats are immutable
+    "round_statistics_final": 86400,  # 24 hours - finalised round statistics are immutable
     "current_round": 60,          # 1 minute - current round changes more frequently
     "network_status": 120,        # 2 minutes - network status changes moderately
     "leaderboard": 300,           # 5 minutes - leaderboard data changes slowly

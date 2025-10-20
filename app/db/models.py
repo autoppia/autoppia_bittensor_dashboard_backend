@@ -117,6 +117,13 @@ class ValidatorRoundORM(TimestampMixin, Base):
     """Canonical representation of a validator_round."""
 
     __tablename__ = "validator_rounds"
+    __table_args__ = (
+        UniqueConstraint(
+            "validator_uid",
+            "round_number",
+            name="uq_validator_round_uid_number",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     validator_round_id: Mapped[str] = mapped_column(

@@ -198,13 +198,16 @@ def _build_validator_seed_records() -> Dict[int, ValidatorSeedRecord]:
         if metagraph_hotkey is None:
             metagraph_hotkey = meta_hotkey or f"validator_hotkey_{uid}"
 
+        version = metadata.get("version")
+        if not version:
+            version = "1.0.0"
         records[uid] = ValidatorSeedRecord(
             uid=uid,
             hotkey=metagraph_hotkey,
             coldkey=metagraph_coldkey,
             name=metadata.get("name"),
             image=_asset_url(metadata.get("image")),
-            version=metadata.get("version"),
+            version=version,
         )
 
     # Include any validators present on-chain but missing in the static directory.
@@ -217,7 +220,7 @@ def _build_validator_seed_records() -> Dict[int, ValidatorSeedRecord]:
             coldkey=coldkey,
             name=f"Validator {uid}",
             image=None,
-            version=None,
+            version="1.0.0",
         )
 
     return records
@@ -965,19 +968,14 @@ async def seed_validator_round(
         round_number=round_number,
     )
 
-    owns_client = client is None
-    if owns_client:
-        transport = ASGITransport(app=_get_fastapi_app())
-        client = AsyncClient(transport=transport, base_url="http://seed-server")
-
-    try:
+    async def _persist_with_client(http_client: AsyncClient) -> PersistenceResult:
         start_body = {
             "validator_identity": payload.validator_identity.model_dump(mode="json", exclude_none=True),
             "validator_round": payload.validator_round.model_dump(mode="json", exclude_none=True),
             "validator_snapshot": payload.validator_snapshot.model_dump(mode="json", exclude_none=True),
         }
         _ensure_response(
-            await client.post("/api/v1/validator-rounds/start", json=start_body),
+            await http_client.post("/api/v1/validator-rounds/start", json=start_body),
             "start_round",
         )
 
@@ -988,7 +986,7 @@ async def seed_validator_round(
             ]
         }
         _ensure_response(
-            await client.post(
+            await http_client.post(
                 f"/api/v1/validator-rounds/{validator_round_id}/tasks",
                 json=tasks_body,
             ),
@@ -1004,7 +1002,7 @@ async def seed_validator_round(
                 "miner_snapshot": bundle.miner_snapshot.model_dump(mode="json", exclude_none=True),
             }
             _ensure_response(
-                await client.post(
+                await http_client.post(
                     f"/api/v1/validator-rounds/{validator_round_id}/agent-runs/start",
                     json=start_run_body,
                 ),
@@ -1024,7 +1022,7 @@ async def seed_validator_round(
                     "evaluation_result": evaluation_result.model_dump(mode="json", exclude_none=True),
                 }
                 _ensure_response(
-                    await client.post(
+                    await http_client.post(
                         f"/api/v1/validator-rounds/{validator_round_id}/agent-runs/{bundle.agent_run.agent_run_id}/evaluations",
                         json=body,
                     ),
@@ -1041,46 +1039,50 @@ async def seed_validator_round(
             "summary": payload.validator_round.summary,
         }
         _ensure_response(
-            await client.post(
+            await http_client.post(
                 f"/api/v1/validator-rounds/{validator_round_id}/finish",
                 json=finish_body,
             ),
             "finish_round",
         )
 
-    finally:
-        if owns_client:
-            await client.aclose()
+        saved_entities: Dict[str, Any] = {
+            "validator_round": payload.validator_round.validator_round_id,
+            "validator_snapshots": [
+                payload.validator_snapshot.validator_hotkey
+            ],
+            "miner_snapshots": [
+                snapshot.miner_hotkey or snapshot.agent_key
+                for snapshot in payload.miner_snapshots
+            ],
+            "agent_evaluation_runs": [
+                bundle.agent_run.agent_run_id for bundle in payload.agent_bundles
+            ],
+            "tasks": [task.task_id for task in payload.tasks],
+            "task_solutions": [
+                solution.solution_id
+                for solution in payload.task_solutions
+            ],
+            "evaluations": [
+                evaluation.evaluation_id for evaluation in payload.evaluations
+            ],
+            "evaluation_results": [
+                result.result_id for result in payload.evaluation_results
+            ],
+        }
 
-    saved_entities: Dict[str, Any] = {
-        "validator_round": payload.validator_round.validator_round_id,
-        "validator_snapshots": [
-            payload.validator_snapshot.validator_hotkey
-        ],
-        "miner_snapshots": [
-            snapshot.miner_hotkey or snapshot.agent_key
-            for snapshot in payload.miner_snapshots
-        ],
-        "agent_evaluation_runs": [
-            bundle.agent_run.agent_run_id for bundle in payload.agent_bundles
-        ],
-        "tasks": [task.task_id for task in payload.tasks],
-        "task_solutions": [
-            solution.solution_id
-            for solution in payload.task_solutions
-        ],
-        "evaluations": [
-            evaluation.evaluation_id for evaluation in payload.evaluations
-        ],
-        "evaluation_results": [
-            result.result_id for result in payload.evaluation_results
-        ],
-    }
+        return PersistenceResult(
+            validator_uid=payload.validator_round.validator_uid,
+            saved_entities=saved_entities,
+        )
+    # End of inner helper
 
-    return PersistenceResult(
-        validator_uid=payload.validator_round.validator_uid,
-        saved_entities=saved_entities,
-    )
+    if client is None:
+        transport = ASGITransport(app=_get_fastapi_app())
+        async with AsyncClient(transport=transport, base_url="http://seed-server") as owned_client:
+            return await _persist_with_client(owned_client)
+
+    return await _persist_with_client(client)
 
 
 async def seed_validator_round_bulk(
