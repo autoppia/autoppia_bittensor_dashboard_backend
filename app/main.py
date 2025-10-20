@@ -27,7 +27,6 @@ from app.api.ui.rounds import router as rounds_router
 from app.api.ui.subnets import legacy_router as subnets_legacy_router
 from app.api.ui.subnets import router as subnets_router
 from app.api.ui.tasks import router as tasks_router
-from app.api.validator.rounds_post import router as rounds_post_router
 from app.api.validator.validator_round import router as validator_rounds_router
 from app.db.session import init_db
 from app.services.idempotency import get_cache_stats
@@ -74,7 +73,6 @@ async def log_requests(request: Request, call_next):
 
 
 # Routers
-app.include_router(rounds_post_router)
 app.include_router(validator_rounds_router)
 app.include_router(cache_router)
 app.include_router(rounds_router)

@@ -247,23 +247,7 @@ class AgentsService:
             raise ValueError(f"Agent {agent_id} not found")
 
         agent_model = self._aggregate_to_agent(aggregate)
-        score_round_data = [
-            ScoreRoundDataPoint(
-                round_id=int(
-                    context.round.round_number or _round_id_to_int(context.round.validator_round_id)
-                ),
-                score=score,
-                rank=context.run.rank,
-                topScore=self._round_top_score(context),
-                reward=0.0,
-                timestamp=datetime.fromtimestamp(
-                    context.round.started_at or context.run.started_at or _ts(None),
-                    tz=timezone.utc,
-                ),
-                benchmarks=self._round_benchmark_entries(context),
-            )
-            for context, score in self._run_scores(aggregate)
-        ]
+        score_round_data = self._build_round_score_series(aggregate, aggregates)
 
         available_rounds = sorted(
             {round_id for round_id in aggregate.rounds if isinstance(round_id, int) and round_id > 0},
@@ -1393,6 +1377,77 @@ class AgentsService:
         if not benchmark_scores:
             return self._compute_run_score(context)
         return max(benchmark_scores)
+
+    def _build_round_score_series(
+        self,
+        aggregate: AgentAggregate,
+        aggregates: Dict[str, AgentAggregate],
+    ) -> List[ScoreRoundDataPoint]:
+        contexts_by_round: Dict[int, List[AgentRunContext]] = defaultdict(list)
+        for context in aggregate.runs:
+            round_id = self._round_number(context)
+            if round_id <= 0:
+                continue
+            contexts_by_round[round_id].append(context)
+
+        if not contexts_by_round:
+            return []
+
+        top_scores_by_round: Dict[int, float] = {}
+        for other in aggregates.values():
+            if other.is_sota:
+                continue
+            for round_id, scores in other.round_scores.items():
+                if not scores:
+                    continue
+                average = sum(scores) / len(scores)
+                current = top_scores_by_round.get(round_id)
+                if current is None or average > current:
+                    top_scores_by_round[round_id] = average
+
+        datapoints: List[ScoreRoundDataPoint] = []
+        for round_id in sorted(contexts_by_round.keys()):
+            contexts = contexts_by_round[round_id]
+            scores = [self._compute_run_score(ctx) for ctx in contexts]
+            if not scores:
+                continue
+
+            average_score = sum(scores) / len(scores)
+            top_score = top_scores_by_round.get(round_id, average_score)
+
+            rank: Optional[int] = None
+            ranks = aggregate.round_ranks.get(round_id)
+            if ranks:
+                rank = min(ranks)
+            else:
+                rank_candidates = [ctx.run.rank for ctx in contexts if ctx.run.rank is not None]
+                if rank_candidates:
+                    rank = min(rank_candidates)
+
+            timestamp_candidates: List[float] = []
+            for ctx in contexts:
+                for candidate in (ctx.run.ended_at, ctx.run.started_at, ctx.round.started_at):
+                    if candidate is not None:
+                        timestamp_candidates.append(float(candidate))
+                        break
+            timestamp_value = min(timestamp_candidates) if timestamp_candidates else _ts(None)
+            timestamp_dt = datetime.fromtimestamp(float(timestamp_value), tz=timezone.utc)
+
+            benchmark_entries = self._round_benchmark_entries(contexts[0])
+
+            datapoints.append(
+                ScoreRoundDataPoint(
+                    round_id=round_id,
+                    score=round(average_score, 3),
+                    rank=rank,
+                    topScore=round(top_score, 3),
+                    reward=0.0,
+                    timestamp=timestamp_dt,
+                    benchmarks=benchmark_entries,
+                )
+            )
+
+        return datapoints
 
     def _round_benchmark_entries(self, context: AgentRunContext) -> Optional[List[Dict[str, Any]]]:
         round_number = self._round_number(context)

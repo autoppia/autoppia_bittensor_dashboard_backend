@@ -7,7 +7,10 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.models import AgentEvaluationRunORM, RoundORM
 
 from app.models.core import EvaluationResult, Task, TaskSolution
 from app.models.ui.agent_runs import (
@@ -87,77 +90,130 @@ class AgentRunsService:
         sort_order: str = "desc",
     ) -> Dict[str, object]:
         skip = max(0, (page - 1) * limit)
-        contexts = await self.rounds_service.list_agent_run_contexts(
-            limit=None,
-            skip=0,
-            include_details=False,
-        )
 
         status_filter = status.lower() if status else None
+        validator_uid = _parse_identifier(validator_id) if validator_id else None
+        miner_uid = _parse_identifier(agent_id) if agent_id else None
         start_ts = _to_timestamp(start_date)
         end_ts = _to_timestamp(end_date)
-        query_lower = query.lower() if query else None
+        query_term = query.lower() if query else None
 
-        runs = []
-        available_rounds: set[int] = set()
-        for context in contexts:
-            round_id_value = context.round.round_number or _round_id_to_int(
-                context.round.validator_round_id
+        base_stmt = select(AgentEvaluationRunORM.agent_run_id)
+        count_stmt = select(func.count()).select_from(AgentEvaluationRunORM)
+
+        filters = []
+        if validator_uid is not None:
+            filters.append(AgentEvaluationRunORM.validator_uid == validator_uid)
+        if miner_uid is not None:
+            filters.append(AgentEvaluationRunORM.miner_uid == miner_uid)
+        if round_number is not None:
+            filters.append(
+                AgentEvaluationRunORM.validator_round.has(
+                    RoundORM.round_number == round_number
+                )
+            )
+        if start_ts is not None:
+            filters.append(AgentEvaluationRunORM.started_at >= start_ts)
+        if end_ts is not None:
+            filters.append(AgentEvaluationRunORM.started_at <= end_ts)
+
+        if status_filter == RunStatus.COMPLETED.value:
+            filters.append(AgentEvaluationRunORM.ended_at.is_not(None))
+        elif status_filter == RunStatus.RUNNING.value:
+            filters.append(
+                and_(
+                    AgentEvaluationRunORM.started_at.is_not(None),
+                    AgentEvaluationRunORM.ended_at.is_(None),
+                )
+            )
+        elif status_filter == RunStatus.PENDING.value:
+            filters.append(AgentEvaluationRunORM.started_at.is_(None))
+        elif status_filter in {RunStatus.FAILED.value, RunStatus.CANCELLED.value}:
+            # FAILED/CANCELLED are not stored explicitly; return empty result set.
+            return {
+                "runs": [],
+                "total": 0,
+                "page": page,
+                "limit": limit,
+                "availableRounds": await self._list_available_round_numbers(),
+                "selectedRound": round_number,
+            }
+
+        if query_term:
+            like_pattern = f"%{query_term}%"
+            filters.append(
+                or_(
+                    func.lower(AgentEvaluationRunORM.agent_run_id).like(like_pattern),
+                    func.lower(AgentEvaluationRunORM.miner_hotkey).like(like_pattern),
+                    func.lower(AgentEvaluationRunORM.validator_hotkey).like(like_pattern),
+                    cast(AgentEvaluationRunORM.validator_uid, String).like(like_pattern),
+                    cast(AgentEvaluationRunORM.miner_uid, String).like(like_pattern),
+                )
             )
 
-            if validator_id:
-                validator_uid = _parse_identifier(validator_id)
-                if context.run.validator_uid != validator_uid:
-                    continue
-            if agent_id:
-                miner_uid = _parse_identifier(agent_id)
-                if context.run.miner_uid != miner_uid:
-                    continue
+        for flt in filters:
+            base_stmt = base_stmt.where(flt)
+            count_stmt = count_stmt.where(flt)
 
-            if status_filter:
-                if self._run_status(context).value != status_filter:
-                    continue
+        sort_columns = {
+            "startTime": AgentEvaluationRunORM.started_at,
+            "endTime": AgentEvaluationRunORM.ended_at,
+            "averageScore": AgentEvaluationRunORM.average_score,
+            "score": AgentEvaluationRunORM.average_score,
+            "overallScore": AgentEvaluationRunORM.average_score,
+            "totalTasks": AgentEvaluationRunORM.total_tasks,
+            "completedTasks": AgentEvaluationRunORM.completed_tasks,
+            "successRate": func.coalesce(
+                AgentEvaluationRunORM.completed_tasks * 100.0
+                / func.nullif(AgentEvaluationRunORM.total_tasks, 0),
+                0.0,
+            ),
+        }
 
-            run_start = context.run.started_at or context.round.started_at
-            if start_ts is not None and (run_start or 0) < start_ts:
-                continue
-            if end_ts is not None and (run_start or 0) > end_ts:
-                continue
+        order_expr = sort_columns.get(sort_by, AgentEvaluationRunORM.started_at)
+        if isinstance(order_expr, (int, float)):
+            # Guard for unexpected literals.
+            order_expr = AgentEvaluationRunORM.started_at
+        if sort_order.lower() == "desc":
+            order_clause = order_expr.desc()
+        else:
+            order_clause = order_expr.asc()
 
-            if query_lower:
-                agent_identifier = _format_agent_id(context.run.miner_uid).lower()
-                validator_identifier = _format_validator_id(context.run.validator_uid).lower()
-                if (
-                    query_lower not in context.run.agent_run_id.lower()
-                    and query_lower not in agent_identifier
-                    and query_lower not in validator_identifier
-                ):
-                    continue
+        base_stmt = base_stmt.order_by(order_clause, AgentEvaluationRunORM.agent_run_id.desc())
+        base_stmt = base_stmt.offset(skip).limit(limit)
 
-            if round_id_value:
-                available_rounds.add(round_id_value)
+        result_ids = await self.session.scalars(base_stmt)
+        agent_run_ids = list(result_ids)
+        total = int(await self.session.scalar(count_stmt) or 0)
 
-            if round_number is not None and round_id_value != round_number:
-                continue
+        contexts: List[AgentRunContext] = []
+        if agent_run_ids:
+            contexts = await self.rounds_service.list_agent_run_contexts(
+                include_details=True,
+                agent_run_ids=agent_run_ids,
+            )
 
-            run_summary = self._build_run_summary(context)
-            runs.append(run_summary)
+        runs = [self._build_run_summary(context) for context in contexts]
 
-        runs = self._sort_runs(runs, sort_by, sort_order)
-        total = len(runs)
-
-        start = skip
-        end = start + limit
-        paginated_runs = runs[start:end]
+        available_rounds = await self._list_available_round_numbers()
 
         return {
-            "runs": paginated_runs,
+            "runs": runs,
             "total": total,
             "page": page,
             "limit": limit,
-            "availableRounds": sorted(available_rounds, reverse=True),
+            "availableRounds": available_rounds,
             "selectedRound": round_number,
         }
+
+    async def _list_available_round_numbers(self) -> List[int]:
+        stmt = (
+            select(func.distinct(RoundORM.round_number))
+            .where(RoundORM.round_number.is_not(None))
+            .order_by(RoundORM.round_number.desc())
+        )
+        result = await self.session.scalars(stmt)
+        return [int(value) for value in result if value is not None]
 
     async def get_agent_run(self, agent_run_id: str) -> Optional[AgentRun]:
         try:
@@ -339,6 +395,7 @@ class AgentRunsService:
 
         average_score = self._compute_average_score(context.evaluation_results)
         overall_score = _safe_int(average_score * 100)
+        average_evaluation_time = self._average_evaluation_time(context)
 
         validator_name, validator_image = self._resolve_validator_identity(context)
         agent_name, agent_image, agent_uid, agent_hotkey, agent_identifier, agent_description = self._resolve_agent_identity(context)
@@ -366,6 +423,9 @@ class AgentRunsService:
             ranking=context.run.rank or 0,
             duration=_safe_int((context.run.ended_at or context.run.started_at or 0) - (context.run.started_at or 0)),
             overallScore=overall_score,
+            averageEvaluationTime=round(average_evaluation_time, 3)
+            if average_evaluation_time is not None
+            else None,
             websites=websites,
             tasks=ui_tasks,
             metadata={
@@ -633,6 +693,8 @@ class AgentRunsService:
             average_score = self._compute_average_score(context.evaluation_results)
         average_score = float(average_score or 0.0)
 
+        average_evaluation_time = self._average_evaluation_time(context)
+
         validator_name, validator_image = self._resolve_validator_identity(context)
         agent_name, _, agent_uid, agent_hotkey, agent_identifier, _ = self._resolve_agent_identity(context)
         success_count = completed_tasks
@@ -672,6 +734,9 @@ class AgentRunsService:
             "overallScore": overall_score,
             "ranking": run_model.rank or 0,
             "duration": _safe_int(duration_sec),
+            "averageEvaluationTime": round(average_evaluation_time, 3)
+            if average_evaluation_time is not None
+            else None,
         }
 
     def _sort_runs(self, runs: List[Dict[str, object]], sort_by: str, sort_order: str) -> List[Dict[str, object]]:
@@ -790,6 +855,21 @@ class AgentRunsService:
             screenshots=list(getattr(evaluation, "screenshots", []) or []),
             logs=[],
         )
+
+    @staticmethod
+    def _average_evaluation_time(context: AgentRunContext) -> Optional[float]:
+        durations: List[float] = []
+        for result in context.evaluation_results:
+            value = getattr(result, "evaluation_time", None)
+            if value is None:
+                continue
+            try:
+                durations.append(abs(float(value)))
+            except (TypeError, ValueError):
+                continue
+        if not durations:
+            return None
+        return sum(durations) / len(durations)
 
     @staticmethod
     def _compute_average_score(evaluation_results: List[EvaluationResult]) -> float:

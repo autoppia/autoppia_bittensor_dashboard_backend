@@ -155,10 +155,125 @@ def _make_submission_payload(prefix: str = "001") -> dict:
     }
 
 
+class _MockResponse:
+    def __init__(self, status_code: int, payload: dict):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def _normalize_round_status(status_value) -> str:
+    normalized = str(status_value or "").lower()
+    if normalized in {"in_progress", "in-progress", "active"}:
+        return "active"
+    if normalized in {"finished", "complete", "completed"}:
+        return "completed"
+    if normalized == "pending":
+        return "pending"
+    return normalized or "active"
+
+
+async def submit_round_via_validator_endpoints(client, payload):
+    round_data = deepcopy(payload["round"])
+    validator_round_id = round_data["validator_round_id"]
+
+    start_response = await client.post(
+        "/api/v1/validator-rounds/start",
+        json={"validator_round_id": validator_round_id, "round": round_data},
+    )
+    if start_response.status_code >= 400:
+        return start_response
+
+    tasks = [deepcopy(task) for task in payload.get("tasks", [])]
+    if tasks:
+        tasks_response = await client.post(
+            f"/api/v1/validator-rounds/{validator_round_id}/tasks",
+            json={"tasks": tasks},
+        )
+        if tasks_response.status_code >= 400:
+            return tasks_response
+
+    tasks_by_id = {task["task_id"]: task for task in tasks}
+
+    solutions_by_run = {}
+    for solution in payload.get("task_solutions", []):
+        run_map = solutions_by_run.setdefault(solution["agent_run_id"], {})
+        run_map[solution["solution_id"]] = solution
+
+    evaluations_by_run = {}
+    for result in payload.get("evaluation_results", []):
+        evaluations_by_run.setdefault(result["agent_run_id"], []).append(result)
+
+    agent_runs = payload.get("agent_evaluation_runs", [])
+    for agent_run in agent_runs:
+        agent_response = await client.post(
+            f"/api/v1/validator-rounds/{validator_round_id}/agent-runs/start",
+            json={"agent_run": agent_run},
+        )
+        if agent_response.status_code >= 400:
+            return agent_response
+
+        agent_run_id = agent_run["agent_run_id"]
+        solution_map = solutions_by_run.get(agent_run_id, {})
+
+        for result in evaluations_by_run.get(agent_run_id, []):
+            task = tasks_by_id.get(result["task_id"])
+            solution = solution_map.get(result["task_solution_id"])
+            if task is None or solution is None:
+                raise AssertionError("Evaluation payload missing task or solution data")
+            evaluation_response = await client.post(
+                f"/api/v1/validator-rounds/{validator_round_id}/agent-runs/{agent_run_id}/evaluations",
+                json={
+                    "task": task,
+                    "task_solution": solution,
+                    "evaluation_result": result,
+                },
+            )
+            if evaluation_response.status_code >= 400:
+                return evaluation_response
+
+    validator_info = round_data.get("validator_info") or {}
+    primary_validator = (round_data.get("validators") or [validator_info])[0]
+    validator_uid = primary_validator.get("uid")
+
+    finish_response = await client.post(
+        f"/api/v1/validator-rounds/{validator_round_id}/finish",
+        json={
+            "status": _normalize_round_status(round_data.get("status")),
+            "winners": round_data.get("winners", []),
+            "winner_scores": round_data.get("winner_scores", []),
+            "weights": round_data.get("weights", {}),
+            "ended_at": round_data.get("ended_at"),
+            "summary": round_data.get("summary"),
+            "agent_runs": [
+                {
+                    "agent_run_id": agent_run["agent_run_id"],
+                    "rank": agent_run.get("rank"),
+                    "weight": agent_run.get("weight"),
+                }
+                for agent_run in agent_runs
+            ],
+        },
+    )
+    if finish_response.status_code >= 400:
+        return finish_response
+
+    return _MockResponse(
+        200,
+        {
+            "success": True,
+            "validator_round_id": validator_round_id,
+            "validator_uid": validator_uid,
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_round_submission_flow(client, db_session):
     payload = _make_submission_payload("101")
-    response = await client.post("/api/v1/rounds/submit", json=payload)
+    response = await submit_round_via_validator_endpoints(client, payload)
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is True
@@ -186,7 +301,7 @@ async def test_round_submission_flow(client, db_session):
 @pytest.mark.asyncio
 async def test_round_submission_rejects_duplicate_round_numbers(client):
     base_payload = _make_submission_payload("150")
-    first_response = await client.post("/api/v1/rounds/submit", json=base_payload)
+    first_response = await submit_round_via_validator_endpoints(client, base_payload)
     assert first_response.status_code == 200
 
     duplicate_payload = deepcopy(base_payload)
@@ -212,7 +327,7 @@ async def test_round_submission_rejects_duplicate_round_numbers(client):
     duplicate_payload["evaluation_results"][0]["task_solution_id"] = "solution_150_dup"
     duplicate_payload["evaluation_results"][0]["evaluation_id"] = "evaluation_150_dup"
 
-    dup_response = await client.post("/api/v1/rounds/submit", json=duplicate_payload)
+    dup_response = await submit_round_via_validator_endpoints(client, duplicate_payload)
     assert dup_response.status_code == 409
     expected_detail = (
         f"Validator {base_payload['round']['validator_info']['uid']} already has a round with number {base_payload['round']['round']}"
@@ -331,7 +446,7 @@ async def test_progressive_validator_flow(client, db_session):
 @pytest.mark.asyncio
 async def test_rounds_endpoint_returns_data(client):
     payload = _make_submission_payload("303")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     response = await client.get("/api/v1/rounds/?limit=10&skip=0")
@@ -350,7 +465,7 @@ async def test_rounds_endpoint_returns_data(client):
 @pytest.mark.asyncio
 async def test_round_detail_and_agent_run_endpoints(client):
     payload = _make_submission_payload("404")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     validator_round_id = payload["round"]["validator_round_id"]
@@ -395,7 +510,7 @@ async def test_round_detail_and_agent_run_endpoints(client):
 @pytest.mark.asyncio
 async def test_round_detail_accepts_numeric_identifier(client):
     payload = _make_submission_payload("606")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     validator_round_id = payload["round"]["validator_round_id"]
@@ -416,7 +531,7 @@ async def test_round_detail_accepts_numeric_identifier(client):
 @pytest.mark.asyncio
 async def test_agent_runs_endpoints(client):
     payload = _make_submission_payload("505")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     run_id = payload["agent_evaluation_runs"][0]["agent_run_id"]
@@ -486,7 +601,7 @@ async def test_agent_runs_endpoints(client):
 @pytest.mark.asyncio
 async def test_evaluations_endpoints(client):
     payload = _make_submission_payload("606")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     evaluation_id = payload["evaluation_results"][0]["evaluation_id"]
@@ -513,7 +628,7 @@ async def test_evaluations_endpoints(client):
 @pytest.mark.asyncio
 async def test_tasks_endpoints(client):
     payload = _make_submission_payload("707")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     task_id = payload["tasks"][0]["task_id"]
@@ -577,7 +692,7 @@ async def test_tasks_endpoints(client):
 @pytest.mark.asyncio
 async def test_agents_endpoints(client):
     payload = _make_submission_payload("808")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     miner_uid = payload["agent_evaluation_runs"][0]["miner_uid"]
@@ -635,7 +750,7 @@ async def test_agents_endpoints(client):
 @pytest.mark.asyncio
 async def test_miners_endpoints(client):
     payload = _make_submission_payload("909")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     miner_uid = payload["agent_evaluation_runs"][0]["miner_uid"]
@@ -656,7 +771,7 @@ async def test_miners_endpoints(client):
 @pytest.mark.asyncio
 async def test_overview_endpoints(client):
     payload = _make_submission_payload("1010")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     metrics_response = await client.get("/api/v1/overview")
@@ -711,11 +826,11 @@ async def test_overview_endpoints(client):
 async def test_overview_metrics_uses_previous_round_when_current_active(client):
     # Seed two completed rounds to provide historical context.
     payload_round_1 = _make_submission_payload("201")
-    response_round_1 = await client.post("/api/v1/rounds/submit", json=payload_round_1)
+    response_round_1 = await submit_round_via_validator_endpoints(client, payload_round_1)
     assert response_round_1.status_code == 200
 
     payload_round_2 = _make_submission_payload("202")
-    response_round_2 = await client.post("/api/v1/rounds/submit", json=payload_round_2)
+    response_round_2 = await submit_round_via_validator_endpoints(client, payload_round_2)
     assert response_round_2.status_code == 200
 
     # Seed a new active round by omitting ended_at so it remains running.
@@ -723,7 +838,7 @@ async def test_overview_metrics_uses_previous_round_when_current_active(client):
     payload_round_3["round"]["ended_at"] = None
     payload_round_3["round"]["status"] = "active"
     payload_round_3["agent_evaluation_runs"][0]["ended_at"] = None
-    response_round_3 = await client.post("/api/v1/rounds/submit", json=payload_round_3)
+    response_round_3 = await submit_round_via_validator_endpoints(client, payload_round_3)
     assert response_round_3.status_code == 200
 
     metrics_response = await client.get("/api/v1/overview")
@@ -740,7 +855,7 @@ async def test_overview_metrics_uses_previous_round_when_current_active(client):
 @pytest.mark.asyncio
 async def test_miner_list_endpoints(client):
     payload = _make_submission_payload("1111")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     miner_uid = payload["agent_evaluation_runs"][0]["miner_uid"]
@@ -761,7 +876,7 @@ async def test_miner_list_endpoints(client):
 @pytest.mark.asyncio
 async def test_miner_list_falls_back_to_latest_round(client):
     payload = _make_submission_payload("1212")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     miner_uid = payload["agent_evaluation_runs"][0]["miner_uid"]
@@ -778,7 +893,7 @@ async def test_miner_list_falls_back_to_latest_round(client):
 @pytest.mark.asyncio
 async def test_subnet_timeline(client):
     payload = _make_submission_payload("401")
-    submission = await client.post("/api/v1/rounds/submit", json=payload)
+    submission = await submit_round_via_validator_endpoints(client, payload)
     assert submission.status_code == 200
 
     response = await client.get("/api/v1/subnets/subnet-1/timeline")

@@ -205,7 +205,21 @@ class ValidatorRoundPersistenceService:
                 f"Agent run {agent_run_id} is not associated with validator_round {validator_round_id}"
             )
 
-        await self.add_tasks(validator_round_id, [task], allow_existing=True)
+        if task.validator_round_id != validator_round_id:
+            raise ValueError(
+                f"Task {task.task_id} does not belong to validator_round {validator_round_id}"
+            )
+
+        existing_task = await self._get_task_row(task.task_id)
+        if existing_task is None:
+            raise ValueError(
+                f"Task {task.task_id} has not been registered for validator_round {validator_round_id}"
+            )
+        if existing_task.validator_round_id != validator_round_id:
+            raise ValueError(
+                f"Task {task.task_id} is registered under validator_round {existing_task.validator_round_id}, "
+                f"not {validator_round_id}"
+            )
 
         miner_id = await self._resolve_miner_identity_id(
             task_solution.miner_uid, task_solution.miner_hotkey, task_solution.miner_agent_key
@@ -598,6 +612,10 @@ class ValidatorRoundPersistenceService:
         stmt = select(AgentEvaluationRunORM).where(
             AgentEvaluationRunORM.agent_run_id == agent_run_id
         )
+        return await self.session.scalar(stmt)
+
+    async def _get_task_row(self, task_id: str) -> Optional[TaskORM]:
+        stmt = select(TaskORM).where(TaskORM.task_id == task_id)
         return await self.session.scalar(stmt)
 
     async def _ensure_round_exists(self, validator_round_id: str) -> ValidatorRoundORM:

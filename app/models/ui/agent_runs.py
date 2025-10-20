@@ -106,6 +106,10 @@ class AgentRun(BaseModel):
     ranking: int
     duration: int
     overallScore: int
+    averageEvaluationTime: Optional[float] = Field(
+        default=None,
+        description="Average evaluation duration recorded for the run (seconds)",
+    )
     websites: List[Website] = Field(default_factory=list)
     tasks: List[Task] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)

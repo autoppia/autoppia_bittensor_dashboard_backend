@@ -8,7 +8,7 @@ import re
 import json
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -404,6 +404,7 @@ class RoundsService:
         limit: Optional[int] = 100,
         skip: int = 0,
         include_details: bool = True,
+        agent_run_ids: Optional[Iterable[str]] = None,
     ) -> List[AgentRunContext]:
         stmt = select(AgentEvaluationRunORM).options(
             selectinload(AgentEvaluationRunORM.validator_round)
@@ -420,10 +421,17 @@ class RoundsService:
 
         stmt = stmt.order_by(AgentEvaluationRunORM.id.desc())
 
-        if skip:
-            stmt = stmt.offset(skip)
-        if limit is not None:
-            stmt = stmt.limit(limit)
+        run_id_list: Optional[List[str]] = None
+        if agent_run_ids is not None:
+            run_id_list = [run_id for run_id in agent_run_ids]
+            if not run_id_list:
+                return []
+            stmt = stmt.where(AgentEvaluationRunORM.agent_run_id.in_(run_id_list))
+        else:
+            if skip:
+                stmt = stmt.offset(skip)
+            if limit is not None:
+                stmt = stmt.limit(limit)
 
         if validator_round_id:
             stmt = stmt.where(
@@ -447,6 +455,12 @@ class RoundsService:
             for run_row in run_rows
         ]
         self._assign_ranks(contexts)
+
+        if run_id_list:
+            order_map = {run_id: index for index, run_id in enumerate(run_id_list)}
+            contexts.sort(
+                key=lambda ctx: order_map.get(ctx.run.agent_run_id, len(order_map))
+            )
         return contexts
 
     async def get_agent_run_context(self, agent_run_id: str) -> AgentRunContext:
@@ -502,19 +516,87 @@ class RoundsService:
             records.append(RoundRecord(row=row, model=model))
         return records
 
-    async def _fetch_round_records_by_number(self, round_number: int) -> Tuple[List[RoundRecord], int]:
-        records = await self._get_all_round_records()
-        matched: List[RoundRecord] = []
-        latest_round_number = 0
-        for record in records:
-            value = _round_number_from_model(record.model, record.validator_round_id)
+    async def _count_distinct_rounds(self) -> int:
+        stmt = select(func.count(func.distinct(RoundORM.round_number))).where(
+            RoundORM.round_number.is_not(None)
+        )
+        result = await self.session.scalar(stmt)
+        return int(result or 0)
+
+    async def _fetch_round_numbers_page(
+        self,
+        *,
+        offset: int,
+        limit: int,
+        sort_order: str,
+    ) -> List[int]:
+        order_desc = sort_order.lower() != "asc"
+        order_clause = (
+            RoundORM.round_number.desc() if order_desc else RoundORM.round_number.asc()
+        )
+        stmt = (
+            select(RoundORM.round_number)
+            .where(RoundORM.round_number.is_not(None))
+            .group_by(RoundORM.round_number)
+            .order_by(order_clause)
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self.session.scalars(stmt)
+        return [int(number) for number in result]
+
+    async def _get_round_records_for_round_numbers(
+        self,
+        round_numbers: Iterable[int],
+    ) -> Dict[int, List[RoundRecord]]:
+        numbers = [number for number in round_numbers if number is not None]
+        if not numbers:
+            return {}
+
+        stmt = (
+            select(RoundORM)
+            .options(
+                selectinload(RoundORM.validator_snapshots),
+                selectinload(RoundORM.miner_snapshots),
+            )
+            .where(RoundORM.round_number.in_(numbers))
+        )
+        rows = await self.session.scalars(stmt)
+        record_map: Dict[int, List[RoundRecord]] = {number: [] for number in numbers}
+        for row in rows:
+            try:
+                model = self._deserialize_round(row)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Failed to deserialize round %s: %s",
+                    row.validator_round_id,
+                    exc,
+                )
+                continue
+
+            value = _round_number_from_model(model, row.validator_round_id)
             if value is None:
                 continue
-            if value > latest_round_number:
-                latest_round_number = value
-            if value == round_number:
-                matched.append(record)
-        if latest_round_number == 0 and matched:
+            if value in record_map:
+                record_map[value].append(RoundRecord(row=row, model=model))
+
+        # Remove empty entries to match the exact dataset present in the database.
+        return {key: records for key, records in record_map.items() if records}
+
+    async def _get_latest_round_number(self) -> Optional[int]:
+        stmt = (
+            select(RoundORM.round_number)
+            .where(RoundORM.round_number.is_not(None))
+            .order_by(RoundORM.round_number.desc())
+            .limit(1)
+        )
+        return await self.session.scalar(stmt)
+
+    async def _fetch_round_records_by_number(self, round_number: int) -> Tuple[List[RoundRecord], int]:
+        record_map = await self._get_round_records_for_round_numbers([round_number])
+        matched = record_map.get(round_number, [])
+        latest_round_number = await self._get_latest_round_number()
+        if latest_round_number is None:
             latest_round_number = round_number
         return matched, latest_round_number
 
@@ -893,6 +975,16 @@ class RoundsService:
         sort_by: str = "id",
         sort_order: str = "desc",
     ) -> Tuple[List[Dict[str, Any]], int]:
+        optimized_sort_fields = {"id", "round", "roundNumber"}
+        if status is None and sort_by in optimized_sort_fields:
+            return await self._list_rounds_paginated_optimized(
+                page=page,
+                limit=limit,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+
+        # Fallback: keep legacy behaviour for complex sort or status filters.
         records = await self._get_all_round_records()
         if not records:
             return [], 0
@@ -926,6 +1018,47 @@ class RoundsService:
         start = max(0, (page - 1) * limit)
         end = start + limit
         return dataset[start:end], total
+
+    async def _list_rounds_paginated_optimized(
+        self,
+        *,
+        page: int,
+        limit: int,
+        sort_by: str,
+        sort_order: str,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        total_rounds = await self._count_distinct_rounds()
+        if total_rounds == 0:
+            return [], 0
+
+        offset = max(0, (page - 1) * limit)
+        round_numbers = await self._fetch_round_numbers_page(
+            offset=offset,
+            limit=limit,
+            sort_order=sort_order,
+        )
+        if not round_numbers:
+            return [], total_rounds
+
+        record_map = await self._get_round_records_for_round_numbers(round_numbers)
+        latest_round_number = await self._get_latest_round_number()
+        if latest_round_number is None and round_numbers:
+            latest_round_number = max(round_numbers)
+
+        entries: List[Dict[str, Any]] = []
+        for number in round_numbers:
+            records = record_map.get(number, [])
+            if not records:
+                continue
+            entry = self._build_round_day_overview_from_records(
+                number,
+                records,
+                latest_round_number or number,
+            )
+            if entry.get("validatorRoundCount", 0) > 0:
+                entries.append(entry)
+
+        return entries, total_rounds
 
     async def get_current_round_overview(self) -> Optional[Dict[str, Any]]:
         records = await self._get_all_round_records()

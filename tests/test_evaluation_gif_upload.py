@@ -8,7 +8,10 @@ from app.config import settings
 from app.db.models import EvaluationResultORM
 from app.services import media_storage
 
-from tests.test_validator_endpoints import _make_submission_payload
+from tests.test_validator_endpoints import (
+    _make_submission_payload,
+    submit_round_via_validator_endpoints,
+)
 
 
 MINIMAL_GIF = (
@@ -29,7 +32,7 @@ MINIMAL_GIF = (
 @pytest.mark.asyncio
 async def test_uploads_gif_and_returns_s3_url(client, db_session):
     payload = _make_submission_payload("205")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     evaluation_id = payload["evaluation_results"][0]["evaluation_id"]
@@ -74,7 +77,7 @@ async def test_uploads_gif_and_returns_s3_url(client, db_session):
 @pytest.mark.asyncio
 async def test_upload_rejects_non_gif_images(client):
     payload = _make_submission_payload("206")
-    submit_response = await client.post("/api/v1/rounds/submit", json=payload)
+    submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
 
     evaluation_id = payload["evaluation_results"][0]["evaluation_id"]
