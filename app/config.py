@@ -1,3 +1,6 @@
+# app/config.py
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any, Optional
 
@@ -34,7 +37,17 @@ class Settings(BaseSettings):
     SUBTENSOR_NETWORK: Optional[str] = None
     SUBTENSOR_ENDPOINT: Optional[str] = None
     VALIDATOR_AUTH_CACHE_TTL: int = 180
-    LOG_LEVEL: str = "INFO"
+
+    # ---------- Logging configuration (all configurable via env) ----------
+    # General app log level
+    LOG_LEVEL: str = "WARNING"          # quiet by default
+
+    # Specific library levels
+    SQLALCHEMY_LOG_LEVEL: str = "ERROR"  # kills SQL/ORM chatter by default
+    BITTENSOR_LOG_LEVEL: str = "WARNING" # keep to warnings+
+    UVICORN_LOG_LEVEL: str = "WARNING"   # quiet server
+    UVICORN_ACCESS_LOG: bool = False     # hide access log lines by default
+    # ---------------------------------------------------------------------
 
     # Overview / validators list behavior
     OVERVIEW_VALIDATORS_LOOKBACK_ROUNDS: int = 2
@@ -54,20 +67,30 @@ class Settings(BaseSettings):
     )
 
     def model_post_init(self, __context: Any) -> None:  # type: ignore[override]
-        """Ensure required CORS origins are present."""
+        """Ensure required defaults and normalization."""
+        # Database default to local sqlite
         if not self.DATABASE_URL:
             backend_root = Path(__file__).resolve().parents[1]
             db_path = backend_root / "autoppia.db"
             self.DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
 
+        # Normalize asset paths
         if self.ASSET_BASE_URL:
             self.ASSET_BASE_URL = self.ASSET_BASE_URL.rstrip("/")
 
         if self.AWS_S3_GIF_PREFIX:
             self.AWS_S3_GIF_PREFIX = self.AWS_S3_GIF_PREFIX.strip("/") or "gifs"
 
-        self.LOG_LEVEL = (self.LOG_LEVEL or "INFO").strip().upper()
+        # Normalize log level strings
+        def _norm(v: Optional[str], default: str) -> str:
+            return (v or default).strip().upper()
 
+        self.LOG_LEVEL = _norm(self.LOG_LEVEL, "WARNING")
+        self.SQLALCHEMY_LOG_LEVEL = _norm(self.SQLALCHEMY_LOG_LEVEL, "ERROR")
+        self.BITTENSOR_LOG_LEVEL = _norm(self.BITTENSOR_LOG_LEVEL, "WARNING")
+        self.UVICORN_LOG_LEVEL = _norm(self.UVICORN_LOG_LEVEL, "WARNING")
+
+        # Ensure required CORS origins unless wildcard
         if "*" in self.CORS_ORIGINS:
             return
 

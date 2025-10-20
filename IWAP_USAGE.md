@@ -110,7 +110,7 @@ BACKUP
 Enter database path (/path/to/autoppia.db): [Press Enter]
 S3 object key (autoppia-20241020T180000Z.db): [Press Enter]
 
-🔄 Uploading /path/to/autoppia.db to s3://iwap_backups/autoppia-20241020T180000Z.db
+🔄 Uploading /path/to/autoppia.db to s3://autoppia-subnet/backups/autoppia-20241020T180000Z.db
 ✅ Backup uploaded successfully!
 ```
 

@@ -262,7 +262,14 @@ def prompt_backup() -> int:
     default_key = f"{db_path.stem}-{timestamp}{db_path.suffix or '.db'}"
     object_key = input(f"S3 object key [{default_key}]: ").strip() or default_key
 
-    bucket_name = "iwap_backups"
+    bucket_name = "autoppia-subnet"
+    prefix = "backups/"
+    normalized_key = object_key.lstrip("/")
+    if not normalized_key.startswith(prefix):
+        object_key = f"{prefix}{normalized_key}"
+    else:
+        object_key = normalized_key
+
     print(f"\n🔄 Uploading {db_path} to s3://{bucket_name}/{object_key}")
 
     try:

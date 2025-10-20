@@ -62,7 +62,7 @@ You will be prompted for:
 
 #### 4. Backup
 
-Upload the SQLite database to the `iwap_backups` S3 bucket (credentials pulled from environment/settings):
+Upload the SQLite database to the `autoppia-subnet/backups/` prefix (credentials pulled from environment/settings):
 
 ```bash
 iwap backup
