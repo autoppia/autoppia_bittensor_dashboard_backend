@@ -46,6 +46,10 @@ def _ensure_absolute_url(candidate: Optional[str]) -> str:
     if not candidate:
         return ""
     if candidate.startswith(("http://", "https://", "data:")):
+        # Rewrite GitHub blob URLs to raw content
+        # e.g., https://github.com/org/repo/blob/branch/path -> https://raw.githubusercontent.com/org/repo/branch/path
+        if candidate.startswith("https://github.com/") and "/blob/" in candidate:
+            return candidate.replace("https://github.com/", "https://raw.githubusercontent.com/").replace("/blob/", "/")
         return candidate
     if candidate.startswith("//"):
         return f"https:{candidate}"
