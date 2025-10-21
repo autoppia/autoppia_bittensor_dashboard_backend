@@ -23,7 +23,6 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import quote_plus
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
@@ -69,53 +68,48 @@ def _ensure_postgres(database_url: str) -> None:
         )
 
 
-def _resolve_default_postgres_url() -> str:
-    """Return a Postgres URL, coercing config defaults if necessary."""
-    default_url = _default_database_url()
-    try:
-        url = make_url(default_url)
-    except ArgumentError:
-        url = None
-
-    if url is not None and url.get_backend_name() == "postgresql":
-        return str(url)
-
-    env_url: Optional[str] = None
-    if ENV_PATH.exists():
-        for raw_line in ENV_PATH.read_text().splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("DATABASE_URL="):
-                value = line.split("=", 1)[1].strip()
-                if value and value[0] in {'"', "'"} and value[-1:] == value[0]:
-                    value = value[1:-1]
-                env_url = value
-                break
-
+def _load_base_database_url() -> Optional[str]:
+    """Return DATABASE_URL from environment or .env files if available."""
+    env_url = os.environ.get("DATABASE_URL")
     if env_url:
+        return env_url
+
+    for candidate in (Path.cwd() / ".env", ENV_PATH):
+        if not candidate.exists():
+            continue
         try:
-            env_url_obj = make_url(env_url)
-        except ArgumentError:
-            env_url_obj = None
-        if env_url_obj is not None and env_url_obj.get_backend_name() == "postgresql":
-            return str(env_url_obj)
+            for raw_line in candidate.read_text().splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("DATABASE_URL="):
+                    value = line.split("=", 1)[1].strip()
+                    if value and value[0] in {"'", '"'} and value[-1:] == value[0]:
+                        value = value[1:-1]
+                    if value:
+                        return value
+        except OSError:
+            continue
+    return None
 
-    backend = url.get_backend_name() if url is not None else ""
-    if backend in {"sqlite", ""}:
-        from app.config import settings
 
-        user = quote_plus(settings.POSTGRES_USER)
-        password = quote_plus(settings.POSTGRES_PASSWORD) if settings.POSTGRES_PASSWORD else ""
-        auth = f"{user}:{password}@" if password else f"{user}@"
-        return (
-            f"postgresql+asyncpg://{auth}"
-            f"{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
+def _resolve_default_postgres_url() -> str:
+    """Return the base Postgres URL sourced from environment or settings."""
+    candidate = _load_base_database_url()
+    if candidate is None:
+        candidate = _default_database_url()
+
+    try:
+        url = make_url(candidate)
+    except ArgumentError as exc:
+        raise RuntimeError(f"Invalid DATABASE_URL: {exc}") from exc
+
+    if url.get_backend_name() != "postgresql":
+        raise RuntimeError(
+            "PostgreSQL connection required. Update DATABASE_URL to use a PostgreSQL DSN."
         )
 
-    raise RuntimeError(
-        "Unsupported database backend configured. Please provide a PostgreSQL DATABASE_URL."
-    )
+    return str(url)
 
 
 def _coerce_database_url(user_input: str, default_url: str) -> str:
