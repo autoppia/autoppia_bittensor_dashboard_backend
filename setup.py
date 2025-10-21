@@ -2,7 +2,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="iwa-cli",
+    name="iwap-cli",
     version="1.0.0",
     author="Autoppia Team",
     description="IWAP - Simplified Interactive Wrapper for Autoppia",
