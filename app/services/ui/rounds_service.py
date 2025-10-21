@@ -754,7 +754,10 @@ class RoundsService:
         include_details: bool = True,
     ) -> AggregatedRound:
         # Ensure UI aggregation does not trigger unintended writes.
-        async with self.session.no_autoflush:
+        # NOTE: SQLAlchemy's `no_autoflush` is a synchronous context manager,
+        # even when using `AsyncSession`. Using `async with` here raises
+        # TypeError: '_GeneratorContextManager' does not support async protocol.
+        with self.session.no_autoflush:
             round_number = await self._resolve_round_number(round_identifier)
             records, latest_round_number = await self._fetch_round_records_by_number(round_number)
             if not records:
