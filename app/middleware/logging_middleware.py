@@ -69,12 +69,6 @@ class DetailedLoggingMiddleware(BaseHTTPMiddleware):
                         if len(body_str) > 1000:
                             body_str = body_str[:1000] + "... (truncated)"
                         log_data["body"] = body_str
-
-                # Important: Restore body for downstream handlers
-                async def receive():
-                    return {"type": "http.request", "body": body_bytes}
-
-                request._receive = receive
             except Exception as e:
                 logger.warning(f"Failed to read request body: {e}")
 
@@ -83,9 +77,12 @@ class DetailedLoggingMiddleware(BaseHTTPMiddleware):
         # Process request
         response_body = None
         error = None
+        response = None
+        status_code = 500  # Default in case of error
 
         try:
-            response: Response = await call_next(request)
+            response = await call_next(request)
+            status_code = response.status_code
 
             # Try to capture response body
             if self.log_response_body and hasattr(response, "body"):
@@ -108,38 +105,42 @@ class DetailedLoggingMiddleware(BaseHTTPMiddleware):
         except Exception as exc:
             error = str(exc)
             logger.error(f"Error processing request: {exc}", exc_info=True)
+            # Re-raise the exception to let FastAPI handle it
             raise
-
         finally:
-            # Log response
-            elapsed = time.time() - start_time
+            # Log response (only if response was created successfully)
+            if response is not None:
+                elapsed = time.time() - start_time
 
-            response_log = {
-                "type": "response",
-                "method": method,
-                "path": path,
-                "status": response.status_code,
-                "elapsed_seconds": round(elapsed, 3),
-            }
+                response_log = {
+                    "type": "response",
+                    "method": method,
+                    "path": path,
+                    "status": status_code,
+                    "elapsed_seconds": round(elapsed, 3),
+                }
 
-            if response_body:
-                response_log["body"] = response_body
+                if response_body:
+                    response_log["body"] = response_body
 
-            if error:
-                response_log["error"] = error
+                if error:
+                    response_log["error"] = error
 
-            status = response.status_code
-            if status >= 500:
-                logger.error(
-                    f"← {method} {path} {status} | {json.dumps(response_log, default=str)}"
-                )
-            elif status >= 400:
-                logger.warning(
-                    f"← {method} {path} {status} | {json.dumps(response_log, default=str)}"
-                )
-            else:
-                logger.info(
-                    f"← {method} {path} {status} | {json.dumps(response_log, default=str)}"
-                )
+                if status_code >= 500:
+                    logger.error(
+                        f"← {method} {path} {status_code} | {json.dumps(response_log, default=str)}"
+                    )
+                elif status_code >= 400:
+                    logger.warning(
+                        f"← {method} {path} {status_code} | {json.dumps(response_log, default=str)}"
+                    )
+                else:
+                    logger.info(
+                        f"← {method} {path} {status_code} | {json.dumps(response_log, default=str)}"
+                    )
+
+        # This should never be None if we reach here (exception would have been raised)
+        if response is None:
+            raise RuntimeError("Response was not created")
 
         return response
