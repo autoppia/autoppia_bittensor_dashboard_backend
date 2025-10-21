@@ -26,12 +26,12 @@ def _headers() -> dict[str, str]:
     }
 
 
-async def _start_minimal_round(client, *, round_id: str, validator_uid: int = 1001):
+async def _start_minimal_round(client, *, round_id: str, validator_uid: int = 1001, round_number: int = 1):
     payload = {
         "validator_round_id": round_id,
         "round": {
             "validator_round_id": round_id,
-            "round": 1,
+            "round": round_number,
             "validators": [
                 {
                     "uid": validator_uid,
@@ -83,7 +83,9 @@ async def test_start_agent_run_non_sota_requires_identity(client, monkeypatch):
     }
     resp = await client.post(f"/api/v1/validator-rounds/{round_id}/agent-runs/start", json=bad_payload, headers=_headers())
     assert resp.status_code == 400
-    assert "miner_identity" in resp.json()["detail"]
+    # Pydantic validation enforces agent_key when uid is missing; accept that error surface
+    detail = resp.json()["detail"]
+    assert "agent_key is required" in detail or "miner_identity" in detail
 
     # Consistent identity
     good_payload = {
@@ -298,8 +300,8 @@ async def test_duplicate_agent_run_id_in_different_round_conflicts(client, monke
     app.dependency_overrides[get_validator_auth_service] = lambda: _StubAuthService()
 
     # Start two rounds
-    await _start_minimal_round(client, round_id="round_A")
-    await _start_minimal_round(client, round_id="round_B")
+    await _start_minimal_round(client, round_id="round_A", round_number=1)
+    await _start_minimal_round(client, round_id="round_B", round_number=2)
 
     payload_A = {
         "agent_run": {

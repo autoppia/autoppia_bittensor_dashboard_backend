@@ -297,8 +297,8 @@ async def validator_auth_check() -> dict[str, Any]:
 @router.post("/start", dependencies=[Depends(require_validator_auth)])
 async def start_round(
     payload: Union[StartRoundRequest, LegacyStartRoundRequest],
-    session: AsyncSession = Depends(get_session),
     request: Request,
+    session: AsyncSession = Depends(get_session),
 ):
     """Register a new validator round along with validator identity and snapshot."""
 
