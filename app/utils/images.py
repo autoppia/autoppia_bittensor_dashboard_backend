@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 from typing import Optional
+from urllib.parse import urlparse
 
 from app.config import settings
 from app.models.core import MinerInfo
@@ -26,6 +27,14 @@ SOTA_IMAGE_OVERRIDES = {
 
 FALLBACK_MINER_IMAGES = tuple(f"/miners/{index}.svg" for index in range(50))
 
+DEFAULT_ALLOWED_IMAGE_HOSTS = {
+    "leaderboard.autoppia.com",
+    "dev-infinitewebarena.autoppia.com",
+    "api-leaderboard.autoppia.com",
+    "raw.githubusercontent.com",
+    "taostats.io",
+}
+
 
 def _slugify(value: str) -> str:
     return (
@@ -36,28 +45,94 @@ def _slugify(value: str) -> str:
     )
 
 
-def _ensure_absolute_url(candidate: Optional[str]) -> str:
-    """
-    Convert relative asset paths into fully qualified URLs using the configured asset base.
-    """
-    if not candidate:
-        return ""
-    candidate = candidate.strip()
-    if not candidate:
-        return ""
-    if candidate.startswith(("http://", "https://", "data:")):
-        # Rewrite GitHub blob URLs to raw content
-        # e.g., https://github.com/org/repo/blob/branch/path -> https://raw.githubusercontent.com/org/repo/branch/path
-        if candidate.startswith("https://github.com/") and "/blob/" in candidate:
-            return candidate.replace("https://github.com/", "https://raw.githubusercontent.com/").replace("/blob/", "/")
-        return candidate
-    if candidate.startswith("//"):
-        return f"https:{candidate}"
+def _normalize_allowed_host(entry: Optional[str]) -> Optional[str]:
+    if entry is None:
+        return None
+    value = entry.strip().lower()
+    return value or None
+
+
+def _build_allowed_hosts() -> set[str]:
+    hosts: set[str] = set(DEFAULT_ALLOWED_IMAGE_HOSTS)
+    extra_hosts = getattr(settings, "ALLOWED_IMAGE_HOSTS", None) or []
+    for candidate in extra_hosts:
+        normalized = _normalize_allowed_host(str(candidate))
+        if normalized:
+            hosts.add(normalized)
+
+    base_url = getattr(settings, "ASSET_BASE_URL", "") or ""
+    try:
+        parsed = urlparse(str(base_url))
+        if parsed.hostname:
+            hosts.add(parsed.hostname.lower())
+    except Exception:
+        pass
+
+    return hosts
+
+
+_ALLOWED_IMAGE_HOSTS = _build_allowed_hosts()
+
+
+def _is_allowed_host(hostname: Optional[str]) -> bool:
+    if not hostname:
+        return False
+    host = hostname.lower()
+    if host in _ALLOWED_IMAGE_HOSTS:
+        return True
+    for allowed in _ALLOWED_IMAGE_HOSTS:
+        if allowed.startswith("*.") and host.endswith(allowed[1:]):
+            return True
+    return False
+
+
+def _rewrite_github_blob(url: str) -> str:
+    if url.startswith("https://github.com/") and "/blob/" in url:
+        return url.replace("https://github.com/", "https://raw.githubusercontent.com/").replace("/blob/", "/")
+    return url
+
+
+def _normalize_relative_path(value: str) -> str:
     base = settings.ASSET_BASE_URL.rstrip("/") if settings.ASSET_BASE_URL else ""
-    normalized = candidate.lstrip("/")
+    normalized = value.lstrip("/")
+    if not normalized:
+        return base or ""
     if base:
         return f"{base}/{normalized}"
     return f"/{normalized}"
+
+
+def _sanitize_url(candidate: Optional[str]) -> str:
+    if not candidate:
+        return ""
+    value = candidate.strip()
+    if not value:
+        return ""
+
+    if value.startswith("data:"):
+        return value if value.startswith("data:image/") else ""
+
+    if value.startswith("//"):
+        value = f"https:{value}"
+
+    if value.startswith("http://") or value.startswith("https://"):
+        rewritten = _rewrite_github_blob(value)
+        try:
+            parsed = urlparse(rewritten)
+        except Exception:
+            return ""
+        if _is_allowed_host(parsed.hostname):
+            return rewritten
+        return ""
+
+    return _normalize_relative_path(value)
+
+
+def _ensure_absolute_url(candidate: Optional[str], fallback: Optional[str] = None) -> str:
+    primary = _sanitize_url(candidate)
+    if primary:
+        return primary
+    return _sanitize_url(fallback)
 
 
 def resolve_agent_image(info: Optional[MinerInfo], existing: Optional[str] = None) -> str:
@@ -69,14 +144,17 @@ def resolve_agent_image(info: Optional[MinerInfo], existing: Optional[str] = Non
     prefers any explicit `agent_image` value, falling back to the supplied
     `existing` string (if provided) or an empty string.
     """
+
+    existing_url = _ensure_absolute_url(existing)
+
     if info is None:
-        return existing or ""
+        return existing_url
 
     if info.is_sota:
         candidates = [
             info.agent_name or "",
             info.provider or "",
-            existing or "",
+            existing_url or "",
         ]
 
         for candidate in candidates:
@@ -84,41 +162,28 @@ def resolve_agent_image(info: Optional[MinerInfo], existing: Optional[str] = Non
                 continue
             slug = _slugify(candidate)
             if slug in SOTA_IMAGE_OVERRIDES:
-                return _ensure_absolute_url(SOTA_IMAGE_OVERRIDES[slug])
+                return _ensure_absolute_url(SOTA_IMAGE_OVERRIDES[slug], fallback=existing_url)
             if slug.startswith("sota/"):
-                # already mapped to a sota asset
-                return _ensure_absolute_url(f"/{slug}")
+                return _ensure_absolute_url(f"/{slug}", fallback=existing_url)
 
-        if existing:
-            # Preserve explicitly configured assets (e.g., /sota/*.webp)
-            if existing.startswith("/"):
-                return _ensure_absolute_url(existing)
-            slug = _slugify(existing)
-            if slug in SOTA_IMAGE_OVERRIDES:
-                return _ensure_absolute_url(SOTA_IMAGE_OVERRIDES[slug])
+        if existing_url:
+            return existing_url
 
         slug = _slugify(info.agent_name or info.provider or "sota-agent")
-        return _ensure_absolute_url(f"/sota/{slug}.webp")
+        return _ensure_absolute_url(f"/sota/{slug}.webp", fallback=existing_url)
 
-    # Non-SOTA – return the stored image when available
     if info.agent_image:
-        return _ensure_absolute_url(info.agent_image)
+        return _ensure_absolute_url(info.agent_image, fallback=existing_url)
 
-    return _ensure_absolute_url(_fallback_miner_image(info, existing))
+    fallback_path = _fallback_miner_image(info, existing_url)
+    return _ensure_absolute_url(fallback_path, fallback=existing_url)
 
 
 def _fallback_miner_image(info: Optional[MinerInfo], existing: Optional[str]) -> str:
-    """
-    Provide a deterministic fallback miner image when none is supplied.
-
-    - Preserve an explicitly supplied `existing` asset when present.
-    - Choose a pseudo-random image from the `/miners` set based on stable miner identifiers
-      (uid, hotkey, agent name, provider) so the same miner keeps the same asset between requests.
-    """
     if existing:
-        return _ensure_absolute_url(existing)
+        return existing
 
-    identifier = None
+    identifier: Optional[str] = None
     if info:
         candidates = [
             getattr(info, "hotkey", None),
@@ -147,16 +212,16 @@ def resolve_validator_image(name: Optional[str], existing: Optional[str] = None)
     We preserve explicit assets when available and otherwise fall back to
     bundled validator logos keyed by name.
     """
-    candidate = (existing or "").strip()
-    if candidate and candidate != "/validators/Autoppia.png":
-        return _ensure_absolute_url(candidate)
+
+    existing_url = _ensure_absolute_url(existing)
+    default_url = _ensure_absolute_url(DEFAULT_VALIDATOR_IMAGE)
 
     if name:
         slug = _slugify(name)
         if slug in VALIDATOR_IMAGE_OVERRIDES:
-            return _ensure_absolute_url(VALIDATOR_IMAGE_OVERRIDES[slug])
+            return _ensure_absolute_url(VALIDATOR_IMAGE_OVERRIDES[slug], fallback=existing_url or default_url)
 
-    if candidate:
-        return _ensure_absolute_url(candidate)
+    if existing_url:
+        return existing_url
 
-    return _ensure_absolute_url(DEFAULT_VALIDATOR_IMAGE)
+    return default_url

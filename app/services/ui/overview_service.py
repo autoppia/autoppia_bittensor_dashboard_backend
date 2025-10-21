@@ -951,13 +951,19 @@ class OverviewService:
             existing_icon = getattr(validator_info, "image_url", None) if validator_info else None
             icon = resolve_validator_image(display_name, existing=existing_icon)
 
-            stake_value = None
-            if validator_info and validator_info.stake not in (None, 0, 0.0):
-                stake_value = float(validator_info.stake)
+            stake_value: float = 0.0
+            if validator_info and validator_info.stake is not None:
+                try:
+                    stake_value = float(validator_info.stake)
+                except (TypeError, ValueError):
+                    stake_value = 0.0
 
-            trust_value = None
-            if validator_info and validator_info.vtrust not in (None, 0, 0.0):
-                trust_value = float(validator_info.vtrust)
+            trust_value: float = 0.0
+            if validator_info and validator_info.vtrust is not None:
+                try:
+                    trust_value = float(validator_info.vtrust)
+                except (TypeError, ValueError):
+                    trust_value = 0.0
 
             version = None
             if validator_info and validator_info.version:

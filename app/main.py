@@ -17,7 +17,6 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.ui.agent_runs import router as agent_runs_router
 from app.api.ui.agents import router as agents_router
-from app.api.ui.cache import router as cache_router
 from app.api.ui.evaluations import router as evaluations_router
 from app.api.ui.legacy_rounds import legacy_router as legacy_rounds_router
 from app.api.ui.miner_list import router as miner_list_router
@@ -74,7 +73,6 @@ async def log_requests(request: Request, call_next):
 
 # Routers
 app.include_router(validator_rounds_router)
-app.include_router(cache_router)
 app.include_router(rounds_router)
 app.include_router(legacy_rounds_router)
 app.include_router(agent_runs_router)
