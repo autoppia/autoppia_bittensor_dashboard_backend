@@ -14,6 +14,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
+import importlib
 import os
 import subprocess
 import sys
@@ -63,6 +65,68 @@ def _ensure_postgres(database_url: str) -> None:
         raise RuntimeError(
             f"PostgreSQL connection required; received backend '{backend}'."
         )
+
+
+def _coerce_database_url(user_input: str, default_url: str) -> str:
+    """Combine optional database name input with the default Postgres URL."""
+    if user_input and "://" in user_input:
+        return user_input
+
+    url = make_url(default_url)
+    database_name = user_input or url.database
+    if not database_name:
+        raise RuntimeError("Database name required to continue.")
+
+    return str(url.set(database=database_name))
+
+
+def _apply_database_url(database_url: str) -> None:
+    """Set DATABASE_URL for downstream imports and refresh the session module."""
+    os.environ["DATABASE_URL"] = database_url
+
+    from app.config import settings
+
+    if settings.DATABASE_URL != database_url:
+        settings.DATABASE_URL = database_url
+
+    session_module = sys.modules.get("app.db.session")
+    if session_module is None:
+        return
+
+    engine = getattr(session_module, "engine", None)
+    if engine is not None:
+        try:
+            asyncio.run(engine.dispose())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(engine.dispose())
+            finally:
+                loop.close()
+
+    importlib.reload(session_module)
+
+
+def _select_and_apply_database(action: str) -> str:
+    """Prompt for a target Postgres database, apply it globally, and return the URL."""
+    try:
+        default_url = _default_database_url()
+    except Exception as exc:
+        raise RuntimeError(f"Unable to resolve DATABASE_URL: {exc}") from exc
+
+    _ensure_postgres(default_url)
+    default_db = make_url(default_url).database or ""
+    prompt = f"Target database name for {action} [{default_db}]: "
+    user_input = input(prompt).strip()
+
+    try:
+        database_url = _coerce_database_url(user_input, default_url)
+        _ensure_postgres(database_url)
+    except Exception as exc:
+        raise RuntimeError(f"Invalid database selection: {exc}") from exc
+
+    _apply_database_url(database_url)
+    return database_url
 
 
 def _create_pg_dump(database_url: str) -> Path:
@@ -121,13 +185,10 @@ def prompt_flush() -> int:
     print("=" * 60)
 
     try:
-        default_url = _default_database_url()
+        database_url = _select_and_apply_database("database flush")
     except Exception as exc:  # pragma: no cover - defensive guard
-        print(f"❌ Unable to resolve DATABASE_URL: {exc}")
+        print(f"❌ {exc}")
         return 1
-
-    masked_default = _mask_database_url(default_url)
-    database_url = input(f"Database URL [{masked_default}]: ").strip() or default_url
 
     print(f"\n⚠️  This will DROP ALL TABLES in: {_mask_database_url(database_url)}")
     confirm = input("Are you sure you want to continue? [y/N]: ").strip().lower()
@@ -195,7 +256,14 @@ def prompt_seed_round() -> int:
         except ValueError:
             print("❌ Invalid number of tasks.")
             return 1
-    
+
+    try:
+        database_url = _select_and_apply_database("round seeding")
+    except Exception as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    print(f"\n📡 Using database: {_mask_database_url(database_url)}")
     print("\n🔄 Seeding round(s)...")
     
     try:
@@ -274,9 +342,15 @@ def prompt_seed_validator_round() -> int:
         except ValueError:
             print("❌ Invalid number of tasks.")
             return 1
-    
+    try:
+        database_url = _select_and_apply_database("validator round seeding")
+    except Exception as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    print(f"📡 Using database: {_mask_database_url(database_url)}")
     print(f"\n🔄 Seeding validator {validator_uid} round {round_number}...")
-    
+
     try:
         from scripts.seed_round import seed_validator_round
         
@@ -309,20 +383,14 @@ def prompt_backup() -> int:
     print("BACKUP")
     print("=" * 60)
     try:
-        default_url = _default_database_url()
-    except Exception as exc:
-        print(f"❌ Unable to determine default database URL: {exc}")
-        return 1
-
-    masked_default = _mask_database_url(default_url)
-    database_url = input(f"Enter database URL [{masked_default}]: ").strip() or default_url
-
-    try:
-        _ensure_postgres(database_url)
-        url = make_url(database_url)
+        database_url = _select_and_apply_database("backup creation")
     except Exception as exc:
         print(f"❌ {exc}")
         return 1
+
+    print(f"📡 Using database: {_mask_database_url(database_url)}")
+
+    url = make_url(database_url)
 
     db_name = url.database or "database"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
