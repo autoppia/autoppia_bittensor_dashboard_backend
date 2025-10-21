@@ -74,7 +74,14 @@ def _load_base_database_url() -> Optional[str]:
     if env_url:
         return env_url
 
-    for candidate in (Path.cwd() / ".env", ENV_PATH):
+    candidates = []
+    if ENV_PATH.exists():
+        candidates.append(ENV_PATH)
+    cwd_env = Path.cwd() / ".env"
+    if cwd_env.exists() and cwd_env not in candidates:
+        candidates.append(cwd_env)
+
+    for candidate in candidates:
         if not candidate.exists():
             continue
         try:
