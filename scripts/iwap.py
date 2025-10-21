@@ -89,7 +89,7 @@ def seed_round_cli() -> None:
     num_to_seed = int(num_to_seed_input)
     start_round = last_round + 1
     end_round = last_round + num_to_seed
-    rounds_to_seed = list(range(start_round, end_round))  # ✅ fixed: seeds exact number requested
+    rounds_to_seed = list(range(start_round, end_round + 1))  # ✅ fixed inclusive range
     print(f"➡️  Will seed rounds {rounds_to_seed}")
 
     num_miners_input = input("Number of miners (default random 10–20): ").strip()
