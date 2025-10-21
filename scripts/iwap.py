@@ -62,18 +62,29 @@ def _ensure_postgres(database_url: str) -> None:
         raise RuntimeError(f"Invalid DATABASE_URL: {exc}") from exc
 
     backend = url.get_backend_name()
-    if not backend.startswith("postgresql"):
+    if not (backend.startswith("postgresql") or backend == "postgres"):
         raise RuntimeError(
             f"PostgreSQL connection required; received backend '{backend}'."
         )
 
 
+def _is_postgres_dsn(value: str) -> bool:
+    try:
+        url = make_url(value)
+    except Exception:
+        return False
+    backend = url.get_backend_name()
+    return backend.startswith("postgresql") or backend == "postgres"
+
+
 def _load_base_database_url() -> Optional[str]:
-    """Return DATABASE_URL from environment or .env files if available."""
+    """Return a PostgreSQL DATABASE_URL from env or .env files, ignoring non-Postgres values."""
+    # Prefer explicit env only if it's Postgres
     env_url = os.environ.get("DATABASE_URL")
-    if env_url:
+    if env_url and _is_postgres_dsn(env_url):
         return env_url
 
+    # Prefer backend .env over CWD .env
     candidates = []
     if ENV_PATH.exists():
         candidates.append(ENV_PATH)
@@ -82,8 +93,6 @@ def _load_base_database_url() -> Optional[str]:
         candidates.append(cwd_env)
 
     for candidate in candidates:
-        if not candidate.exists():
-            continue
         try:
             for raw_line in candidate.read_text().splitlines():
                 line = raw_line.strip()
@@ -93,7 +102,7 @@ def _load_base_database_url() -> Optional[str]:
                     value = line.split("=", 1)[1].strip()
                     if value and value[0] in {"'", '"'} and value[-1:] == value[0]:
                         value = value[1:-1]
-                    if value:
+                    if value and _is_postgres_dsn(value):
                         return value
         except OSError:
             continue
@@ -111,7 +120,17 @@ def _resolve_default_postgres_url() -> str:
     except ArgumentError as exc:
         raise RuntimeError(f"Invalid DATABASE_URL: {exc}") from exc
 
-    if not url.get_backend_name().startswith("postgresql"):
+    backend = url.get_backend_name()
+    if not (backend.startswith("postgresql") or backend == "postgres"):
+        # Fallback to app settings if they provide a Postgres DSN
+        try:
+            from app.config import settings
+            f_url = make_url(settings.DATABASE_URL)
+            f_backend = f_url.get_backend_name()
+            if f_backend.startswith("postgresql") or f_backend == "postgres":
+                return str(f_url)
+        except Exception:
+            pass
         raise RuntimeError(
             "PostgreSQL connection required. Update DATABASE_URL to use a PostgreSQL DSN."
         )
@@ -188,7 +207,7 @@ def _create_pg_dump(database_url: str) -> Path:
     except ArgumentError as exc:
         raise RuntimeError(f"Invalid DATABASE_URL: {exc}") from exc
 
-    if url.get_backend_name() != "postgresql":
+    if not url.get_backend_name().startswith("postgresql"):
         raise RuntimeError("pg_dump backups currently support PostgreSQL databases only.")
 
     if not url.database:

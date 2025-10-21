@@ -71,7 +71,7 @@ async def flush_database(database_url: str, *, assume_yes: bool) -> None:
         raise SystemExit(f"Invalid DATABASE_URL: {exc}") from exc
 
     backend = url.get_backend_name()
-    if backend != "postgresql":
+    if not (backend.startswith("postgresql") or backend == "postgres"):
         raise SystemExit(
             f"This utility only works with PostgreSQL connections. Current backend: {backend}"
         )
