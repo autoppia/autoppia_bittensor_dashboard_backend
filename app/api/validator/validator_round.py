@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Any, Dict, Union
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +24,7 @@ from app.models.core import (
     ValidatorRound,
     ValidatorRoundValidator,
 )
-from app.services.validator.validator_auth import require_validator_auth
+from app.services.validator.validator_auth import require_validator_auth, VALIDATOR_HOTKEY_HEADER
 from app.services.validator.validator_storage import (
     RoundConflictError,
     DuplicateIdentifierError,
@@ -298,6 +298,7 @@ async def validator_auth_check() -> dict[str, Any]:
 async def start_round(
     payload: Union[StartRoundRequest, LegacyStartRoundRequest],
     session: AsyncSession = Depends(get_session),
+    request: Request | None = None,
 ):
     """Register a new validator round along with validator identity and snapshot."""
 
@@ -333,6 +334,15 @@ async def start_round(
             detail="Validator snapshot identity does not match validator round metadata",
         )
 
+    # If validator auth headers are present, ensure payload identity matches header hotkey
+    if request is not None:
+        header_hotkey = request.headers.get(VALIDATOR_HOTKEY_HEADER)
+        if header_hotkey and header_hotkey != validator_identity.hotkey:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Validator header hotkey does not match payload hotkey",
+            )
+
     service = ValidatorRoundPersistenceService(session)
 
     try:
@@ -343,6 +353,24 @@ async def start_round(
                 validator_snapshot=validator_snapshot,
             )
     except DuplicateIdentifierError as exc:
+        # Treat duplicate start as idempotent if it belongs to the same validator
+        try:
+            existing_round = await service._get_round_row(validator_round.validator_round_id)  # type: ignore[attr-defined]
+        except Exception:
+            existing_round = None
+        if existing_round is not None:
+            if (
+                existing_round.validator_uid == validator_round.validator_uid
+                and existing_round.validator_hotkey == validator_round.validator_hotkey
+            ):
+                logger.info(
+                    "Validator round %s already registered; treating as idempotent",
+                    validator_round.validator_round_id,
+                )
+                return {
+                    "message": "Validator round created",
+                    "validator_round_id": validator_round.validator_round_id,
+                }
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
@@ -388,7 +416,8 @@ async def set_tasks(
 
     try:
         async with session.begin():
-            count = await service.add_tasks(validator_round_id, payload.tasks)
+            # Idempotent: allow existing tasks to be skipped silently
+            count = await service.add_tasks(validator_round_id, payload.tasks, allow_existing=True)
     except DuplicateIdentifierError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
@@ -442,11 +471,60 @@ async def start_agent_run(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="miner_agent_key is required for SOTA runs",
                     )
+                # Cross-check SOTA agent_key across payloads if present
+                agent_key_values = [
+                    v
+                    for v in [
+                        agent_run.miner_agent_key,
+                        request_payload.miner_identity.agent_key,
+                        miner_snapshot.agent_key,
+                    ]
+                    if v is not None
+                ]
+                if agent_key_values and len(set(agent_key_values)) > 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Inconsistent agent_key across agent_run, miner_identity, and miner_snapshot",
+                    )
             else:
                 if agent_run.miner_uid is None:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="miner_uid is required for non-SOTA runs",
+                    )
+                # For non-SOTA, ensure miner uid/hotkey are consistent between all payload parts
+                identity = request_payload.miner_identity
+                if identity.uid is None or not identity.hotkey:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="miner_identity must include uid and hotkey for non-SOTA runs",
+                    )
+                expected_uid = agent_run.miner_uid
+                expected_hotkey = agent_run.miner_hotkey
+                if expected_uid != identity.uid:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="miner_identity.uid must match agent_run.miner_uid",
+                    )
+                if expected_hotkey and identity.hotkey and expected_hotkey != identity.hotkey:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="miner_identity.hotkey must match agent_run.miner_hotkey",
+                    )
+                # Snapshot consistency (if provided)
+                if miner_snapshot.miner_uid is not None and miner_snapshot.miner_uid != expected_uid:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="miner_snapshot.miner_uid must match agent_run.miner_uid",
+                    )
+                if (
+                    miner_snapshot.miner_hotkey is not None
+                    and expected_hotkey is not None
+                    and miner_snapshot.miner_hotkey != expected_hotkey
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="miner_snapshot.miner_hotkey must match agent_run.miner_hotkey",
                     )
 
             await service.start_agent_run(
