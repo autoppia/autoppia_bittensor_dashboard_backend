@@ -23,6 +23,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote_plus
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
@@ -65,6 +66,34 @@ def _ensure_postgres(database_url: str) -> None:
         raise RuntimeError(
             f"PostgreSQL connection required; received backend '{backend}'."
         )
+
+
+def _resolve_default_postgres_url() -> str:
+    """Return a Postgres URL, coercing config defaults if necessary."""
+    default_url = _default_database_url()
+    try:
+        url = make_url(default_url)
+    except ArgumentError as exc:
+        raise RuntimeError(f"Invalid DATABASE_URL: {exc}") from exc
+
+    backend = url.get_backend_name()
+    if backend == "postgresql":
+        return str(url)
+
+    if backend == "sqlite":
+        from app.config import settings
+
+        user = quote_plus(settings.POSTGRES_USER)
+        password = quote_plus(settings.POSTGRES_PASSWORD) if settings.POSTGRES_PASSWORD else ""
+        auth = f"{user}:{password}@" if password else f"{user}@"
+        return (
+            f"postgresql+asyncpg://{auth}"
+            f"{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
+        )
+
+    raise RuntimeError(
+        "Unsupported database backend configured. Please provide a PostgreSQL DATABASE_URL."
+    )
 
 
 def _coerce_database_url(user_input: str, default_url: str) -> str:
@@ -110,7 +139,7 @@ def _apply_database_url(database_url: str) -> None:
 def _select_and_apply_database(action: str) -> str:
     """Prompt for a target Postgres database, apply it globally, and return the URL."""
     try:
-        default_url = _default_database_url()
+        default_url = _resolve_default_postgres_url()
     except Exception as exc:
         raise RuntimeError(f"Unable to resolve DATABASE_URL: {exc}") from exc
 
