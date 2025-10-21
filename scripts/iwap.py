@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
 
-# Optional: load .env early if available (safer for passwords with special chars)
+# Best-effort: load .env early (helpful for passwords w/ special chars)
 try:
     from dotenv import load_dotenv  # type: ignore
     load_dotenv()
@@ -43,7 +43,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 
 # -------------------------------
-# DATABASE URL helpers (robust)
+# DATABASE URL helpers
 # -------------------------------
 
 def _default_database_url() -> str:
@@ -75,8 +75,8 @@ def _is_postgres_dsn(value: str) -> bool:
 
 def _load_base_database_url_from_envfiles() -> Optional[str]:
     """
-    Try to find a Postgres DATABASE_URL by scanning .env files without mutating it.
-    Keeps exact string (no quote stripping) to avoid damaging special character passwords.
+    Find a Postgres DATABASE_URL by scanning .env files.
+    Keeps the value verbatim (aside from outer quotes) to avoid damaging special chars.
     """
     candidates: list[Path] = []
     if ENV_PATH.exists():
@@ -95,13 +95,9 @@ def _load_base_database_url_from_envfiles() -> Optional[str]:
             if not line or line.startswith("#"):
                 continue
             if line.startswith("DATABASE_URL="):
-                # Keep the value verbatim after the first '='
-                value = line.split("=", 1)[1]
-                # Remove leading export if present: export DATABASE_URL=...
+                value = line.split("=", 1)[1].strip()
                 if value.lower().startswith("export "):
-                    value = value[7:]
-                value = value.strip()
-                # If wrapped in quotes, keep content but do NOT interpret escapes.
+                    value = value[7:].strip()
                 if value and value[0] in {"'", '"'} and value[-1:] == value[0]:
                     value = value[1:-1]
                 if value and _is_postgres_dsn(value):
@@ -111,9 +107,9 @@ def _load_base_database_url_from_envfiles() -> Optional[str]:
 
 def _resolve_default_postgres_url() -> str:
     """
-    Resolve the base Postgres URL from:
-      1) explicit env var if it's Postgres,
-      2) .env files (backend first, then CWD),
+    Resolve base Postgres URL from:
+      1) env var DATABASE_URL (if Postgres),
+      2) .env files,
       3) settings.DATABASE_URL
     """
     env_url = os.environ.get("DATABASE_URL")
@@ -131,7 +127,7 @@ def _resolve_default_postgres_url() -> str:
 
     backend = url.get_backend_name()
     if not (backend.startswith("postgresql") or backend == "postgres"):
-        # Fallback to app settings if they provide a Postgres DSN
+        # Fallback to settings if that is Postgres
         try:
             from app.config import settings
             f_url = make_url(settings.DATABASE_URL)
@@ -140,29 +136,25 @@ def _resolve_default_postgres_url() -> str:
                 return str(f_url)
         except Exception:
             pass
-        raise RuntimeError(
-            "PostgreSQL connection required. Update DATABASE_URL to use a PostgreSQL DSN."
-        )
-
+        raise RuntimeError("PostgreSQL connection required. Update DATABASE_URL to a Postgres DSN.")
     return str(url)
 
 
 def _apply_database_url(database_url: str) -> None:
     """
     Set DATABASE_URL for downstream imports and refresh the session module.
-    We do NOT modify the URL string — use exactly what the user/env provided.
+    Do not mutate the DSN string.
     """
     os.environ["DATABASE_URL"] = database_url
 
     from app.config import settings
-    # Some Settings classes are mutable; if yours isn't, this no-ops harmlessly.
     try:
         if settings.DATABASE_URL != database_url:
             settings.DATABASE_URL = database_url  # type: ignore[attr-defined]
     except Exception:
         pass
 
-    # Refresh db session module so new engine picks up the new URL
+    # Reload DB session so the new engine is used.
     session_module = sys.modules.get("app.db.session")
     if session_module is not None:
         engine = getattr(session_module, "engine", None)
@@ -180,8 +172,7 @@ def _apply_database_url(database_url: str) -> None:
 
 def _prompt_db_target(action: str) -> Tuple[str, str]:
     """
-    Ask user for *either* a database name (relative to default URL) or a full DSN.
-    If input is blank, we keep the default URL *as-is* (no reconstruction).
+    Ask user for: (a) full DSN, (b) database name only, or (c) press Enter.
     Returns (chosen_database_url, masked_preview).
     """
     default_url = _resolve_default_postgres_url()
@@ -192,36 +183,83 @@ def _prompt_db_target(action: str) -> Tuple[str, str]:
 
     default_db = url.database or ""
     print(f"Current default: {_mask_database_url(default_url)}")
-    print("Tip: You can paste a FULL DATABASE_URL here to override, "
-          "or just type a database *name*, or press Enter to keep the default as-is.")
+    print("Tip: paste a FULL DATABASE_URL to override, type just a database name, "
+          "or press Enter to keep the default DSN verbatim.")
     user_input = input(f"Target database for {action} [{default_db}|full-DSN]: ").strip()
 
-    # 1) Full DSN override provided
+    # Full DSN override
     if "://" in user_input:
         chosen = user_input
         if not _is_postgres_dsn(chosen):
             raise RuntimeError("PostgreSQL connection required; provided DSN is not Postgres.")
         return chosen, _mask_database_url(chosen)
 
-    # 2) Empty => keep URL verbatim (this avoids subtle mutations that can break auth)
+    # Keep default as-is
     if user_input == "":
         return default_url, _mask_database_url(default_url)
 
-    # 3) Only database name provided => change only the database component
-    #    Keep *everything else identical* (driver, host, port, user, password).
+    # Only change database name; keep all other parts identical
     try:
         new_url: URL = url.set(database=user_input)
     except Exception as exc:
         raise RuntimeError(f"Invalid database name '{user_input}': {exc}") from exc
-
     return str(new_url), _mask_database_url(str(new_url))
 
 
 def _select_and_apply_database(action: str) -> str:
-    """Prompt for a target Postgres database/DSN and apply it globally, returning the URL."""
-    chosen_url, masked = _prompt_db_target(action)
+    """Prompt for a target Postgres database/DSN and apply it globally; return the URL."""
+    chosen_url, _ = _prompt_db_target(action)
     _apply_database_url(chosen_url)
     return chosen_url
+
+
+def _make_unix_socket_fallback(dsn: str) -> Optional[str]:
+    """
+    Build a UNIX-socket DSN from a TCP DSN:
+      - same driver/user/database
+      - remove host/port
+      - (optionally) drop the password so peer/trust can work
+    Return None if DSN isn't Postgres.
+    """
+    if not _is_postgres_dsn(dsn):
+        return None
+    url = make_url(dsn)
+    try:
+        socket_url = URL.create(
+            drivername=url.drivername,
+            username=url.username,
+            password=None,          # allow peer/trust
+            host=None,              # trigger UNIX socket
+            port=None,
+            database=url.database,
+            query=url.query,
+        )
+        return str(socket_url)
+    except Exception:
+        return None
+
+
+def _looks_like_local_tcp(url: URL) -> bool:
+    host = (url.host or "").lower()
+    return host in ("127.0.0.1", "localhost", "")
+
+
+def _should_try_socket_fallback(err: Exception, dsn: str) -> bool:
+    msg = str(err).lower()
+    try:
+        url = make_url(dsn)
+    except Exception:
+        return False
+    if not _looks_like_local_tcp(url):
+        return False
+    triggers = (
+        "password authentication failed",
+        "no pg_hba.conf entry",
+        "connection refused",
+        "role does not exist",
+        "auth failed",
+    )
+    return any(t in msg for t in triggers)
 
 
 # -------------------------------
@@ -277,6 +315,32 @@ def _create_pg_dump(database_url: str) -> Path:
 # Interactive flows
 # -------------------------------
 
+def _try_with_optional_socket_retry(func) -> int:
+    """
+    Run an operation; on auth/pg_hba/connection errors over local TCP,
+    automatically retry once using a UNIX-socket DSN.
+    """
+    try:
+        return func()
+    except Exception as e:
+        # First failure: maybe retry via socket
+        current_dsn = os.environ.get("DATABASE_URL", "")
+        if _should_try_socket_fallback(e, current_dsn):
+            socket_dsn = _make_unix_socket_fallback(current_dsn)
+            if socket_dsn:
+                print("⚠️  Connection failed over TCP; retrying once using UNIX socket DSN...")
+                print(f"    {_mask_database_url(socket_dsn)}")
+                _apply_database_url(socket_dsn)
+                try:
+                    return func()
+                except Exception as e2:
+                    print(f"❌ Retry (UNIX socket) failed: {e2}")
+                    return 1
+        # No retry or retry not applicable
+        print(f"❌ {e}")
+        return 1
+
+
 def prompt_flush() -> int:
     """Interactive prompt for flushing the database."""
     print("=" * 60)
@@ -291,20 +355,18 @@ def prompt_flush() -> int:
 
     print(f"\n⚠️  This will DROP ALL TABLES in: {_mask_database_url(database_url)}")
     confirm = input("Are you sure you want to continue? [y/N]: ").strip().lower()
-
     if confirm not in {"y", "yes"}:
         print("Aborted.")
         return 0
 
-    try:
+    def _do():
         from scripts.flush_db import flush_seed_database
-        print(f"\n🔄 Flushing database: {_mask_database_url(database_url)}")
-        flush_seed_database(database_url=database_url, assume_yes=True)
+        print(f"\n🔄 Flushing database: {_mask_database_url(os.environ['DATABASE_URL'])}")
+        flush_seed_database(database_url=os.environ["DATABASE_URL"], assume_yes=True)
         print("✅ Database flushed successfully!")
         return 0
-    except Exception as e:
-        print(f"❌ Error flushing database: {e}")
-        return 1
+
+    return _try_with_optional_socket_retry(_do)
 
 
 def prompt_seed_round() -> int:
@@ -317,7 +379,6 @@ def prompt_seed_round() -> int:
     if not rounds_input:
         print("❌ Round number(s) required.")
         return 1
-
     try:
         round_numbers = [int(r.strip()) for r in rounds_input.split(",")]
     except ValueError:
@@ -364,9 +425,8 @@ def prompt_seed_round() -> int:
     print(f"\n📡 Using database: {_mask_database_url(database_url)}")
     print("\n🔄 Seeding round(s)...")
 
-    try:
+    def _do():
         from scripts.seed_round import seed_round, seed_multiple_rounds
-
         if len(round_numbers) == 1:
             results = seed_round(
                 round_number=round_numbers[0],
@@ -384,19 +444,19 @@ def prompt_seed_round() -> int:
             )
             total = sum(len(results) for results in seeded.values())
             print(f"✅ Seeded {len(round_numbers)} round(s) with {total} total validator round(s).")
-
         return 0
-    except Exception as e:
-        msg = str(e)
-        print(f"❌ Error seeding round(s): {msg}")
-        # Helpful hints for common auth failures (no stack spam)
-        if "password authentication failed" in msg.lower():
-            print("   Hints:")
-            print("   • If your .env password has special characters, prefer pasting the FULL DATABASE_URL")
-            print("     at the DB prompt so it’s used verbatim.")
-            print("   • Pressing Enter now keeps the existing DSN 100% unchanged (no reconstruction).")
-            print("   • If your server trusts Unix sockets but not TCP, try a socket DSN (omit host) in .env.")
-        return 1
+
+    rc = _try_with_optional_socket_retry(_do)
+    if rc != 0:
+        msg = "password authentication failed"
+        # Friendly hints if it still failed:
+        print("   Hints:")
+        print("   • Paste your FULL DATABASE_URL at the DB prompt to keep it unchanged.")
+        print("   • If local sockets are trusted (peer/trust) but TCP requires md5/scram,")
+        print("     keep a socket DSN in your .env, e.g.:")
+        print("       postgresql+asyncpg://autoppia_user@/autoppia_dev")
+        print("   • Check pg_hba.conf: ensure a matching entry for local connections.")
+    return rc
 
 
 def prompt_seed_validator_round() -> int:
@@ -409,7 +469,6 @@ def prompt_seed_validator_round() -> int:
     if not validator_uid_input:
         print("❌ Validator UID required.")
         return 1
-
     try:
         validator_uid = int(validator_uid_input)
     except ValueError:
@@ -420,7 +479,6 @@ def prompt_seed_validator_round() -> int:
     if not round_number_input:
         print("❌ Round number required.")
         return 1
-
     try:
         round_number = int(round_number_input)
     except ValueError:
@@ -458,35 +516,32 @@ def prompt_seed_validator_round() -> int:
     print(f"📡 Using database: {_mask_database_url(database_url)}")
     print(f"\n🔄 Seeding validator {validator_uid} round {round_number}...")
 
-    try:
+    def _do():
         from scripts.seed_round import seed_validator_round
-
         result = seed_validator_round(
             validator_uid=validator_uid,
             round_number=round_number,
             num_miners=num_miners,
             num_tasks=num_tasks,
         )
-
         saved = result.saved_entities
         agent_runs = len(saved.get("agent_evaluation_runs", []))
         tasks = len(saved.get("tasks", []))
-
-        print(f"✅ Successfully seeded validator round!")
+        print("✅ Successfully seeded validator round!")
         print(f"   - Validator UID: {validator_uid}")
         print(f"   - Round: {round_number}")
         print(f"   - Agent runs: {agent_runs}")
         print(f"   - Tasks: {tasks}")
-
         return 0
-    except Exception as e:
-        msg = str(e)
-        print(f"❌ Error seeding validator round: {msg}")
-        if "password authentication failed" in msg.lower():
-            print("   Hints:")
-            print("   • Paste your FULL DATABASE_URL at the DB prompt to keep it unchanged.")
-            print("   • Consider a socket DSN (omit host) if local peer/trust auth is configured.")
-        return 1
+
+    rc = _try_with_optional_socket_retry(_do)
+    if rc != 0:
+        print("   Hints:")
+        print("   • Paste your FULL DATABASE_URL at the DB prompt to keep it unchanged.")
+        print("   • For local peer/trust auth, prefer a socket DSN like:")
+        print("       postgresql+asyncpg://autoppia_user@/autoppia_dev")
+        print("   • Check pg_hba.conf for local entries.")
+    return rc
 
 
 def prompt_backup() -> int:

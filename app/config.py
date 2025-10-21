@@ -68,7 +68,17 @@ class Settings(BaseSettings):
     OVERVIEW_VALIDATORS_LOOKBACK_ROUNDS: int = 2
 
     # CORS Configuration
-    CORS_ORIGINS: list[str] = ["*"]
+    # Prefer explicit origins to support credentials; fallback to wildcard in local env
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://dev-infinitewebarena.autoppia.com",
+        "https://infinitewebarena.autoppia.com",
+    ]
+    # Optional regex to allow subdomains (e.g., all *.autoppia.com)
+    CORS_ALLOW_ORIGIN_REGEX: Optional[str] = None
 
     # Idempotency Configuration (seconds to keep)
     IDEMPOTENCY_TTL: int = 600
@@ -108,17 +118,17 @@ class Settings(BaseSettings):
         self.BITTENSOR_LOG_LEVEL = _norm(self.BITTENSOR_LOG_LEVEL, "WARNING")
         self.UVICORN_LOG_LEVEL = _norm(self.UVICORN_LOG_LEVEL, "WARNING")
 
-        # Ensure required CORS origins unless wildcard
-        if "*" in self.CORS_ORIGINS:
-            return
-
-        required_origins = {
-            "https://dev-infinitewebarena.autoppia.com",
-            "https://infinitewebarena.autoppia.com",
-        }
-        missing = required_origins.difference(self.CORS_ORIGINS)
-        if missing:
-            self.CORS_ORIGINS.extend(sorted(missing))
+        # Ensure required CORS origins if no regex is provided
+        if not self.CORS_ALLOW_ORIGIN_REGEX:
+            required_origins = {
+                "https://dev-infinitewebarena.autoppia.com",
+                "https://infinitewebarena.autoppia.com",
+            }
+            # Avoid duplicates and preserve values from env
+            existing = set(self.CORS_ORIGINS or [])
+            missing = required_origins.difference(existing)
+            if missing:
+                self.CORS_ORIGINS.extend(sorted(missing))
 
 
 settings = Settings()
