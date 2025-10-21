@@ -31,6 +31,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+ENV_PATH = BACKEND_DIR / ".env"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
@@ -73,14 +74,35 @@ def _resolve_default_postgres_url() -> str:
     default_url = _default_database_url()
     try:
         url = make_url(default_url)
-    except ArgumentError as exc:
-        raise RuntimeError(f"Invalid DATABASE_URL: {exc}") from exc
+    except ArgumentError:
+        url = None
 
-    backend = url.get_backend_name()
-    if backend == "postgresql":
+    if url is not None and url.get_backend_name() == "postgresql":
         return str(url)
 
-    if backend == "sqlite":
+    env_url: Optional[str] = None
+    if ENV_PATH.exists():
+        for raw_line in ENV_PATH.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("DATABASE_URL="):
+                value = line.split("=", 1)[1].strip()
+                if value and value[0] in {'"', "'"} and value[-1:] == value[0]:
+                    value = value[1:-1]
+                env_url = value
+                break
+
+    if env_url:
+        try:
+            env_url_obj = make_url(env_url)
+        except ArgumentError:
+            env_url_obj = None
+        if env_url_obj is not None and env_url_obj.get_backend_name() == "postgresql":
+            return str(env_url_obj)
+
+    backend = url.get_backend_name() if url is not None else ""
+    if backend in {"sqlite", ""}:
         from app.config import settings
 
         user = quote_plus(settings.POSTGRES_USER)
