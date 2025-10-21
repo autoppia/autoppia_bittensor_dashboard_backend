@@ -123,10 +123,16 @@ def _format_agent_id(miner_uid: Optional[int]) -> str:
 
 
 def _format_validator_id(validator_uid: Optional[int]) -> str:
-    return f"validator-{validator_uid}" if validator_uid is not None else "validator-unknown"
+    return (
+        f"validator-{validator_uid}"
+        if validator_uid is not None
+        else "validator-unknown"
+    )
 
 
-def _normalize_media_url(value: Optional[str], mime: str = "image/gif") -> Optional[str]:
+def _normalize_media_url(
+    value: Optional[str], mime: str = "image/gif"
+) -> Optional[str]:
     if not value:
         return None
     candidate = str(value).strip()
@@ -239,8 +245,12 @@ class TasksService:
                     continue
 
             ui_task = self._build_ui_task(context)
-            evaluation_score = context.evaluation.final_score if context.evaluation else 0.0
-            run_start_ts = context.agent_run.started_at or context.round.started_at or 0.0
+            evaluation_score = (
+                context.evaluation.final_score if context.evaluation else 0.0
+            )
+            run_start_ts = (
+                context.agent_run.started_at or context.round.started_at or 0.0
+            )
 
             if status and ui_task.status.value.lower() != status.lower():
                 continue
@@ -295,15 +305,21 @@ class TasksService:
             result["facets"] = {
                 "websites": [
                     {"name": name, "count": count}
-                    for name, count in sorted(website_counts.items(), key=lambda item: item[1], reverse=True)
+                    for name, count in sorted(
+                        website_counts.items(), key=lambda item: item[1], reverse=True
+                    )
                 ],
                 "useCases": [
                     {"name": name, "count": count}
-                    for name, count in sorted(use_case_counts.items(), key=lambda item: item[1], reverse=True)
+                    for name, count in sorted(
+                        use_case_counts.items(), key=lambda item: item[1], reverse=True
+                    )
                 ],
                 "statuses": [
                     {"name": name, "count": count}
-                    for name, count in sorted(status_counts.items(), key=lambda item: item[1], reverse=True)
+                    for name, count in sorted(
+                        status_counts.items(), key=lambda item: item[1], reverse=True
+                    )
                 ],
                 "scoreRanges": [
                     {"name": name, "count": score_buckets.get(name, 0)}
@@ -342,12 +358,9 @@ class TasksService:
         return await self._build_context(task_row, context_cache)
 
     async def analytics(self) -> TaskAnalytics:
-        stmt = (
-            select(TaskORM)
-            .options(
-                selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluation_results),
-            )
+        stmt = select(TaskORM).options(
+            selectinload(TaskORM.task_solutions),
+            selectinload(TaskORM.evaluation_results),
         )
         rows = await self.session.scalars(stmt)
 
@@ -360,23 +373,57 @@ class TasksService:
                 continue
 
         total = len(contexts)
-        completed = len([ctx for ctx in contexts if ctx.evaluation and ctx.evaluation.final_score >= 0.5])
-        failed = len([ctx for ctx in contexts if ctx.evaluation and ctx.evaluation.final_score < 0.5])
+        completed = len(
+            [
+                ctx
+                for ctx in contexts
+                if ctx.evaluation and ctx.evaluation.final_score >= 0.5
+            ]
+        )
+        failed = len(
+            [
+                ctx
+                for ctx in contexts
+                if ctx.evaluation and ctx.evaluation.final_score < 0.5
+            ]
+        )
 
         scores = [ctx.evaluation.final_score for ctx in contexts if ctx.evaluation]
-        durations = [ctx.evaluation.evaluation_time for ctx in contexts if ctx.evaluation]
+        durations = [
+            ctx.evaluation.evaluation_time for ctx in contexts if ctx.evaluation
+        ]
 
         average_score = sum(scores) / len(scores) if scores else 0.0
         average_duration = sum(durations) / len(durations) if durations else 0.0
         success_rate = (completed / total * 100.0) if total else 0.0
 
-        website_stats: Dict[str, Dict[str, float]] = defaultdict(lambda: {"tasks": 0, "successful": 0, "failed": 0, "score": 0.0, "duration": 0.0})
-        use_case_stats: Dict[str, Dict[str, float]] = defaultdict(lambda: {"tasks": 0, "successful": 0, "failed": 0, "score": 0.0, "duration": 0.0})
+        website_stats: Dict[str, Dict[str, float]] = defaultdict(
+            lambda: {
+                "tasks": 0,
+                "successful": 0,
+                "failed": 0,
+                "score": 0.0,
+                "duration": 0.0,
+            }
+        )
+        use_case_stats: Dict[str, Dict[str, float]] = defaultdict(
+            lambda: {
+                "tasks": 0,
+                "successful": 0,
+                "failed": 0,
+                "score": 0.0,
+                "duration": 0.0,
+            }
+        )
 
         performance_over_time: List[Dict[str, Any]] = []
         for context in contexts:
-            evaluation_score = context.evaluation.final_score if context.evaluation else 0.0
-            evaluation_duration = context.evaluation.evaluation_time if context.evaluation else 0.0
+            evaluation_score = (
+                context.evaluation.final_score if context.evaluation else 0.0
+            )
+            evaluation_duration = (
+                context.evaluation.evaluation_time if context.evaluation else 0.0
+            )
             completed_flag = evaluation_score >= 0.5
 
             website = context.task.url
@@ -413,8 +460,12 @@ class TasksService:
                 tasks=int(values["tasks"]),
                 successful=int(values["successful"]),
                 failed=int(values["failed"]),
-                averageScore=(values["score"] / values["tasks"]) if values["tasks"] else 0.0,
-                averageDuration=(values["duration"] / values["tasks"]) if values["tasks"] else 0.0,
+                averageScore=(
+                    (values["score"] / values["tasks"]) if values["tasks"] else 0.0
+                ),
+                averageDuration=(
+                    (values["duration"] / values["tasks"]) if values["tasks"] else 0.0
+                ),
             )
             for website, values in website_stats.items()
         ]
@@ -425,8 +476,12 @@ class TasksService:
                 tasks=int(values["tasks"]),
                 successful=int(values["successful"]),
                 failed=int(values["failed"]),
-                averageScore=(values["score"] / values["tasks"]) if values["tasks"] else 0.0,
-                averageDuration=(values["duration"] / values["tasks"]) if values["tasks"] else 0.0,
+                averageScore=(
+                    (values["score"] / values["tasks"]) if values["tasks"] else 0.0
+                ),
+                averageDuration=(
+                    (values["duration"] / values["tasks"]) if values["tasks"] else 0.0
+                ),
             )
             for use_case, values in use_case_stats.items()
         ]
@@ -457,7 +512,9 @@ class TasksService:
         compared_tasks = [self._build_ui_task(ctx) for ctx in contexts]
         best = max(compared_tasks, key=lambda t: t.score, default=None)
         fastest = min(compared_tasks, key=lambda t: t.duration, default=None)
-        most_actions = max(compared_tasks, key=lambda t: len(t.actions or []), default=None)
+        most_actions = max(
+            compared_tasks, key=lambda t: len(t.actions or []), default=None
+        )
         best_success = max(
             compared_tasks,
             key=lambda t: t.successRate,
@@ -501,7 +558,9 @@ class TasksService:
             roundNumber=context.round.round_number,
             status=context.round.status,
             startedAt=_parse_iso(context.round.started_at),
-            endedAt=_parse_iso(context.round.ended_at) if context.round.ended_at else None,
+            endedAt=(
+                _parse_iso(context.round.ended_at) if context.round.ended_at else None
+            ),
             startEpoch=getattr(context.round, "start_epoch", None),
             endEpoch=getattr(context.round, "end_epoch", None),
         )
@@ -509,7 +568,11 @@ class TasksService:
         validator_model: Optional[ValidatorInfo] = None
         if context.round.validators:
             validator_model = next(
-                (val for val in context.round.validators if val.uid == context.agent_run.validator_uid),
+                (
+                    val
+                    for val in context.round.validators
+                    if val.uid == context.agent_run.validator_uid
+                ),
                 context.round.validators[0],
             )
         elif getattr(context.round, "validator_info", None):
@@ -538,7 +601,11 @@ class TasksService:
 
         miner_model = context.agent_run.miner_info
         miner_summary = TaskMinerSummary(
-            uid=miner_model.uid if miner_model and miner_model.uid is not None else context.agent_run.miner_uid,
+            uid=(
+                miner_model.uid
+                if miner_model and miner_model.uid is not None
+                else context.agent_run.miner_uid
+            ),
             hotkey=miner_model.hotkey if miner_model else None,
             name=(
                 miner_model.agent_name
@@ -551,7 +618,9 @@ class TasksService:
             isSota=context.agent_run.is_sota,
         )
 
-        started_at_dt = datetime.fromtimestamp(context.agent_run.started_at, tz=timezone.utc)
+        started_at_dt = datetime.fromtimestamp(
+            context.agent_run.started_at, tz=timezone.utc
+        )
         ended_at_dt = (
             datetime.fromtimestamp(context.agent_run.ended_at, tz=timezone.utc)
             if context.agent_run.ended_at
@@ -566,10 +635,14 @@ class TasksService:
 
         if context.evaluation:
             evaluation_status = (
-                TaskStatus.COMPLETED if context.evaluation.final_score >= 0.5 else TaskStatus.FAILED
+                TaskStatus.COMPLETED
+                if context.evaluation.final_score >= 0.5
+                else TaskStatus.FAILED
             )
         elif context.agent_run.ended_at:
-            evaluation_status = TaskStatus.FAILED if task.score < 0.5 else TaskStatus.COMPLETED
+            evaluation_status = (
+                TaskStatus.FAILED if task.score < 0.5 else TaskStatus.COMPLETED
+            )
         else:
             evaluation_status = TaskStatus.RUNNING
 
@@ -581,7 +654,8 @@ class TasksService:
             startedAt=started_at_dt,
             endedAt=ended_at_dt,
             duration=duration,
-            taskCount=context.agent_run.n_tasks_total or len(context.agent_run.task_ids or []),
+            taskCount=context.agent_run.n_tasks_total
+            or len(context.agent_run.task_ids or []),
             completedTasks=context.agent_run.n_tasks_completed,
             failedTasks=context.agent_run.n_tasks_failed,
             averageScore=context.agent_run.avg_eval_score,
@@ -641,13 +715,21 @@ class TasksService:
         validator = None
         if context.round.validators:
             validator = next(
-                (val for val in context.round.validators if val.uid == context.agent_run.validator_uid),
+                (
+                    val
+                    for val in context.round.validators
+                    if val.uid == context.agent_run.validator_uid
+                ),
                 context.round.validators[0],
             )
 
         validator_info = ValidatorInfo(
             id=_format_validator_id(context.agent_run.validator_uid),
-            name=validator.name if validator and validator.name else _format_validator_id(context.agent_run.validator_uid),
+            name=(
+                validator.name
+                if validator and validator.name
+                else _format_validator_id(context.agent_run.validator_uid)
+            ),
             image="https://placehold.co/64x64?text=V",
             description="",
             website="",
@@ -657,14 +739,20 @@ class TasksService:
         miner = context.agent_run.miner_info
         agent_info = AgentInfo(
             id=_format_agent_id(context.agent_run.miner_uid),
-            name=miner.agent_name if miner and miner.agent_name else _format_agent_id(context.agent_run.miner_uid),
+            name=(
+                miner.agent_name
+                if miner and miner.agent_name
+                else _format_agent_id(context.agent_run.miner_uid)
+            ),
             type="sota" if context.agent_run.is_sota else "miner",
             image=resolve_agent_image(miner),
             description=miner.description if miner and miner.description else "",
         )
 
         evaluation_score = context.evaluation.final_score if context.evaluation else 0.0
-        task_status = TaskStatus.COMPLETED if evaluation_score >= 0.5 else TaskStatus.FAILED
+        task_status = (
+            TaskStatus.COMPLETED if evaluation_score >= 0.5 else TaskStatus.FAILED
+        )
 
         task_info = TaskInfo(
             id=context.task.task_id,
@@ -674,7 +762,9 @@ class TasksService:
             score=evaluation_score,
         )
 
-        return PersonasData(round=round_info, validator=validator_info, agent=agent_info, task=task_info)
+        return PersonasData(
+            round=round_info, validator=validator_info, agent=agent_info, task=task_info
+        )
 
     def build_task_statistics(self, context: TaskContext) -> TaskStatistics:
         evaluation_score = context.evaluation.final_score if context.evaluation else 0.0
@@ -758,9 +848,11 @@ class TasksService:
 
         return TaskResults(
             taskId=context.task.task_id,
-            status="completed"
-            if context.evaluation and context.evaluation.final_score >= 0.5
-            else "failed",
+            status=(
+                "completed"
+                if context.evaluation and context.evaluation.final_score >= 0.5
+                else "failed"
+            ),
             score=context.evaluation.final_score if context.evaluation else 0.0,
             duration=_safe_int(getattr(context.evaluation, "evaluation_time", 0.0)),
             actions=action_models,
@@ -776,31 +868,115 @@ class TasksService:
             return actions
 
         for index, action in enumerate(context.solution.actions):
+            # Get action as dict if possible
+            if isinstance(action, dict):
+                action_dict = action
+            elif hasattr(action, "model_dump"):
+                action_dict = action.model_dump()
+            elif hasattr(action, "dict"):
+                action_dict = action.dict()
+            else:
+                action_dict = {}
+
+            # Get attributes
             attributes: Dict[str, Any] = {}
             if hasattr(action, "attributes"):
                 attributes = getattr(action, "attributes", {}) or {}
             elif isinstance(action, dict):
                 attributes = action.get("attributes", {}) or {}
 
-            raw_type = getattr(action, "type", ActionType.OTHER.value)
+            # Extract and normalize type
+            raw_type = getattr(action, "type", None) or action_dict.get(
+                "type", ActionType.OTHER.value
+            )
             if isinstance(raw_type, ActionType):
                 raw_type_value = raw_type.value
             else:
                 raw_type_value = str(raw_type).lower()
-            normalized_type_key = raw_type_value.replace("-", "_")
+
+            # Convert "NavigateAction" → "navigate", "ClickAction" → "click", etc.
+            normalized_type_key = (
+                raw_type_value.replace("action", "").replace("-", "_").strip()
+            )
+
             alias_map = {
+                # Navigation actions
+                "navigate": ActionType.NAVIGATE,
+                "navigation": ActionType.NAVIGATE,
+                "goto": ActionType.NAVIGATE,
+                "visit": ActionType.NAVIGATE,
+                "load": ActionType.NAVIGATE,
+                # Click actions (all mouse click variants)
+                "click": ActionType.CLICK,
+                "doubleclick": ActionType.CLICK,
+                "rightclick": ActionType.CLICK,
+                "middleclick": ActionType.CLICK,
+                "tripleclick": ActionType.CLICK,
+                "mousedown": ActionType.CLICK,
+                "mouseup": ActionType.CLICK,
+                "mousemove": ActionType.CLICK,
+                "hover": ActionType.CLICK,  # HoverAction maps to CLICK
+                "tap": ActionType.CLICK,
+                "press": ActionType.CLICK,
+                "select": ActionType.CLICK,
+                # Input/typing actions
+                "type": ActionType.TYPE,
                 "input": ActionType.INPUT,
                 "fill": ActionType.INPUT,
                 "type_text": ActionType.INPUT,
+                "enter": ActionType.INPUT,
+                "write": ActionType.INPUT,
+                "text": ActionType.INPUT,
+                "sendkeysiwa": ActionType.INPUT,  # SendKeysIWAAction
+                "holdkey": ActionType.INPUT,     # HoldKeyAction
+                # Search actions
                 "search": ActionType.SEARCH,
+                "find": ActionType.SEARCH,
+                "lookup": ActionType.SEARCH,
+                # Extract/scrape actions
                 "extract": ActionType.EXTRACT,
                 "scrape": ActionType.EXTRACT,
+                "get": ActionType.EXTRACT,
+                "read": ActionType.EXTRACT,
+                "parse": ActionType.EXTRACT,
+                "getdropdownoptions": ActionType.EXTRACT,  # GetDropDownOptionsAction
+                "assert": ActionType.EXTRACT,  # AssertAction
+                # Submit actions
                 "submit": ActionType.SUBMIT,
                 "form_submit": ActionType.SUBMIT,
+                "send": ActionType.SUBMIT,
+                "post": ActionType.SUBMIT,
+                "selectdropdownoption": ActionType.SUBMIT,  # SelectDropDownOptionAction
+                # Tab management
                 "open_tab": ActionType.OPEN_TAB,
                 "open_new_tab": ActionType.OPEN_TAB,
+                "new_tab": ActionType.OPEN_TAB,
                 "close_tab": ActionType.CLOSE_TAB,
                 "close_current_tab": ActionType.CLOSE_TAB,
+                "close": ActionType.CLOSE_TAB,
+                # Wait actions
+                "wait": ActionType.WAIT,
+                "pause": ActionType.WAIT,
+                "sleep": ActionType.WAIT,
+                "delay": ActionType.WAIT,
+                "idle": ActionType.WAIT,  # IdleAction
+                # Scroll actions
+                "scroll": ActionType.SCROLL,
+                "scroll_up": ActionType.SCROLL,
+                "scroll_down": ActionType.SCROLL,
+                "scroll_to": ActionType.SCROLL,
+                # Screenshot actions
+                "screenshot": ActionType.SCREENSHOT,
+                "capture": ActionType.SCREENSHOT,
+                "snap": ActionType.SCREENSHOT,
+                "photo": ActionType.SCREENSHOT,
+                
+                # Drag and drop actions (map to CLICK for now)
+                "draganddrop": ActionType.CLICK,
+                "leftclickdrag": ActionType.CLICK,
+                
+                # Undefined actions
+                "undefined": ActionType.OTHER,
             }
             action_type = alias_map.get(normalized_type_key)
             if action_type is None:
@@ -809,9 +985,34 @@ class TasksService:
                 except ValueError:
                     action_type = ActionType.OTHER
 
-            selector = attributes.get("selector")
+            # Extract selector - check action object first, then attributes
+            selector = None
+            if hasattr(action, "selector"):
+                selector_obj = getattr(action, "selector")
+                if isinstance(selector_obj, dict):
+                    # Selector is a dict with type and value (e.g., xpathSelector)
+                    selector = selector_obj.get("value") or str(selector_obj)
+                elif selector_obj is not None:
+                    selector = str(selector_obj)
+            elif "selector" in action_dict:
+                selector_obj = action_dict["selector"]
+                if isinstance(selector_obj, dict):
+                    selector = selector_obj.get("value") or str(selector_obj)
+                elif selector_obj is not None:
+                    selector = str(selector_obj)
+
+            if not selector:
+                selector = attributes.get("selector")
+
+            # Extract value - check action object first, then attributes
             value = (
-                attributes.get("value")
+                getattr(action, "url", None)
+                or action_dict.get("url")
+                or getattr(action, "value", None)
+                or action_dict.get("value")
+                or getattr(action, "text", None)
+                or action_dict.get("text")
+                or attributes.get("value")
                 or attributes.get("url")
                 or attributes.get("text")
                 or attributes.get("label")
@@ -821,24 +1022,40 @@ class TasksService:
             if value is not None:
                 value = str(value)
 
+            # Extract duration - check action object first, then attributes
             duration_candidate = (
-                attributes.get("durationSeconds")
+                getattr(action, "duration", None)
+                or action_dict.get("duration")
+                or getattr(action, "time_seconds", None)
+                or action_dict.get("time_seconds")
+                or attributes.get("durationSeconds")
                 or attributes.get("duration")
-                or getattr(action, "duration", None)
             )
             try:
-                duration = float(duration_candidate) if duration_candidate is not None else 0.0
+                duration = (
+                    float(duration_candidate) if duration_candidate is not None else 0.0
+                )
             except (TypeError, ValueError):
                 duration = 0.0
 
+            # Extract success status
             status = attributes.get("status")
             if isinstance(status, str):
                 success_flag = status.lower() not in {"failed", "error"}
             else:
                 success_flag = bool(getattr(action, "success", True))
 
-            error_message = str(attributes.get("error")) if attributes.get("error") is not None else None
-            metadata = attributes or None
+            error_message = (
+                str(attributes.get("error"))
+                if attributes.get("error") is not None
+                else None
+            )
+
+            # Build metadata from the complete action object
+            metadata = {
+                "attributes": attributes,
+                "raw_action": action_dict,  # Include full action data for debugging
+            }
 
             actions.append(
                 TaskAction(
@@ -860,7 +1077,9 @@ class TasksService:
         base_ts = context.agent_run.started_at or context.round.started_at or 0.0
         timestamp = _parse_iso(base_ts)
 
-        screenshot_url = _normalize_media_url(getattr(context.task, "screenshot", None), mime="image/png")
+        screenshot_url = _normalize_media_url(
+            getattr(context.task, "screenshot", None), mime="image/png"
+        )
         if screenshot_url:
             screenshots.append(
                 TaskScreenshot(
@@ -873,7 +1092,9 @@ class TasksService:
             )
 
         if context.evaluation:
-            gif_url = _normalize_media_url(getattr(context.evaluation, "gif_recording", None), mime="image/gif")
+            gif_url = _normalize_media_url(
+                getattr(context.evaluation, "gif_recording", None), mime="image/gif"
+            )
         else:
             gif_url = None
 
@@ -897,7 +1118,9 @@ class TasksService:
             for index, entry in enumerate(context.evaluation.execution_history):
                 logs.append(
                     TaskLog(
-                        timestamp=datetime.fromtimestamp(base_ts + index, tz=timezone.utc),
+                        timestamp=datetime.fromtimestamp(
+                            base_ts + index, tz=timezone.utc
+                        ),
                         level=LogLevel.INFO,
                         message=str(entry),
                         metadata={"taskId": context.task.task_id},
@@ -912,7 +1135,9 @@ class TasksService:
             for index, action in enumerate(context.solution.actions):
                 timeline.append(
                     TaskTimeline(
-                        timestamp=datetime.fromtimestamp(base_ts + index, tz=timezone.utc),
+                        timestamp=datetime.fromtimestamp(
+                            base_ts + index, tz=timezone.utc
+                        ),
                         action=getattr(action, "type", "action"),
                         duration=float(getattr(action, "duration", 0.0)),
                         success=bool(getattr(action, "success", True)),
@@ -979,7 +1204,11 @@ class TasksService:
         solution_model = None
         if context.task_solutions:
             solution_model = next(
-                (solution for solution in context.task_solutions if solution.task_id == task_row.task_id),
+                (
+                    solution
+                    for solution in context.task_solutions
+                    if solution.task_id == task_row.task_id
+                ),
                 None,
             )
         if solution_model is None and task_row.task_solutions:
@@ -988,13 +1217,21 @@ class TasksService:
                 for solution_row in task_row.task_solutions
                 if solution_row.agent_run_id == agent_run_id
             ]
-            target_solution = matching_solutions[0] if matching_solutions else task_row.task_solutions[0]
+            target_solution = (
+                matching_solutions[0]
+                if matching_solutions
+                else task_row.task_solutions[0]
+            )
             solution_model = self._deserialize_task_solution(target_solution)
 
         evaluation_model = None
         if context.evaluation_results:
             evaluation_model = next(
-                (evaluation for evaluation in context.evaluation_results if evaluation.task_id == task_row.task_id),
+                (
+                    evaluation
+                    for evaluation in context.evaluation_results
+                    if evaluation.task_id == task_row.task_id
+                ),
                 None,
             )
         if evaluation_model is None and task_row.evaluation_results:
@@ -1003,7 +1240,11 @@ class TasksService:
                 for evaluation_row in task_row.evaluation_results
                 if evaluation_row.agent_run_id == agent_run_id
             ]
-            target_evaluation = matching_evaluations[0] if matching_evaluations else task_row.evaluation_results[0]
+            target_evaluation = (
+                matching_evaluations[0]
+                if matching_evaluations
+                else task_row.evaluation_results[0]
+            )
             evaluation_model = self._deserialize_evaluation(target_evaluation)
 
         return TaskContext(
@@ -1079,7 +1320,9 @@ class TasksService:
         return TaskSolution(**data)
 
     @staticmethod
-    def _deserialize_evaluation(evaluation_row: EvaluationResultORM) -> EvaluationResult:
+    def _deserialize_evaluation(
+        evaluation_row: EvaluationResultORM,
+    ) -> EvaluationResult:
         data = dict(evaluation_row.data or {})
         data.setdefault("evaluation_id", evaluation_row.evaluation_id)
         data.setdefault("task_id", evaluation_row.task_id)
@@ -1097,7 +1340,9 @@ class TasksService:
     def _sort_tasks(tasks: List[UITask], sort_by: str, sort_order: str) -> List[UITask]:
         reverse = sort_order.lower() == "desc"
         try:
-            return sorted(tasks, key=lambda task: getattr(task, sort_by), reverse=reverse)
+            return sorted(
+                tasks, key=lambda task: getattr(task, sort_by), reverse=reverse
+            )
         except Exception:  # noqa: BLE001
             return tasks
 
