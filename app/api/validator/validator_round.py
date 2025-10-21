@@ -298,7 +298,7 @@ async def validator_auth_check() -> dict[str, Any]:
 async def start_round(
     payload: Union[StartRoundRequest, LegacyStartRoundRequest],
     session: AsyncSession = Depends(get_session),
-    request: Request | None = None,
+    request: Request,
 ):
     """Register a new validator round along with validator identity and snapshot."""
 
@@ -334,14 +334,13 @@ async def start_round(
             detail="Validator snapshot identity does not match validator round metadata",
         )
 
-    # If validator auth headers are present, ensure payload identity matches header hotkey
-    if request is not None:
-        header_hotkey = request.headers.get(VALIDATOR_HOTKEY_HEADER)
-        if header_hotkey and header_hotkey != validator_identity.hotkey:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Validator header hotkey does not match payload hotkey",
-            )
+    # Ensure payload identity matches validator auth header hotkey (if provided)
+    header_hotkey = request.headers.get(VALIDATOR_HOTKEY_HEADER)
+    if header_hotkey and header_hotkey != validator_identity.hotkey:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Validator header hotkey does not match payload hotkey",
+        )
 
     service = ValidatorRoundPersistenceService(session)
 
