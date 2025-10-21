@@ -409,24 +409,6 @@ class RoundsService:
 
         cache_key: Optional[str] = None
         if self._is_final_round(aggregated):
-            cache_key = self._round_cache_key(
-                "round:miners",
-                aggregated.round_number,
-                {
-                    "page": page,
-                    "limit": limit,
-                    "sort": sort_by,
-                    "order": sort_order,
-                    "success": success,
-                    "min": min_score,
-                    "max": max_score,
-                },
-            )
-            cached_payload = api_cache.get(cache_key)
-            if cached_payload is not None:
-                return cached_payload
-        cache_key: Optional[str] = None
-        if self._is_final_round(aggregated):
             cache_key = self._round_cache_key("round:detail", aggregated.round_number)
             cached_payload = api_cache.get(cache_key)
             if cached_payload is not None:
