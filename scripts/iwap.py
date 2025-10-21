@@ -62,7 +62,7 @@ def _ensure_postgres(database_url: str) -> None:
         raise RuntimeError(f"Invalid DATABASE_URL: {exc}") from exc
 
     backend = url.get_backend_name()
-    if backend != "postgresql":
+    if not backend.startswith("postgresql"):
         raise RuntimeError(
             f"PostgreSQL connection required; received backend '{backend}'."
         )
@@ -111,7 +111,7 @@ def _resolve_default_postgres_url() -> str:
     except ArgumentError as exc:
         raise RuntimeError(f"Invalid DATABASE_URL: {exc}") from exc
 
-    if url.get_backend_name() != "postgresql":
+    if not url.get_backend_name().startswith("postgresql"):
         raise RuntimeError(
             "PostgreSQL connection required. Update DATABASE_URL to use a PostgreSQL DSN."
         )
