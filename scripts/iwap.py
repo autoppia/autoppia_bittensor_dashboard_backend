@@ -22,11 +22,18 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
+
+# Optional: load .env early if available (safer for passwords with special chars)
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv()
+except Exception:
+    pass
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import make_url, URL
 from sqlalchemy.exc import ArgumentError
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -35,10 +42,13 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 
+# -------------------------------
+# DATABASE URL helpers (robust)
+# -------------------------------
+
 def _default_database_url() -> str:
     """Return the configured DATABASE_URL from application settings."""
     from app.config import settings
-
     database_url = settings.DATABASE_URL
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
@@ -54,20 +64,6 @@ def _mask_database_url(database_url: str) -> str:
     return url.render_as_string(hide_password=True)
 
 
-def _ensure_postgres(database_url: str) -> None:
-    """Validate that the supplied URL targets a PostgreSQL backend."""
-    try:
-        url = make_url(database_url)
-    except ArgumentError as exc:
-        raise RuntimeError(f"Invalid DATABASE_URL: {exc}") from exc
-
-    backend = url.get_backend_name()
-    if not (backend.startswith("postgresql") or backend == "postgres"):
-        raise RuntimeError(
-            f"PostgreSQL connection required; received backend '{backend}'."
-        )
-
-
 def _is_postgres_dsn(value: str) -> bool:
     try:
         url = make_url(value)
@@ -77,15 +73,12 @@ def _is_postgres_dsn(value: str) -> bool:
     return backend.startswith("postgresql") or backend == "postgres"
 
 
-def _load_base_database_url() -> Optional[str]:
-    """Return a PostgreSQL DATABASE_URL from env or .env files, ignoring non-Postgres values."""
-    # Prefer explicit env only if it's Postgres
-    env_url = os.environ.get("DATABASE_URL")
-    if env_url and _is_postgres_dsn(env_url):
-        return env_url
-
-    # Prefer backend .env over CWD .env
-    candidates = []
+def _load_base_database_url_from_envfiles() -> Optional[str]:
+    """
+    Try to find a Postgres DATABASE_URL by scanning .env files without mutating it.
+    Keeps exact string (no quote stripping) to avoid damaging special character passwords.
+    """
+    candidates: list[Path] = []
     if ENV_PATH.exists():
         candidates.append(ENV_PATH)
     cwd_env = Path.cwd() / ".env"
@@ -94,24 +87,40 @@ def _load_base_database_url() -> Optional[str]:
 
     for candidate in candidates:
         try:
-            for raw_line in candidate.read_text().splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("DATABASE_URL="):
-                    value = line.split("=", 1)[1].strip()
-                    if value and value[0] in {"'", '"'} and value[-1:] == value[0]:
-                        value = value[1:-1]
-                    if value and _is_postgres_dsn(value):
-                        return value
+            text = candidate.read_text()
         except OSError:
             continue
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("DATABASE_URL="):
+                # Keep the value verbatim after the first '='
+                value = line.split("=", 1)[1]
+                # Remove leading export if present: export DATABASE_URL=...
+                if value.lower().startswith("export "):
+                    value = value[7:]
+                value = value.strip()
+                # If wrapped in quotes, keep content but do NOT interpret escapes.
+                if value and value[0] in {"'", '"'} and value[-1:] == value[0]:
+                    value = value[1:-1]
+                if value and _is_postgres_dsn(value):
+                    return value
     return None
 
 
 def _resolve_default_postgres_url() -> str:
-    """Return the base Postgres URL sourced from environment or settings."""
-    candidate = _load_base_database_url()
+    """
+    Resolve the base Postgres URL from:
+      1) explicit env var if it's Postgres,
+      2) .env files (backend first, then CWD),
+      3) settings.DATABASE_URL
+    """
+    env_url = os.environ.get("DATABASE_URL")
+    if env_url and _is_postgres_dsn(env_url):
+        return env_url
+
+    candidate = _load_base_database_url_from_envfiles()
     if candidate is None:
         candidate = _default_database_url()
 
@@ -138,67 +147,86 @@ def _resolve_default_postgres_url() -> str:
     return str(url)
 
 
-def _coerce_database_url(user_input: str, default_url: str) -> str:
-    """Combine optional database name input with the default Postgres URL."""
-    if user_input and "://" in user_input:
-        return user_input
-
-    url = make_url(default_url)
-    database_name = user_input or url.database
-    if not database_name:
-        raise RuntimeError("Database name required to continue.")
-
-    return str(url.set(database=database_name))
-
-
 def _apply_database_url(database_url: str) -> None:
-    """Set DATABASE_URL for downstream imports and refresh the session module."""
+    """
+    Set DATABASE_URL for downstream imports and refresh the session module.
+    We do NOT modify the URL string — use exactly what the user/env provided.
+    """
     os.environ["DATABASE_URL"] = database_url
 
     from app.config import settings
+    # Some Settings classes are mutable; if yours isn't, this no-ops harmlessly.
+    try:
+        if settings.DATABASE_URL != database_url:
+            settings.DATABASE_URL = database_url  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
-    if settings.DATABASE_URL != database_url:
-        settings.DATABASE_URL = database_url
-
+    # Refresh db session module so new engine picks up the new URL
     session_module = sys.modules.get("app.db.session")
-    if session_module is None:
-        return
-
-    engine = getattr(session_module, "engine", None)
-    if engine is not None:
-        try:
-            asyncio.run(engine.dispose())
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
+    if session_module is not None:
+        engine = getattr(session_module, "engine", None)
+        if engine is not None:
             try:
-                loop.run_until_complete(engine.dispose())
-            finally:
-                loop.close()
+                asyncio.run(engine.dispose())
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(engine.dispose())
+                finally:
+                    loop.close()
+        importlib.reload(session_module)
 
-    importlib.reload(session_module)
+
+def _prompt_db_target(action: str) -> Tuple[str, str]:
+    """
+    Ask user for *either* a database name (relative to default URL) or a full DSN.
+    If input is blank, we keep the default URL *as-is* (no reconstruction).
+    Returns (chosen_database_url, masked_preview).
+    """
+    default_url = _resolve_default_postgres_url()
+    try:
+        url = make_url(default_url)
+    except ArgumentError as exc:
+        raise RuntimeError(f"Invalid default DATABASE_URL: {exc}") from exc
+
+    default_db = url.database or ""
+    print(f"Current default: {_mask_database_url(default_url)}")
+    print("Tip: You can paste a FULL DATABASE_URL here to override, "
+          "or just type a database *name*, or press Enter to keep the default as-is.")
+    user_input = input(f"Target database for {action} [{default_db}|full-DSN]: ").strip()
+
+    # 1) Full DSN override provided
+    if "://" in user_input:
+        chosen = user_input
+        if not _is_postgres_dsn(chosen):
+            raise RuntimeError("PostgreSQL connection required; provided DSN is not Postgres.")
+        return chosen, _mask_database_url(chosen)
+
+    # 2) Empty => keep URL verbatim (this avoids subtle mutations that can break auth)
+    if user_input == "":
+        return default_url, _mask_database_url(default_url)
+
+    # 3) Only database name provided => change only the database component
+    #    Keep *everything else identical* (driver, host, port, user, password).
+    try:
+        new_url: URL = url.set(database=user_input)
+    except Exception as exc:
+        raise RuntimeError(f"Invalid database name '{user_input}': {exc}") from exc
+
+    return str(new_url), _mask_database_url(str(new_url))
 
 
 def _select_and_apply_database(action: str) -> str:
-    """Prompt for a target Postgres database, apply it globally, and return the URL."""
-    try:
-        default_url = _resolve_default_postgres_url()
-    except Exception as exc:
-        raise RuntimeError(f"Unable to resolve DATABASE_URL: {exc}") from exc
+    """Prompt for a target Postgres database/DSN and apply it globally, returning the URL."""
+    chosen_url, masked = _prompt_db_target(action)
+    _apply_database_url(chosen_url)
+    return chosen_url
 
-    _ensure_postgres(default_url)
-    default_db = make_url(default_url).database or ""
-    prompt = f"Target database name for {action} [{default_db}]: "
-    user_input = input(prompt).strip()
 
-    try:
-        database_url = _coerce_database_url(user_input, default_url)
-        _ensure_postgres(database_url)
-    except Exception as exc:
-        raise RuntimeError(f"Invalid database selection: {exc}") from exc
-
-    _apply_database_url(database_url)
-    return database_url
-
+# -------------------------------
+# pg_dump helper
+# -------------------------------
 
 def _create_pg_dump(database_url: str) -> Path:
     """Create a pg_dump archive for the given database and return its path."""
@@ -225,14 +253,10 @@ def _create_pg_dump(database_url: str) -> Path:
 
     command = [
         "pg_dump",
-        "-h",
-        host,
-        "-p",
-        port,
-        "-U",
-        user,
-        "-d",
-        url.database,
+        "-h", host,
+        "-p", port,
+        "-U", user,
+        "-d", url.database,
         "-Fc",
     ]
 
@@ -249,6 +273,10 @@ def _create_pg_dump(database_url: str) -> Path:
     return dump_path
 
 
+# -------------------------------
+# Interactive flows
+# -------------------------------
+
 def prompt_flush() -> int:
     """Interactive prompt for flushing the database."""
     print("=" * 60)
@@ -257,7 +285,7 @@ def prompt_flush() -> int:
 
     try:
         database_url = _select_and_apply_database("database flush")
-    except Exception as exc:  # pragma: no cover - defensive guard
+    except Exception as exc:
         print(f"❌ {exc}")
         return 1
 
@@ -270,7 +298,6 @@ def prompt_flush() -> int:
 
     try:
         from scripts.flush_db import flush_seed_database
-
         print(f"\n🔄 Flushing database: {_mask_database_url(database_url)}")
         flush_seed_database(database_url=database_url, assume_yes=True)
         print("✅ Database flushed successfully!")
@@ -285,20 +312,18 @@ def prompt_seed_round() -> int:
     print("=" * 60)
     print("SEED ROUND (Multiple Validators)")
     print("=" * 60)
-    
-    # Get round number(s)
+
     rounds_input = input("Enter round number(s) (comma-separated, e.g., 1,2,3): ").strip()
     if not rounds_input:
         print("❌ Round number(s) required.")
         return 1
-    
+
     try:
         round_numbers = [int(r.strip()) for r in rounds_input.split(",")]
     except ValueError:
         print("❌ Invalid round number(s). Please enter integers.")
         return 1
-    
-    # Get validator UIDs (optional)
+
     validators_input = input("Enter validator UID(s) (comma-separated, or press Enter for all): ").strip()
     validator_uids: Optional[list[int]] = None
     if validators_input:
@@ -307,25 +332,27 @@ def prompt_seed_round() -> int:
         except ValueError:
             print("❌ Invalid validator UID(s). Please enter integers.")
             return 1
-    
-    # Get number of miners (optional)
+
     num_miners_input = input("Number of miners (or press Enter for random 10-20): ").strip()
     num_miners: Optional[int] = None
     if num_miners_input:
         try:
             num_miners = int(num_miners_input)
-        except ValueError:
-            print("❌ Invalid number of miners.")
+            if num_miners < 1:
+                raise ValueError("must be >= 1")
+        except Exception as e:
+            print(f"❌ Invalid number of miners: {e}")
             return 1
-    
-    # Get number of tasks (optional)
+
     num_tasks_input = input("Number of tasks (or press Enter for random 10-20): ").strip()
     num_tasks: Optional[int] = None
     if num_tasks_input:
         try:
             num_tasks = int(num_tasks_input)
-        except ValueError:
-            print("❌ Invalid number of tasks.")
+            if num_tasks < 1:
+                raise ValueError("must be >= 1")
+        except Exception as e:
+            print(f"❌ Invalid number of tasks: {e}")
             return 1
 
     try:
@@ -336,10 +363,10 @@ def prompt_seed_round() -> int:
 
     print(f"\n📡 Using database: {_mask_database_url(database_url)}")
     print("\n🔄 Seeding round(s)...")
-    
+
     try:
         from scripts.seed_round import seed_round, seed_multiple_rounds
-        
+
         if len(round_numbers) == 1:
             results = seed_round(
                 round_number=round_numbers[0],
@@ -357,10 +384,18 @@ def prompt_seed_round() -> int:
             )
             total = sum(len(results) for results in seeded.values())
             print(f"✅ Seeded {len(round_numbers)} round(s) with {total} total validator round(s).")
-        
+
         return 0
     except Exception as e:
-        print(f"❌ Error seeding round(s): {e}")
+        msg = str(e)
+        print(f"❌ Error seeding round(s): {msg}")
+        # Helpful hints for common auth failures (no stack spam)
+        if "password authentication failed" in msg.lower():
+            print("   Hints:")
+            print("   • If your .env password has special characters, prefer pasting the FULL DATABASE_URL")
+            print("     at the DB prompt so it’s used verbatim.")
+            print("   • Pressing Enter now keeps the existing DSN 100% unchanged (no reconstruction).")
+            print("   • If your server trusts Unix sockets but not TCP, try a socket DSN (omit host) in .env.")
         return 1
 
 
@@ -369,50 +404,51 @@ def prompt_seed_validator_round() -> int:
     print("=" * 60)
     print("SEED VALIDATOR ROUND (Single Validator)")
     print("=" * 60)
-    
-    # Get validator UID
+
     validator_uid_input = input("Enter validator UID: ").strip()
     if not validator_uid_input:
         print("❌ Validator UID required.")
         return 1
-    
+
     try:
         validator_uid = int(validator_uid_input)
     except ValueError:
         print("❌ Invalid validator UID. Please enter an integer.")
         return 1
-    
-    # Get round number
+
     round_number_input = input("Enter round number: ").strip()
     if not round_number_input:
         print("❌ Round number required.")
         return 1
-    
+
     try:
         round_number = int(round_number_input)
     except ValueError:
         print("❌ Invalid round number. Please enter an integer.")
         return 1
-    
-    # Get number of miners (optional)
+
     num_miners_input = input("Number of miners (or press Enter for random 10-20): ").strip()
     num_miners: Optional[int] = None
     if num_miners_input:
         try:
             num_miners = int(num_miners_input)
-        except ValueError:
-            print("❌ Invalid number of miners.")
+            if num_miners < 1:
+                raise ValueError("must be >= 1")
+        except Exception as e:
+            print(f"❌ Invalid number of miners: {e}")
             return 1
-    
-    # Get number of tasks (optional)
+
     num_tasks_input = input("Number of tasks (or press Enter for random 10-20): ").strip()
     num_tasks: Optional[int] = None
     if num_tasks_input:
         try:
             num_tasks = int(num_tasks_input)
-        except ValueError:
-            print("❌ Invalid number of tasks.")
+            if num_tasks < 1:
+                raise ValueError("must be >= 1")
+        except Exception as e:
+            print(f"❌ Invalid number of tasks: {e}")
             return 1
+
     try:
         database_url = _select_and_apply_database("validator round seeding")
     except Exception as exc:
@@ -424,27 +460,32 @@ def prompt_seed_validator_round() -> int:
 
     try:
         from scripts.seed_round import seed_validator_round
-        
+
         result = seed_validator_round(
             validator_uid=validator_uid,
             round_number=round_number,
             num_miners=num_miners,
             num_tasks=num_tasks,
         )
-        
+
         saved = result.saved_entities
         agent_runs = len(saved.get("agent_evaluation_runs", []))
         tasks = len(saved.get("tasks", []))
-        
+
         print(f"✅ Successfully seeded validator round!")
         print(f"   - Validator UID: {validator_uid}")
         print(f"   - Round: {round_number}")
         print(f"   - Agent runs: {agent_runs}")
         print(f"   - Tasks: {tasks}")
-        
+
         return 0
     except Exception as e:
-        print(f"❌ Error seeding validator round: {e}")
+        msg = str(e)
+        print(f"❌ Error seeding validator round: {msg}")
+        if "password authentication failed" in msg.lower():
+            print("   Hints:")
+            print("   • Paste your FULL DATABASE_URL at the DB prompt to keep it unchanged.")
+            print("   • Consider a socket DSN (omit host) if local peer/trust auth is configured.")
         return 1
 
 
@@ -462,7 +503,6 @@ def prompt_backup() -> int:
     print(f"📡 Using database: {_mask_database_url(database_url)}")
 
     url = make_url(database_url)
-
     db_name = url.database or "database"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     default_key = f"{db_name}-{timestamp}.dump"
@@ -503,7 +543,6 @@ def prompt_backup() -> int:
 
         s3_client = boto3.client("s3", **client_kwargs)
 
-        # Ensure bucket exists.
         try:
             s3_client.head_bucket(Bucket=bucket_name)
         except ClientError as head_exc:
@@ -540,27 +579,24 @@ Examples:
   python -m scripts.iwap backup
         """,
     )
-    
+
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
-    
-    # Flush command
+
     subparsers.add_parser("flush", help="Flush and reinitialize the database")
-    
-    # Seed commands
+
     seed_parser = subparsers.add_parser("seed", help="Seed data into the database")
     seed_subparsers = seed_parser.add_subparsers(dest="seed_command", help="Seed command")
     seed_subparsers.add_parser("round", help="Seed round(s) across validators")
     seed_subparsers.add_parser("validator-round", help="Seed a single validator round")
-    
-    # Backup command
+
     subparsers.add_parser("backup", help="Create and upload a PostgreSQL backup")
-    
+
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         return 1
-    
+
     if args.command == "flush":
         return prompt_flush()
     elif args.command == "seed":
@@ -573,7 +609,7 @@ Examples:
             return prompt_seed_validator_round()
     elif args.command == "backup":
         return prompt_backup()
-    
+
     parser.print_help()
     return 1
 

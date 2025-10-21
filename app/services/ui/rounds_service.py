@@ -753,31 +753,33 @@ class RoundsService:
         round_identifier: Union[str, int],
         include_details: bool = True,
     ) -> AggregatedRound:
-        round_number = await self._resolve_round_number(round_identifier)
-        records, latest_round_number = await self._fetch_round_records_by_number(round_number)
-        if not records:
-            raise ValueError(f"Round {round_identifier} not found")
+        # Ensure UI aggregation does not trigger unintended writes.
+        async with self.session.no_autoflush:
+            round_number = await self._resolve_round_number(round_identifier)
+            records, latest_round_number = await self._fetch_round_records_by_number(round_number)
+            if not records:
+                raise ValueError(f"Round {round_identifier} not found")
 
-        validator_rounds: List[ValidatorRoundAggregate] = []
-        for record in records:
-            contexts = await self.list_agent_run_contexts(
-                validator_round_id=record.validator_round_id,
-                limit=None,
-                skip=0,
-                include_details=include_details,
-            )
-            self._recalculate_round_from_contexts(record, contexts)
-            validator_rounds.append(
-                ValidatorRoundAggregate(
-                    record=record,
-                    contexts=contexts,
+            validator_rounds: List[ValidatorRoundAggregate] = []
+            for record in records:
+                contexts = await self.list_agent_run_contexts(
+                    validator_round_id=record.validator_round_id,
+                    limit=None,
+                    skip=0,
+                    include_details=include_details,
                 )
+                self._recalculate_round_from_contexts(record, contexts)
+                validator_rounds.append(
+                    ValidatorRoundAggregate(
+                        record=record,
+                        contexts=contexts,
+                    )
+                )
+            return AggregatedRound(
+                round_number=round_number,
+                latest_round_number=latest_round_number or round_number,
+                validator_rounds=validator_rounds,
             )
-        return AggregatedRound(
-            round_number=round_number,
-            latest_round_number=latest_round_number or round_number,
-            validator_rounds=validator_rounds,
-        )
 
     def _aggregate_round_data(
         self,
@@ -2226,18 +2228,11 @@ class RoundsService:
         summary = dict(round_model.summary or {})
         summary["winning_miners"] = len(winners)
         round_model.summary = summary
-
-        # Keep ORM record in sync for downstream consumers that inspect row metadata directly.
-        if hasattr(record.row, "meta"):
-            row_meta = dict(record.row.meta or {})
-            row_meta["winners"] = winners
-            row_meta["winner_scores"] = winner_scores
-            record.row.meta = row_meta
-            record.row.n_winners = len(winners)
-            if average_score is not None:
-                record.row.average_score = average_score
-            if top_score is not None:
-                record.row.top_score = top_score
+        # NOTE: Do NOT mutate ORM rows here.
+        # This method runs within UI read flows. Writing to record.row would mark
+        # the session dirty and can trigger an autoflush (UPDATE) before later
+        # SELECTs, which can deadlock under concurrent writer/reader traffic.
+        # Persisted aggregates must only be written by validator endpoints.
 
     def _build_miner_performance(
         self,

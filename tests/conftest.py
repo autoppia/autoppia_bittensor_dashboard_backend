@@ -10,7 +10,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
 # Configure test database before application modules are imported
-os.environ["DATABASE_URL"] = "postgresql+asyncpg://autoppia:password@127.0.0.1/autoppia_test"
+# Allow overriding DB for tests; default to Postgres when not provided
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://autoppia:password@127.0.0.1/autoppia_test")
 os.environ.setdefault("TESTING", "true")
 
 # Configure AWS defaults for tests before application settings are loaded
@@ -49,16 +50,27 @@ def event_loop():
 async def reset_database():
     """Ensure the SQL schema is rebuilt and clean for every test."""
     await engine.dispose()
+    drivername = engine.url.drivername if hasattr(engine, "url") else ""
     async with engine.begin() as conn:
-        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-        await conn.execute(text("CREATE SCHEMA public"))
-        await conn.run_sync(Base.metadata.create_all)
+        if "sqlite" in drivername:
+            # SQLite: drop and recreate all tables
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+        else:
+            # Postgres: reset schema
+            await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            await conn.execute(text("CREATE SCHEMA public"))
+            await conn.run_sync(Base.metadata.create_all)
     yield
     await engine.dispose()
     async with engine.begin() as conn:
-        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-        await conn.execute(text("CREATE SCHEMA public"))
-        await conn.run_sync(Base.metadata.create_all)
+        if "sqlite" in drivername:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+        else:
+            await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            await conn.execute(text("CREATE SCHEMA public"))
+            await conn.run_sync(Base.metadata.create_all)
 
 
 @pytest.fixture
