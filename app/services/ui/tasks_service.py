@@ -928,7 +928,7 @@ class TasksService:
                 "write": ActionType.INPUT,
                 "text": ActionType.INPUT,
                 "sendkeysiwa": ActionType.INPUT,  # SendKeysIWAAction
-                "holdkey": ActionType.INPUT,     # HoldKeyAction
+                "holdkey": ActionType.INPUT,  # HoldKeyAction
                 # Search actions
                 "search": ActionType.SEARCH,
                 "find": ActionType.SEARCH,
@@ -970,11 +970,9 @@ class TasksService:
                 "capture": ActionType.SCREENSHOT,
                 "snap": ActionType.SCREENSHOT,
                 "photo": ActionType.SCREENSHOT,
-                
                 # Drag and drop actions (map to CLICK for now)
                 "draganddrop": ActionType.CLICK,
                 "leftclickdrag": ActionType.CLICK,
-                
                 # Undefined actions
                 "undefined": ActionType.OTHER,
             }
