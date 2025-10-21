@@ -42,13 +42,21 @@ class Settings(BaseSettings):
 
     # ---------- Logging configuration (all configurable via env) ----------
     # General app log level
-    LOG_LEVEL: str = "WARNING"          # quiet by default
+    LOG_LEVEL: str = "WARNING"  # quiet by default
 
     # Specific library levels
     SQLALCHEMY_LOG_LEVEL: str = "ERROR"  # kills SQL/ORM chatter by default
-    BITTENSOR_LOG_LEVEL: str = "WARNING" # keep to warnings+
-    UVICORN_LOG_LEVEL: str = "WARNING"   # quiet server
-    UVICORN_ACCESS_LOG: bool = False     # hide access log lines by default
+    BITTENSOR_LOG_LEVEL: str = "WARNING"  # keep to warnings+
+    UVICORN_LOG_LEVEL: str = "WARNING"  # quiet server
+    UVICORN_ACCESS_LOG: bool = False  # hide access log lines by default
+
+    # File logging
+    LOG_TO_FILE: bool = False  # enable file logging
+    LOG_FILE_PATH: str = "logs/app.log"  # path to log file
+
+    # Detailed request/response logging
+    LOG_REQUEST_BODY: bool = False  # log request bodies
+    LOG_RESPONSE_BODY: bool = False  # log response bodies
     # ---------------------------------------------------------------------
 
     # Overview / validators list behavior

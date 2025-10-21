@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.middleware.logging_middleware import DetailedLoggingMiddleware
 from app.api.ui.agent_runs import router as agent_runs_router
 from app.api.ui.agents import router as agents_router
 from app.api.ui.evaluations import router as evaluations_router
@@ -48,6 +49,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Detailed logging middleware (optional, configured via env)
+if settings.LOG_REQUEST_BODY or settings.LOG_RESPONSE_BODY:
+    app.add_middleware(
+        DetailedLoggingMiddleware,
+        log_request_body=settings.LOG_REQUEST_BODY,
+        log_response_body=settings.LOG_RESPONSE_BODY,
+    )
+
 # Static files
 images_path = os.path.join(os.path.dirname(__file__), "..", "images")
 try:
@@ -67,7 +76,9 @@ async def log_requests(request: Request, call_next):
     logger.info(f"{request.method} {request.url.path} - {client}")
     resp = await call_next(request)
     elapsed = time.time() - start
-    logger.info(f"{request.method} {request.url.path} - {resp.status_code} - {elapsed:.3f}s")
+    logger.info(
+        f"{request.method} {request.url.path} - {resp.status_code} - {elapsed:.3f}s"
+    )
     return resp
 
 
@@ -102,12 +113,14 @@ async def idempotency_stats():
 @app.get("/debug/cache-stats")
 async def cache_stats():
     from app.services.cache import api_cache
+
     return api_cache.get_stats()
 
 
 @app.post("/debug/cache-disable")
 async def disable_cache():
     from app.services.cache import api_cache
+
     api_cache.disable()
     return {"message": "Cache disabled", "disabled": True}
 
@@ -115,6 +128,7 @@ async def disable_cache():
 @app.post("/debug/cache-enable")
 async def enable_cache():
     from app.services.cache import api_cache
+
     api_cache.enable()
     return {"message": "Cache enabled", "disabled": False}
 
@@ -122,6 +136,7 @@ async def enable_cache():
 @app.post("/debug/cache-clear")
 async def clear_cache():
     from app.services.cache import api_cache
+
     cleared = api_cache.clear()
     return {"message": f"Cleared {cleared} cache entries", "cleared": cleared}
 
@@ -152,12 +167,17 @@ async def on_shutdown():
 # Global exception handler
 from fastapi import Request as _Request  # avoid shadowing
 
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: _Request, exc: Exception):
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"ok": False, "error": "Internal server error", "detail": "An unexpected error occurred"},
+        content={
+            "ok": False,
+            "error": "Internal server error",
+            "detail": "An unexpected error occurred",
+        },
     )
 
 

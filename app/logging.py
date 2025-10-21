@@ -8,11 +8,16 @@ Environment overrides (examples):
   BITTENSOR_LOG_LEVEL=ERROR
   UVICORN_LOG_LEVEL=INFO
   UVICORN_ACCESS_LOG=true|false
+  LOG_TO_FILE=true|false
+  LOG_FILE_PATH=logs/app.log
 """
 from __future__ import annotations
 
 import sys
+import os
 import logging as _logging
+from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
+from pathlib import Path
 from typing import Dict, Tuple
 
 SQLALCHEMY_LOGGER_NAMES = (
@@ -49,6 +54,7 @@ def _parse_level(v: str | int | None, default: int) -> int:
 
 class _SuppressSqlalchemyInfoFilter(_logging.Filter):
     """Drop noisy SQLAlchemy < WARNING records (safety net)."""
+
     noisy_prefixes = ("sqlalchemy.engine", "sqlalchemy.pool", "sqlalchemy.orm")
 
     def filter(self, record: _logging.LogRecord) -> bool:  # pragma: no cover
@@ -106,15 +112,76 @@ def _configure_bittensor(level: int) -> None:
     bt_logger.setLevel(level)
 
 
+def _setup_file_logging(settings, level: int) -> None:
+    """
+    Set up file logging with rotation if enabled.
+    """
+    log_to_file = getattr(settings, "LOG_TO_FILE", False)
+    if not log_to_file:
+        return
+
+    # Get log file path from settings or use default
+    log_file_path = getattr(settings, "LOG_FILE_PATH", "logs/app.log")
+    log_path = Path(log_file_path)
+
+    # Create logs directory if it doesn't exist
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Create file handler with daily rotation
+    file_handler = TimedRotatingFileHandler(
+        filename=str(log_path),
+        when="midnight",
+        interval=1,
+        backupCount=30,  # Keep 30 days of logs
+        encoding="utf-8",
+    )
+    file_handler.suffix = "%Y-%m-%d"
+    file_handler.setLevel(level)
+
+    # Set format for file logs (more detailed)
+    file_formatter = _logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
+    )
+    file_handler.setFormatter(file_formatter)
+
+    # Add to root logger
+    root_logger = _logging.getLogger()
+    root_logger.addHandler(file_handler)
+
+    # Also create a separate file for request logs
+    request_log_path = log_path.parent / "requests.log"
+    request_handler = TimedRotatingFileHandler(
+        filename=str(request_log_path),
+        when="midnight",
+        interval=1,
+        backupCount=30,
+        encoding="utf-8",
+    )
+    request_handler.suffix = "%Y-%m-%d"
+    request_handler.setLevel(_logging.INFO)
+    request_handler.setFormatter(file_formatter)
+
+    # Add to request logger
+    request_logger = _logging.getLogger("app.requests")
+    request_logger.addHandler(request_handler)
+    request_logger.setLevel(_logging.INFO)
+
+
 def init_logging(settings) -> Tuple[_logging.Logger, int]:
     """
     Initialize logging EARLY (call from app.main before importing DB/ORM modules).
     Returns: (logger, effective_level)
     """
     level = _parse_level(getattr(settings, "LOG_LEVEL", "WARNING"), _logging.WARNING)
-    sa_level = _parse_level(getattr(settings, "SQLALCHEMY_LOG_LEVEL", "ERROR"), _logging.ERROR)
-    bt_level = _parse_level(getattr(settings, "BITTENSOR_LOG_LEVEL", "WARNING"), _logging.WARNING)
-    uvicorn_level = _parse_level(getattr(settings, "UVICORN_LOG_LEVEL", "WARNING"), _logging.WARNING)
+    sa_level = _parse_level(
+        getattr(settings, "SQLALCHEMY_LOG_LEVEL", "ERROR"), _logging.ERROR
+    )
+    bt_level = _parse_level(
+        getattr(settings, "BITTENSOR_LOG_LEVEL", "WARNING"), _logging.WARNING
+    )
+    uvicorn_level = _parse_level(
+        getattr(settings, "UVICORN_LOG_LEVEL", "WARNING"), _logging.WARNING
+    )
 
     # If DEBUG=true and general level was INFO, allow bump to DEBUG
     if getattr(settings, "DEBUG", False) and level == _logging.INFO:
@@ -139,6 +206,9 @@ def init_logging(settings) -> Tuple[_logging.Logger, int]:
     # Keep a couple of known-noisy libs at least INFO+
     for name in ("btdecode", "aiosqlite"):
         _logging.getLogger(name).setLevel(max(level, _logging.INFO))
+
+    # Set up file logging if enabled
+    _setup_file_logging(settings, level)
 
     logger = _logging.getLogger("app")
     return logger, level
