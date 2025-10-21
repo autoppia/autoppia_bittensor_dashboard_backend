@@ -29,7 +29,7 @@ iwap flush
 ```
 
 You will be prompted for:
-- Database path (e.g., `autoppia.db`)
+- Database URL (defaults to the configured `DATABASE_URL`)
 - Confirmation to proceed
 
 #### 2. Seed Round
@@ -62,15 +62,15 @@ You will be prompted for:
 
 #### 4. Backup
 
-Upload the SQLite database to the `autoppia-subnet/backups/` prefix (credentials pulled from environment/settings):
+Create a pg_dump archive of the PostgreSQL database and upload it to the `autoppia-subnet/backups/` prefix (credentials pulled from environment/settings):
 
 ```bash
 iwap backup
 ```
 
 You will be prompted for:
-- Database path (defaults to the configured `DATABASE_URL` location)
-- Optional S3 object key (defaults to `<db-name>-<timestamp>.db`)
+- Database URL (defaults to the configured `DATABASE_URL`)
+- Optional S3 object key (defaults to `<db-name>-<timestamp>.dump`)
 
 Requires AWS credentials with write access to the bucket.
 
@@ -111,7 +111,7 @@ seeded = seed_multiple_rounds(
 
 # Flush database
 flush_seed_database(
-    database_url="sqlite+aiosqlite:///autoppia.db",
+    database_url="postgresql+asyncpg://autoppia:password@127.0.0.1/autoppia_db",
     assume_yes=True
 )
 ```
@@ -125,5 +125,5 @@ For automation, you can also use the non-interactive CLIs:
 python -m scripts.seed_round --round 1 2 3 --validators 124 125 --num-miners 15 --num-tasks 12
 
 # Flush database with arguments
-python -m scripts.flush_db --database-url sqlite+aiosqlite:///autoppia.db --yes
+python -m scripts.flush_db --database-url postgresql+asyncpg://autoppia:password@127.0.0.1/autoppia_db --yes
 ```

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Utilities to reset the SQLite database used for seeding scenarios.
+Utilities to reset the local PostgreSQL database used for seeding scenarios.
 
-This module provides functionality to flush and reinitialize the database.
+This module provides functionality to drop and recreate the schema.
 
 Usage:
-    python -m scripts.flush_db --yes --database-url sqlite+aiosqlite:///autoppia.db
+    python -m scripts.flush_db --yes --database-url postgresql+asyncpg://user:pass@localhost/dbname
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, Optional
 
+from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
@@ -27,7 +28,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 def _build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Reset the Autoppia backend SQLite database used for seeding.",
+        description="Reset the Autoppia backend PostgreSQL database used for seeding.",
     )
     parser.add_argument(
         "--database-url",
@@ -58,10 +59,10 @@ def _resolve_database_url(candidate: str | None) -> str:
 
 async def flush_database(database_url: str, *, assume_yes: bool) -> None:
     """
-    Remove the SQLite file backing the service and recreate the schema.
+    Drop all tables from the configured database and recreate the schema.
 
     Args:
-        database_url: SQLAlchemy-compatible database URL pointing at SQLite.
+        database_url: SQLAlchemy-compatible database URL pointing at PostgreSQL.
         assume_yes: Skip confirmation prompt when True.
     """
     try:
@@ -70,37 +71,28 @@ async def flush_database(database_url: str, *, assume_yes: bool) -> None:
         raise SystemExit(f"Invalid DATABASE_URL: {exc}") from exc
 
     backend = url.get_backend_name()
-    if backend != "sqlite":
+    if backend != "postgresql":
         raise SystemExit(
-            f"This utility only works with SQLite connections. Current backend: {backend}"
+            f"This utility only works with PostgreSQL connections. Current backend: {backend}"
         )
 
-    db_path = url.database
-    if not db_path or db_path == ":memory:":
-        raise SystemExit("Cannot reset in-memory SQLite database.")
-
-    file_path = Path(db_path).expanduser()
-    if not file_path.is_absolute():
-        project_root = BACKEND_DIR
-        file_path = (project_root / file_path).resolve()
+    database_name = url.database or ""
+    display_name = database_name or str(url)
 
     if not assume_yes:
-        response = input(f"This will delete {file_path}. Continue? [y/N]: ").strip().lower()
+        response = input(
+            f"This will DROP ALL TABLES in database '{display_name}'. Continue? [y/N]: "
+        ).strip().lower()
         if response not in {"y", "yes"}:
             print("Aborted.")
             return
 
     from app.db.session import engine, init_db  # type: ignore  # noqa: E402
 
-    await engine.dispose()
-
-    if file_path.exists():
-        file_path.unlink()
-        print(f"Removed {file_path}")
-    else:
-        print(f"{file_path} does not exist. Continuing with clean initialisation.")
-
-    file_path.parent.mkdir(parents=True, exist_ok=True)
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
+    print(f"Existing schema dropped for database '{display_name}'.")
 
     await init_db()
     print("Database schema recreated.")
@@ -112,7 +104,7 @@ def flush_seed_database(
     assume_yes: bool = True,
 ) -> None:
     """
-    Reset the SQLite database backing the backend service.
+    Reset the PostgreSQL database backing the backend service.
 
     Args:
         database_url: Optional explicit DATABASE_URL override. If omitted, the

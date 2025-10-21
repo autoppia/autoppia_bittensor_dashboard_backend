@@ -75,19 +75,22 @@ async def _seed_async(
     num_tasks: int,
 ) -> PersistenceResult:
     """Internal async helper that delegates to the shared seeding utilities."""
-    from app.db.session import init_db  # local import
+    from app.db.session import engine, init_db  # local import
     from app.services.seed_utils import (  # local import
         seed_validator_round as _seed_validator_round,
     )
 
-    await init_db()
-    return await _seed_validator_round(
-        validator_round_id=validator_round_id,
-        validator_uid=validator_uid,
-        num_tasks=num_tasks,
-        num_miners=num_miners,
-        round_number=round_number,
-    )
+    try:
+        await init_db()
+        return await _seed_validator_round(
+            validator_round_id=validator_round_id,
+            validator_uid=validator_uid,
+            num_tasks=num_tasks,
+            num_miners=num_miners,
+            round_number=round_number,
+        )
+    finally:
+        await engine.dispose()
 
 
 # ---------------------------------------------------------------------------

@@ -24,13 +24,12 @@ iwap flush
 ============================================================
 DATABASE FLUSH
 ============================================================
-Enter database path (e.g., autoppia.db): autoppia.db
+Enter database URL (postgresql+asyncpg://autoppia:******@127.0.0.1/autoppia_db): [Press Enter]
 
-⚠️  This will DELETE and recreate the database at: autoppia.db
+⚠️  This will DROP ALL TABLES in: postgresql+asyncpg://autoppia:***@127.0.0.1/autoppia_db
 Are you sure you want to continue? [y/N]: y
 
-🔄 Flushing database: autoppia.db
-Removed /path/to/autoppia.db
+🔄 Flushing database: postgresql+asyncpg://autoppia:***@127.0.0.1/autoppia_db
 Database schema recreated.
 ✅ Database flushed successfully!
 ```
@@ -107,10 +106,12 @@ iwap backup
 ============================================================
 BACKUP
 ============================================================
-Enter database path (/path/to/autoppia.db): [Press Enter]
-S3 object key (autoppia-20241020T180000Z.db): [Press Enter]
+Enter database URL (postgresql+asyncpg://autoppia:******@127.0.0.1/autoppia_db): [Press Enter]
+S3 object key (autoppia_db-20241020T180000Z.dump): [Press Enter]
 
-🔄 Uploading /path/to/autoppia.db to s3://autoppia-subnet/backups/autoppia-20241020T180000Z.db
+🔄 Creating pg_dump archive for autoppia_db...
+📦 Dump created at /tmp/tmpabcd.dump
+🔼 Uploading to s3://autoppia-subnet/backups/autoppia_db-20241020T180000Z.dump
 ✅ Backup uploaded successfully!
 ```
 
@@ -166,7 +167,7 @@ seed_round(1, num_miners=15, num_tasks=12)
 seed_multiple_rounds([1, 2, 3], validator_uids=[124, 125])
 
 # Flush database
-flush_seed_database("sqlite+aiosqlite:///autoppia.db", assume_yes=True)
+flush_seed_database("postgresql+asyncpg://autoppia:password@127.0.0.1/autoppia_db", assume_yes=True)
 ```
 
 ---

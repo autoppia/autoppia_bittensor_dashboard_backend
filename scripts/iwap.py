@@ -14,7 +14,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -22,10 +25,93 @@ from typing import Optional
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+
+
+def _default_database_url() -> str:
+    """Return the configured DATABASE_URL from application settings."""
+    from app.config import settings
+
+    database_url = settings.DATABASE_URL
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is not configured.")
+    return database_url
+
+
+def _mask_database_url(database_url: str) -> str:
+    """Render a database URL suitable for display (password hidden)."""
+    try:
+        url = make_url(database_url)
+    except ArgumentError:
+        return database_url
+    return url.render_as_string(hide_password=True)
+
+
+def _ensure_postgres(database_url: str) -> None:
+    """Validate that the supplied URL targets a PostgreSQL backend."""
+    try:
+        url = make_url(database_url)
+    except ArgumentError as exc:
+        raise RuntimeError(f"Invalid DATABASE_URL: {exc}") from exc
+
+    backend = url.get_backend_name()
+    if backend != "postgresql":
+        raise RuntimeError(
+            f"PostgreSQL connection required; received backend '{backend}'."
+        )
+
+
+def _create_pg_dump(database_url: str) -> Path:
+    """Create a pg_dump archive for the given database and return its path."""
+    try:
+        url = make_url(database_url)
+    except ArgumentError as exc:
+        raise RuntimeError(f"Invalid DATABASE_URL: {exc}") from exc
+
+    if url.get_backend_name() != "postgresql":
+        raise RuntimeError("pg_dump backups currently support PostgreSQL databases only.")
+
+    if not url.database:
+        raise RuntimeError("Database name missing from DATABASE_URL.")
+
+    host = url.host or "127.0.0.1"
+    port = str(url.port or 5432)
+    user = url.username or "postgres"
+    env = os.environ.copy()
+    if url.password:
+        env["PGPASSWORD"] = url.password
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".dump") as tmp:
+        dump_path = Path(tmp.name)
+
+    command = [
+        "pg_dump",
+        "-h",
+        host,
+        "-p",
+        port,
+        "-U",
+        user,
+        "-d",
+        url.database,
+        "-Fc",
+    ]
+
+    try:
+        with dump_path.open("wb") as dump_file:
+            subprocess.run(command, check=True, stdout=dump_file, env=env)
+    except FileNotFoundError as exc:
+        dump_path.unlink(missing_ok=True)
+        raise RuntimeError("pg_dump not found. Please ensure PostgreSQL client tools are installed.") from exc
+    except subprocess.CalledProcessError as exc:
+        dump_path.unlink(missing_ok=True)
+        raise RuntimeError(f"pg_dump failed with exit code {exc.returncode}.") from exc
+
+    return dump_path
 
 
 def prompt_flush() -> int:
@@ -33,26 +119,27 @@ def prompt_flush() -> int:
     print("=" * 60)
     print("DATABASE FLUSH")
     print("=" * 60)
-    
-    db_path = input("Enter database path (e.g., autoppia.db): ").strip()
-    if not db_path:
-        print("❌ Database path cannot be empty.")
+
+    try:
+        default_url = _default_database_url()
+    except Exception as exc:  # pragma: no cover - defensive guard
+        print(f"❌ Unable to resolve DATABASE_URL: {exc}")
         return 1
-    
-    # Construct the database URL
-    database_url = f"sqlite+aiosqlite:///{db_path}"
-    
-    print(f"\n⚠️  This will DELETE and recreate the database at: {db_path}")
+
+    masked_default = _mask_database_url(default_url)
+    database_url = input(f"Database URL [{masked_default}]: ").strip() or default_url
+
+    print(f"\n⚠️  This will DROP ALL TABLES in: {_mask_database_url(database_url)}")
     confirm = input("Are you sure you want to continue? [y/N]: ").strip().lower()
-    
+
     if confirm not in {"y", "yes"}:
         print("Aborted.")
         return 0
-    
+
     try:
         from scripts.flush_db import flush_seed_database
-        
-        print(f"\n🔄 Flushing database: {db_path}")
+
+        print(f"\n🔄 Flushing database: {_mask_database_url(database_url)}")
         flush_seed_database(database_url=database_url, assume_yes=True)
         print("✅ Database flushed successfully!")
         return 0
@@ -216,50 +303,30 @@ def prompt_seed_validator_round() -> int:
         return 1
 
 
-def _default_database_path() -> Path:
-    """Resolve the default SQLite database path from application settings."""
-    from app.config import settings
-
-    database_url = settings.DATABASE_URL
-    if not database_url:
-        raise RuntimeError("DATABASE_URL is not configured.")
-
-    url = make_url(database_url)
-    if url.get_backend_name() != "sqlite":
-        raise RuntimeError(f"Backup currently supports SQLite databases only (got {url.get_backend_name()})")
-
-    db_path = url.database
-    if not db_path or db_path == ":memory:":
-        raise RuntimeError("Cannot back up an in-memory database.")
-
-    file_path = Path(db_path).expanduser()
-    if not file_path.is_absolute():
-        file_path = (BACKEND_DIR / file_path).resolve()
-    return file_path
-
-
 def prompt_backup() -> int:
-    """Upload the SQLite database to the iwap_backups S3 bucket."""
+    """Create a pg_dump archive and upload it to the iwap_backups S3 bucket."""
     print("=" * 60)
     print("BACKUP")
     print("=" * 60)
     try:
-        default_path = _default_database_path()
+        default_url = _default_database_url()
     except Exception as exc:
-        print(f"❌ Unable to determine default database path: {exc}")
+        print(f"❌ Unable to determine default database URL: {exc}")
         return 1
 
-    db_input = input(f"Enter database path [{default_path}]: ").strip()
-    db_path = Path(db_input or str(default_path)).expanduser()
-    if not db_path.is_absolute():
-        db_path = (BACKEND_DIR / db_path).resolve()
+    masked_default = _mask_database_url(default_url)
+    database_url = input(f"Enter database URL [{masked_default}]: ").strip() or default_url
 
-    if not db_path.exists():
-        print(f"❌ Database file not found at {db_path}")
+    try:
+        _ensure_postgres(database_url)
+        url = make_url(database_url)
+    except Exception as exc:
+        print(f"❌ {exc}")
         return 1
 
+    db_name = url.database or "database"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    default_key = f"{db_path.stem}-{timestamp}{db_path.suffix or '.db'}"
+    default_key = f"{db_name}-{timestamp}.dump"
     object_key = input(f"S3 object key [{default_key}]: ").strip() or default_key
 
     bucket_name = "autoppia-subnet"
@@ -270,7 +337,15 @@ def prompt_backup() -> int:
     else:
         object_key = normalized_key
 
-    print(f"\n🔄 Uploading {db_path} to s3://{bucket_name}/{object_key}")
+    print(f"\n🔄 Creating pg_dump archive for {db_name}...")
+    try:
+        dump_path = _create_pg_dump(database_url)
+    except Exception as exc:
+        print(f"❌ Failed to create backup archive: {exc}")
+        return 1
+
+    print(f"📦 Dump created at {dump_path}")
+    print(f"🔼 Uploading to s3://{bucket_name}/{object_key}")
 
     try:
         from app.config import settings
@@ -297,7 +372,7 @@ def prompt_backup() -> int:
             print(f"❌ Unable to access bucket {bucket_name}: {error_code}")
             return 1
 
-        s3_client.upload_file(str(db_path), bucket_name, object_key)
+        s3_client.upload_file(str(dump_path), bucket_name, object_key)
 
         public_base = settings.AWS_S3_PUBLIC_BASE_URL
         if public_base:
@@ -310,6 +385,8 @@ def prompt_backup() -> int:
     except (NoCredentialsError, ClientError, BotoCoreError, FileNotFoundError) as exc:
         print(f"❌ Failed to upload backup: {exc}")
         return 1
+    finally:
+        dump_path.unlink(missing_ok=True)
 
 
 def main() -> int:
@@ -337,7 +414,7 @@ Examples:
     seed_subparsers.add_parser("validator-round", help="Seed a single validator round")
     
     # Backup command
-    subparsers.add_parser("backup", help="Backup the database (coming soon)")
+    subparsers.add_parser("backup", help="Create and upload a PostgreSQL backup")
     
     args = parser.parse_args()
     

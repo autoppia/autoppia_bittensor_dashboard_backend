@@ -7,11 +7,10 @@ import sys
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
 # Configure test database before application modules are imported
-TEST_DB_PATH = (Path(__file__).parent / "test.db").resolve()
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_PATH}"
-TEST_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+os.environ["DATABASE_URL"] = "postgresql+asyncpg://autoppia:password@127.0.0.1/autoppia_test"
 os.environ.setdefault("TESTING", "true")
 
 # Configure AWS defaults for tests before application settings are loaded
@@ -29,7 +28,7 @@ os.environ.setdefault(
     "https://autoppia-subnet-test.s3.eu-west-1.amazonaws.com",
 )
 
-PROJECT_ROOT = TEST_DB_PATH.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -49,12 +48,17 @@ def event_loop():
 @pytest.fixture(autouse=True)
 async def reset_database():
     """Ensure the SQL schema is rebuilt and clean for every test."""
+    await engine.dispose()
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
         await conn.run_sync(Base.metadata.create_all)
     yield
+    await engine.dispose()
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
+        await conn.run_sync(Base.metadata.create_all)
 
 
 @pytest.fixture

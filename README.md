@@ -1,6 +1,6 @@
 # Autoppia Leaderboard API
 
-Backend service that powers the Autoppia validator dashboard. It exposes FastAPI endpoints that validators call to register validator rounds, agent runs, evaluations, and aggregate metrics. The service persists data to SQLite (`autoppia.db` locally, `autoppia_prod.db` in production) and provides UI-ready views consumed by the frontend.
+Backend service that powers the Autoppia validator dashboard. It exposes FastAPI endpoints that validators call to register validator rounds, agent runs, evaluations, and aggregate metrics. The service persists data to PostgreSQL (`autoppia_db` locally) and provides UI-ready views consumed by the frontend.
 
 ## Local Development
 

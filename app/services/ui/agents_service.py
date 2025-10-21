@@ -1119,7 +1119,7 @@ class AgentsService:
         total_runs, last_updated = result.one()
         total = int(total_runs or 0)
         if isinstance(last_updated, str):
-            # SQLite may return ISO strings for datetime columns
+            # Some drivers may return ISO strings for datetime columns
             last_updated = datetime.fromisoformat(last_updated.replace(" ", "T"))
         if isinstance(last_updated, datetime) and last_updated.tzinfo is None:
             last_updated = last_updated.replace(tzinfo=timezone.utc)

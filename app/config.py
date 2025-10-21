@@ -1,8 +1,8 @@
 # app/config.py
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import quote_plus
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,6 +15,11 @@ class Settings(BaseSettings):
 
     # SQL Database Configuration
     DATABASE_URL: str = ""
+    POSTGRES_USER: str = "autoppia"
+    POSTGRES_PASSWORD: str = "password"
+    POSTGRES_HOST: str = "127.0.0.1"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_DB: str = "autoppia_db"
 
     # Asset handling
     ASSET_BASE_URL: str = "https://dev-infinitewebarena.autoppia.com"
@@ -78,11 +83,14 @@ class Settings(BaseSettings):
 
     def model_post_init(self, __context: Any) -> None:  # type: ignore[override]
         """Ensure required defaults and normalization."""
-        # Database default to local sqlite
+        # Database default to local Postgres service
         if not self.DATABASE_URL:
-            backend_root = Path(__file__).resolve().parents[1]
-            db_path = backend_root / "autoppia.db"
-            self.DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
+            user = quote_plus(self.POSTGRES_USER)
+            password = quote_plus(self.POSTGRES_PASSWORD) if self.POSTGRES_PASSWORD else ""
+            auth = f"{user}:{password}@" if password else f"{user}@"
+            self.DATABASE_URL = (
+                f"postgresql+asyncpg://{auth}{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+            )
 
         # Normalize asset paths
         if self.ASSET_BASE_URL:

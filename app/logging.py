@@ -204,7 +204,7 @@ def init_logging(settings) -> Tuple[_logging.Logger, int]:
     _apply_filter_to_active_handlers(filt)
 
     # Keep a couple of known-noisy libs at least INFO+
-    for name in ("btdecode", "aiosqlite"):
+    for name in ("btdecode", "asyncpg"):
         _logging.getLogger(name).setLevel(max(level, _logging.INFO))
 
     # Set up file logging if enabled

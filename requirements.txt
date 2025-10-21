@@ -9,7 +9,7 @@ pydantic-settings>=2.4.0
 
 # SQL database support
 SQLAlchemy>=2.0.30
-aiosqlite>=0.19.0
+asyncpg>=0.29.0
 
 # Environment management
 python-dotenv>=1.0.0
