@@ -1,12 +1,13 @@
+python -m scripts.iwap seed
 #!/usr/bin/env python3
 """
 IWAP - Interactive Wrapper for Autoppia (Clean Edition)
 
-Simplified CLI for database operations.
+Simple, safe CLI for database and seeding operations.
 
 Usage:
   python -m scripts.iwap flush
-  python -m scripts.iwap seed
+  python -m scripts.iwap seed round
 """
 
 import argparse
@@ -38,7 +39,7 @@ async def flush_database_cli() -> None:
 
 
 # ------------------------------------------------------------
-# SEED COMMAND
+# SEED COMMANDS
 # ------------------------------------------------------------
 
 def _get_last_round_number() -> int:
@@ -48,7 +49,6 @@ def _get_last_round_number() -> int:
     """
     import sqlalchemy
     from sqlalchemy import text
-    from scripts.db_utils import get_database_url
     from sqlalchemy.ext.asyncio import create_async_engine
     import asyncio
 
@@ -58,10 +58,10 @@ def _get_last_round_number() -> int:
         async with engine.begin() as conn:
             try:
                 result = await conn.execute(text("SELECT MAX(round_number) FROM validator_rounds"))
-                row = result.scalar()
-                return row or 0
+                value = result.scalar()
+                return value or 0
             except sqlalchemy.exc.ProgrammingError:
-                # Table may not exist yet
+                # Table doesn't exist yet
                 return 0
             finally:
                 await engine.dispose()
@@ -69,8 +69,8 @@ def _get_last_round_number() -> int:
     return asyncio.run(_fetch_last_round())
 
 
-def seed_rounds_cli() -> None:
-    """Seed multiple rounds using .env connection, starting from last existing round."""
+def seed_round_cli() -> None:
+    """Seed multiple rounds using .env connection, starting from the last round."""
     from scripts.seed_round import seed_multiple_rounds
 
     database_url = get_database_url()
@@ -122,25 +122,36 @@ def main() -> int:
         epilog="""
 Examples:
   python -m scripts.iwap flush
-  python -m scripts.iwap seed
+  python -m scripts.iwap seed round
         """,
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="Command to run")
-    subparsers.add_parser("flush", help="Flush and reinitialize the database")
-    subparsers.add_parser("seed", help="Seed one or more validator rounds")
+    subparsers = parser.add_subparsers(dest="command", help="Main command")
 
+    # --- FLUSH
+    subparsers.add_parser("flush", help="Flush and reinitialize the database")
+
+    # --- SEED GROUP
+    seed_parser = subparsers.add_parser("seed", help="Seed data into the database")
+    seed_subparsers = seed_parser.add_subparsers(dest="seed_command", help="Seed command")
+    seed_subparsers.add_parser("round", help="Seed round(s) across validators")
+
+    # --- Parse
     args = parser.parse_args()
 
     if args.command == "flush":
         asyncio.run(flush_database_cli())
         return 0
     elif args.command == "seed":
-        seed_rounds_cli()
-        return 0
-    else:
-        parser.print_help()
-        return 1
+        if not args.seed_command:
+            print("Error: Please specify a seed command (e.g. 'iwap seed round')")
+            return 1
+        if args.seed_command == "round":
+            seed_round_cli()
+            return 0
+
+    parser.print_help()
+    return 1
 
 
 if __name__ == "__main__":
