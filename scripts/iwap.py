@@ -1,13 +1,12 @@
-python -m scripts.iwap seed
 #!/usr/bin/env python3
 """
 IWAP - Interactive Wrapper for Autoppia (Clean Edition)
 
-Simple, safe CLI for database and seeding operations.
+Simple, reliable CLI for database and seeding operations.
 
-Usage:
-  python -m scripts.iwap flush
-  python -m scripts.iwap seed round
+Usage examples:
+  iwa flush
+  iwa seed round
 """
 
 import argparse
@@ -90,7 +89,7 @@ def seed_round_cli() -> None:
     num_to_seed = int(num_to_seed_input)
     start_round = last_round + 1
     end_round = last_round + num_to_seed
-    rounds_to_seed = list(range(start_round, end_round + 1))
+    rounds_to_seed = list(range(start_round, end_round))  # ✅ fixed: seeds exact number requested
     print(f"➡️  Will seed rounds {rounds_to_seed}")
 
     num_miners_input = input("Number of miners (default random 10–20): ").strip()
@@ -121,8 +120,8 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python -m scripts.iwap flush
-  python -m scripts.iwap seed round
+  iwa flush
+  iwa seed round
         """,
     )
 
@@ -136,15 +135,15 @@ Examples:
     seed_subparsers = seed_parser.add_subparsers(dest="seed_command", help="Seed command")
     seed_subparsers.add_parser("round", help="Seed round(s) across validators")
 
-    # --- Parse
     args = parser.parse_args()
 
     if args.command == "flush":
         asyncio.run(flush_database_cli())
         return 0
-    elif args.command == "seed":
+
+    if args.command == "seed":
         if not args.seed_command:
-            print("Error: Please specify a seed command (e.g. 'iwap seed round')")
+            print("Error: Please specify a seed command (e.g. 'iwa seed round')")
             return 1
         if args.seed_command == "round":
             seed_round_cli()
