@@ -1,130 +1,57 @@
 #!/usr/bin/env python3
 """
-Utilities to reset the local PostgreSQL database used for seeding scenarios.
+Dialect-aware database flush utilities.
 
-This module provides functionality to drop and recreate the schema.
-
-Usage:
-    python -m scripts.flush_db --yes --database-url postgresql+asyncpg://user:pass@localhost/dbname
+- PostgreSQL: DROP/CREATE public schema
+- SQLite: reflect and drop all tables safely
 """
 
-from __future__ import annotations
-
-import argparse
-import asyncio
-import os
-import sys
-from pathlib import Path
-from typing import Iterable, Optional
-
-from sqlalchemy import text
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError
-
-BACKEND_DIR = Path(__file__).resolve().parents[1]
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
+from sqlalchemy import MetaData, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 
-def _build_argument_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Reset the Autoppia backend PostgreSQL database used for seeding.",
-    )
-    parser.add_argument(
-        "--database-url",
-        dest="database_url",
-        default=None,
-        help="Optional explicit DATABASE_URL override.",
-    )
-    parser.add_argument(
-        "--yes",
-        action="store_true",
-        help="Skip confirmation prompt.",
-    )
-    return parser
-
-
-def _resolve_database_url(candidate: str | None) -> str:
-    if candidate:
-        os.environ["DATABASE_URL"] = candidate
-        return candidate
-
-    from app.config import settings  # local import to respect env overrides
-
-    database_url = settings.DATABASE_URL
-    if not database_url:
-        raise RuntimeError("DATABASE_URL is not configured.")
-    return database_url
-
-
-async def flush_database(database_url: str, *, assume_yes: bool) -> None:
+async def flush_database(database_url: str, assume_yes: bool = False) -> None:
     """
-    Drop all tables from the configured database and recreate the schema.
+    Flush the database at `database_url` in a dialect-aware manner.
 
     Args:
-        database_url: SQLAlchemy-compatible database URL pointing at PostgreSQL.
-        assume_yes: Skip confirmation prompt when True.
+        database_url: Async SQLAlchemy DSN (e.g., postgresql+asyncpg://...)
+        assume_yes: reserved for future interactivity (confirmation handled by caller).
     """
+    engine = create_async_engine(database_url, future=True)
+
     try:
-        url = make_url(database_url)
-    except ArgumentError as exc:  # pragma: no cover - defensive
-        raise SystemExit(f"Invalid DATABASE_URL: {exc}") from exc
+        async with engine.begin() as conn:
+            dialect = conn.dialect.name  # 'postgresql', 'sqlite', etc.
 
-    backend = url.get_backend_name()
-    if not (backend.startswith("postgresql") or backend == "postgres"):
-        raise SystemExit(
-            f"This utility only works with PostgreSQL connections. Current backend: {backend}"
-        )
+            if dialect in ("postgresql", "postgres"):
+                # PostgreSQL: nuke public schema, then recreate it
+                await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+                await conn.execute(text("CREATE SCHEMA public"))
+                # Optional: reset search_path or grants here if needed
+                # await conn.execute(text("GRANT ALL ON SCHEMA public TO public"))
+                # await conn.execute(text("GRANT ALL ON SCHEMA public TO postgres"))
 
-    database_name = url.database or ""
-    display_name = database_name or str(url)
+            elif dialect == "sqlite":
+                # SQLite: reflect & drop all tables. Disable FKs during drop.
+                await conn.execute(text("PRAGMA foreign_keys = OFF"))
 
-    if not assume_yes:
-        response = input(
-            f"This will DROP ALL TABLES in database '{display_name}'. Continue? [y/N]: "
-        ).strip().lower()
-        if response not in {"y", "yes"}:
-            print("Aborted.")
-            return
+                async def _drop_all(sync_conn):
+                    md = MetaData()
+                    md.reflect(bind=sync_conn)
+                    md.drop_all(bind=sync_conn)
 
-    from app.db.session import engine, init_db  # type: ignore  # noqa: E402
+                await conn.run_sync(_drop_all)
+                await conn.execute(text("PRAGMA foreign_keys = ON"))
+                # Optionally VACUUM (requires autocommit; safe to skip here)
 
-    async with engine.begin() as conn:
-        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-        await conn.execute(text("CREATE SCHEMA public"))
-    print(f"Existing schema dropped for database '{display_name}'.")
+            else:
+                # Generic fallback: reflect & drop_all
+                async def _drop_all(sync_conn):
+                    md = MetaData()
+                    md.reflect(bind=sync_conn)
+                    md.drop_all(bind=sync_conn)
 
-    await init_db()
-    print("Database schema recreated.")
-
-
-def flush_seed_database(
-    database_url: str | None = None,
-    *,
-    assume_yes: bool = True,
-) -> None:
-    """
-    Reset the PostgreSQL database backing the backend service.
-
-    Args:
-        database_url: Optional explicit DATABASE_URL override. If omitted, the
-            application settings (environment/.env) will be used.
-        assume_yes: When True, skips the interactive confirmation prompt.
-    """
-    resolved_url = _resolve_database_url(database_url)
-    asyncio.run(flush_database(resolved_url, assume_yes=assume_yes))
-
-
-def main(argv: Optional[Iterable[str]] = None) -> int:
-    parser = _build_argument_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
-
-    flush_seed_database(
-        database_url=args.database_url,
-        assume_yes=args.yes,
-    )
-    return 0
-
-
-if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    raise SystemExit(main())
+                await conn.run_sync(_drop_all)
+    finally:
+        await engine.dispose()

@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # Authentication
     API_KEYS: list[str] = ["dev-token-123"]  # replace with real keys or load from vault
     VALIDATOR_AUTH_MESSAGE: str = "I am a honest validator"
-    MIN_VALIDATOR_STAKE: float = 50_000.0
+    MIN_VALIDATOR_STAKE: float = 10_000.0
     VALIDATOR_NETUID: int = 36
     SUBTENSOR_NETWORK: Optional[str] = None
     SUBTENSOR_ENDPOINT: Optional[str] = None

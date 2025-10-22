@@ -457,6 +457,27 @@ async def start_agent_run(
                 "agent_run.validator_round_id",
             )
 
+            # Ensure agent_run validator identity matches the round's registered validator
+            round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+            if (
+                agent_run.validator_uid is not None
+                and round_row.validator_uid is not None
+                and int(agent_run.validator_uid) != int(round_row.validator_uid)
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="agent_run.validator_uid must match the round's validator_uid",
+                )
+            if (
+                agent_run.validator_hotkey
+                and round_row.validator_hotkey
+                and agent_run.validator_hotkey != round_row.validator_hotkey
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="agent_run.validator_hotkey must match the round's validator_hotkey",
+                )
+
             miner_snapshot = request_payload.miner_snapshot
             _require_round_match(
                 miner_snapshot.validator_round_id,
@@ -648,6 +669,25 @@ async def add_evaluation(
                 evaluation.evaluation_id,
                 "evaluation_result.evaluation_id",
             )
+
+            # Cross-check validator identity on payloads matches the round
+            round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+            check_pairs = [
+                (task_solution.validator_uid, task_solution.validator_hotkey, "task_solution"),
+                (evaluation.validator_uid, evaluation.validator_hotkey, "evaluation"),
+                (evaluation_result.validator_uid, None, "evaluation_result"),
+            ]
+            for uid_value, hotkey_value, label in check_pairs:
+                if uid_value is not None and int(uid_value) != int(round_row.validator_uid):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"{label}.validator_uid must match the round's validator_uid",
+                    )
+                if hotkey_value and hotkey_value != round_row.validator_hotkey:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"{label}.validator_hotkey must match the round's validator_hotkey",
+                    )
 
             await service.add_evaluation(
                 validator_round_id=validator_round_id,
