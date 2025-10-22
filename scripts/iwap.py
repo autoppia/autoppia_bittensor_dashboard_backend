@@ -46,6 +46,8 @@ Examples:
         print("DATABASE FLUSH")
         print("=" * 60)
         print(f"🔄 Using database: {dsn}")
+        if dsn.startswith("sqlite"):
+            print("⚠️  Detected SQLite DSN. If you expected Postgres, ensure .env has DATABASE_URL or POSTGRES_* set.")
 
         resp = input("⚠️  This will DROP ALL TABLES. Continue? [y/N]: ").strip().lower()
         if resp not in {"y", "yes"}:
@@ -63,6 +65,8 @@ Examples:
             print("SEED ROUND (Multiple Validators)")
             print("=" * 60)
             print(f"📡 Using database: {dsn}")
+            if dsn.startswith("sqlite"):
+                print("⚠️  Detected SQLite DSN. If you expected Postgres, ensure .env has DATABASE_URL or POSTGRES_* set.")
 
             rounds_str = input(
                 "Enter round number(s) (comma-separated, e.g., 1,2,3): "
