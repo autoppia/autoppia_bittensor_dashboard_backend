@@ -16,6 +16,17 @@ from typing import List, Optional
 from scripts.db_utils import get_database_url
 from scripts.flush_db import flush_database
 from scripts.seed_round import seed_multiple_rounds
+from sqlalchemy.engine import make_url
+
+
+def _mask_dsn(dsn: str) -> str:
+    try:
+        url = make_url(dsn)
+        if url.password:
+            url = url.set(password="***")
+        return str(url)
+    except Exception:
+        return dsn
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -45,7 +56,7 @@ Examples:
         print("=" * 60)
         print("DATABASE FLUSH")
         print("=" * 60)
-        print(f"🔄 Using database: {dsn}")
+        print(f"🔄 Using database: {_mask_dsn(dsn)}")
         if dsn.startswith("sqlite"):
             print("⚠️  Detected SQLite DSN. If you expected Postgres, ensure .env has DATABASE_URL or POSTGRES_* set.")
 
@@ -64,7 +75,7 @@ Examples:
             print("=" * 60)
             print("SEED ROUND (Multiple Validators)")
             print("=" * 60)
-            print(f"📡 Using database: {dsn}")
+            print(f"📡 Using database: {_mask_dsn(dsn)}")
             if dsn.startswith("sqlite"):
                 print("⚠️  Detected SQLite DSN. If you expected Postgres, ensure .env has DATABASE_URL or POSTGRES_* set.")
 

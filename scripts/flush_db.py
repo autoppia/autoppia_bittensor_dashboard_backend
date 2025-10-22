@@ -52,6 +52,13 @@ async def flush_database(database_url: Optional[str] = None, assume_yes: bool = 
     # Optional interactive confirmation when not bypassed
     if not assume_yes:
         dsn_display = database_url or settings.DATABASE_URL
+        try:
+            _url = make_url(dsn_display)
+            if _url.password:
+                _url = _url.set(password="***")
+            dsn_display = str(_url)
+        except Exception:
+            pass
         resp = input(
             f"⚠️  This will DROP ALL TABLES in: {dsn_display}\nAre you sure you want to continue? [y/N]: "
         ).strip().lower()
@@ -79,4 +86,3 @@ def _main() -> None:  # Manual quick run support
 
 if __name__ == "__main__":
     _main()
-
