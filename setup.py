@@ -1,11 +1,10 @@
+# setup.py
 #!/usr/bin/env python3
 from setuptools import setup, find_packages
 
 setup(
-    name="iwap-cli",
-    version="1.0.1",  # bump so pip overwrites old console scripts
-    author="Autoppia Team",
-    description="IWAP - Simplified Interactive Wrapper for Autoppia",
+    name="leaderboard-api",
+    version="0.1.1",  # bump
     packages=find_packages(exclude=["tests", "examples"]),
     install_requires=[
         "python-dotenv",
@@ -15,8 +14,9 @@ setup(
     ],
     entry_points={
         "console_scripts": [
+            "iwap = scripts.iwap:main",
             "iwa = scripts.iwap:main",
-            "iwap = scripts.iwap:main",  # <— alias so `iwap` works too
+            "iwaseed = scripts.seed_round:main",
         ],
     },
     python_requires=">=3.9",
