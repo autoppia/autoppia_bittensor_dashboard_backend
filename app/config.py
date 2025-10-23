@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # Round calculation (chain-derived)
     # Epochs per round (prod 20), blocks per epoch (Bittensor ~360), and the
     # deterministic starting block gate for the DZ launch.
-    ROUND_SIZE_EPOCHS: float = 20.0
+    ROUND_SIZE_EPOCHS: float = 4.0
     BLOCKS_PER_EPOCH: int = 360
     DZ_STARTING_BLOCK: int = 6_716_460
     # Chain state
