@@ -2,6 +2,7 @@
 Agent Runs API models for the AutoPPIA Bittensor Dashboard.
 These models define the data structures for agent evaluation runs.
 """
+
 from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from enum import Enum
 # --- Enums ---
 class RunStatus(str, Enum):
     """Agent run status enumeration."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -20,6 +22,7 @@ class RunStatus(str, Enum):
 
 class TaskStatus(str, Enum):
     """Task status enumeration."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -29,6 +32,7 @@ class TaskStatus(str, Enum):
 
 class LogLevel(str, Enum):
     """Log level enumeration."""
+
     DEBUG = "debug"
     INFO = "info"
     WARN = "warn"
@@ -37,6 +41,7 @@ class LogLevel(str, Enum):
 
 class EventType(str, Enum):
     """Event type enumeration."""
+
     RUN_STARTED = "run_started"
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"
@@ -50,6 +55,7 @@ class EventType(str, Enum):
 # --- Core Models ---
 class Website(BaseModel):
     """Website performance data."""
+
     website: str
     tasks: int
     successful: int
@@ -59,6 +65,7 @@ class Website(BaseModel):
 
 class Action(BaseModel):
     """Action performed during task execution."""
+
     id: str
     type: str
     selector: Optional[str] = None
@@ -70,6 +77,7 @@ class Action(BaseModel):
 
 class Task(BaseModel):
     """Task execution details."""
+
     taskId: str
     website: str
     useCase: str
@@ -78,7 +86,7 @@ class Task(BaseModel):
     score: float
     duration: int
     startTime: str
-    endTime: str
+    endTime: Optional[str] = None
     actions: List[Action] = Field(default_factory=list)
     screenshots: List[str] = Field(default_factory=list)
     logs: List[str] = Field(default_factory=list)
@@ -86,6 +94,7 @@ class Task(BaseModel):
 
 class AgentRun(BaseModel):
     """Agent evaluation run details."""
+
     runId: str
     agentId: str
     agentUid: Optional[int] = None
@@ -117,6 +126,7 @@ class AgentRun(BaseModel):
 
 class RoundInfo(BaseModel):
     """Round information for personas."""
+
     id: int
     name: str
     status: str
@@ -126,6 +136,7 @@ class RoundInfo(BaseModel):
 
 class ValidatorInfo(BaseModel):
     """Validator information for personas."""
+
     id: str
     name: str
     image: str
@@ -136,6 +147,7 @@ class ValidatorInfo(BaseModel):
 
 class AgentInfo(BaseModel):
     """Agent information for personas."""
+
     id: str
     uid: Optional[int] = None
     hotkey: Optional[str] = None
@@ -147,6 +159,7 @@ class AgentInfo(BaseModel):
 
 class Personas(BaseModel):
     """Personas data (round, validator, agent information)."""
+
     round: RoundInfo
     validator: ValidatorInfo
     agent: AgentInfo
@@ -154,6 +167,7 @@ class Personas(BaseModel):
 
 class ScoreDistribution(BaseModel):
     """Score distribution data."""
+
     excellent: int
     good: int
     average: int
@@ -162,6 +176,7 @@ class ScoreDistribution(BaseModel):
 
 class PerformanceByWebsite(BaseModel):
     """Performance data by website."""
+
     website: str
     tasks: int
     successful: int
@@ -172,6 +187,7 @@ class PerformanceByWebsite(BaseModel):
 
 class PerformanceByUseCase(BaseModel):
     """Performance data by use case."""
+
     useCase: str
     tasks: int
     successful: int
@@ -182,6 +198,7 @@ class PerformanceByUseCase(BaseModel):
 
 class Statistics(BaseModel):
     """Detailed statistics for an agent run."""
+
     runId: str
     overallScore: int
     totalTasks: int
@@ -197,6 +214,7 @@ class Statistics(BaseModel):
 
 class TopPerformingWebsite(BaseModel):
     """Top performing website data."""
+
     website: str
     score: float
     tasks: int
@@ -204,6 +222,7 @@ class TopPerformingWebsite(BaseModel):
 
 class TopPerformingUseCase(BaseModel):
     """Top performing use case data."""
+
     useCase: str
     score: float
     tasks: int
@@ -211,6 +230,7 @@ class TopPerformingUseCase(BaseModel):
 
 class RecentActivity(BaseModel):
     """Recent activity data."""
+
     timestamp: str
     action: str
     details: str
@@ -218,6 +238,7 @@ class RecentActivity(BaseModel):
 
 class Summary(BaseModel):
     """Summary information for an agent run."""
+
     runId: str
     agentId: str
     agentUid: Optional[int] = None
@@ -241,6 +262,7 @@ class Summary(BaseModel):
 
 class Event(BaseModel):
     """Timeline event data."""
+
     timestamp: str
     type: EventType
     message: str
@@ -250,6 +272,7 @@ class Event(BaseModel):
 
 class Log(BaseModel):
     """Log entry data."""
+
     timestamp: str
     level: LogLevel
     message: str
@@ -258,12 +281,14 @@ class Log(BaseModel):
 
 class Metric(BaseModel):
     """Performance metric data."""
+
     timestamp: str
     value: float
 
 
 class Metrics(BaseModel):
     """Performance metrics for an agent run."""
+
     cpu: List[Metric]
     memory: List[Metric]
     network: List[Metric]
@@ -275,6 +300,7 @@ class Metrics(BaseModel):
 
 class Comparison(BaseModel):
     """Agent run comparison data."""
+
     bestScore: str
     fastest: str
     mostTasks: str
@@ -284,6 +310,7 @@ class Comparison(BaseModel):
 # --- Request/Response Models ---
 class AgentRunDetailResponse(BaseModel):
     """Response model for agent run details."""
+
     success: bool
     data: Optional[Dict[str, AgentRun]] = None
     error: Optional[str] = None
@@ -292,6 +319,7 @@ class AgentRunDetailResponse(BaseModel):
 
 class PersonasResponse(BaseModel):
     """Response model for personas data."""
+
     success: bool
     data: Optional[Dict[str, Personas]] = None
     error: Optional[str] = None
@@ -300,6 +328,7 @@ class PersonasResponse(BaseModel):
 
 class StatisticsResponse(BaseModel):
     """Response model for statistics data."""
+
     success: bool
     data: Optional[Dict[str, Statistics]] = None
     error: Optional[str] = None
@@ -308,6 +337,7 @@ class StatisticsResponse(BaseModel):
 
 class SummaryResponse(BaseModel):
     """Response model for summary data."""
+
     success: bool
     data: Optional[Dict[str, Summary]] = None
     error: Optional[str] = None
@@ -316,6 +346,7 @@ class SummaryResponse(BaseModel):
 
 class TasksResponse(BaseModel):
     """Response model for tasks data."""
+
     success: bool
     data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -324,6 +355,7 @@ class TasksResponse(BaseModel):
 
 class AgentRunsListResponse(BaseModel):
     """Response model for agent runs list."""
+
     success: bool
     data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -332,11 +364,13 @@ class AgentRunsListResponse(BaseModel):
 
 class ComparisonRequest(BaseModel):
     """Request model for comparing agent runs."""
+
     runIds: List[str]
 
 
 class ComparisonResponse(BaseModel):
     """Response model for agent run comparison."""
+
     success: bool
     data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -345,6 +379,7 @@ class ComparisonResponse(BaseModel):
 
 class TimelineResponse(BaseModel):
     """Response model for timeline data."""
+
     success: bool
     data: Optional[Dict[str, List[Event]]] = None
     error: Optional[str] = None
@@ -353,6 +388,7 @@ class TimelineResponse(BaseModel):
 
 class LogsResponse(BaseModel):
     """Response model for logs data."""
+
     success: bool
     data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -361,6 +397,7 @@ class LogsResponse(BaseModel):
 
 class MetricsResponse(BaseModel):
     """Response model for metrics data."""
+
     success: bool
     data: Optional[Dict[str, Metrics]] = None
     error: Optional[str] = None
