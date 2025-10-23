@@ -247,7 +247,7 @@ class Summary(BaseModel):
     roundId: int
     validatorId: str
     startTime: str
-    endTime: str
+    endTime: Optional[str] = None
     status: RunStatus
     overallScore: int
     totalTasks: int
