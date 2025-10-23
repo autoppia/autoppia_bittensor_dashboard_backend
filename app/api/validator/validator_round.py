@@ -6,8 +6,9 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any, Dict, Union
+from types import SimpleNamespace
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +27,6 @@ from app.models.core import (
 )
 from app.services.validator.validator_auth import require_validator_auth, VALIDATOR_HOTKEY_HEADER
 from app.data import get_validator_metadata
-from urllib.parse import urlparse
 from app.services.chain_state import get_current_block
 from app.services.round_calc import (
     compute_round_number,
@@ -34,6 +34,7 @@ from app.services.round_calc import (
     is_inside_window,
 )
 from app.config import settings
+from app.utils.images import resolve_agent_image, resolve_validator_image, sanitize_miner_image
 from app.services.validator.validator_storage import (
     RoundConflictError,
     DuplicateIdentifierError,
@@ -70,6 +71,25 @@ class StartRoundRequest(BaseModel):
 class LegacyStartRoundRequest(BaseModel):
     validator_round_id: str
     round: Dict[str, Any]
+
+
+def _resolve_miner_snapshot_image(snapshot: ValidatorRoundMiner) -> None:
+    """
+    Normalize miner snapshot images so we persist full URLs and apply fallbacks.
+    """
+    sanitized = sanitize_miner_image(snapshot.image_url)
+    info = SimpleNamespace(
+        agent_image=sanitized or "",
+        is_sota=bool(snapshot.is_sota),
+        agent_name=(snapshot.agent_name or "").strip(),
+        provider=(snapshot.provider or "").strip() or None,
+        hotkey=snapshot.miner_hotkey,
+        uid=snapshot.miner_uid,
+    )
+    resolved = resolve_agent_image(info, existing=sanitized or None)
+    if not resolved:
+        resolved = resolve_agent_image(info)
+    snapshot.image_url = resolved
 
 
 def _legacy_to_start_request(payload: LegacyStartRoundRequest) -> StartRoundRequest:
@@ -127,6 +147,10 @@ def _legacy_to_start_request(payload: LegacyStartRoundRequest) -> StartRoundRequ
     metadata = get_validator_metadata(uid)
     validator_snapshot.name = metadata.get("name") or validator_snapshot.name
     validator_snapshot.image_url = metadata.get("image") or validator_snapshot.image_url
+    validator_snapshot.image_url = resolve_validator_image(
+        validator_snapshot.name,
+        existing=validator_snapshot.image_url,
+    )
 
     return StartRoundRequest(
         validator_identity=validator_identity,
@@ -200,13 +224,8 @@ async def _legacy_to_start_agent_run_request(
         is_sota=bool(miner_info.get("is_sota")),
         metadata=miner_info.get("metadata") or {},
     )
-
-    # Enforce miner image host allowlist (production IWA only) at ingest time
-    from app.utils.images import sanitize_miner_image
-    def _sanitize_miner_image(url: str | None) -> str:
-        return sanitize_miner_image(url)
-
-    miner_snapshot.image_url = _sanitize_miner_image(miner_snapshot.image_url)
+    # Canonicalize miner image asset (allowlist + fallback)
+    _resolve_miner_snapshot_image(miner_snapshot)
 
     return StartAgentRunRequest(
         agent_run=agent_run,
@@ -414,6 +433,11 @@ async def start_round(
         if snapshot_image:
             validator_snapshot.image_url = snapshot_image
 
+    validator_snapshot.image_url = resolve_validator_image(
+        validator_snapshot.name,
+        existing=validator_snapshot.image_url,
+    )
+
     # Override payload boundaries to chain-derived values unless testing override is enabled
     if not testing_override and bounds is not None:
         validator_round.round_number = backend_round_number
@@ -436,6 +460,11 @@ async def start_round(
             validator_snapshot.name = snapshot_name
         if snapshot_image:
             validator_snapshot.image_url = snapshot_image
+
+    validator_snapshot.image_url = resolve_validator_image(
+        validator_snapshot.name,
+        existing=validator_snapshot.image_url,
+    )
 
     service = ValidatorRoundPersistenceService(session)
 
@@ -612,9 +641,8 @@ async def start_agent_run(
                 )
 
             miner_snapshot = request_payload.miner_snapshot
-            # Sanitize miner image on non-legacy path as well
-            from app.utils.images import sanitize_miner_image
-            miner_snapshot.image_url = sanitize_miner_image(miner_snapshot.image_url)
+            # Canonicalize miner image on non-legacy path as well
+            _resolve_miner_snapshot_image(miner_snapshot)
 
             # Enforce chain-derived round is current and inside window unless testing override is enabled
             testing_override = settings.TESTING and bool(force)

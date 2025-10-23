@@ -28,11 +28,8 @@ SOTA_IMAGE_OVERRIDES = {
 FALLBACK_MINER_IMAGES = tuple(f"/miners/{index}.svg" for index in range(50))
 
 DEFAULT_ALLOWED_IMAGE_HOSTS = {
-    "leaderboard.autoppia.com",
+    "infinitewebarena.autoppia.com",
     "dev-infinitewebarena.autoppia.com",
-    "api-leaderboard.autoppia.com",
-    "raw.githubusercontent.com",
-    "taostats.io",
 }
 
 
@@ -198,7 +195,7 @@ def sanitize_miner_image(candidate: Optional[str]) -> str:
     if value.startswith("//"):
         value = f"https:{value}"
     if value.startswith("/"):
-        return value
+        return _ensure_absolute_url(value)
     try:
         parsed = urlparse(value)
     except Exception:
@@ -212,7 +209,7 @@ def sanitize_miner_image(candidate: Optional[str]) -> str:
 
 def _fallback_miner_image(info: Optional[MinerInfo], existing: Optional[str]) -> str:
     if existing:
-        return existing
+        return _ensure_absolute_url(existing)
 
     identifier: Optional[str] = None
     if info:
@@ -233,7 +230,7 @@ def _fallback_miner_image(info: Optional[MinerInfo], existing: Optional[str]) ->
 
     digest = sha256(identifier.encode("utf-8")).digest()
     index = digest[0] % len(FALLBACK_MINER_IMAGES)
-    return FALLBACK_MINER_IMAGES[index]
+    return _ensure_absolute_url(FALLBACK_MINER_IMAGES[index])
 
 
 def resolve_validator_image(name: Optional[str], existing: Optional[str] = None) -> str:

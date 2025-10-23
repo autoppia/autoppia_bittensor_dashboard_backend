@@ -8,7 +8,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 
 from app.db.models import AgentEvaluationRunORM, RoundORM
-from app.models.core import MinerInfo
+from app.models.core import MinerInfo, ValidatorRound
 from app.models.ui.agents import (
     Agent,
     AgentDetailResponse,
@@ -51,6 +51,9 @@ from app.utils.images import resolve_agent_image
 from app.utils.urls import build_taostats_miner_url
 
 logger = logging.getLogger(__name__)
+
+ALPHA_EMISSION_PER_EPOCH = 148.0
+_EPSILON = 1e-6
 
 
 def _format_agent_id(miner_uid: Optional[int]) -> str:
@@ -116,9 +119,13 @@ class AgentAggregate:
     latest_round_top_score: Optional[float] = None
     latest_round_rank: Optional[int] = None
     latest_round_global_rank: Optional[int] = None
-    rounds: set = field(default_factory=set)
+    rounds: Set[int] = field(default_factory=set)
     first_seen: float = field(default_factory=lambda: float("inf"))
     last_seen: float = field(default_factory=lambda: 0.0)
+    round_rewards: Dict[int, float] = field(default_factory=dict)
+    winning_rounds: Set[int] = field(default_factory=set)
+    alpha_reward: float = 0.0
+    best_round_average: float = 0.0
 
 
 @dataclass
@@ -962,6 +969,7 @@ class AgentsService:
         aggregates: Dict[str, AgentAggregate] = {}
         round_benchmark_scores: Dict[int, Dict[str, Dict[str, Any]]] = defaultdict(dict)
         round_leaderboards: Dict[int, List[tuple[str, float]]] = defaultdict(list)
+        round_epoch_lengths: Dict[int, float] = {}
 
         for context in contexts:
             agent_id = _format_agent_id(context.run.miner_uid)
@@ -991,6 +999,11 @@ class AgentsService:
             aggregate.rounds.add(round_identifier)
             if round_identifier:
                 aggregate.round_scores.setdefault(round_identifier, []).append(run_score)
+                epoch_length = self._round_epoch_length(context.round)
+                if epoch_length > 0:
+                    current = round_epoch_lengths.get(round_identifier)
+                    if current is None or epoch_length > current:
+                        round_epoch_lengths[round_identifier] = epoch_length
 
             duration = self._compute_run_duration(context)
             if duration is not None:
@@ -1058,6 +1071,37 @@ class AgentsService:
                 existing_entry = round_benchmark_scores[round_identifier].get(bench_key)
                 if existing_entry is None or run_score > existing_entry.get("score", 0.0):
                     round_benchmark_scores[round_identifier][bench_key] = entry
+
+        round_winners: Dict[int, tuple[str, float]] = {}
+        for aggregate in aggregates.values():
+            best_avg = aggregate.best_round_average
+            for round_number, scores in aggregate.round_scores.items():
+                if not scores:
+                    continue
+                avg_score = sum(scores) / len(scores)
+                if avg_score > best_avg:
+                    best_avg = avg_score
+                if aggregate.is_sota:
+                    continue
+                existing_winner = round_winners.get(round_number)
+                if (
+                    existing_winner is None
+                    or avg_score > existing_winner[1] + _EPSILON
+                    or (abs(avg_score - existing_winner[1]) <= _EPSILON and aggregate.agent_id < existing_winner[0])
+                ):
+                    round_winners[round_number] = (aggregate.agent_id, avg_score)
+            aggregate.best_round_average = best_avg
+
+        for round_number, (winner_id, _) in round_winners.items():
+            epochs = round_epoch_lengths.get(round_number)
+            if epochs is None or epochs <= 0:
+                epochs = self._fallback_round_epochs()
+            reward = ALPHA_EMISSION_PER_EPOCH * epochs
+            winner_aggregate = aggregates.get(winner_id)
+            if winner_aggregate is not None:
+                winner_aggregate.round_rewards[round_number] = reward
+                winner_aggregate.alpha_reward += reward
+                winner_aggregate.winning_rounds.add(round_number)
 
         round_best_scores: Dict[int, float] = {}
         for aggregate in aggregates.values():
@@ -1300,7 +1344,8 @@ class AgentsService:
             currentRank=current_rank_value or 0,
             bestRankEver=best_rank or 0,
             roundsParticipated=len({round_id for round_id in aggregate.rounds if round_id}),
-            alphaWonInPrizes=0.0,
+            alphaWonInPrizes=aggregate.alpha_reward,
+            bestRoundScore=aggregate.best_round_average,
             averageResponseTime=average_duration,
             totalTasks=aggregate.total_tasks,
             completedTasks=aggregate.completed_tasks,
@@ -1366,6 +1411,41 @@ class AgentsService:
 
     def _round_number(self, context: AgentRunContext) -> int:
         return int(context.round.round_number or _round_id_to_int(context.round.validator_round_id))
+
+    def _fallback_round_epochs(self) -> float:
+        try:
+            value = float(settings.ROUND_SIZE_EPOCHS)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+        return 1.0
+
+    def _round_epoch_length(self, round_model: ValidatorRound) -> float:
+        if round_model is None:
+            return self._fallback_round_epochs()
+
+        max_epochs = getattr(round_model, "max_epochs", None)
+        if max_epochs is not None:
+            try:
+                value = float(max_epochs)
+                if value > 0:
+                    return value
+            except (TypeError, ValueError):
+                pass
+
+        start_epoch = getattr(round_model, "start_epoch", None)
+        end_epoch = getattr(round_model, "end_epoch", None)
+        if start_epoch is not None and end_epoch is not None:
+            try:
+                span = float(end_epoch) - float(start_epoch)
+                if span <= 0:
+                    span = 1.0
+                return span
+            except (TypeError, ValueError):
+                pass
+
+        return self._fallback_round_epochs()
 
     def _round_top_score(self, context: AgentRunContext) -> float:
         round_number = self._round_number(context)
@@ -1439,6 +1519,7 @@ class AgentsService:
             timestamp_dt = datetime.fromtimestamp(float(timestamp_value), tz=timezone.utc)
 
             benchmark_entries = self._round_benchmark_entries(contexts[0])
+            reward_value = aggregate.round_rewards.get(round_id, 0.0)
 
             datapoints.append(
                 ScoreRoundDataPoint(
@@ -1446,7 +1527,7 @@ class AgentsService:
                     score=round(average_score, 3),
                     rank=rank,
                     topScore=round(top_score, 3),
-                    reward=0.0,
+                    reward=round(reward_value, 6) if reward_value else 0.0,
                     timestamp=timestamp_dt,
                     benchmarks=benchmark_entries,
                 )
