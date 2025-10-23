@@ -178,6 +178,18 @@ def _normalize_round_status(status_value) -> str:
 async def submit_round_via_validator_endpoints(client, payload):
     round_data = deepcopy(payload["round"])
     validator_round_id = round_data["validator_round_id"]
+    # Ensure chain-derived backend accepts the requested round number
+    try:
+        from app.config import settings as _settings
+        import app.api.validator.validator_round as vmod
+        blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
+        dz = int(_settings.DZ_STARTING_BLOCK)
+        def _inside_round(n: int) -> int:
+            return dz + (n - 1) * blocks_per_round + 1
+        _prev = getattr(vmod, "get_current_block", None)
+        vmod.get_current_block = lambda: _inside_round(int(round_data.get("round") or round_data.get("round_number") or 1))  # type: ignore[assignment]
+    except Exception:
+        _prev = None
 
     start_response = await client.post(
         "/api/v1/validator-rounds/start",
@@ -257,6 +269,12 @@ async def submit_round_via_validator_endpoints(client, payload):
             ],
         },
     )
+    # Restore chain getter
+    try:
+        if _prev is not None:
+            vmod.get_current_block = _prev  # type: ignore[assignment]
+    except Exception:
+        pass
     if finish_response.status_code >= 400:
         return finish_response
 
@@ -336,13 +354,20 @@ async def test_round_submission_rejects_duplicate_round_numbers(client):
 
 
 @pytest.mark.asyncio
-async def test_start_round_prevents_duplicate_round_numbers(client):
+async def test_start_round_prevents_duplicate_round_numbers(client, monkeypatch):
     payload = _make_submission_payload("303")
     round_data = {**payload["round"]}
     start_payload = {
         "validator_round_id": round_data["validator_round_id"],
         "round": round_data,
     }
+    # Patch chain for this round
+    from app.config import settings as _settings
+    blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
+    dz = int(_settings.DZ_STARTING_BLOCK)
+    def inside_round(n: int) -> int:
+        return dz + (n - 1) * blocks_per_round + 1
+    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: inside_round(int(round_data["round"])))
 
     first_start = await client.post("/api/v1/validator-rounds/start", json=start_payload)
     assert first_start.status_code == 200
@@ -362,7 +387,7 @@ async def test_start_round_prevents_duplicate_round_numbers(client):
 
 
 @pytest.mark.asyncio
-async def test_progressive_validator_flow(client, db_session):
+async def test_progressive_validator_flow(client, db_session, monkeypatch):
     payload = _make_submission_payload("202")
     round_data = payload["round"]
     validator_round_id = round_data["validator_round_id"]
@@ -370,6 +395,14 @@ async def test_progressive_validator_flow(client, db_session):
     task = payload["tasks"][0]
     task_solution = payload["task_solutions"][0]
     evaluation = payload["evaluation_results"][0]
+
+    # Patch chain to be inside this requested round
+    from app.config import settings as _settings
+    blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
+    dz = int(_settings.DZ_STARTING_BLOCK)
+    def inside_round(n: int) -> int:
+        return dz + (n - 1) * blocks_per_round + 1
+    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: inside_round(int(round_data["round"])))
 
     start_response = await client.post(
         "/api/v1/validator-rounds/start",
@@ -444,10 +477,18 @@ async def test_progressive_validator_flow(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_rounds_endpoint_returns_data(client):
+async def test_rounds_endpoint_returns_data(client, monkeypatch):
     payload = _make_submission_payload("303")
     submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
+
+    # Ensure chain thinks the round has started when listing
+    from app.config import settings as _settings
+    blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
+    dz = int(_settings.DZ_STARTING_BLOCK)
+    def inside_round(n: int) -> int:
+        return dz + (n - 1) * blocks_per_round + 1
+    monkeypatch.setattr("app.api.ui.rounds.get_current_block", lambda: inside_round(int(payload["round"]["round"])))
 
     response = await client.get("/api/v1/rounds/?limit=10&skip=0")
     assert response.status_code == 200

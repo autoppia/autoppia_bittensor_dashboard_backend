@@ -299,8 +299,18 @@ async def test_duplicate_agent_run_id_in_different_round_conflicts(client, monke
     monkeypatch.setattr(_settings, "AUTH_DISABLED", False)
     app.dependency_overrides[get_validator_auth_service] = lambda: _StubAuthService()
 
-    # Start two rounds
+    # Helpers to set chain block inside a given round window
+    blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
+    dz = int(_settings.DZ_STARTING_BLOCK)
+    def _inside_round(n: int) -> int:
+        return dz + (n - 1) * blocks_per_round + 1
+
+    # Start round 1 with chain inside round 1
+    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _inside_round(1))
     await _start_minimal_round(client, round_id="round_A", round_number=1)
+
+    # Start round 2 with chain inside round 2
+    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _inside_round(2))
     await _start_minimal_round(client, round_id="round_B", round_number=2)
 
     payload_A = {
@@ -316,6 +326,8 @@ async def test_duplicate_agent_run_id_in_different_round_conflicts(client, monke
         "miner_identity": {"uid": 1, "hotkey": "m1"},
         "miner_snapshot": {"validator_round_id": "round_A", "miner_uid": 1, "miner_hotkey": "m1", "agent_name": "M"},
     }
+    # Chain must match round 1 window for starting agent run on round_A
+    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _inside_round(1))
     rA = await client.post("/api/v1/validator-rounds/round_A/agent-runs/start", json=payload_A, headers=_headers())
     assert rA.status_code == 200
 
@@ -332,6 +344,8 @@ async def test_duplicate_agent_run_id_in_different_round_conflicts(client, monke
         "miner_identity": {"uid": 2, "hotkey": "m2"},
         "miner_snapshot": {"validator_round_id": "round_B", "miner_uid": 2, "miner_hotkey": "m2", "agent_name": "M"},
     }
+    # Chain must match round 2 window for starting agent run on round_B
+    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _inside_round(2))
     rB = await client.post("/api/v1/validator-rounds/round_B/agent-runs/start", json=payload_B, headers=_headers())
     assert rB.status_code == 409
 

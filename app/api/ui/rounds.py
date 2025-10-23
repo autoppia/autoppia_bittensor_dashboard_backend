@@ -22,6 +22,7 @@ from app.models.ui.rounds import (
     RoundsListResponse,
 )
 from app.services.ui.rounds_service import RoundsService
+from app.services.chain_state import get_current_block
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,10 @@ async def list_rounds(
             sort_by=sortBy,
             sort_order=sortOrder,
         )
+        # Filter to started rounds only (based on chain state)
+        current_block = get_current_block()
+        if current_block is not None:
+            entries = [e for e in entries if int(e.get("startBlock", 0) or 0) < current_block]
         sliced = entries[offset:]
         return sliced
 
@@ -64,6 +69,11 @@ async def list_rounds(
         sort_by=sortBy,
         sort_order=sortOrder,
     )
+    # Filter to started rounds only (based on chain state)
+    current_block = get_current_block()
+    if current_block is not None:
+        entries = [e for e in entries if int(e.get("startBlock", 0) or 0) < current_block]
+        total = len(entries)
     current = await service.get_current_round_overview()
     payload = {
         "rounds": entries,

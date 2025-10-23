@@ -5,17 +5,21 @@ IWAP - Simplified Python CLI for Autoppia.
 Commands:
   iwap flush
   iwap seed round
+
+This CLI sets DATABASE_URL in the process environment before importing any
+app modules, ensuring the FastAPI app and seed utilities target the same DB
+specified in the project's .env file.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+import sys
 from typing import List, Optional
 
-from scripts.db_utils import get_database_url
-from scripts.flush_db import flush_database
-from scripts.seed_round import seed_multiple_rounds
+from dotenv import dotenv_values
 from sqlalchemy.engine import make_url
 
 
@@ -27,6 +31,40 @@ def _mask_dsn(dsn: str) -> str:
         return str(url)
     except Exception:
         return dsn
+
+
+def _resolve_cli_dsn() -> str:
+    """Resolve DB URL from project .env (preferred) or OS env.
+
+    This intentionally avoids importing app.config.settings so we can set
+    os.environ["DATABASE_URL"] first, then import seed modules.
+    """
+    values = {}
+    try:
+        values = dotenv_values(".env") or {}
+    except Exception:
+        values = {}
+    # Prefer explicit DATABASE_URL only if it's Postgres
+    db_url = (values.get("DATABASE_URL") or os.environ.get("DATABASE_URL") or "").strip()
+    if db_url:
+        if db_url.lower().startswith("postgres"):
+            return db_url
+        # Ignore non-Postgres DATABASE_URL in favor of POSTGRES_* variables
+    # Build from POSTGRES_* (fall back to OS env for any missing)
+    def _v(key: str, default: str = "") -> str:
+        return (values.get(key) or os.environ.get(key) or default).strip().strip('"')
+
+    user = _v("POSTGRES_USER", "")
+    password = _v("POSTGRES_PASSWORD", "")
+    host = _v("POSTGRES_HOST", "127.0.0.1")
+    port = _v("POSTGRES_PORT", "5432")
+    db = _v("POSTGRES_DB", "")
+    if user and db:
+        auth = f"{user}:{password}@" if password else f"{user}@"
+        return f"postgresql+asyncpg://{auth}{host}:{port}/{db}"
+    # As a last resort, fail fast rather than defaulting to SQLite
+    print("❌ Unable to resolve Postgres DATABASE_URL from .env. Set POSTGRES_* or DATABASE_URL=postgresql+asyncpg://...")
+    raise SystemExit(2)
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -52,32 +90,34 @@ Examples:
     args = parser.parse_args()
 
     if args.command == "flush":
-        dsn = get_database_url()
+        # Use standalone flush script to avoid Python DB driver quirks
+        dsn = _resolve_cli_dsn()
+        os.environ["DATABASE_URL"] = dsn
         print("=" * 60)
-        print("DATABASE FLUSH")
+        print("DATABASE FLUSH (psql)")
         print("=" * 60)
         print(f"🔄 Using database: {_mask_dsn(dsn)}")
-        if dsn.startswith("sqlite"):
-            print("⚠️  Detected SQLite DSN. If you expected Postgres, ensure .env has DATABASE_URL or POSTGRES_* set.")
-
-        resp = input("⚠️  This will DROP ALL TABLES. Continue? [y/N]: ").strip().lower()
+        resp = input("⚠️  This will TRUNCATE ALL USER TABLES and RESET IDENTITIES. Continue? [y/N]: ").strip().lower()
         if resp not in {"y", "yes"}:
             print("Aborted.")
             return 1
-
-        asyncio.run(flush_database(database_url=dsn, assume_yes=True))
-        print("✅ Database flushed successfully!")
-        return 0
+        # Delegate to the dedicated psql-based script
+        import subprocess
+        code = subprocess.call([sys.executable, "scripts/flush.py"])  # returns exit code
+        return int(code)
 
     if args.command == "seed":
         if args.seed_command == "round":
-            dsn = get_database_url()
+            # Ensure the FastAPI app uses the exact same DB as the CLI
+            dsn = _resolve_cli_dsn()
+            os.environ["DATABASE_URL"] = dsn
             print("=" * 60)
             print("SEED ROUND (Multiple Validators)")
             print("=" * 60)
             print(f"📡 Using database: {_mask_dsn(dsn)}")
-            if dsn.startswith("sqlite"):
-                print("⚠️  Detected SQLite DSN. If you expected Postgres, ensure .env has DATABASE_URL or POSTGRES_* set.")
+
+            # Import seeding utilities only after DATABASE_URL is set
+            from scripts.seed_round import seed_multiple_rounds
 
             rounds_str = input(
                 "Enter round number(s) (comma-separated, e.g., 1,2,3): "

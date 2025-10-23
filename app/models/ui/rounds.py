@@ -124,6 +124,10 @@ class RoundProgress(BaseModel):
     currentBlock: int
     startBlock: int
     endBlock: int
+    # Chain-derived epoch fields (optional in legacy responses)
+    startEpoch: float | None = None
+    endEpoch: float | None = None
+    currentEpoch: float | None = None
     blocksRemaining: int
     progress: float
     estimatedTimeRemaining: TimeRemaining

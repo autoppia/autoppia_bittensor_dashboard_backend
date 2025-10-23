@@ -958,7 +958,8 @@ async def seed_validator_round(
     if round_number is None:
         round_number = await _determine_next_round_number()
 
-    await _guard_duplicate_round(validator_uid, round_number)
+    # Rely on the API endpoint's own uniqueness enforcement. Doing a pre-check here
+    # can race with other sessions or stale snapshots and cause false conflicts.
 
     payload = build_seed_payload(
         validator_round_id=validator_round_id,
@@ -1096,7 +1097,7 @@ async def seed_validator_round_bulk(
     if round_number is None:
         round_number = await _determine_next_round_number()
 
-    await _guard_duplicate_round(validator_uid, round_number)
+    # Rely on API-level checks for uniqueness and sequencing.
     payload = build_seed_payload(
         validator_round_id=validator_round_id,
         validator_uid=validator_uid,

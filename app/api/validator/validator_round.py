@@ -25,6 +25,15 @@ from app.models.core import (
     ValidatorRoundValidator,
 )
 from app.services.validator.validator_auth import require_validator_auth, VALIDATOR_HOTKEY_HEADER
+from app.data import get_validator_metadata
+from urllib.parse import urlparse
+from app.services.chain_state import get_current_block
+from app.services.round_calc import (
+    compute_round_number,
+    compute_boundaries_for_round,
+    is_inside_window,
+)
+from app.config import settings
 from app.services.validator.validator_storage import (
     RoundConflictError,
     DuplicateIdentifierError,
@@ -114,6 +123,11 @@ def _legacy_to_start_request(payload: LegacyStartRoundRequest) -> StartRoundRequ
         image_url=primary_validator.get("image") or primary_validator.get("image_url"),
         version=primary_validator.get("version"),
     )
+    # Override validator snapshot fields from canonical directory
+    metadata = get_validator_metadata(uid)
+    validator_snapshot.name = metadata.get("name") or validator_snapshot.name
+    validator_snapshot.image_url = metadata.get("image") or validator_snapshot.image_url
+
     return StartRoundRequest(
         validator_identity=validator_identity,
         validator_round=validator_round,
@@ -186,6 +200,13 @@ async def _legacy_to_start_agent_run_request(
         is_sota=bool(miner_info.get("is_sota")),
         metadata=miner_info.get("metadata") or {},
     )
+
+    # Enforce miner image host allowlist (production IWA only) at ingest time
+    from app.utils.images import sanitize_miner_image
+    def _sanitize_miner_image(url: str | None) -> str:
+        return sanitize_miner_image(url)
+
+    miner_snapshot.image_url = _sanitize_miner_image(miner_snapshot.image_url)
 
     return StartAgentRunRequest(
         agent_run=agent_run,
@@ -342,6 +363,69 @@ async def start_round(
             detail="Validator header hotkey does not match payload hotkey",
         )
 
+    # Enforce chain-derived round constraints
+    current_block = get_current_block()
+    if current_block is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
+
+    backend_round_number = compute_round_number(current_block)
+    if validator_round.round_number != backend_round_number:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "round_number mismatch",
+                "expectedRoundNumber": backend_round_number,
+                "got": validator_round.round_number,
+            },
+        )
+
+    bounds = compute_boundaries_for_round(backend_round_number)
+    if not is_inside_window(current_block, bounds):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "round window not active",
+                "currentBlock": current_block,
+                "startBlock": bounds.start_block,
+                "endBlock": bounds.end_block,
+            },
+        )
+
+    # Canonicalize validator snapshot fields using directory
+    try:
+        directory = get_validator_metadata(int(validator_identity.uid))  # type: ignore[arg-type]
+    except Exception:
+        directory = {}
+    if directory:
+        snapshot_name = directory.get("name")
+        snapshot_image = directory.get("image")
+        if snapshot_name:
+            validator_snapshot.name = snapshot_name
+        if snapshot_image:
+            validator_snapshot.image_url = snapshot_image
+
+    # Override payload boundaries to chain-derived values
+    validator_round.round_number = backend_round_number
+    validator_round.start_block = bounds.start_block
+    validator_round.end_block = bounds.end_block
+    validator_round.start_epoch = int(bounds.start_epoch)
+    validator_round.end_epoch = int(bounds.end_epoch)
+    validator_round.max_epochs = int(settings.ROUND_SIZE_EPOCHS)
+    validator_round.max_blocks = settings.BLOCKS_PER_EPOCH
+
+    # Canonicalize validator snapshot fields (name, image) using our directory
+    try:
+        directory = get_validator_metadata(int(validator_identity.uid))  # type: ignore[arg-type]
+    except Exception:
+        directory = {}
+    if directory:
+        snapshot_name = directory.get("name")
+        snapshot_image = directory.get("image")
+        if snapshot_name:
+            validator_snapshot.name = snapshot_name
+        if snapshot_image:
+            validator_snapshot.image_url = snapshot_image
+
     service = ValidatorRoundPersistenceService(session)
 
     try:
@@ -479,6 +563,37 @@ async def start_agent_run(
                 )
 
             miner_snapshot = request_payload.miner_snapshot
+            # Sanitize miner image on non-legacy path as well
+            from app.utils.images import sanitize_miner_image
+            miner_snapshot.image_url = sanitize_miner_image(miner_snapshot.image_url)
+
+            # Enforce chain-derived round is current and inside window
+            current_block = get_current_block()
+            if current_block is None:
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
+            backend_round_number = compute_round_number(current_block)
+            round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+            stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
+            if stored_round_number != backend_round_number:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": "round_number mismatch",
+                        "expectedRoundNumber": backend_round_number,
+                        "got": stored_round_number,
+                    },
+                )
+            bounds = compute_boundaries_for_round(backend_round_number)
+            if not is_inside_window(current_block, bounds):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "round window not active",
+                        "currentBlock": current_block,
+                        "startBlock": bounds.start_block,
+                        "endBlock": bounds.end_block,
+                    },
+                )
             _require_round_match(
                 miner_snapshot.validator_round_id,
                 validator_round_id,
@@ -689,6 +804,33 @@ async def add_evaluation(
                         detail=f"{label}.validator_hotkey must match the round's validator_hotkey",
                     )
 
+            # Enforce chain-derived round window for this submission
+            current_block = get_current_block()
+            if current_block is None:
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
+            backend_round_number = compute_round_number(current_block)
+            stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
+            if stored_round_number != backend_round_number:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": "round_number mismatch",
+                        "expectedRoundNumber": backend_round_number,
+                        "got": stored_round_number,
+                    },
+                )
+            bounds = compute_boundaries_for_round(backend_round_number)
+            if not is_inside_window(current_block, bounds):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "round window not active",
+                        "currentBlock": current_block,
+                        "startBlock": bounds.start_block,
+                        "endBlock": bounds.end_block,
+                    },
+                )
+
             await service.add_evaluation(
                 validator_round_id=validator_round_id,
                 agent_run_id=agent_run_id,
@@ -725,7 +867,39 @@ async def finish_round(
 
     service = ValidatorRoundPersistenceService(session)
 
+    # Enforce chain-derived finalization window
+    current_block = get_current_block()
+    if current_block is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
+
+    # Begin a transaction BEFORE any DB I/O to avoid implicit autobegin
     async with session.begin():
+        round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+        stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
+
+        # Validate phase using stored round boundaries
+        bounds = compute_boundaries_for_round(stored_round_number)
+        if current_block <= bounds.start_block:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "round not started",
+                    "currentBlock": current_block,
+                    "startBlock": bounds.start_block,
+                    "endBlock": bounds.end_block,
+                },
+            )
+        if current_block > bounds.end_block:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "round already finished",
+                    "currentBlock": current_block,
+                    "startBlock": bounds.start_block,
+                    "endBlock": bounds.end_block,
+                },
+            )
+
         await service.finish_round(
             validator_round_id=validator_round_id,
             status=payload.status,

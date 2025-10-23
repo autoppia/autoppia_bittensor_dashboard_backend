@@ -30,7 +30,15 @@ MINIMAL_GIF = (
 
 
 @pytest.mark.asyncio
-async def test_uploads_gif_and_returns_s3_url(client, db_session):
+async def test_uploads_gif_and_returns_s3_url(client, db_session, monkeypatch):
+    from app.config import settings as _settings
+    blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
+    dz = int(_settings.DZ_STARTING_BLOCK)
+    def inside_round(n: int) -> int:
+        return dz + (n - 1) * blocks_per_round + 1
+    # Patch chain to be inside the requested round number
+    round_number = int("205")
+    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: inside_round(round_number))
     payload = _make_submission_payload("205")
     submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200
@@ -75,7 +83,14 @@ async def test_uploads_gif_and_returns_s3_url(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_upload_rejects_non_gif_images(client):
+async def test_upload_rejects_non_gif_images(client, monkeypatch):
+    from app.config import settings as _settings
+    blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
+    dz = int(_settings.DZ_STARTING_BLOCK)
+    def inside_round(n: int) -> int:
+        return dz + (n - 1) * blocks_per_round + 1
+    round_number = int("206")
+    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: inside_round(round_number))
     payload = _make_submission_payload("206")
     submit_response = await submit_round_via_validator_endpoints(client, payload)
     assert submit_response.status_code == 200

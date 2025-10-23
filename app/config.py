@@ -22,7 +22,22 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "autoppia_db"
 
     # Asset handling
-    ASSET_BASE_URL: str = "https://dev-infinitewebarena.autoppia.com"
+    # Default to production host for public assets unless overridden by env
+    ASSET_BASE_URL: str = "https://infinitewebarena.autoppia.com"
+
+    # Round calculation (chain-derived)
+    # Epochs per round (prod 20), blocks per epoch (Bittensor ~360), and the
+    # deterministic starting block gate for the DZ launch.
+    ROUND_SIZE_EPOCHS: float = 20.0
+    BLOCKS_PER_EPOCH: int = 360
+    DZ_STARTING_BLOCK: int = 6_716_460
+
+    # Miner image host allowlist and blocked asset
+    MINER_IMAGE_ALLOWED_HOSTS: list[str] = [
+        "infinitewebarena.autoppia.com",
+        "dev-infinitewebarena.autoppia.com",
+    ]
+    BLOCKED_IMAGE_PATH: str = "/blocked.png"
 
     # AWS / S3 configuration
     AWS_ACCESS_KEY_ID: Optional[str] = None

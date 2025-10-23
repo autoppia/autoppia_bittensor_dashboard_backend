@@ -22,7 +22,7 @@ ICON48_GIF_BYTES = base64.b64decode("".join(ICON48_GIF_BASE64.split()))
 
 
 @pytest.mark.asyncio
-async def test_validator_round_flow_with_gif_upload(client, db_session):
+async def test_validator_round_flow_with_gif_upload(client, db_session, monkeypatch):
     original_prefix = settings.AWS_S3_GIF_PREFIX
     prefixed_value = "tests" if not original_prefix else f"tests/{original_prefix.strip('/')}"
     settings.AWS_S3_GIF_PREFIX = prefixed_value
@@ -100,6 +100,14 @@ async def test_validator_round_flow_with_gif_upload(client, db_session):
             "validator_round_id": base_payload["round"]["validator_round_id"],
             "round": base_payload["round"],
         }
+        # Ensure chain inside the requested round window (777)
+        from app.config import settings as _settings
+        blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
+        dz = int(_settings.DZ_STARTING_BLOCK)
+        def inside_round(n: int) -> int:
+            return dz + (n - 1) * blocks_per_round + 1
+        monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: inside_round(777))
+
         start_response = await client.post("/api/v1/validator-rounds/start", json=start_payload)
         assert start_response.status_code == 200
 

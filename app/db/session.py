@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+import logging
 
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -8,16 +9,52 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.config import settings
 from app.db.base import Base
 
+logger = logging.getLogger(__name__)
+
+
+def _redact_dsn(dsn: str) -> str:
+    """Render a DSN string with password redacted for safe logging."""
+    try:
+        u = make_url(dsn)
+        # Force a visible placeholder so we don't rely on driver hiding behavior
+        return str(u.set(password="***"))
+    except Exception:
+        # Best‑effort fallback
+        return dsn.replace("@", "@***:") if "://" in dsn else dsn
+
+
 # Ensure we are using the async variant of the configured driver (e.g. postgresql+asyncpg)
 database_url = settings.DATABASE_URL
-url = make_url(database_url)
-driver = url.drivername
+try:
+    url = make_url(database_url)
+    driver = url.drivername
+except Exception:
+    url = make_url("sqlite:///./autoppia.db")
+    driver = url.drivername
+
+# Log the configured URL (redacted)
+try:
+    logger.info("DB init: configured DATABASE_URL=%s", _redact_dsn(settings.DATABASE_URL))
+except Exception:
+    pass
+
 if driver in {"postgres", "postgresql"} or (
     driver.startswith("postgresql") and "+asyncpg" not in driver
 ):
     database_url = str(url.set(drivername="postgresql+asyncpg"))
 elif driver == "sqlite":
     database_url = str(url.set(drivername="sqlite+aiosqlite"))
+
+# Log the resolved driver/DSN that will actually be used
+try:
+    resolved = make_url(database_url)
+    logger.info(
+        "DB init: resolved driver=%s dsn=%s",
+        resolved.drivername,
+        _redact_dsn(database_url),
+    )
+except Exception:
+    pass
 
 # Create async engine and session factory
 engine = create_async_engine(database_url, echo=False, future=True)

@@ -173,10 +173,41 @@ def resolve_agent_image(info: Optional[MinerInfo], existing: Optional[str] = Non
         return _ensure_absolute_url(f"/sota/{slug}.webp", fallback=existing_url)
 
     if info.agent_image:
-        return _ensure_absolute_url(info.agent_image, fallback=existing_url)
+        # Enforce miner image host restriction
+        url = sanitize_miner_image(info.agent_image)
+        return _ensure_absolute_url(url, fallback=existing_url)
 
     fallback_path = _fallback_miner_image(info, existing_url)
     return _ensure_absolute_url(fallback_path, fallback=existing_url)
+
+
+def sanitize_miner_image(candidate: Optional[str]) -> str:
+    """
+    Enforce miner image allowed hosts. If not allowed, return the blocked asset URL.
+
+    - Root-relative paths are accepted as-is (served by ASSET_BASE_URL).
+    - Absolute URLs must have a hostname in settings.MINER_IMAGE_ALLOWED_HOSTS.
+    - Otherwise returns ASSET_BASE_URL/BLOCKED_IMAGE_PATH.
+    """
+    blocked = _ensure_absolute_url(settings.BLOCKED_IMAGE_PATH or "/blocked.png")
+    if not candidate or not isinstance(candidate, str):
+        return ""
+    value = candidate.strip()
+    if not value:
+        return ""
+    if value.startswith("//"):
+        value = f"https:{value}"
+    if value.startswith("/"):
+        return value
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        return blocked
+    host = (parsed.hostname or "").lower()
+    allowed = {h.lower() for h in (settings.MINER_IMAGE_ALLOWED_HOSTS or [])}
+    if host and host in allowed:
+        return value
+    return blocked
 
 
 def _fallback_miner_image(info: Optional[MinerInfo], existing: Optional[str]) -> str:

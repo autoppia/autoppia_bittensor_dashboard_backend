@@ -1829,7 +1829,39 @@ class RoundsService:
         self,
         round_identifier: Union[str, int],
     ) -> Dict[str, Any]:
+        # Prefer chain-derived progress
         aggregated = await self._fetch_aggregated_round(round_identifier, include_details=False)
+        try:
+            from app.services.chain_state import get_current_block
+            from app.services.round_calc import (
+                compute_boundaries_for_round,
+                progress_for_block,
+                block_to_epoch,
+            )
+            current_block = get_current_block()
+        except Exception:
+            current_block = None
+
+        if current_block is not None:
+            bounds = compute_boundaries_for_round(aggregated.round_number)
+            progress_value = progress_for_block(current_block, bounds)
+            blocks_remaining = max(bounds.end_block - current_block, 0)
+            seconds_remaining = blocks_remaining * 12
+            return {
+                "roundId": aggregated.round_number,
+                "currentBlock": current_block,
+                "startBlock": bounds.start_block,
+                "endBlock": bounds.end_block,
+                "blocksRemaining": blocks_remaining,
+                "progress": progress_value,
+                "startEpoch": bounds.start_epoch,
+                "endEpoch": bounds.end_epoch,
+                "currentEpoch": block_to_epoch(current_block),
+                "estimatedTimeRemaining": _time_remaining(seconds_remaining),
+                "lastUpdated": datetime.now(timezone.utc).isoformat(),
+            }
+
+        # Fallback to task-based estimate when chain is unavailable
         records = [entry.record for entry in aggregated.validator_rounds]
         total_tasks = sum(record.model.n_tasks or 0 for record in records)
         completed_tasks = sum(self._estimate_completed_tasks(record.model) for record in records)
