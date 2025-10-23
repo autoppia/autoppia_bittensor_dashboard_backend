@@ -291,7 +291,7 @@ class RoundInfo(BaseModel):
     name: str = Field(..., description="Round name")
     status: str = Field(..., description="Round status")
     startTime: datetime = Field(..., description="Round start time")
-    endTime: datetime = Field(..., description="Round end time")
+    endTime: Optional[datetime] = Field(None, description="Round end time")
 
 class ValidatorInfo(BaseModel):
     """Model for validator information"""

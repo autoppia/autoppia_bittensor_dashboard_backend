@@ -121,7 +121,7 @@ class RoundInfo(BaseModel):
     name: str
     status: str
     startTime: str
-    endTime: str
+    endTime: Optional[str] = None
 
 
 class ValidatorInfo(BaseModel):
