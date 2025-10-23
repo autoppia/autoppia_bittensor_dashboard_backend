@@ -976,7 +976,11 @@ async def seed_validator_round(
             "validator_snapshot": payload.validator_snapshot.model_dump(mode="json", exclude_none=True),
         }
         _ensure_response(
-            await http_client.post("/api/v1/validator-rounds/start", json=start_body),
+            await http_client.post(
+                "/api/v1/validator-rounds/start",
+                json=start_body,
+                params={"force": True} if settings.TESTING else None,
+            ),
             "start_round",
         )
 
@@ -990,6 +994,7 @@ async def seed_validator_round(
             await http_client.post(
                 f"/api/v1/validator-rounds/{validator_round_id}/tasks",
                 json=tasks_body,
+                params={"force": True} if settings.TESTING else None,
             ),
             "set_tasks",
         )
@@ -1006,6 +1011,7 @@ async def seed_validator_round(
                 await http_client.post(
                     f"/api/v1/validator-rounds/{validator_round_id}/agent-runs/start",
                     json=start_run_body,
+                    params={"force": True} if settings.TESTING else None,
                 ),
                 "start_agent_run",
             )
@@ -1026,6 +1032,7 @@ async def seed_validator_round(
                     await http_client.post(
                         f"/api/v1/validator-rounds/{validator_round_id}/agent-runs/{bundle.agent_run.agent_run_id}/evaluations",
                         json=body,
+                        params={"force": True} if settings.TESTING else None,
                     ),
                     "add_evaluation",
                 )
@@ -1043,6 +1050,7 @@ async def seed_validator_round(
             await http_client.post(
                 f"/api/v1/validator-rounds/{validator_round_id}/finish",
                 json=finish_body,
+                params={"force": True} if settings.TESTING else None,
             ),
             "finish_round",
         )

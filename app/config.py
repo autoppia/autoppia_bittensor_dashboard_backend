@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     ROUND_SIZE_EPOCHS: float = 20.0
     BLOCKS_PER_EPOCH: int = 360
     DZ_STARTING_BLOCK: int = 6_716_460
+    # Chain state
+    # Cache duration for last fetched chain block height (seconds)
+    CHAIN_BLOCK_CACHE_TTL_SECONDS: int = 15 * 60
+    # Average time per block on Bittensor (seconds)
+    CHAIN_BLOCK_TIME_SECONDS: int = 12
 
     # Miner image host allowlist and blocked asset
     MINER_IMAGE_ALLOWED_HOSTS: list[str] = [
@@ -56,6 +61,11 @@ class Settings(BaseSettings):
     VALIDATOR_NETUID: int = 36
     SUBTENSOR_NETWORK: Optional[str] = None
     SUBTENSOR_ENDPOINT: Optional[str] = None
+    # Back-compat / alias envs (preferred names many users expect)
+    BITTENSOR_NETWORK: Optional[str] = None
+    BITTENSOR_ENDPOINT: Optional[str] = None
+    # Common typo alias to reduce friction
+    ITTENSOR_NETWORK: Optional[str] = None
     VALIDATOR_AUTH_CACHE_TTL: int = 180
     API_CACHE_DISABLED: bool = False
     AUTH_DISABLED: bool = False
@@ -132,6 +142,46 @@ class Settings(BaseSettings):
         self.SQLALCHEMY_LOG_LEVEL = _norm(self.SQLALCHEMY_LOG_LEVEL, "ERROR")
         self.BITTENSOR_LOG_LEVEL = _norm(self.BITTENSOR_LOG_LEVEL, "WARNING")
         self.UVICORN_LOG_LEVEL = _norm(self.UVICORN_LOG_LEVEL, "WARNING")
+
+        # Normalize chain cache settings (ensure sensible positive integers)
+        try:
+            ttl = int(self.CHAIN_BLOCK_CACHE_TTL_SECONDS)
+        except (TypeError, ValueError):
+            ttl = 900
+        self.CHAIN_BLOCK_CACHE_TTL_SECONDS = max(0, ttl)
+
+        try:
+            blk = int(self.CHAIN_BLOCK_TIME_SECONDS)
+        except (TypeError, ValueError):
+            blk = 12
+        self.CHAIN_BLOCK_TIME_SECONDS = max(1, blk)
+
+        # Map alias env vars (BITTENSOR_*) to internal SUBTENSOR_* if not set
+        # If BITTENSOR_NETWORK looks like an endpoint (ws:// or wss://), treat it as endpoint
+        alias_network = (
+            (self.BITTENSOR_NETWORK or self.ITTENSOR_NETWORK or "").strip()
+            if (self.BITTENSOR_NETWORK or self.ITTENSOR_NETWORK)
+            else None
+        )
+        alias_endpoint = (
+            (self.BITTENSOR_ENDPOINT or "").strip() if self.BITTENSOR_ENDPOINT else None
+        )
+
+        def _looks_like_endpoint(value: Optional[str]) -> bool:
+            if not value:
+                return False
+            v = value.lower().strip()
+            return v.startswith("ws://") or v.startswith("wss://") or "://" in v
+
+        if not self.SUBTENSOR_ENDPOINT and alias_endpoint:
+            self.SUBTENSOR_ENDPOINT = alias_endpoint
+        if not self.SUBTENSOR_NETWORK and alias_network:
+            if _looks_like_endpoint(alias_network):
+                # Route endpoint-like value to endpoint setting
+                if not self.SUBTENSOR_ENDPOINT:
+                    self.SUBTENSOR_ENDPOINT = alias_network
+            else:
+                self.SUBTENSOR_NETWORK = alias_network
 
         # Ensure required CORS origins if no regex is provided
         if not self.CORS_ALLOW_ORIGIN_REGEX:

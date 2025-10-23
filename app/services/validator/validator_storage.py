@@ -185,6 +185,19 @@ class ValidatorRoundPersistenceService:
         await self.session.flush()
         return row
 
+    async def get_round_by_validator_and_number(
+        self,
+        *,
+        validator_uid: int,
+        round_number: int,
+    ) -> Optional[ValidatorRoundORM]:
+        """Fetch an existing round row by (validator_uid, round_number) without modifying DB state."""
+        stmt = select(ValidatorRoundORM).where(
+            ValidatorRoundORM.validator_uid == validator_uid,
+            ValidatorRoundORM.round_number == round_number,
+        )
+        return await self.session.scalar(stmt)
+
     async def add_evaluation(
         self,
         *,
@@ -266,6 +279,128 @@ class ValidatorRoundPersistenceService:
                 f"evaluation_result_id {evaluation_result.result_id} is already registered"
             )
         self.session.add(EvaluationResultORM(**result_kwargs))
+        # Reaching here means fresh insert path; idempotency is handled at endpoint by
+        # detecting duplicates before writes. This method intentionally raises
+        # DuplicateIdentifierError when any of the IDs already exist.
+
+    async def upsert_evaluation_bundle(
+        self,
+        *,
+        validator_round_id: str,
+        agent_run_id: str,
+        task: Task,
+        task_solution: TaskSolution,
+        evaluation: Evaluation,
+        evaluation_result: EvaluationResult,
+    ) -> None:
+        """
+        Insert any missing records for the (solution, evaluation, result) bundle and
+        validate consistency for any existing ones. This is an idempotent helper that
+        only writes what is missing and raises when existing rows conflict
+        (e.g., belong to a different round/run).
+        """
+        # Ensure round and agent_run belong together
+        round_row = await self._ensure_round_exists(validator_round_id)
+        agent_run_row = await self._get_agent_run_row(agent_run_id)
+        if not agent_run_row:
+            raise ValueError(f"Agent run {agent_run_id} has not been registered yet")
+        if agent_run_row.validator_round_id != validator_round_id:
+            raise ValueError(
+                f"Agent run {agent_run_id} is not associated with validator_round {validator_round_id}"
+            )
+
+        # Ensure task exists and belongs to round
+        if task.validator_round_id != validator_round_id:
+            raise ValueError(
+                f"Task {task.task_id} does not belong to validator_round {validator_round_id}"
+            )
+        existing_task = await self._get_task_row(task.task_id)
+        if existing_task is None:
+            raise ValueError(
+                f"Task {task.task_id} has not been registered for validator_round {validator_round_id}"
+            )
+        if existing_task.validator_round_id != validator_round_id:
+            raise ValueError(
+                f"Task {task.task_id} is registered under validator_round {existing_task.validator_round_id}, not {validator_round_id}"
+            )
+
+        miner_id = await self._resolve_miner_identity_id(
+            task_solution.miner_uid, task_solution.miner_hotkey, task_solution.miner_agent_key
+        )
+
+        # Task solution upsert/validate
+        existing_solution = await self.get_task_solution_row(task_solution.solution_id)
+        if existing_solution is not None:
+            if (
+                existing_solution.validator_round_id != validator_round_id
+                or existing_solution.agent_run_id != agent_run_id
+                or existing_solution.task_id != task.task_id
+            ):
+                raise DuplicateIdentifierError(
+                    f"task_solution_id {task_solution.solution_id} already belongs to a different context"
+                )
+            solution_row = existing_solution
+        else:
+            solution_kwargs = self._task_solution_kwargs(task_solution, miner_id=miner_id)
+            solution_row = TaskSolutionORM(**solution_kwargs)
+            self.session.add(solution_row)
+
+        # Evaluation upsert/validate
+        existing_eval = await self.get_evaluation_row(evaluation.evaluation_id)
+        if existing_eval is not None:
+            if (
+                existing_eval.validator_round_id != validator_round_id
+                or existing_eval.agent_run_id != agent_run_id
+                or existing_eval.task_id != task.task_id
+                or existing_eval.task_solution_id != task_solution.solution_id
+            ):
+                raise DuplicateIdentifierError(
+                    f"evaluation_id {evaluation.evaluation_id} already belongs to a different context"
+                )
+            evaluation_row = existing_eval
+        else:
+            evaluation_kwargs = self._evaluation_kwargs(evaluation, miner_id=miner_id)
+            evaluation_row = EvaluationORM(**evaluation_kwargs)
+            self.session.add(evaluation_row)
+
+        # Evaluation result upsert/validate
+        existing_result = await self.get_evaluation_result_row(evaluation_result.result_id)
+        if existing_result is not None:
+            if (
+                existing_result.validator_round_id != validator_round_id
+                or existing_result.agent_run_id != agent_run_id
+                or existing_result.task_id != task.task_id
+                or existing_result.task_solution_id != task_solution.solution_id
+                or existing_result.evaluation_id != evaluation_row.evaluation_id
+            ):
+                raise DuplicateIdentifierError(
+                    f"evaluation_result_id {evaluation_result.result_id} already belongs to a different context"
+                )
+        else:
+            # We may need flush to ensure evaluation_row has PK for FK relations
+            await self.session.flush()
+            result_kwargs = self._evaluation_result_kwargs(
+                evaluation_row,
+                evaluation_result,
+                miner_id=miner_id,
+            )
+            self.session.add(EvaluationResultORM(**result_kwargs))
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Read-only helpers for idempotency checks
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def get_task_solution_row(self, solution_id: str) -> Optional[TaskSolutionORM]:
+        stmt = select(TaskSolutionORM).where(TaskSolutionORM.solution_id == solution_id)
+        return await self.session.scalar(stmt)
+
+    async def get_evaluation_row(self, evaluation_id: str) -> Optional[EvaluationORM]:
+        stmt = select(EvaluationORM).where(EvaluationORM.evaluation_id == evaluation_id)
+        return await self.session.scalar(stmt)
+
+    async def get_evaluation_result_row(self, result_id: str) -> Optional[EvaluationResultORM]:
+        stmt = select(EvaluationResultORM).where(EvaluationResultORM.result_id == result_id)
+        return await self.session.scalar(stmt)
 
     async def finish_round(
         self,

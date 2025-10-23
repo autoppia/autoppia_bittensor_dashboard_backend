@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Any, Dict, Union
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -319,6 +319,7 @@ async def validator_auth_check() -> dict[str, Any]:
 async def start_round(
     payload: Union[StartRoundRequest, LegacyStartRoundRequest],
     request: Request,
+    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
     """Register a new validator round along with validator identity and snapshot."""
@@ -363,33 +364,42 @@ async def start_round(
             detail="Validator header hotkey does not match payload hotkey",
         )
 
-    # Enforce chain-derived round constraints
-    current_block = get_current_block()
-    if current_block is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
-
-    backend_round_number = compute_round_number(current_block)
-    if validator_round.round_number != backend_round_number:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "round_number mismatch",
-                "expectedRoundNumber": backend_round_number,
-                "got": validator_round.round_number,
-            },
+    # Enforce chain-derived round constraints unless testing override is enabled
+    testing_override = settings.TESTING and bool(force)
+    if testing_override:
+        logger.warning(
+            "TESTING override enabled: accepting start_round for validator_round_id=%s with round_number=%s without chain checks",
+            validator_round.validator_round_id,
+            validator_round.round_number,
         )
+        bounds = None  # do not override payload values when forced
+    else:
+        current_block = get_current_block()
+        if current_block is None:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
 
-    bounds = compute_boundaries_for_round(backend_round_number)
-    if not is_inside_window(current_block, bounds):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error": "round window not active",
-                "currentBlock": current_block,
-                "startBlock": bounds.start_block,
-                "endBlock": bounds.end_block,
-            },
-        )
+        backend_round_number = compute_round_number(current_block)
+        if validator_round.round_number != backend_round_number:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "round_number mismatch",
+                    "expectedRoundNumber": backend_round_number,
+                    "got": validator_round.round_number,
+                },
+            )
+
+        bounds = compute_boundaries_for_round(backend_round_number)
+        if not is_inside_window(current_block, bounds):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "round window not active",
+                    "currentBlock": current_block,
+                    "startBlock": bounds.start_block,
+                    "endBlock": bounds.end_block,
+                },
+            )
 
     # Canonicalize validator snapshot fields using directory
     try:
@@ -404,14 +414,15 @@ async def start_round(
         if snapshot_image:
             validator_snapshot.image_url = snapshot_image
 
-    # Override payload boundaries to chain-derived values
-    validator_round.round_number = backend_round_number
-    validator_round.start_block = bounds.start_block
-    validator_round.end_block = bounds.end_block
-    validator_round.start_epoch = int(bounds.start_epoch)
-    validator_round.end_epoch = int(bounds.end_epoch)
-    validator_round.max_epochs = int(settings.ROUND_SIZE_EPOCHS)
-    validator_round.max_blocks = settings.BLOCKS_PER_EPOCH
+    # Override payload boundaries to chain-derived values unless testing override is enabled
+    if not testing_override and bounds is not None:
+        validator_round.round_number = backend_round_number
+        validator_round.start_block = bounds.start_block
+        validator_round.end_block = bounds.end_block
+        validator_round.start_epoch = int(bounds.start_epoch)
+        validator_round.end_epoch = int(bounds.end_epoch)
+        validator_round.max_epochs = int(settings.ROUND_SIZE_EPOCHS)
+        validator_round.max_blocks = settings.BLOCKS_PER_EPOCH
 
     # Canonicalize validator snapshot fields (name, image) using our directory
     try:
@@ -458,6 +469,26 @@ async def start_round(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
     except RoundConflictError as exc:
+        # Idempotency: if a round with this (validator_uid, round_number) already exists,
+        # return its validator_round_id without performing writes.
+        try:
+            existing = await service.get_round_by_validator_and_number(
+                validator_uid=int(validator_round.validator_uid),  # type: ignore[arg-type]
+                round_number=int(validator_round.round_number),    # type: ignore[arg-type]
+            )
+        except Exception:
+            existing = None
+        if existing is not None:
+            logger.info(
+                "Validator %s already has round_number=%s; returning existing round_id=%s idempotently",
+                validator_round.validator_uid,
+                validator_round.round_number,
+                existing.validator_round_id,
+            )
+            return {
+                "message": "Validator round created",
+                "validator_round_id": existing.validator_round_id,
+            }
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
@@ -523,6 +554,7 @@ async def set_tasks(
 async def start_agent_run(
     validator_round_id: str,
     payload: Union[StartAgentRunRequest, LegacyStartAgentRunRequest],
+    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
     """Register the beginning of an agent evaluation run."""
@@ -540,6 +572,23 @@ async def start_agent_run(
                 validator_round_id,
                 "agent_run.validator_round_id",
             )
+
+            # Early idempotency: if this agent_run already exists for this round and validator,
+            # return 200 without enforcing window checks. This enables safe replays even if
+            # the validator has moved past the active window.
+            existing_run = await service._get_agent_run_row(agent_run.agent_run_id)  # type: ignore[attr-defined]
+            if (
+                existing_run is not None
+                and existing_run.validator_round_id == validator_round_id
+                and (existing_run.validator_uid is None or agent_run.validator_uid is None or int(existing_run.validator_uid) == int(agent_run.validator_uid))
+                and (not existing_run.validator_hotkey or not agent_run.validator_hotkey or existing_run.validator_hotkey == agent_run.validator_hotkey)
+            ):
+                logger.info(
+                    "Agent run %s already registered (round %s); treating as idempotent",
+                    agent_run.agent_run_id,
+                    validator_round_id,
+                )
+                return {"message": "Agent run registered", "agent_run_id": agent_run.agent_run_id}
 
             # Ensure agent_run validator identity matches the round's registered validator
             round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
@@ -567,33 +616,40 @@ async def start_agent_run(
             from app.utils.images import sanitize_miner_image
             miner_snapshot.image_url = sanitize_miner_image(miner_snapshot.image_url)
 
-            # Enforce chain-derived round is current and inside window
-            current_block = get_current_block()
-            if current_block is None:
-                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
-            backend_round_number = compute_round_number(current_block)
-            round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
-            stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
-            if stored_round_number != backend_round_number:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "error": "round_number mismatch",
-                        "expectedRoundNumber": backend_round_number,
-                        "got": stored_round_number,
-                    },
+            # Enforce chain-derived round is current and inside window unless testing override is enabled
+            testing_override = settings.TESTING and bool(force)
+            if testing_override:
+                logger.warning(
+                    "TESTING override enabled: accepting start_agent_run for validator_round_id=%s without chain checks",
+                    validator_round_id,
                 )
-            bounds = compute_boundaries_for_round(backend_round_number)
-            if not is_inside_window(current_block, bounds):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "error": "round window not active",
-                        "currentBlock": current_block,
-                        "startBlock": bounds.start_block,
-                        "endBlock": bounds.end_block,
-                    },
-                )
+            else:
+                current_block = get_current_block()
+                if current_block is None:
+                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
+                backend_round_number = compute_round_number(current_block)
+                round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+                stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
+                if stored_round_number != backend_round_number:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "error": "round_number mismatch",
+                            "expectedRoundNumber": backend_round_number,
+                            "got": stored_round_number,
+                        },
+                    )
+                bounds = compute_boundaries_for_round(backend_round_number)
+                if not is_inside_window(current_block, bounds):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "error": "round window not active",
+                            "currentBlock": current_block,
+                            "startBlock": bounds.start_block,
+                            "endBlock": bounds.end_block,
+                        },
+                    )
             _require_round_match(
                 miner_snapshot.validator_round_id,
                 validator_round_id,
@@ -723,6 +779,7 @@ async def add_evaluation(
     validator_round_id: str,
     agent_run_id: str,
     payload: Union[AddEvaluationRequest, LegacyAddEvaluationRequest],
+    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
     """Persist evaluation data (task, solution, evaluation record, and artefact)."""
@@ -804,34 +861,68 @@ async def add_evaluation(
                         detail=f"{label}.validator_hotkey must match the round's validator_hotkey",
                     )
 
-            # Enforce chain-derived round window for this submission
-            current_block = get_current_block()
-            if current_block is None:
-                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
-            backend_round_number = compute_round_number(current_block)
-            stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
-            if stored_round_number != backend_round_number:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "error": "round_number mismatch",
-                        "expectedRoundNumber": backend_round_number,
-                        "got": stored_round_number,
-                    },
+            # Early idempotency: if the entire bundle already exists for this round/run,
+            # return success before enforcing window checks to allow safe replays.
+            try:
+                existing_solution = await service.get_task_solution_row(task_solution.solution_id)
+                existing_eval = await service.get_evaluation_row(evaluation.evaluation_id)
+                existing_result = await service.get_evaluation_result_row(evaluation_result.result_id)
+            except Exception:
+                existing_solution = existing_eval = existing_result = None
+            if (
+                existing_solution
+                and existing_eval
+                and existing_result
+                and str(existing_solution.validator_round_id) == str(validator_round_id)
+                and str(existing_eval.validator_round_id) == str(validator_round_id)
+                and str(existing_result.validator_round_id) == str(validator_round_id)
+                and str(existing_solution.agent_run_id) == str(agent_run_id)
+                and str(existing_eval.agent_run_id) == str(agent_run_id)
+                and str(existing_result.agent_run_id) == str(agent_run_id)
+            ):
+                logger.info(
+                    "Evaluation %s already stored for round %s (agent_run_id=%s); treating as idempotent",
+                    existing_eval.evaluation_id,
+                    validator_round_id,
+                    agent_run_id,
                 )
-            bounds = compute_boundaries_for_round(backend_round_number)
-            if not is_inside_window(current_block, bounds):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "error": "round window not active",
-                        "currentBlock": current_block,
-                        "startBlock": bounds.start_block,
-                        "endBlock": bounds.end_block,
-                    },
-                )
+                return {"message": "Evaluation stored", "evaluation_id": existing_eval.evaluation_id}
 
-            await service.add_evaluation(
+            # Enforce chain-derived round window for this submission unless testing override is enabled
+            testing_override = settings.TESTING and bool(force)
+            if testing_override:
+                logger.warning(
+                    "TESTING override enabled: accepting add_evaluation for validator_round_id=%s without chain checks",
+                    validator_round_id,
+                )
+            else:
+                current_block = get_current_block()
+                if current_block is None:
+                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
+                backend_round_number = compute_round_number(current_block)
+                stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
+                if stored_round_number != backend_round_number:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "error": "round_number mismatch",
+                            "expectedRoundNumber": backend_round_number,
+                            "got": stored_round_number,
+                        },
+                    )
+                bounds = compute_boundaries_for_round(backend_round_number)
+                if not is_inside_window(current_block, bounds):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "error": "round window not active",
+                            "currentBlock": current_block,
+                            "startBlock": bounds.start_block,
+                            "endBlock": bounds.end_block,
+                        },
+                    )
+
+            await service.upsert_evaluation_bundle(
                 validator_round_id=validator_round_id,
                 agent_run_id=agent_run_id,
                 task=task,
@@ -839,6 +930,9 @@ async def add_evaluation(
                 evaluation=evaluation,
                 evaluation_result=evaluation_result,
             )
+    except DuplicateIdentifierError as exc:
+        # Conflicting duplicate (belongs to another round/run), surface as 409
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
@@ -860,6 +954,7 @@ async def add_evaluation(
 async def finish_round(
     validator_round_id: str,
     payload: FinishRoundRequest,
+    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
     """Mark a validator round as finished and persist summary data."""
@@ -867,38 +962,56 @@ async def finish_round(
 
     service = ValidatorRoundPersistenceService(session)
 
-    # Enforce chain-derived finalization window
+    # Enforce chain-derived finalization window unless testing override is enabled
+    testing_override = settings.TESTING and bool(force)
     current_block = get_current_block()
-    if current_block is None:
+    if not testing_override and current_block is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
 
     # Begin a transaction BEFORE any DB I/O to avoid implicit autobegin
     async with session.begin():
         round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+        # Idempotency: if this round is already finished, return success without further writes
+        if getattr(round_row, "ended_at", None):
+            logger.info(
+                "finish_round called for already finished round %s; treating as idempotent",
+                validator_round_id,
+            )
+            return {
+                "message": "Validator round finalized",
+                "validator_round_id": validator_round_id,
+            }
+
         stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
 
-        # Validate phase using stored round boundaries
-        bounds = compute_boundaries_for_round(stored_round_number)
-        if current_block <= bounds.start_block:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "error": "round not started",
-                    "currentBlock": current_block,
-                    "startBlock": bounds.start_block,
-                    "endBlock": bounds.end_block,
-                },
+        # Validate phase using stored round boundaries unless testing override is enabled
+        if testing_override:
+            logger.warning(
+                "TESTING override enabled: accepting finish_round for validator_round_id=%s without chain checks",
+                validator_round_id,
             )
-        if current_block > bounds.end_block:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "error": "round already finished",
-                    "currentBlock": current_block,
-                    "startBlock": bounds.start_block,
-                    "endBlock": bounds.end_block,
-                },
-            )
+        else:
+            bounds = compute_boundaries_for_round(stored_round_number)
+            if current_block <= bounds.start_block:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "round not started",
+                        "currentBlock": current_block,
+                        "startBlock": bounds.start_block,
+                        "endBlock": bounds.end_block,
+                    },
+                )
+            if current_block > bounds.end_block:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "round already finished",
+                        "currentBlock": current_block,
+                        "startBlock": bounds.start_block,
+                        "endBlock": bounds.end_block,
+                    },
+                )
 
         await service.finish_round(
             validator_round_id=validator_round_id,
