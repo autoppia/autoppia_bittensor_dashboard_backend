@@ -30,10 +30,10 @@ class Settings(BaseSettings):
     # deterministic starting block gate for the DZ launch.
     ROUND_SIZE_EPOCHS: float = 4.0
     BLOCKS_PER_EPOCH: int = 360
-    DZ_STARTING_BLOCK: int = 6_716_460
+    DZ_STARTING_BLOCK: int = 6_726_960
     # Chain state
     # Cache duration for last fetched chain block height (seconds)
-    CHAIN_BLOCK_CACHE_TTL_SECONDS: int = 15 * 60
+    CHAIN_BLOCK_CACHE_TTL_SECONDS: int = 900
     # Average time per block on Bittensor (seconds)
     CHAIN_BLOCK_TIME_SECONDS: int = 12
 
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     SUBTENSOR_NETWORK: Optional[str] = None
     SUBTENSOR_ENDPOINT: Optional[str] = None
     # Back-compat / alias envs (preferred names many users expect)
-    BITTENSOR_NETWORK: Optional[str] = None
+    BITTENSOR_NETWORK: Optional[str] = "ws://91.99.168.13:11144"
     BITTENSOR_ENDPOINT: Optional[str] = None
     # Common typo alias to reduce friction
     ITTENSOR_NETWORK: Optional[str] = None
