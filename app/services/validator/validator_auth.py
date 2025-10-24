@@ -67,8 +67,6 @@ class ValidatorAuthService:
         subtensor_kwargs: Dict[str, str] = {}
         if settings.SUBTENSOR_NETWORK:
             subtensor_kwargs["network"] = settings.SUBTENSOR_NETWORK
-        if settings.SUBTENSOR_ENDPOINT:
-            subtensor_kwargs["chain_endpoint"] = settings.SUBTENSOR_ENDPOINT
 
         try:
             subtensor = bt.subtensor(**subtensor_kwargs)  # type: ignore[attr-defined]

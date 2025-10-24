@@ -28,8 +28,6 @@ def _fetch_current_block() -> Optional[int]:
     kwargs = {}
     if settings.SUBTENSOR_NETWORK:
         kwargs["network"] = settings.SUBTENSOR_NETWORK
-    if settings.SUBTENSOR_ENDPOINT:
-        kwargs["chain_endpoint"] = settings.SUBTENSOR_ENDPOINT
 
     try:
         subtensor = bt.subtensor(**kwargs)  # type: ignore[attr-defined]
