@@ -90,13 +90,8 @@ def _rewrite_github_blob(url: str) -> str:
 
 
 def _normalize_relative_path(value: str) -> str:
-    base = settings.ASSET_BASE_URL.rstrip("/") if settings.ASSET_BASE_URL else ""
     normalized = value.lstrip("/")
-    if not normalized:
-        return base or ""
-    if base:
-        return f"{base}/{normalized}"
-    return f"/{normalized}"
+    return f"/{normalized}" if normalized else "/"
 
 
 def _sanitize_url(candidate: Optional[str]) -> str:
@@ -119,7 +114,9 @@ def _sanitize_url(candidate: Optional[str]) -> str:
         except Exception:
             return ""
         if _is_allowed_host(parsed.hostname):
-            return rewritten
+            path = parsed.path or "/"
+            query = f"?{parsed.query}" if parsed.query else ""
+            return _normalize_relative_path(f"{path}{query}")
         return ""
 
     return _normalize_relative_path(value)
@@ -203,7 +200,7 @@ def sanitize_miner_image(candidate: Optional[str]) -> str:
     host = (parsed.hostname or "").lower()
     allowed = {h.lower() for h in (settings.MINER_IMAGE_ALLOWED_HOSTS or [])}
     if host and host in allowed:
-        return value
+        return _ensure_absolute_url(value)
     return blocked
 
 
