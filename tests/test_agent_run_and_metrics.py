@@ -26,7 +26,14 @@ def _headers() -> dict[str, str]:
     }
 
 
-async def _start_minimal_round(client, *, round_id: str, validator_uid: int = 1001, round_number: int = 1):
+async def _start_minimal_round(
+    client,
+    *,
+    round_id: str,
+    validator_uid: int = 1001,
+    round_number: int = 1,
+    force: bool = True,
+):
     payload = {
         "validator_round_id": round_id,
         "round": {
@@ -52,7 +59,10 @@ async def _start_minimal_round(client, *, round_id: str, validator_uid: int = 10
             "status": "in_progress",
         },
     }
-    resp = await client.post("/api/v1/validator-rounds/start", json=payload, headers=_headers())
+    url = "/api/v1/validator-rounds/start"
+    if force:
+        url = f"{url}?force=true"
+    resp = await client.post(url, json=payload, headers=_headers())
     assert resp.status_code == 200
 
 
@@ -81,7 +91,11 @@ async def test_start_agent_run_non_sota_requires_identity(client, monkeypatch):
         "miner_identity": {"uid": None, "hotkey": None},
         "miner_snapshot": {"validator_round_id": round_id, "agent_key": None, "agent_name": "A"},
     }
-    resp = await client.post(f"/api/v1/validator-rounds/{round_id}/agent-runs/start", json=bad_payload, headers=_headers())
+    resp = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
+        json=bad_payload,
+        headers=_headers(),
+    )
     assert resp.status_code == 400
     # Pydantic validation enforces agent_key when uid is missing; accept that error surface
     detail = resp.json()["detail"]
@@ -101,7 +115,11 @@ async def test_start_agent_run_non_sota_requires_identity(client, monkeypatch):
         "miner_identity": {"uid": 501, "hotkey": "miner_hotkey_501"},
         "miner_snapshot": {"validator_round_id": round_id, "miner_uid": 501, "miner_hotkey": "miner_hotkey_501", "agent_name": "B"},
     }
-    resp2 = await client.post(f"/api/v1/validator-rounds/{round_id}/agent-runs/start", json=good_payload, headers=_headers())
+    resp2 = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
+        json=good_payload,
+        headers=_headers(),
+    )
     assert resp2.status_code == 200
 
 
@@ -128,7 +146,11 @@ async def test_start_agent_run_sota_requires_agent_key_and_consistency(client, m
         "miner_identity": {"agent_key": None},
         "miner_snapshot": {"validator_round_id": round_id, "agent_name": "Bench"},
     }
-    resp = await client.post(f"/api/v1/validator-rounds/{round_id}/agent-runs/start", json=bad_payload, headers=_headers())
+    resp = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
+        json=bad_payload,
+        headers=_headers(),
+    )
     assert resp.status_code == 400
 
     # Inconsistent agent_key across payloads
@@ -144,7 +166,11 @@ async def test_start_agent_run_sota_requires_agent_key_and_consistency(client, m
         "miner_identity": {"agent_key": "key-B"},
         "miner_snapshot": {"validator_round_id": round_id, "agent_name": "Bench", "agent_key": "key-A"},
     }
-    resp2 = await client.post(f"/api/v1/validator-rounds/{round_id}/agent-runs/start", json=inconsistent_payload, headers=_headers())
+    resp2 = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
+        json=inconsistent_payload,
+        headers=_headers(),
+    )
     assert resp2.status_code == 400
 
     # Consistent keys
@@ -160,7 +186,11 @@ async def test_start_agent_run_sota_requires_agent_key_and_consistency(client, m
         "miner_identity": {"agent_key": "agent-xyz"},
         "miner_snapshot": {"validator_round_id": round_id, "agent_name": "Bench", "agent_key": "agent-xyz"},
     }
-    resp3 = await client.post(f"/api/v1/validator-rounds/{round_id}/agent-runs/start", json=ok_payload, headers=_headers())
+    resp3 = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
+        json=ok_payload,
+        headers=_headers(),
+    )
     assert resp3.status_code == 200
 
 
@@ -189,10 +219,18 @@ async def test_start_agent_run_idempotent_on_duplicate_same_round(client, db_ses
         "miner_snapshot": {"validator_round_id": round_id, "miner_uid": 123, "miner_hotkey": "miner_hotkey_123", "agent_name": "M"},
     }
 
-    r1 = await client.post(f"/api/v1/validator-rounds/{round_id}/agent-runs/start", json=payload, headers=_headers())
+    r1 = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
+        json=payload,
+        headers=_headers(),
+    )
     assert r1.status_code == 200
 
-    r2 = await client.post(f"/api/v1/validator-rounds/{round_id}/agent-runs/start", json=payload, headers=_headers())
+    r2 = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
+        json=payload,
+        headers=_headers(),
+    )
     assert r2.status_code == 200
     body2 = r2.json()
     assert body2["message"].lower().startswith("agent run registered")
@@ -234,7 +272,11 @@ async def test_add_evaluation_relationship_mismatch_rejected(client, monkeypatch
         "use_case": {"name": "X"},
         "should_record": False,
     }
-    r_tasks = await client.post(f"/api/v1/validator-rounds/{round_id}/tasks", json={"tasks": [task]}, headers=_headers())
+    r_tasks = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/tasks?force=true",
+        json={"tasks": [task]},
+        headers=_headers(),
+    )
     assert r_tasks.status_code == 200
 
     # Start agent run
@@ -252,7 +294,11 @@ async def test_add_evaluation_relationship_mismatch_rejected(client, monkeypatch
         "miner_identity": {"uid": 1, "hotkey": "miner_hotkey_1"},
         "miner_snapshot": {"validator_round_id": round_id, "miner_uid": 1, "miner_hotkey": "miner_hotkey_1", "agent_name": "M"},
     }
-    r_start = await client.post(f"/api/v1/validator-rounds/{round_id}/agent-runs/start", json=start_run, headers=_headers())
+    r_start = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
+        json=start_run,
+        headers=_headers(),
+    )
     assert r_start.status_code == 200
 
     # Mismatched task_solution.task_id
@@ -284,7 +330,7 @@ async def test_add_evaluation_relationship_mismatch_rejected(client, monkeypatch
         },
     }
     r_eval = await client.post(
-        f"/api/v1/validator-rounds/{round_id}/agent-runs/{run_id}/evaluations",
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/{run_id}/evaluations?force=true",
         json=bad_eval,
         headers=_headers(),
     )
@@ -383,7 +429,11 @@ async def test_finish_round_computes_run_metrics_and_top_miners(client, db_sessi
         "use_case": {"name": "X"},
         "should_record": False,
     }
-    r_tasks = await client.post(f"/api/v1/validator-rounds/{round_id}/tasks", json={"tasks": [task]}, headers=_headers())
+    r_tasks = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/tasks?force=true",
+        json={"tasks": [task]},
+        headers=_headers(),
+    )
     assert r_tasks.status_code == 200
 
     # Start run
@@ -401,7 +451,11 @@ async def test_finish_round_computes_run_metrics_and_top_miners(client, db_sessi
         "miner_identity": {"uid": 501, "hotkey": "miner_hotkey_501"},
         "miner_snapshot": {"validator_round_id": round_id, "miner_uid": 501, "miner_hotkey": "miner_hotkey_501", "agent_name": "M"},
     }
-    r_start = await client.post(f"/api/v1/validator-rounds/{round_id}/agent-runs/start", json=start_run, headers=_headers())
+    r_start = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
+        json=start_run,
+        headers=_headers(),
+    )
     assert r_start.status_code == 200
 
     # Add two evaluations with final_score 0.6 and 0.8, times 4.0 and 6.0, raw_score 0.6/0.8
@@ -438,7 +492,7 @@ async def test_finish_round_computes_run_metrics_and_top_miners(client, db_sessi
             },
         }
         r_eval = await client.post(
-            f"/api/v1/validator-rounds/{round_id}/agent-runs/{run_id}/evaluations",
+            f"/api/v1/validator-rounds/{round_id}/agent-runs/{run_id}/evaluations?force=true",
             json=payload,
             headers=_headers(),
         )
@@ -446,7 +500,7 @@ async def test_finish_round_computes_run_metrics_and_top_miners(client, db_sessi
 
     # Finish round and verify computed metrics
     r_finish = await client.post(
-        f"/api/v1/validator-rounds/{round_id}/finish",
+        f"/api/v1/validator-rounds/{round_id}/finish?force=true",
         json={
             "status": "completed",
             "winners": [{"miner_uid": 501}],
