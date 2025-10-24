@@ -59,11 +59,9 @@ class Settings(BaseSettings):
     VALIDATOR_AUTH_MESSAGE: str = "I am a honest validator"
     MIN_VALIDATOR_STAKE: float = 10_000.0
     VALIDATOR_NETUID: int = 36
-    SUBTENSOR_NETWORK: Optional[str] = "finney"
-    SUBTENSOR_ENDPOINT: Optional[str] = "ws://91.99.168.13:11144"
+    SUBTENSOR_NETWORK: Optional[str] = "ws://91.99.168.13:11144"
     # Back-compat / alias envs (preferred names many users expect)
-    BITTENSOR_NETWORK: Optional[str] = "finney"
-    BITTENSOR_ENDPOINT: Optional[str] = "ws://91.99.168.13:11144"
+    BITTENSOR_NETWORK: Optional[str] = "ws://91.99.168.13:11144"
     # Common typo alias to reduce friction
     ITTENSOR_NETWORK: Optional[str] = None
     VALIDATOR_AUTH_CACHE_TTL: int = 180
