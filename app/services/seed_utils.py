@@ -36,6 +36,7 @@ from app.services.validator.validator_storage import (
     RoundConflictError,
     ValidatorRoundPersistenceService,
 )
+from app.utils.images import FALLBACK_MINER_IMAGES
 
 logger = logging.getLogger(__name__)
 
@@ -247,13 +248,14 @@ def _fallback_miner_seed_records(
 
     for index, uid in enumerate(available_uids[:count]):
         provider = providers[index % len(providers)]
+        fallback_asset = FALLBACK_MINER_IMAGES[index % len(FALLBACK_MINER_IMAGES)]
         records.append(
             MinerSeedRecord(
                 uid=uid,
                 hotkey=f"mock_miner_hotkey_{uid}",
                 coldkey=f"mock_miner_coldkey_{uid}",
                 name=f"Mock Miner {uid}",
-                image=_asset_url(f"/miners/mock_miner_{(index % 8) + 1}.png"),
+                image=_asset_url(fallback_asset),
                 provider=provider,
                 github=f"https://github.com/autoppia/mock-miner-{uid}",
                 description=f"Synthetic miner profile provided by {provider}.",
