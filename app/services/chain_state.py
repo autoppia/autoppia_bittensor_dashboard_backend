@@ -97,22 +97,36 @@ def get_current_block() -> Optional[int]:
         should_retry_failure = base_block is None and (now - last_attempt) >= retry_delay
         if not ttl_expired and not should_retry_failure:
             return estimate
+        reason = "ttl_expired" if ttl_expired else "retry_failure"
         _fetch_in_progress = True
         _last_fetch_attempt = now
 
+    if _logger.isEnabledFor(logging.INFO):
+        _logger.info(
+            "Refreshing chain block from Subtensor (reason=%s, estimate=%s)",
+            reason,
+            estimate,
+        )
+
     # Refresh path: attempt to fetch a fresh value
+    started_at = time.time()
     fresh = _fetch_current_block()
+    elapsed = time.time() - started_at
 
     with _cache_lock:
         _fetch_in_progress = False
         if fresh is not None:
             _cached_block = fresh
             _cached_at = time.time()
+            if _logger.isEnabledFor(logging.INFO):
+                _logger.info("Chain block refreshed to %s in %.2fs", fresh, elapsed)
             return fresh
         # Failed refresh: keep previous estimate but avoid hammering the chain
         if _cached_block is None:
             # ensure we have a non-zero timestamp so subsequent retries respect backoff
             _cached_at = time.time()
+        if _logger.isEnabledFor(logging.WARNING):
+            _logger.warning("Failed to refresh chain block (duration=%.2fs)", elapsed)
 
     # Fetch failed: keep serving estimate if we have one
     return estimate
