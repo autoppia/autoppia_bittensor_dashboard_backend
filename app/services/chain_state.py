@@ -11,6 +11,9 @@ _logger = logging.getLogger(__name__)
 _cache_lock = threading.Lock()
 _cached_block: Optional[int] = None
 _cached_at: float = 0.0
+_fetch_in_progress = False
+_last_fetch_attempt: float = 0.0
+_FAILURE_RETRY_SECONDS = 30.0
 
 
 def _fetch_current_block() -> Optional[int]:
@@ -55,7 +58,7 @@ def get_current_block() -> Optional[int]:
     - When TTL expires, attempt a background refresh; if it fails, keep serving
       the estimated value.
     """
-    global _cached_block, _cached_at
+    global _cached_block, _cached_at, _fetch_in_progress, _last_fetch_attempt
     ttl = int(getattr(settings, "CHAIN_BLOCK_CACHE_TTL_SECONDS", 900) or 900)
     block_time = int(getattr(settings, "CHAIN_BLOCK_TIME_SECONDS", 12) or 12)
     now = time.time()
@@ -64,25 +67,52 @@ def get_current_block() -> Optional[int]:
     with _cache_lock:
         base_block = _cached_block
         base_ts = _cached_at
+        in_progress = _fetch_in_progress
+        last_attempt = _last_fetch_attempt
 
     estimate: Optional[int] = None
     if base_block is not None and base_ts > 0:
         elapsed = max(0.0, now - base_ts)
         estimate = base_block + int(elapsed // block_time)
 
-    need_refresh = base_block is None or (now - base_ts) >= ttl
+    ttl_expired = base_block is not None and (now - base_ts) >= ttl
+    retry_delay = min(ttl, _FAILURE_RETRY_SECONDS) if ttl > 0 else _FAILURE_RETRY_SECONDS
+    should_retry_failure = base_block is None and (now - last_attempt) >= retry_delay
+    need_refresh = ttl_expired or should_retry_failure
+
     if not need_refresh:
         return estimate
 
+    if in_progress:
+        return estimate
+
+    with _cache_lock:
+        if _fetch_in_progress:
+            return estimate
+        # Double-check conditions with the freshest state
+        base_block = _cached_block
+        base_ts = _cached_at
+        last_attempt = _last_fetch_attempt
+        ttl_expired = base_block is not None and (now - base_ts) >= ttl
+        should_retry_failure = base_block is None and (now - last_attempt) >= retry_delay
+        if not ttl_expired and not should_retry_failure:
+            return estimate
+        _fetch_in_progress = True
+        _last_fetch_attempt = now
+
     # Refresh path: attempt to fetch a fresh value
     fresh = _fetch_current_block()
-    if fresh is not None:
-        with _cache_lock:
+
+    with _cache_lock:
+        _fetch_in_progress = False
+        if fresh is not None:
             _cached_block = fresh
             _cached_at = time.time()
-        # New estimate from fresh base (usually identical to fresh)
-        elapsed = 0.0
-        return fresh + int(elapsed // block_time)
+            return fresh
+        # Failed refresh: keep previous estimate but avoid hammering the chain
+        if _cached_block is None:
+            # ensure we have a non-zero timestamp so subsequent retries respect backoff
+            _cached_at = time.time()
 
     # Fetch failed: keep serving estimate if we have one
     return estimate
