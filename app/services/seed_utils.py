@@ -36,7 +36,7 @@ from app.services.validator.validator_storage import (
     RoundConflictError,
     ValidatorRoundPersistenceService,
 )
-from app.utils.images import FALLBACK_MINER_IMAGES
+from app.utils.images import FALLBACK_MINER_IMAGES, normalize_asset_path
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +49,8 @@ MAX_MINER_UID = 255
 def _asset_url(path: Optional[str]) -> Optional[str]:
     if not path:
         return None
-    candidate = str(path).strip()
-    if not candidate:
-        return None
-    if candidate.startswith(("http://", "https://", "data:")):
-        return candidate
-    if candidate.startswith("//"):
-        return f"https:{candidate}"
-    base = settings.ASSET_BASE_URL.rstrip("/") if settings.ASSET_BASE_URL else ""
-    normalized = candidate.lstrip("/")
-    if base:
-        return f"{base}/{normalized}"
-    return f"/{normalized}"
+    normalized = normalize_asset_path(str(path))
+    return normalized or None
 
 
 @lru_cache(maxsize=1)

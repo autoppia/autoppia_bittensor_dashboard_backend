@@ -129,6 +129,14 @@ def _ensure_absolute_url(candidate: Optional[str], fallback: Optional[str] = Non
     return _sanitize_url(fallback)
 
 
+def normalize_asset_path(candidate: Optional[str]) -> str:
+    """
+    Public helper that normalizes any candidate asset reference into a safe
+    root-relative path (or empty string when not usable).
+    """
+    return _sanitize_url(candidate)
+
+
 def resolve_agent_image(info: Optional[MinerInfo], existing: Optional[str] = None) -> str:
     """
     Determine the most appropriate image URL for a miner/agent.
