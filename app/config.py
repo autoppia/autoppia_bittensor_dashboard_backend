@@ -111,6 +111,10 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
 
+    # UI caching toggles
+    ENABLE_FINAL_ROUND_CACHE: bool = True
+    ENABLE_CURRENT_ROUND_CACHE: bool = True
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore"
     )

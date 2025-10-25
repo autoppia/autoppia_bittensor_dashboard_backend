@@ -953,9 +953,12 @@ class AgentsService:
             non_sota_contexts = [
                 ctx for ctx in context_list if not ctx.run.is_sota
             ]
+            # Deterministic tie-break: higher score first, then lexicographic agent_id
             non_sota_contexts.sort(
-                key=lambda ctx: self._compute_run_score(ctx),
-                reverse=True,
+                key=lambda ctx: (
+                    -self._compute_run_score(ctx),
+                    _format_agent_id(ctx.run.miner_uid),
+                )
             )
             current_rank = 0
             last_score: Optional[float] = None
@@ -969,6 +972,7 @@ class AgentsService:
         aggregates: Dict[str, AgentAggregate] = {}
         round_benchmark_scores: Dict[int, Dict[str, Dict[str, Any]]] = defaultdict(dict)
         round_leaderboards: Dict[int, List[tuple[str, float]]] = defaultdict(list)
+        # Track epoch length per unique numeric round to compute reward amounts
         round_epoch_lengths: Dict[int, float] = {}
 
         for context in contexts:
@@ -1072,11 +1076,70 @@ class AgentsService:
                 if existing_entry is None or run_score > existing_entry.get("score", 0.0):
                     round_benchmark_scores[round_identifier][bench_key] = entry
 
+        # Determine winners from persisted round payloads (per-validator),
+        # rather than re-deriving from scores. Award alpha to rank-1 winners.
+        # If a round has no winners metadata, fall back to score-based winner.
+        seen_round_ids: Set[str] = set()
+        awarded_numeric_rounds: Set[int] = set()
+        for context in contexts:
+            round_model = context.round
+            round_id = round_model.validator_round_id
+            if not round_id or round_id in seen_round_ids:
+                continue
+            seen_round_ids.add(round_id)
+
+            # Prefer actual elapsed epochs if available; else fallback to configured/default
+            epochs = self._round_epoch_length(round_model)
+            if epochs <= 0:
+                epochs = self._fallback_round_epochs()
+
+            numeric_round = int(round_model.round_number or _round_id_to_int(round_id))
+            if numeric_round > 0 and numeric_round not in round_epoch_lengths:
+                round_epoch_lengths[numeric_round] = epochs
+
+            winners: List[Dict[str, Any]] = getattr(round_model, "metadata", {}).get("winners") or []
+            # Back-compat: some layers expose winners at top-level `winners`
+            if not winners:
+                winners = getattr(round_model, "winners", []) or []
+
+            top = None
+            for entry in winners:
+                # Accept keys: rank/position/placement with value 1
+                rank_value = entry.get("rank") or entry.get("position") or entry.get("placement")
+                try:
+                    if rank_value is None or int(rank_value) != 1:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                top = entry
+                break
+
+            if top is None:
+                continue
+
+            # Ensure we only award once per global numeric round
+            if numeric_round in awarded_numeric_rounds:
+                continue
+
+            winner_uid = top.get("miner_uid")
+            if winner_uid is None:
+                continue
+            winner_id = _format_agent_id(winner_uid)
+            reward = ALPHA_EMISSION_PER_EPOCH * epochs
+            winner_aggregate = aggregates.get(winner_id)
+            if winner_aggregate is not None and numeric_round > 0:
+                existing = winner_aggregate.round_rewards.get(numeric_round, 0.0)
+                winner_aggregate.round_rewards[numeric_round] = existing + reward
+                winner_aggregate.alpha_reward += reward
+                winner_aggregate.winning_rounds.add(numeric_round)
+                awarded_numeric_rounds.add(numeric_round)
+
+        # Score-based fallback for rounds without explicit winners
         round_winners: Dict[int, tuple[str, float]] = {}
         for aggregate in aggregates.values():
             best_avg = aggregate.best_round_average
             for round_number, scores in aggregate.round_scores.items():
-                if not scores:
+                if not scores or round_number in awarded_numeric_rounds:
                     continue
                 avg_score = sum(scores) / len(scores)
                 if avg_score > best_avg:
@@ -1126,7 +1189,8 @@ class AgentsService:
             )
 
         for round_number, entries in round_leaderboards.items():
-            sorted_entries = sorted(entries, key=lambda item: item[1], reverse=True)
+            # Deterministic tie-break consistent with winner selection: by score desc, then agent_id asc
+            sorted_entries = sorted(entries, key=lambda item: (-item[1], item[0]))
             if sorted_entries:
                 round_best_scores[round_number] = sorted_entries[0][1]
             for rank, (agent_id, _) in enumerate(sorted_entries, start=1):
@@ -1425,15 +1489,7 @@ class AgentsService:
         if round_model is None:
             return self._fallback_round_epochs()
 
-        max_epochs = getattr(round_model, "max_epochs", None)
-        if max_epochs is not None:
-            try:
-                value = float(max_epochs)
-                if value > 0:
-                    return value
-            except (TypeError, ValueError):
-                pass
-
+        # Prefer actual elapsed epochs when available
         start_epoch = getattr(round_model, "start_epoch", None)
         end_epoch = getattr(round_model, "end_epoch", None)
         if start_epoch is not None and end_epoch is not None:
@@ -1442,6 +1498,16 @@ class AgentsService:
                 if span <= 0:
                     span = 1.0
                 return span
+            except (TypeError, ValueError):
+                pass
+
+        # Fallback to configured maximum only if no boundaries are present
+        max_epochs = getattr(round_model, "max_epochs", None)
+        if max_epochs is not None:
+            try:
+                value = float(max_epochs)
+                if value > 0:
+                    return value
             except (TypeError, ValueError):
                 pass
 

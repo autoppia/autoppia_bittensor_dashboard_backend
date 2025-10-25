@@ -55,7 +55,24 @@ def _asset_url(path: Optional[str]) -> Optional[str]:
 
 @lru_cache(maxsize=1)
 def _get_fastapi_app():
+    """Return the FastAPI app instance used for in-process seeding.
+
+    When running in TESTING mode, disable validator auth so local seeding
+    can exercise the ingestion pipeline without requiring real signatures
+    or on-chain stake checks.
+    """
     from app.main import app as fastapi_app
+    from app.config import settings as _settings
+
+    # In local/test runs we seed through the in-process ASGI app. The
+    # validator endpoints normally require signed headers; for synthetic
+    # seed data we bypass auth to avoid needing real keypairs.
+    if getattr(_settings, "TESTING", False) and not getattr(_settings, "AUTH_DISABLED", False):
+        try:
+            _settings.AUTH_DISABLED = True  # type: ignore[attr-defined]
+            logger.info("Validator auth disabled for seeding (TESTING=true)")
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Unable to toggle AUTH_DISABLED for seeding", exc_info=True)
 
     return fastapi_app
 

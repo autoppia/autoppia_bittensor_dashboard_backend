@@ -606,10 +606,12 @@ class OverviewService:
             else 0
         )
 
+        # Simplified policy: Always show healthy/live except when last round was > 6 hours ago.
+        # If there are no rounds yet, treat as healthy.
         if not rounds:
             return NetworkStatus(
-                status="down",
-                message="No round activity recorded yet",
+                status="healthy",
+                message="Awaiting first round",
                 lastChecked=now.isoformat(),
                 activeValidators=len(validators),
                 networkLatency=average_latency,
@@ -626,9 +628,10 @@ class OverviewService:
             else None
         )
 
+        # If timestamp missing, still treat as healthy per simplified policy
         if not last_activity_ts:
-            status = "degraded"
-            message = "Latest round is missing timing data"
+            status = "healthy"
+            message = "Awaiting next round"
         else:
             delta = max(now.timestamp() - last_activity_ts, 0.0)
             delta_hours = delta / 3600
@@ -655,28 +658,18 @@ class OverviewService:
             )
             round_label = _round_id_to_int(last_round.validator_round_id)
 
-            if delta <= 900:
-                status = "healthy"
-                message = "Rounds are completing normally"
-            elif delta <= 3600:
+            if delta_hours > 6:
                 status = "degraded"
-                message = f"Last round completed {human_delta} ago ({timestamp_label})"
-            elif len(validators) == 0:
-                status = "down"
-                message = "No active validators detected"
+                message = (
+                    f"No round activity for {human_delta} — last known round #{round_label} "
+                    f"completed at {timestamp_label}"
+                )
             else:
-                if delta_hours < 24:
-                    status = "healthy"
-                    message = (
-                        f"Awaiting next round — last recorded round #{round_label} finished {human_delta} ago "
-                        f"({timestamp_label})"
-                    )
-                else:
-                    status = "degraded"
-                    message = (
-                        f"No rounds recorded in the past {human_delta} — last known round #{round_label} "
-                        f"completed at {timestamp_label}"
-                    )
+                status = "healthy"
+                message = (
+                    f"Awaiting next round — last recorded round #{round_label} finished {human_delta} ago "
+                    f"({timestamp_label})"
+                )
 
         return NetworkStatus(
             status=status,
