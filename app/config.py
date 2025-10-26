@@ -132,11 +132,11 @@ class Settings(BaseSettings):
     VALIDATOR_AUTH_MESSAGE: str = "I am a honest validator"
     MIN_VALIDATOR_STAKE: float = float(_env_var("MIN_VALIDATOR_STAKE", "0.0"))
     VALIDATOR_NETUID: int = 36
-    SUBTENSOR_NETWORK: Optional[str] = "ws://91.99.168.13:11144"
+    SUBTENSOR_NETWORK: Optional[str] = os.getenv("SUBTENSOR_NETWORK")
     # Back-compat / alias envs (preferred names many users expect)
-    BITTENSOR_NETWORK: Optional[str] = "ws://91.99.168.13:11144"
+    BITTENSOR_NETWORK: Optional[str] = os.getenv("BITTENSOR_NETWORK")
     # Common typo alias to reduce friction
-    ITTENSOR_NETWORK: Optional[str] = None
+    ITTENSOR_NETWORK: Optional[str] = os.getenv("ITTENSOR_NETWORK")
     VALIDATOR_AUTH_CACHE_TTL: int = 180
     API_CACHE_DISABLED: bool = _str_to_bool(_env_var("API_CACHE_DISABLED", "false"))
     AUTH_DISABLED: bool = _str_to_bool(_env_var("AUTH_DISABLED", "false"))
@@ -184,8 +184,12 @@ class Settings(BaseSettings):
     PORT: int = int(os.getenv("PORT", "8000"))
 
     # UI caching toggles
-    ENABLE_FINAL_ROUND_CACHE: bool = True
-    ENABLE_CURRENT_ROUND_CACHE: bool = True
+    ENABLE_FINAL_ROUND_CACHE: bool = _str_to_bool(
+        os.getenv("ENABLE_FINAL_ROUND_CACHE", "true")
+    )
+    ENABLE_CURRENT_ROUND_CACHE: bool = _str_to_bool(
+        os.getenv("ENABLE_CURRENT_ROUND_CACHE", "true")
+    )
 
     model_config = SettingsConfigDict(
         # env_file disabled because we use load_dotenv() + _env_var() for environment-specific vars
@@ -234,14 +238,13 @@ class Settings(BaseSettings):
         self.CHAIN_BLOCK_TIME_SECONDS = max(1, blk)
 
         # Map alias env vars (BITTENSOR_*, legacy typo) to internal SUBTENSOR_NETWORK
-        aliases = [
-            (self.BITTENSOR_NETWORK or "").strip(),
-            (self.ITTENSOR_NETWORK or "").strip(),
-            os.getenv("BITTENSOR_ENDPOINT", "").strip(),
-        ]
-        fields_set = getattr(self, "model_fields_set", set())
-        subtensor_explicit = "SUBTENSOR_NETWORK" in fields_set
-        if not subtensor_explicit:
+        # Only use aliases if SUBTENSOR_NETWORK is not set
+        if not self.SUBTENSOR_NETWORK:
+            aliases = [
+                (self.BITTENSOR_NETWORK or "").strip(),
+                (self.ITTENSOR_NETWORK or "").strip(),
+                os.getenv("BITTENSOR_ENDPOINT", "").strip(),
+            ]
             for candidate in aliases:
                 if candidate:
                     self.SUBTENSOR_NETWORK = candidate
