@@ -73,9 +73,9 @@ def _env_var(base_name: str, default: Any = None) -> Any:
 
 
 class Settings(BaseSettings):
-    APP_NAME: str = "Autoppia Leaderboard API"
+    APP_NAME: str = os.getenv("APP_NAME", "Autoppia Leaderboard API")
     API_V1_PREFIX: str = "/api/v1"
-    DEBUG: bool = False
+    DEBUG: bool = _str_to_bool(os.getenv("DEBUG", "false"))
     ENVIRONMENT: str = ENVIRONMENT  # Use the pre-computed value
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -116,13 +116,13 @@ class Settings(BaseSettings):
     # AWS / S3 configuration
     # Reads from .env with environment suffix:
     # AWS_S3_BUCKET_LOCAL, AWS_S3_BUCKET_DEVELOPMENT, AWS_S3_BUCKET_PRODUCTION
-    AWS_ACCESS_KEY_ID: Optional[str] = None
-    AWS_SECRET_ACCESS_KEY: Optional[str] = None
-    AWS_SESSION_TOKEN: Optional[str] = None
-    AWS_REGION: str = "eu-west-1"
+    AWS_ACCESS_KEY_ID: Optional[str] = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY: Optional[str] = os.getenv("AWS_SECRET_ACCESS_KEY")
+    AWS_SESSION_TOKEN: Optional[str] = os.getenv("AWS_SESSION_TOKEN")
+    AWS_REGION: str = os.getenv("AWS_REGION", "eu-west-1")
     AWS_S3_BUCKET: str = _env_var("AWS_S3_BUCKET", "")
-    AWS_S3_ENDPOINT_URL: Optional[str] = None
-    AWS_S3_GIF_PREFIX: str = "gifs"
+    AWS_S3_ENDPOINT_URL: Optional[str] = os.getenv("AWS_S3_ENDPOINT_URL")
+    AWS_S3_GIF_PREFIX: str = os.getenv("AWS_S3_GIF_PREFIX", "gifs")
     AWS_S3_PUBLIC_BASE_URL: Optional[str] = _env_var("AWS_S3_PUBLIC_BASE_URL", "")
 
     # Authentication
@@ -145,21 +145,21 @@ class Settings(BaseSettings):
 
     # ---------- Logging configuration (all configurable via env) ----------
     # General app log level
-    LOG_LEVEL: str = "WARNING"  # quiet by default
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "WARNING")
 
     # Specific library levels
-    SQLALCHEMY_LOG_LEVEL: str = "ERROR"  # kills SQL/ORM chatter by default
-    BITTENSOR_LOG_LEVEL: str = "WARNING"  # keep to warnings+
-    UVICORN_LOG_LEVEL: str = "WARNING"  # quiet server
-    UVICORN_ACCESS_LOG: bool = False  # hide access log lines by default
+    SQLALCHEMY_LOG_LEVEL: str = os.getenv("SQLALCHEMY_LOG_LEVEL", "ERROR")
+    BITTENSOR_LOG_LEVEL: str = os.getenv("BITTENSOR_LOG_LEVEL", "WARNING")
+    UVICORN_LOG_LEVEL: str = os.getenv("UVICORN_LOG_LEVEL", "WARNING")
+    UVICORN_ACCESS_LOG: bool = _str_to_bool(os.getenv("UVICORN_ACCESS_LOG", "false"))
 
     # File logging
-    LOG_TO_FILE: bool = False  # enable file logging
-    LOG_FILE_PATH: str = "logs/app.log"  # path to log file
+    LOG_TO_FILE: bool = _str_to_bool(os.getenv("LOG_TO_FILE", "false"))
+    LOG_FILE_PATH: str = os.getenv("LOG_FILE_PATH", "logs/app.log")
 
     # Detailed request/response logging
-    LOG_REQUEST_BODY: bool = False  # log request bodies
-    LOG_RESPONSE_BODY: bool = False  # log response bodies
+    LOG_REQUEST_BODY: bool = _str_to_bool(os.getenv("LOG_REQUEST_BODY", "false"))
+    LOG_RESPONSE_BODY: bool = _str_to_bool(os.getenv("LOG_RESPONSE_BODY", "false"))
     # ---------------------------------------------------------------------
 
     # Overview / validators list behavior
@@ -179,14 +179,16 @@ class Settings(BaseSettings):
     CORS_ALLOW_ORIGIN_REGEX: Optional[str] = None
 
     # Idempotency Configuration (seconds to keep)
-    IDEMPOTENCY_TTL: int = 600
+    IDEMPOTENCY_TTL: int = int(os.getenv("IDEMPOTENCY_TTL", "600"))
 
     # Server Configuration
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    HOST: str = os.getenv("HOST", "0.0.0.0")
+    PORT: int = int(os.getenv("PORT", "8000"))
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore"
+        # env_file disabled because we use load_dotenv() + _env_var() for environment-specific vars
+        case_sensitive=True,
+        extra="ignore",
     )
 
     def model_post_init(self, __context: Any) -> None:  # type: ignore[override]
