@@ -127,6 +127,7 @@ class Task(BaseModel):
     taskId: str = Field(..., description="Unique task identifier")
     agentRunId: str = Field(..., description="Associated agent run ID")
     website: str = Field(..., description="Target website")
+    seed: Optional[str] = Field(None, description="Seed parameter extracted from website URL")
     useCase: str = Field(..., description="Use case or scenario")
     prompt: str = Field(..., description="Task prompt or description")
     status: TaskStatus = Field(..., description="Current task status")

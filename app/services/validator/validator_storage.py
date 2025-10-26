@@ -6,6 +6,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from app.services.round_calc import compute_boundaries_for_round
 
 from app.db.models import (
     AgentEvaluationRunORM,
@@ -416,6 +417,18 @@ class ValidatorRoundPersistenceService:
     ) -> None:
         """Mark a validator round as completed."""
         round_row = await self._ensure_round_exists(validator_round_id)
+        # Ensure start/end epoch are populated even when testing overrides bypassed chain-boundary fill
+        try:
+            round_number = int(getattr(round_row, "round_number", 0) or 0)
+            if getattr(round_row, "start_epoch", None) is None or getattr(round_row, "end_epoch", None) is None:
+                bounds = compute_boundaries_for_round(round_number)
+                if getattr(round_row, "start_epoch", None) is None:
+                    round_row.start_epoch = int(bounds.start_epoch)
+                if getattr(round_row, "end_epoch", None) is None:
+                    round_row.end_epoch = int(bounds.end_epoch)
+        except Exception:
+            # If boundary computation fails, proceed without blocking finish
+            pass
         round_row.status = status
         round_row.meta = {**round_row.meta, "winners": winners, "winner_scores": winner_scores, "weights": weights}
         round_row.n_winners = len(winners)

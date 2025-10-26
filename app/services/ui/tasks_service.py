@@ -6,6 +6,7 @@ import base64
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse, parse_qs
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +62,7 @@ from app.models.ui.tasks import (
 from app.services.ui.rounds_service import AgentRunContext, RoundsService
 from app.utils.images import resolve_agent_image
 from app.config import settings
+from app.services.round_calc import compute_boundaries_for_round
 
 logger = logging.getLogger(__name__)
 
@@ -553,6 +555,20 @@ class TasksService:
             },
         )
 
+        # Ensure epochs are present for finished rounds even if seeding set them to None
+        start_epoch_val = getattr(context.round, "start_epoch", None)
+        end_epoch_val = getattr(context.round, "end_epoch", None)
+        if end_epoch_val is None:
+            try:
+                status_lower = str(context.round.status or "").lower()
+                if status_lower in {"completed", "finished", "complete"}:
+                    bounds = compute_boundaries_for_round(int(context.round.round_number or 0))
+                    end_epoch_val = int(bounds.end_epoch)
+                    if start_epoch_val is None:
+                        start_epoch_val = int(bounds.start_epoch)
+            except Exception:  # noqa: BLE001
+                pass
+
         round_summary = TaskRoundSummary(
             validatorRoundId=context.round.validator_round_id,
             roundNumber=context.round.round_number,
@@ -561,8 +577,8 @@ class TasksService:
             endedAt=(
                 _parse_iso(context.round.ended_at) if context.round.ended_at else None
             ),
-            startEpoch=getattr(context.round, "start_epoch", None),
-            endEpoch=getattr(context.round, "end_epoch", None),
+            startEpoch=start_epoch_val,
+            endEpoch=end_epoch_val,
         )
 
         validator_model: Optional[ValidatorInfo] = None
@@ -589,8 +605,9 @@ class TasksService:
                 version=None,
             )
 
+        # Ensure UID is non-negative
         validator_summary = TaskValidatorSummary(
-            uid=validator_model.uid,
+            uid=abs(int(validator_model.uid)) if validator_model.uid is not None else 0,
             hotkey=validator_model.hotkey,
             coldkey=validator_model.coldkey,
             name=validator_model.name,
@@ -602,9 +619,7 @@ class TasksService:
         miner_model = context.agent_run.miner_info
         miner_summary = TaskMinerSummary(
             uid=(
-                miner_model.uid
-                if miner_model and miner_model.uid is not None
-                else context.agent_run.miner_uid
+                abs(int(miner_model.uid)) if (miner_model and miner_model.uid is not None) else abs(int(context.agent_run.miner_uid))
             ),
             hotkey=miner_model.hotkey if miner_model else None,
             name=(
@@ -1264,10 +1279,24 @@ class TasksService:
         start_time = context.agent_run.started_at or context.round.started_at
         end_time = context.agent_run.ended_at or start_time
 
+        # Extract seed from URL if present
+        seed_val: Optional[str] = None
+        try:
+            parsed = urlparse(context.task.url or "")
+            if parsed and parsed.query:
+                q = parse_qs(parsed.query)
+                if isinstance(q.get("seed"), list):
+                    seed_val = q.get("seed")[0]
+                elif q.get("seed"):
+                    seed_val = str(q.get("seed"))
+        except Exception:
+            seed_val = None
+
         return UITask(
             taskId=context.task.task_id,
             agentRunId=context.agent_run.agent_run_id,
             website=context.task.url,
+            seed=seed_val,
             useCase=self._extract_use_case(context.task) or "unknown",
             prompt=context.task.prompt,
             status=status,

@@ -1865,7 +1865,7 @@ class RoundsService:
         # Prefer chain-derived progress
         aggregated = await self._fetch_aggregated_round(round_identifier, include_details=False)
         try:
-            from app.services.chain_state import get_current_block
+            from app.services.chain_state import get_current_block_estimate as get_current_block
             from app.services.round_calc import (
                 compute_boundaries_for_round,
                 progress_for_block,

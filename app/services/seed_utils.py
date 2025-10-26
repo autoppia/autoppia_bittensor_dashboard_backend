@@ -45,6 +45,13 @@ MAX_FALLBACK_MINERS = 200
 MIN_MINER_UID = 0
 MAX_MINER_UID = 255
 
+# Static GIF used for seeded evaluations so the UI has media to render.
+# If needed later, this can be made configurable via settings.
+SEED_GIF_URL = (
+    "https://autoppia-subnet.s3.eu-west-1.amazonaws.com/gifs/"
+    "evaluation_51_9ff54518-99d8-4262-bab4-2a549032ba7c_81cb33c33048.gif"
+)
+
 
 def _asset_url(path: Optional[str]) -> Optional[str]:
     if not path:
@@ -765,8 +772,8 @@ def _build_agent_run_bundle(
             raw_score=evaluation.raw_score,
             evaluation_time=evaluation.evaluation_time,
             stats=None,
-            gif_recording=None,
-            metadata={"seed_index": task_index},
+            gif_recording=SEED_GIF_URL,
+            metadata={"seed_index": task_index, "seed_gif": True},
         )
         evaluation_results.append(evaluation_result)
 

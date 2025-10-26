@@ -48,6 +48,28 @@ def _fetch_current_block() -> Optional[int]:
         return None
 
 
+def _estimate_from_cache(now: float, block_time: int) -> Optional[int]:
+    """Compute a best-effort block estimate from cached value without side effects."""
+    with _cache_lock:
+        base_block = _cached_block
+        base_ts = _cached_at
+    if base_block is None or base_ts <= 0:
+        return None
+    elapsed = max(0.0, now - base_ts)
+    return base_block + int(elapsed // block_time)
+
+
+def get_current_block_estimate() -> Optional[int]:
+    """Fast, non-blocking best-effort current block estimate.
+
+    - Never triggers a network fetch or mutates cache state.
+    - Returns None if no prior cached value exists.
+    """
+    block_time = int(getattr(settings, "CHAIN_BLOCK_TIME_SECONDS", 12) or 12)
+    now = time.time()
+    return _estimate_from_cache(now, block_time)
+
+
 def get_current_block() -> Optional[int]:
     """Get current block height with 15-min cached fetch + time-based estimate.
 
@@ -60,6 +82,8 @@ def get_current_block() -> Optional[int]:
     """
     global _cached_block, _cached_at, _fetch_in_progress, _last_fetch_attempt
     ttl = int(getattr(settings, "CHAIN_BLOCK_CACHE_TTL_SECONDS", 900) or 900)
+    # Enforce a minimum 10-minute cache to avoid frequent chain access
+    ttl = max(ttl, 600)
     block_time = int(getattr(settings, "CHAIN_BLOCK_TIME_SECONDS", 12) or 12)
     now = time.time()
 
@@ -70,10 +94,7 @@ def get_current_block() -> Optional[int]:
         in_progress = _fetch_in_progress
         last_attempt = _last_fetch_attempt
 
-    estimate: Optional[int] = None
-    if base_block is not None and base_ts > 0:
-        elapsed = max(0.0, now - base_ts)
-        estimate = base_block + int(elapsed // block_time)
+    estimate: Optional[int] = _estimate_from_cache(now, block_time)
 
     ttl_expired = base_block is not None and (now - base_ts) >= ttl
     retry_delay = min(ttl, _FAILURE_RETRY_SECONDS) if ttl > 0 else _FAILURE_RETRY_SECONDS

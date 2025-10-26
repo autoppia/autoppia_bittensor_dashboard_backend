@@ -43,6 +43,8 @@ class ValidatorInfo(BaseModel):
     hotkey: str
     icon: str
     currentTask: str
+    currentWebsite: Optional[str] = None
+    currentUseCase: Optional[str] = None
     status: str  # "Sending Tasks", "Evaluating", "Waiting", "Offline"
     totalTasks: int
     weight: float
