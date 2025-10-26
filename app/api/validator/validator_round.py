@@ -6,8 +6,9 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any, Dict, Union
+from types import SimpleNamespace
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +27,6 @@ from app.models.core import (
 )
 from app.services.validator.validator_auth import require_validator_auth, VALIDATOR_HOTKEY_HEADER
 from app.data import get_validator_metadata
-from urllib.parse import urlparse
 from app.services.chain_state import get_current_block
 from app.services.round_calc import (
     compute_round_number,
@@ -34,6 +34,7 @@ from app.services.round_calc import (
     is_inside_window,
 )
 from app.config import settings
+from app.utils.images import resolve_agent_image, resolve_validator_image, sanitize_miner_image
 from app.services.validator.validator_storage import (
     RoundConflictError,
     DuplicateIdentifierError,
@@ -43,6 +44,20 @@ from app.services.validator.validator_storage import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/validator-rounds", tags=["validator-rounds"])
+
+
+def _ensure_request_matches_round_owner(request: Request, round_row: Any) -> None:
+    """Ensure authenticated validator hotkey matches the round owner."""
+    header_hotkey = request.headers.get(VALIDATOR_HOTKEY_HEADER)
+    if not header_hotkey:
+        # When auth is disabled in tests we do not enforce the check
+        return
+    round_hotkey = getattr(round_row, "validator_hotkey", None)
+    if round_hotkey and header_hotkey != round_hotkey:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Validator hotkey header does not match round owner",
+        )
 
 
 def _require_round_match(value: str, expected: str, field_name: str) -> str:
@@ -70,6 +85,25 @@ class StartRoundRequest(BaseModel):
 class LegacyStartRoundRequest(BaseModel):
     validator_round_id: str
     round: Dict[str, Any]
+
+
+def _resolve_miner_snapshot_image(snapshot: ValidatorRoundMiner) -> None:
+    """
+    Normalize miner snapshot images so we persist full URLs and apply fallbacks.
+    """
+    sanitized = sanitize_miner_image(snapshot.image_url)
+    info = SimpleNamespace(
+        agent_image=sanitized or "",
+        is_sota=bool(snapshot.is_sota),
+        agent_name=(snapshot.agent_name or "").strip(),
+        provider=(snapshot.provider or "").strip() or None,
+        hotkey=snapshot.miner_hotkey,
+        uid=snapshot.miner_uid,
+    )
+    resolved = resolve_agent_image(info, existing=sanitized or None)
+    if not resolved:
+        resolved = resolve_agent_image(info)
+    snapshot.image_url = resolved
 
 
 def _legacy_to_start_request(payload: LegacyStartRoundRequest) -> StartRoundRequest:
@@ -127,6 +161,10 @@ def _legacy_to_start_request(payload: LegacyStartRoundRequest) -> StartRoundRequ
     metadata = get_validator_metadata(uid)
     validator_snapshot.name = metadata.get("name") or validator_snapshot.name
     validator_snapshot.image_url = metadata.get("image") or validator_snapshot.image_url
+    validator_snapshot.image_url = resolve_validator_image(
+        validator_snapshot.name,
+        existing=validator_snapshot.image_url,
+    )
 
     return StartRoundRequest(
         validator_identity=validator_identity,
@@ -200,13 +238,8 @@ async def _legacy_to_start_agent_run_request(
         is_sota=bool(miner_info.get("is_sota")),
         metadata=miner_info.get("metadata") or {},
     )
-
-    # Enforce miner image host allowlist (production IWA only) at ingest time
-    from app.utils.images import sanitize_miner_image
-    def _sanitize_miner_image(url: str | None) -> str:
-        return sanitize_miner_image(url)
-
-    miner_snapshot.image_url = _sanitize_miner_image(miner_snapshot.image_url)
+    # Canonicalize miner image asset (allowlist + fallback)
+    _resolve_miner_snapshot_image(miner_snapshot)
 
     return StartAgentRunRequest(
         agent_run=agent_run,
@@ -414,6 +447,11 @@ async def start_round(
         if snapshot_image:
             validator_snapshot.image_url = snapshot_image
 
+    validator_snapshot.image_url = resolve_validator_image(
+        validator_snapshot.name,
+        existing=validator_snapshot.image_url,
+    )
+
     # Override payload boundaries to chain-derived values unless testing override is enabled
     if not testing_override and bounds is not None:
         validator_round.round_number = backend_round_number
@@ -436,6 +474,11 @@ async def start_round(
             validator_snapshot.name = snapshot_name
         if snapshot_image:
             validator_snapshot.image_url = snapshot_image
+
+    validator_snapshot.image_url = resolve_validator_image(
+        validator_snapshot.name,
+        existing=validator_snapshot.image_url,
+    )
 
     service = ValidatorRoundPersistenceService(session)
 
@@ -516,6 +559,8 @@ async def start_round(
 async def set_tasks(
     validator_round_id: str,
     payload: SetTasksRequest,
+    request: Request,
+    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
     """Add or replace task definitions for a validator round."""
@@ -530,6 +575,47 @@ async def set_tasks(
 
     try:
         async with session.begin():
+            round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+            _ensure_request_matches_round_owner(request, round_row)
+
+            testing_override = settings.TESTING and bool(force)
+            if testing_override:
+                logger.warning(
+                    "TESTING override enabled: accepting set_tasks for validator_round_id=%s without chain checks",
+                    validator_round_id,
+                )
+            else:
+                current_block = get_current_block()
+                if current_block is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Chain state unavailable",
+                    )
+
+                stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
+                backend_round_number = compute_round_number(current_block)
+                if stored_round_number != backend_round_number:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "error": "round_number mismatch",
+                            "expectedRoundNumber": backend_round_number,
+                            "got": stored_round_number,
+                        },
+                    )
+
+                bounds = compute_boundaries_for_round(backend_round_number)
+                if not is_inside_window(current_block, bounds):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "error": "round window not active",
+                            "currentBlock": current_block,
+                            "startBlock": bounds.start_block,
+                            "endBlock": bounds.end_block,
+                        },
+                    )
+
             # Idempotent: allow existing tasks to be skipped silently
             count = await service.add_tasks(validator_round_id, payload.tasks, allow_existing=True)
     except DuplicateIdentifierError as exc:
@@ -554,6 +640,7 @@ async def set_tasks(
 async def start_agent_run(
     validator_round_id: str,
     payload: Union[StartAgentRunRequest, LegacyStartAgentRunRequest],
+    request: Request,
     force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
@@ -592,6 +679,7 @@ async def start_agent_run(
 
             # Ensure agent_run validator identity matches the round's registered validator
             round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+            _ensure_request_matches_round_owner(request, round_row)
             if (
                 agent_run.validator_uid is not None
                 and round_row.validator_uid is not None
@@ -612,9 +700,8 @@ async def start_agent_run(
                 )
 
             miner_snapshot = request_payload.miner_snapshot
-            # Sanitize miner image on non-legacy path as well
-            from app.utils.images import sanitize_miner_image
-            miner_snapshot.image_url = sanitize_miner_image(miner_snapshot.image_url)
+            # Canonicalize miner image on non-legacy path as well
+            _resolve_miner_snapshot_image(miner_snapshot)
 
             # Enforce chain-derived round is current and inside window unless testing override is enabled
             testing_override = settings.TESTING and bool(force)
@@ -628,7 +715,6 @@ async def start_agent_run(
                 if current_block is None:
                     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
                 backend_round_number = compute_round_number(current_block)
-                round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
                 stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
                 if stored_round_number != backend_round_number:
                     raise HTTPException(
@@ -779,6 +865,7 @@ async def add_evaluation(
     validator_round_id: str,
     agent_run_id: str,
     payload: Union[AddEvaluationRequest, LegacyAddEvaluationRequest],
+    request: Request,
     force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
@@ -844,6 +931,7 @@ async def add_evaluation(
 
             # Cross-check validator identity on payloads matches the round
             round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+            _ensure_request_matches_round_owner(request, round_row)
             check_pairs = [
                 (task_solution.validator_uid, task_solution.validator_hotkey, "task_solution"),
                 (evaluation.validator_uid, evaluation.validator_hotkey, "evaluation"),
@@ -954,6 +1042,7 @@ async def add_evaluation(
 async def finish_round(
     validator_round_id: str,
     payload: FinishRoundRequest,
+    request: Request,
     force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
@@ -971,6 +1060,7 @@ async def finish_round(
     # Begin a transaction BEFORE any DB I/O to avoid implicit autobegin
     async with session.begin():
         round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+        _ensure_request_matches_round_owner(request, round_row)
         # Idempotency: if this round is already finished, return success without further writes
         if getattr(round_row, "ended_at", None):
             logger.info(

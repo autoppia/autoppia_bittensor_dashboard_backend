@@ -606,10 +606,12 @@ class OverviewService:
             else 0
         )
 
+        # Simplified policy: Always show healthy/live except when last round was > 6 hours ago.
+        # If there are no rounds yet, treat as healthy.
         if not rounds:
             return NetworkStatus(
-                status="down",
-                message="No round activity recorded yet",
+                status="healthy",
+                message="Awaiting first round",
                 lastChecked=now.isoformat(),
                 activeValidators=len(validators),
                 networkLatency=average_latency,
@@ -626,9 +628,10 @@ class OverviewService:
             else None
         )
 
+        # If timestamp missing, still treat as healthy per simplified policy
         if not last_activity_ts:
-            status = "degraded"
-            message = "Latest round is missing timing data"
+            status = "healthy"
+            message = "Awaiting next round"
         else:
             delta = max(now.timestamp() - last_activity_ts, 0.0)
             delta_hours = delta / 3600
@@ -655,28 +658,18 @@ class OverviewService:
             )
             round_label = _round_id_to_int(last_round.validator_round_id)
 
-            if delta <= 900:
-                status = "healthy"
-                message = "Rounds are completing normally"
-            elif delta <= 3600:
+            if delta_hours > 6:
                 status = "degraded"
-                message = f"Last round completed {human_delta} ago ({timestamp_label})"
-            elif len(validators) == 0:
-                status = "down"
-                message = "No active validators detected"
+                message = (
+                    f"No round activity for {human_delta} — last known round #{round_label} "
+                    f"completed at {timestamp_label}"
+                )
             else:
-                if delta_hours < 24:
-                    status = "healthy"
-                    message = (
-                        f"Awaiting next round — last recorded round #{round_label} finished {human_delta} ago "
-                        f"({timestamp_label})"
-                    )
-                else:
-                    status = "degraded"
-                    message = (
-                        f"No rounds recorded in the past {human_delta} — last known round #{round_label} "
-                        f"completed at {timestamp_label}"
-                    )
+                status = "healthy"
+                message = (
+                    f"Awaiting next round — last recorded round #{round_label} finished {human_delta} ago "
+                    f"({timestamp_label})"
+                )
 
         return NetworkStatus(
             status=status,
@@ -842,16 +835,45 @@ class OverviewService:
                     continue
         return sum(scores) / len(scores) if scores else 0.0
 
-    async def _latest_evaluated_task_prompt(self, validator_round_id: str) -> Optional[str]:
+    async def _latest_evaluated_task_meta(self, validator_round_id: str) -> Optional[Dict[str, Optional[str]]]:
+        """Fetch latest evaluated task prompt + website + use case for a validator round.
+
+        Returns a dict with keys: prompt, website, useCase.
+        """
         stmt = (
-            select(TaskORM.prompt)
+            select(
+                TaskORM.prompt,
+                TaskORM.url,
+                TaskORM.relevant_data,
+                TaskORM.use_case,
+            )
             .join(EvaluationResultORM, EvaluationResultORM.task_id == TaskORM.task_id)
             .where(EvaluationResultORM.validator_round_id == validator_round_id)
             .order_by(EvaluationResultORM.created_at.desc(), EvaluationResultORM.id.desc())
             .limit(1)
         )
         result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
+        row = result.first()
+        if not row:
+            return None
+        prompt, url, relevant_data, use_case = row
+        # Derive website: prefer relevant_data.website, fallback to url
+        website = None
+        if isinstance(relevant_data, dict):
+            website = relevant_data.get("website") or None
+        if not website:
+            website = url
+        # Derive use case name
+        use_case_name = None
+        if isinstance(use_case, dict):
+            use_case_name = use_case.get("name") or None
+        elif isinstance(use_case, str):
+            use_case_name = use_case
+        return {
+            "prompt": prompt or None,
+            "website": website or None,
+            "useCase": use_case_name or None,
+        }
 
     async def _aggregate_validators(self) -> Dict[str, Dict[str, Any]]:
         records_with_contexts = await self._recent_round_records(limit=200, include_details=False)
@@ -895,7 +917,7 @@ class OverviewService:
                     current_round_entries[validator_uid] = (record, contexts)
 
         now_ts = datetime.now(timezone.utc).timestamp()
-        prompt_cache: Dict[str, Optional[str]] = {}
+        meta_cache: Dict[str, Optional[Dict[str, Optional[str]]]] = {}
 
         # Limit expected validators to those who participated in recent rounds instead of a static directory.
         # Include validators from the current round and the last few completed rounds (configurable).
@@ -1021,14 +1043,17 @@ class OverviewService:
             current_task = status_info.default_task
 
             cache_key = validator_round.validator_round_id if validator_round else None
-            current_task_prompt: Optional[str] = None
+            current_website: Optional[str] = None
+            current_use_case: Optional[str] = None
             if cache_key and status_info.requires_prompt:
-                if cache_key not in prompt_cache:
-                    prompt_cache[cache_key] = await self._latest_evaluated_task_prompt(cache_key)
-                current_task_prompt = prompt_cache.get(cache_key)
-
-            if current_task_prompt:
-                current_task = current_task_prompt
+                if cache_key not in meta_cache:
+                    meta_cache[cache_key] = await self._latest_evaluated_task_meta(cache_key)
+                meta = meta_cache.get(cache_key)
+                if meta:
+                    if meta.get("prompt"):
+                        current_task = meta.get("prompt") or current_task
+                    current_website = (meta.get("website") or None)
+                    current_use_case = (meta.get("useCase") or None)
 
             uptime = round(min(100.0, (completed_tasks / total_tasks * 100.0) if total_tasks else 0.0), 1)
 
@@ -1043,6 +1068,8 @@ class OverviewService:
                 "hotkey": hotkey,
                 "icon": icon,
                 "currentTask": current_task,
+                "currentWebsite": current_website,
+                "currentUseCase": current_use_case,
                 "status": status,
                 "statusCode": status_info.state.value,
                 "totalTasks": int(total_tasks),

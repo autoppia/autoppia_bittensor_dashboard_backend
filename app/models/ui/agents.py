@@ -89,6 +89,7 @@ class Agent(BaseModel):
     bestRankEver: int = Field(default=0, description="Best rank ever achieved")
     roundsParticipated: int = Field(default=0, description="Number of rounds participated")
     alphaWonInPrizes: float = Field(default=0.0, description="Alpha won in prizes")
+    bestRoundScore: float = Field(default=0.0, description="Best average score achieved across all rounds")
     averageResponseTime: float = Field(default=0.0, description="Average response time in seconds")
     totalTasks: int = Field(default=0, description="Total number of tasks")
     completedTasks: int = Field(default=0, description="Number of completed tasks")

@@ -36,6 +36,7 @@ from app.services.validator.validator_storage import (
     RoundConflictError,
     ValidatorRoundPersistenceService,
 )
+from app.utils.images import FALLBACK_MINER_IMAGES, normalize_asset_path
 
 logger = logging.getLogger(__name__)
 
@@ -44,27 +45,41 @@ MAX_FALLBACK_MINERS = 200
 MIN_MINER_UID = 0
 MAX_MINER_UID = 255
 
+# Static GIF used for seeded evaluations so the UI has media to render.
+# If needed later, this can be made configurable via settings.
+SEED_GIF_URL = (
+    "https://autoppia-subnet.s3.eu-west-1.amazonaws.com/gifs/"
+    "evaluation_51_9ff54518-99d8-4262-bab4-2a549032ba7c_81cb33c33048.gif"
+)
+
 
 def _asset_url(path: Optional[str]) -> Optional[str]:
     if not path:
         return None
-    candidate = str(path).strip()
-    if not candidate:
-        return None
-    if candidate.startswith(("http://", "https://", "data:")):
-        return candidate
-    if candidate.startswith("//"):
-        return f"https:{candidate}"
-    base = settings.ASSET_BASE_URL.rstrip("/") if settings.ASSET_BASE_URL else ""
-    normalized = candidate.lstrip("/")
-    if base:
-        return f"{base}/{normalized}"
-    return f"/{normalized}"
+    normalized = normalize_asset_path(str(path))
+    return normalized or None
 
 
 @lru_cache(maxsize=1)
 def _get_fastapi_app():
+    """Return the FastAPI app instance used for in-process seeding.
+
+    When running in TESTING mode, disable validator auth so local seeding
+    can exercise the ingestion pipeline without requiring real signatures
+    or on-chain stake checks.
+    """
     from app.main import app as fastapi_app
+    from app.config import settings as _settings
+
+    # In local/test runs we seed through the in-process ASGI app. The
+    # validator endpoints normally require signed headers; for synthetic
+    # seed data we bypass auth to avoid needing real keypairs.
+    if getattr(_settings, "TESTING", False) and not getattr(_settings, "AUTH_DISABLED", False):
+        try:
+            _settings.AUTH_DISABLED = True  # type: ignore[attr-defined]
+            logger.info("Validator auth disabled for seeding (TESTING=true)")
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Unable to toggle AUTH_DISABLED for seeding", exc_info=True)
 
     return fastapi_app
 
@@ -247,13 +262,14 @@ def _fallback_miner_seed_records(
 
     for index, uid in enumerate(available_uids[:count]):
         provider = providers[index % len(providers)]
+        fallback_asset = FALLBACK_MINER_IMAGES[index % len(FALLBACK_MINER_IMAGES)]
         records.append(
             MinerSeedRecord(
                 uid=uid,
                 hotkey=f"mock_miner_hotkey_{uid}",
                 coldkey=f"mock_miner_coldkey_{uid}",
                 name=f"Mock Miner {uid}",
-                image=_asset_url(f"/miners/mock_miner_{(index % 8) + 1}.png"),
+                image=_asset_url(fallback_asset),
                 provider=provider,
                 github=f"https://github.com/autoppia/mock-miner-{uid}",
                 description=f"Synthetic miner profile provided by {provider}.",
@@ -756,8 +772,8 @@ def _build_agent_run_bundle(
             raw_score=evaluation.raw_score,
             evaluation_time=evaluation.evaluation_time,
             stats=None,
-            gif_recording=None,
-            metadata={"seed_index": task_index},
+            gif_recording=SEED_GIF_URL,
+            metadata={"seed_index": task_index, "seed_gif": True},
         )
         evaluation_results.append(evaluation_result)
 

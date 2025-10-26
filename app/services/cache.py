@@ -55,9 +55,9 @@ class APICache:
         if expired_keys:
             logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
     
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str, *, force: bool = False) -> Optional[Any]:
         """Get value from cache if not expired."""
-        if self._disabled:
+        if self._disabled and not force:
             self._stats["misses"] += 1
             logger.debug(f"Cache disabled - miss for key: {key}")
             return None
@@ -78,7 +78,7 @@ class APICache:
         self._stats["hits"] += 1
         return entry["data"]
     
-    def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
+    def set(self, key: str, value: Any, ttl: Optional[int] = None, *, force: bool = False) -> None:
         """Set value in cache with TTL."""
         if ttl is None:
             ttl = self._default_ttl
@@ -90,7 +90,7 @@ class APICache:
 
         ttl_value = max(ttl_value, 0)
 
-        if self._disabled or ttl_value == 0:
+        if (self._disabled and not force) or (ttl_value == 0 and not force):
             logger.debug(
                 "Skipping cache set for key %s (disabled=%s, ttl=%s)",
                 key,
@@ -259,4 +259,5 @@ if settings.API_CACHE_DISABLED:
     api_cache.disable()
     api_cache.set_default_ttl(0)
     for cache_key in CACHE_TTL.keys():
-        CACHE_TTL[cache_key] = 0
+        if not cache_key.endswith("_final") and settings.ENABLE_CURRENT_ROUND_CACHE:
+            CACHE_TTL[cache_key] = 0

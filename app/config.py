@@ -132,11 +132,9 @@ class Settings(BaseSettings):
     VALIDATOR_AUTH_MESSAGE: str = "I am a honest validator"
     MIN_VALIDATOR_STAKE: float = float(_env_var("MIN_VALIDATOR_STAKE", "0.0"))
     VALIDATOR_NETUID: int = 36
-    SUBTENSOR_NETWORK: Optional[str] = None
-    SUBTENSOR_ENDPOINT: Optional[str] = None
+    SUBTENSOR_NETWORK: Optional[str] = "ws://91.99.168.13:11144"
     # Back-compat / alias envs (preferred names many users expect)
-    BITTENSOR_NETWORK: Optional[str] = None
-    BITTENSOR_ENDPOINT: Optional[str] = None
+    BITTENSOR_NETWORK: Optional[str] = "ws://91.99.168.13:11144"
     # Common typo alias to reduce friction
     ITTENSOR_NETWORK: Optional[str] = None
     VALIDATOR_AUTH_CACHE_TTL: int = 180
@@ -185,6 +183,10 @@ class Settings(BaseSettings):
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
 
+    # UI caching toggles
+    ENABLE_FINAL_ROUND_CACHE: bool = True
+    ENABLE_CURRENT_ROUND_CACHE: bool = True
+
     model_config = SettingsConfigDict(
         # env_file disabled because we use load_dotenv() + _env_var() for environment-specific vars
         case_sensitive=True,
@@ -231,32 +233,19 @@ class Settings(BaseSettings):
             blk = 12
         self.CHAIN_BLOCK_TIME_SECONDS = max(1, blk)
 
-        # Map alias env vars (BITTENSOR_*) to internal SUBTENSOR_* if not set
-        # If BITTENSOR_NETWORK looks like an endpoint (ws:// or wss://), treat it as endpoint
-        alias_network = (
-            (self.BITTENSOR_NETWORK or self.ITTENSOR_NETWORK or "").strip()
-            if (self.BITTENSOR_NETWORK or self.ITTENSOR_NETWORK)
-            else None
-        )
-        alias_endpoint = (
-            (self.BITTENSOR_ENDPOINT or "").strip() if self.BITTENSOR_ENDPOINT else None
-        )
-
-        def _looks_like_endpoint(value: Optional[str]) -> bool:
-            if not value:
-                return False
-            v = value.lower().strip()
-            return v.startswith("ws://") or v.startswith("wss://") or "://" in v
-
-        if not self.SUBTENSOR_ENDPOINT and alias_endpoint:
-            self.SUBTENSOR_ENDPOINT = alias_endpoint
-        if not self.SUBTENSOR_NETWORK and alias_network:
-            if _looks_like_endpoint(alias_network):
-                # Route endpoint-like value to endpoint setting
-                if not self.SUBTENSOR_ENDPOINT:
-                    self.SUBTENSOR_ENDPOINT = alias_network
-            else:
-                self.SUBTENSOR_NETWORK = alias_network
+        # Map alias env vars (BITTENSOR_*, legacy typo) to internal SUBTENSOR_NETWORK
+        aliases = [
+            (self.BITTENSOR_NETWORK or "").strip(),
+            (self.ITTENSOR_NETWORK or "").strip(),
+            os.getenv("BITTENSOR_ENDPOINT", "").strip(),
+        ]
+        fields_set = getattr(self, "model_fields_set", set())
+        subtensor_explicit = "SUBTENSOR_NETWORK" in fields_set
+        if not subtensor_explicit:
+            for candidate in aliases:
+                if candidate:
+                    self.SUBTENSOR_NETWORK = candidate
+                    break
 
         # Ensure required CORS origins if no regex is provided
         if not self.CORS_ALLOW_ORIGIN_REGEX:

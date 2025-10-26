@@ -34,6 +34,7 @@ from app.models.core import (
 )
 from app.services.cache import CACHE_TTL, api_cache
 from app.utils.images import resolve_agent_image, resolve_validator_image
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -410,7 +411,10 @@ class RoundsService:
         cache_key: Optional[str] = None
         if self._is_final_round(aggregated):
             cache_key = self._round_cache_key("round:detail", aggregated.round_number)
-            cached_payload = api_cache.get(cache_key)
+            cached_payload = api_cache.get(
+                cache_key,
+                force=settings.ENABLE_FINAL_ROUND_CACHE,
+            )
             if cached_payload is not None:
                 return cached_payload
 
@@ -444,8 +448,13 @@ class RoundsService:
         overview["round"] = aggregated.round_number
         overview["roundNumber"] = aggregated.round_number
 
-        if cache_key:
-            api_cache.set(cache_key, overview, CACHE_TTL["round_detail_final"])
+        if cache_key and settings.ENABLE_FINAL_ROUND_CACHE:
+            api_cache.set(
+                cache_key,
+                overview,
+                CACHE_TTL["round_detail_final"],
+                force=True,
+            )
         return overview
 
     async def list_agent_runs(
@@ -1349,7 +1358,10 @@ class RoundsService:
         cache_key: Optional[str] = None
         if self._is_final_round(aggregated):
             cache_key = self._round_cache_key("round:statistics", aggregated.round_number)
-            cached_payload = api_cache.get(cache_key)
+            cached_payload = api_cache.get(
+                cache_key,
+                force=settings.ENABLE_FINAL_ROUND_CACHE,
+            )
             if cached_payload is not None and "winnerAverageScore" in cached_payload:
                 return cached_payload
         miner_aggregates, _, metrics = self._aggregate_round_data(aggregated)
@@ -1405,8 +1417,13 @@ class RoundsService:
             "totalEmission": total_emission,
             "lastUpdated": datetime.now(timezone.utc).isoformat(),
         }
-        if cache_key:
-            api_cache.set(cache_key, payload, CACHE_TTL["round_statistics_final"])
+        if cache_key and settings.ENABLE_FINAL_ROUND_CACHE:
+            api_cache.set(
+                cache_key,
+                payload,
+                CACHE_TTL["round_statistics_final"],
+                force=True,
+            )
         return payload
 
     async def get_round_miners(
@@ -1437,7 +1454,10 @@ class RoundsService:
                     "max": max_score,
                 },
             )
-            cached_payload = api_cache.get(cache_key)
+            cached_payload = api_cache.get(
+                cache_key,
+                force=settings.ENABLE_FINAL_ROUND_CACHE,
+            )
             if cached_payload is not None:
                 return cached_payload
 
@@ -1507,8 +1527,13 @@ class RoundsService:
             "page": page,
             "limit": limit,
         }
-        if cache_key:
-            api_cache.set(cache_key, response_payload, CACHE_TTL["round_miners_final"])
+        if cache_key and settings.ENABLE_FINAL_ROUND_CACHE:
+            api_cache.set(
+                cache_key,
+                response_payload,
+                CACHE_TTL["round_miners_final"],
+                force=True,
+            )
         return response_payload
 
     async def get_round_validators(
@@ -1520,7 +1545,10 @@ class RoundsService:
         cache_key: Optional[str] = None
         if self._is_final_round(aggregated):
             cache_key = self._round_cache_key("round:validators", aggregated.round_number)
-            cached_payload = api_cache.get(cache_key)
+            cached_payload = api_cache.get(
+                cache_key,
+                force=settings.ENABLE_FINAL_ROUND_CACHE,
+            )
             if cached_payload is not None:
                 return cached_payload
         validator_map: Dict[str, Dict[str, Any]] = {}
@@ -1674,8 +1702,13 @@ class RoundsService:
         validators = list(validator_map.values())
         validators.sort(key=lambda item: (item["validatorRoundId"], item["name"]))
         payload = {"validators": validators, "total": len(validators)}
-        if cache_key:
-            api_cache.set(cache_key, payload, CACHE_TTL["round_validators_final"])
+        if cache_key and settings.ENABLE_FINAL_ROUND_CACHE:
+            api_cache.set(
+                cache_key,
+                payload,
+                CACHE_TTL["round_validators_final"],
+                force=True,
+            )
         return payload
 
     async def get_round_validator(
@@ -1832,7 +1865,7 @@ class RoundsService:
         # Prefer chain-derived progress
         aggregated = await self._fetch_aggregated_round(round_identifier, include_details=False)
         try:
-            from app.services.chain_state import get_current_block
+            from app.services.chain_state import get_current_block_estimate as get_current_block
             from app.services.round_calc import (
                 compute_boundaries_for_round,
                 progress_for_block,

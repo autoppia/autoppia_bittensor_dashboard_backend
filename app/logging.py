@@ -207,6 +207,10 @@ def init_logging(settings) -> Tuple[_logging.Logger, int]:
     for name in ("btdecode", "asyncpg"):
         _logging.getLogger(name).setLevel(max(level, _logging.INFO))
 
+    # Tame very chatty websocket client logs that can flood output
+    _logging.getLogger("websockets").setLevel(_logging.WARNING)
+    _logging.getLogger("websockets.client").setLevel(_logging.WARNING)
+
     # Set up file logging if enabled
     _setup_file_logging(settings, level)
 
