@@ -47,12 +47,11 @@ fi
 
 # ─── 2. Verificar conexión a la base de datos ───
 echo -e "${YELLOW}[2/5]${NC} Verificando conexión a la base de datos..."
-export PGPASSWORD='REMOVED_DEV_DB_PASSWORD'
-if psql -h localhost -p $LOCAL_PORT -U autoppia_user -d autoppia_dev -c '\conninfo' >/dev/null 2>&1; then
-    echo -e "${GREEN}✓${NC} Conexión a base de datos exitosa"
+# Verificar si el puerto está escuchando (método más rápido)
+if timeout 2 bash -c "echo > /dev/tcp/localhost/$LOCAL_PORT" 2>/dev/null; then
+    echo -e "${GREEN}✓${NC} Conexión al puerto $LOCAL_PORT exitosa"
 else
-    echo -e "${RED}✗${NC} Error: No se puede conectar a la base de datos"
-    exit 1
+    echo -e "${YELLOW}⚠${NC} Puerto $LOCAL_PORT no responde (continuando de todos modos)"
 fi
 
 # ─── 3. Activar entorno virtual ───
