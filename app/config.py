@@ -194,6 +194,9 @@ class Settings(BaseSettings):
     # Subnet price fallback (alpha → τ). Used when on-chain query fails.
     SUBNET_PRICE_FALLBACK: float = float(_env_var("SUBNET_PRICE_FALLBACK", "0.004178"))
 
+    # Chain block refresher (seconds). If <=0 disables refresher.
+    CHAIN_BLOCK_REFRESH_PERIOD: int = int(_env_var("CHAIN_BLOCK_REFRESH_PERIOD", "30"))
+
     model_config = SettingsConfigDict(
         # env_file disabled because we use load_dotenv() + _env_var() for environment-specific vars
         case_sensitive=True,
