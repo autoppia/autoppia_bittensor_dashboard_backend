@@ -16,6 +16,7 @@ _cached_price_at: float = 0.0
 _price_fetch_in_progress: bool = False
 _last_price_attempt: float = 0.0
 _FAILURE_RETRY_SECONDS = 30.0
+_MAX_REASONABLE_PRICE = 0.05  # 1 alpha -> at most 0.05 τ unless configured via env
 
 
 def _env_fallback(netuid: int) -> float:
@@ -141,6 +142,7 @@ def get_price(netuid: int = 36, ttl_seconds: int = 300) -> float:
 
     # Try chain
     value = _try_fetch_price_sync(int(netuid))
+    source = "chain"
     if value is None or value <= 0:
         # Prefer stale cache if we have one
         with _price_cache_lock:
@@ -152,12 +154,32 @@ def get_price(netuid: int = 36, ttl_seconds: int = 300) -> float:
                 return float(_cached_price_value)
         # No cache: fallback to env
         value = _env_fallback(int(netuid))
+        source = "env-fallback"
+    else:
+        # Sanity clamp: if chain returns an out-of-range price, fallback to env
+        if value > _MAX_REASONABLE_PRICE:
+            logger.warning(
+                "Ignoring unreasonable subnet price from chain (netuid=%s, value=%s)",
+                netuid,
+                value,
+            )
+            value = _env_fallback(int(netuid))
+            source = "env-fallback-clamped"
 
     # Update cache
     with _price_cache_lock:
         _cached_price_value = float(value)
         _cached_price_netuid = int(netuid)
         _cached_price_at = now
+    try:
+        logger.info(
+            "Subnet price updated: netuid=%s value=%.6f source=%s",
+            netuid,
+            float(value),
+            source,
+        )
+    except Exception:
+        pass
     return float(value)
 
 
@@ -273,9 +295,15 @@ def get_price_cached(netuid: int = 36, ttl_seconds: int = 300) -> float:
     - Does NOT trigger any bittensor calls or state changes.
     - Safe for GET endpoints where we want to avoid chain I/O.
     """
+    # If env fallback is explicitly configured (>0), prefer it over cache/chain for UI reads
+    env_price = _env_fallback(int(netuid))
+    if env_price > 0:
+        _kick_price_refresh_if_needed(netuid=netuid, ttl_seconds=ttl_seconds)
+        return env_price
+
     with _price_cache_lock:
         if _cached_price_value is not None and _cached_price_netuid == int(netuid):
             return float(_cached_price_value)
     # Schedule a background refresh and serve env fallback now
     _kick_price_refresh_if_needed(netuid=netuid, ttl_seconds=ttl_seconds)
-    return _env_fallback(int(netuid))
+    return env_price or 1.0
