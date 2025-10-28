@@ -53,6 +53,7 @@ from app.utils.urls import build_taostats_miner_url
 logger = logging.getLogger(__name__)
 
 ALPHA_EMISSION_PER_EPOCH = 148.0
+_ALPHA_TO_TAO_RATE = float(getattr(settings, "ALPHA_TO_TAO_RATE", 1.0) or 1.0)
 _EPSILON = 1e-6
 
 
@@ -126,6 +127,8 @@ class AgentAggregate:
     winning_rounds: Set[int] = field(default_factory=set)
     alpha_reward: float = 0.0
     best_round_average: float = 0.0
+    # Track which round achieved best_round_average
+    best_round_number: Optional[int] = None
 
 
 @dataclass
@@ -1138,12 +1141,14 @@ class AgentsService:
         round_winners: Dict[int, tuple[str, float]] = {}
         for aggregate in aggregates.values():
             best_avg = aggregate.best_round_average
+            best_round_num = aggregate.best_round_number
             for round_number, scores in aggregate.round_scores.items():
                 if not scores or round_number in awarded_numeric_rounds:
                     continue
                 avg_score = sum(scores) / len(scores)
                 if avg_score > best_avg:
                     best_avg = avg_score
+                    best_round_num = round_number
                 if aggregate.is_sota:
                     continue
                 existing_winner = round_winners.get(round_number)
@@ -1154,6 +1159,7 @@ class AgentsService:
                 ):
                     round_winners[round_number] = (aggregate.agent_id, avg_score)
             aggregate.best_round_average = best_avg
+            aggregate.best_round_number = best_round_num
 
         for round_number, (winner_id, _) in round_winners.items():
             epochs = round_epoch_lengths.get(round_number)
@@ -1409,7 +1415,9 @@ class AgentsService:
             bestRankEver=best_rank or 0,
             roundsParticipated=len({round_id for round_id in aggregate.rounds if round_id}),
             alphaWonInPrizes=aggregate.alpha_reward,
+            taoWonInPrizes=float(aggregate.alpha_reward) * _ALPHA_TO_TAO_RATE,
             bestRoundScore=aggregate.best_round_average,
+            bestRoundId=int(aggregate.best_round_number or 0),
             averageResponseTime=average_duration,
             totalTasks=aggregate.total_tasks,
             completedTasks=aggregate.completed_tasks,

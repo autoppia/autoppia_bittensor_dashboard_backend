@@ -191,6 +191,10 @@ class Settings(BaseSettings):
         os.getenv("ENABLE_CURRENT_ROUND_CACHE", "true")
     )
 
+    # Conversion rate for reporting TAO prizes from alpha totals
+    # Defaults to 1.0 (1 alpha → 1 TAO) unless overridden per-environment
+    ALPHA_TO_TAO_RATE: float = float(_env_var("ALPHA_TO_TAO_RATE", "1.0"))
+
     model_config = SettingsConfigDict(
         # env_file disabled because we use load_dotenv() + _env_var() for environment-specific vars
         case_sensitive=True,
