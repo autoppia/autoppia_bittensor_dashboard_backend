@@ -48,7 +48,7 @@ from app.models.ui.agents import (
 from app.services.ui.rounds_service import AgentRunContext, RoundsService
 from app.services.ui.agent_runs_service import AgentRunsService
 from app.utils.images import resolve_agent_image
-from app.services.subnet_utils import get_price as get_subnet_price
+from app.services.subnet_utils import get_price_cached as get_subnet_price
 from app.utils.urls import build_taostats_miner_url
 
 logger = logging.getLogger(__name__)
@@ -1116,7 +1116,10 @@ class AgentsService:
                 winner_aggregate.alpha_reward += reward
                 winner_aggregate.winning_rounds.add(round_number)
 
-        round_best_scores: Dict[int, float] = {}
+        # Compute a full global leaderboard for every round using per-agent averages
+        # across all validators, so bestRankEver and roundsWon align consistently.
+        # Also recompute latest_round_* summaries using those global tops.
+        # First, derive latest round + latest average score per agent
         for aggregate in aggregates.values():
             if aggregate.round_scores:
                 latest_round = max(aggregate.round_scores.keys())
@@ -1125,11 +1128,7 @@ class AgentsService:
                 aggregate.latest_round_score = (
                     sum(latest_scores) / len(latest_scores) if latest_scores else None
                 )
-                latest_ranks = aggregate.round_ranks.get(latest_round, [])
-                if latest_ranks:
-                    aggregate.latest_round_rank = min(latest_ranks)
-                if aggregate.latest_round_score is not None and not aggregate.is_sota:
-                    round_leaderboards[latest_round].append((aggregate.agent_id, aggregate.latest_round_score))
+            # Keep runs ordering for UI
             aggregate.runs.sort(
                 key=lambda ctx: (
                     int(ctx.round.round_number or _round_id_to_int(ctx.round.validator_round_id)),
@@ -1138,16 +1137,24 @@ class AgentsService:
                 reverse=True,
             )
 
+        from collections import defaultdict as _dd
+        round_leaderboards: Dict[int, List[tuple[str, float]]] = _dd(list)
+        for aggregate in aggregates.values():
+            if aggregate.is_sota:
+                continue
+            for round_number, scores in aggregate.round_scores.items():
+                if not scores:
+                    continue
+                avg = sum(scores) / len(scores)
+                round_leaderboards[round_number].append((aggregate.agent_id, avg))
+
+        round_best_scores: Dict[int, float] = {}
         for round_number, entries in round_leaderboards.items():
-            # Deterministic tie-break consistent with winner selection: by score desc, then agent_id asc
             sorted_entries = sorted(entries, key=lambda item: (-item[1], item[0]))
             if sorted_entries:
                 round_best_scores[round_number] = sorted_entries[0][1]
             for rank, (agent_id, _) in enumerate(sorted_entries, start=1):
-                aggregate = aggregates[agent_id]
-                aggregate.global_round_ranks[round_number] = rank
-                if aggregate.latest_round_number == round_number:
-                    aggregate.latest_round_global_rank = rank
+                aggregates[agent_id].global_round_ranks[round_number] = rank
 
         for aggregate in aggregates.values():
             if aggregate.latest_round_number is not None:
@@ -1376,6 +1383,7 @@ class AgentsService:
             bestRankEver=best_rank or 0,
             bestRankRoundId=best_rank_round,
             roundsParticipated=len({round_id for round_id in aggregate.rounds if round_id}),
+            roundsWon=len(aggregate.winning_rounds),
             alphaWonInPrizes=aggregate.alpha_reward,
             taoWonInPrizes=float(aggregate.alpha_reward) * float(subnet_rate),
             bestRoundScore=aggregate.best_round_average,

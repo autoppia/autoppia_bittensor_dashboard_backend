@@ -13,6 +13,9 @@ _price_cache_lock = threading.Lock()
 _cached_price_value: Optional[float] = None
 _cached_price_netuid: Optional[int] = None
 _cached_price_at: float = 0.0
+_price_fetch_in_progress: bool = False
+_last_price_attempt: float = 0.0
+_FAILURE_RETRY_SECONDS = 30.0
 
 
 def _env_fallback(netuid: int) -> float:
@@ -221,3 +224,58 @@ async def get_price_async(netuid: int = 36, ttl_seconds: int = 300) -> float:
 
     # Fallback to sync path
     return get_price(netuid=netuid, ttl_seconds=ttl_seconds)
+
+
+def _kick_price_refresh_if_needed(netuid: int = 36, ttl_seconds: int = 300) -> None:
+    """If cache is missing or stale, trigger a background refresh.
+
+    Never blocks the caller; uses a best-effort backoff when previous attempts failed.
+    """
+    global _price_fetch_in_progress, _last_price_attempt
+    now = time.time()
+    with _price_cache_lock:
+        cached_ts = _cached_price_at
+        cached_uid = _cached_price_netuid
+        in_progress = _price_fetch_in_progress
+        last_attempt = _last_price_attempt
+
+    ttl = max(60, int(ttl_seconds))
+    is_stale = (cached_uid != int(netuid)) or (cached_ts <= 0) or ((now - cached_ts) >= ttl)
+    retry_delay = min(ttl, _FAILURE_RETRY_SECONDS)
+    should_retry_failure = (cached_ts <= 0) and ((now - last_attempt) >= retry_delay)
+
+    if not is_stale and not should_retry_failure:
+        return
+    if in_progress:
+        return
+
+    def _bg_refresh():
+        global _price_fetch_in_progress, _last_price_attempt
+        try:
+            _ = get_price(netuid=netuid, ttl_seconds=ttl_seconds)
+        finally:
+            with _price_cache_lock:
+                _price_fetch_in_progress = False
+
+    with _price_cache_lock:
+        if _price_fetch_in_progress:
+            return
+        _price_fetch_in_progress = True
+        _last_price_attempt = now
+
+    thread = threading.Thread(target=_bg_refresh, daemon=True)
+    thread.start()
+
+
+def get_price_cached(netuid: int = 36, ttl_seconds: int = 300) -> float:
+    """Return cached subnet price if present; otherwise env fallback.
+
+    - Does NOT trigger any bittensor calls or state changes.
+    - Safe for GET endpoints where we want to avoid chain I/O.
+    """
+    with _price_cache_lock:
+        if _cached_price_value is not None and _cached_price_netuid == int(netuid):
+            return float(_cached_price_value)
+    # Schedule a background refresh and serve env fallback now
+    _kick_price_refresh_if_needed(netuid=netuid, ttl_seconds=ttl_seconds)
+    return _env_fallback(int(netuid))

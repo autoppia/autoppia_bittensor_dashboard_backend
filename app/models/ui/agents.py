@@ -89,6 +89,7 @@ class Agent(BaseModel):
     bestRankEver: int = Field(default=0, description="Best rank ever achieved")
     bestRankRoundId: int = Field(default=0, description="Round where best rank occurred")
     roundsParticipated: int = Field(default=0, description="Number of rounds participated")
+    roundsWon: int = Field(default=0, description="Number of rounds won (global winner)")
     alphaWonInPrizes: float = Field(default=0.0, description="Alpha won in prizes")
     taoWonInPrizes: float = Field(default=0.0, description="TAO won in prizes (derived)")
     bestRoundScore: float = Field(default=0.0, description="Best average score achieved across all rounds")
