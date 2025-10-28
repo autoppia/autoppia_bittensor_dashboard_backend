@@ -1015,7 +1015,11 @@ class TasksService:
                     selector = str(selector_obj)
 
             if not selector:
-                selector = attributes.get("selector")
+                sel_attr = attributes.get("selector") if isinstance(attributes, dict) else None
+                if isinstance(sel_attr, dict):
+                    selector = sel_attr.get("value") or str(sel_attr)
+                else:
+                    selector = sel_attr
 
             # Extract value - check action object first, then attributes
             value = (

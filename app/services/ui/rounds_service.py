@@ -2863,11 +2863,17 @@ class RoundsService:
                 actions = []
                 for action_payload in solution_row.actions or []:
                     action_type = action_payload.get("type", "")
-                    attributes = {
-                        key: value
-                        for key, value in action_payload.items()
-                        if key != "type"
-                    }
+                    # Support both shapes:
+                    # 1) { type, attributes: {...} }
+                    # 2) { type, url/selector/... }
+                    if isinstance(action_payload.get("attributes"), dict):
+                        attributes = dict(action_payload.get("attributes") or {})
+                    else:
+                        attributes = {
+                            key: value
+                            for key, value in action_payload.items()
+                            if key != "type"
+                        }
                     actions.append(Action(type=action_type, attributes=attributes))
 
                 solutions.append(
