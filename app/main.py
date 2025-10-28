@@ -154,6 +154,18 @@ async def on_startup():
         logger.info("SQL schema ready")
         logger.info(f"API server ready on {settings.HOST}:{settings.PORT}")
         logger.info("API documentation available at /docs")
+        # Start background chain block refresher (non-blocking)
+        try:
+            from app.services.chain_state import start_block_refresher
+
+            if int(getattr(settings, "CHAIN_BLOCK_REFRESH_PERIOD", 30) or 30) > 0:
+                start_block_refresher(settings.CHAIN_BLOCK_REFRESH_PERIOD)
+                logger.info(
+                    "Chain block refresher started (period=%ss)",
+                    settings.CHAIN_BLOCK_REFRESH_PERIOD,
+                )
+        except Exception as exc:
+            logger.warning("Could not start chain block refresher: %s", exc)
     except Exception as e:
         logger.error(f"Failed to initialize application: {e}", exc_info=True)
         raise
@@ -163,6 +175,12 @@ async def on_startup():
 async def on_shutdown():
     logger.info("Shutting down Autoppia IWA Platform API...")
     # add cleanup as needed
+    try:
+        from app.services.chain_state import stop_block_refresher
+
+        stop_block_refresher()
+    except Exception:
+        pass
 
 
 # Global exception handler

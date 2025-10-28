@@ -15,6 +15,10 @@ _fetch_in_progress = False
 _last_fetch_attempt: float = 0.0
 _FAILURE_RETRY_SECONDS = 30.0
 
+# Background refresher state
+_refresh_thread: Optional[threading.Thread] = None
+_refresh_stop: Optional[threading.Event] = None
+
 
 def _fetch_current_block() -> Optional[int]:
     """Fetch the current chain block from bittensor.
@@ -151,3 +155,63 @@ def get_current_block() -> Optional[int]:
 
     # Fetch failed: keep serving estimate if we have one
     return estimate
+
+
+def refresh_block_now() -> Optional[int]:
+    """Force a refresh of the cached current block immediately.
+
+    Returns the fetched block or None on failure. This bypasses TTL/backoff
+    and updates the in-memory cache if a value is retrieved.
+    """
+    global _cached_block, _cached_at
+    fresh = _fetch_current_block()
+    if fresh is not None:
+        with _cache_lock:
+            _cached_block = int(fresh)
+            _cached_at = time.time()
+        return int(fresh)
+    return None
+
+
+def start_block_refresher(period_seconds: Optional[int] = None) -> None:
+    """Start a background thread that refreshes the block cache on a fixed cadence.
+
+    - Never blocks request/response paths
+    - Swallows errors and keeps looping
+    """
+    global _refresh_thread, _refresh_stop
+    if _refresh_thread and _refresh_thread.is_alive():
+        return
+    if period_seconds is None:
+        try:
+            period_seconds = int(getattr(settings, "CHAIN_BLOCK_REFRESH_PERIOD", 30) or 30)
+        except Exception:
+            period_seconds = 30
+    period_seconds = max(5, int(period_seconds))
+
+    _refresh_stop = threading.Event()
+
+    def _worker():
+        while _refresh_stop and not _refresh_stop.is_set():
+            try:
+                refresh_block_now()
+            except Exception:
+                pass
+            # Sleep in small intervals to allow quick shutdown
+            for _ in range(period_seconds):
+                if _refresh_stop and _refresh_stop.is_set():
+                    break
+                time.sleep(1)
+
+    _refresh_thread = threading.Thread(target=_worker, daemon=True)
+    _refresh_thread.start()
+
+
+def stop_block_refresher() -> None:
+    global _refresh_stop, _refresh_thread
+    if _refresh_stop is not None:
+        _refresh_stop.set()
+    if _refresh_thread and _refresh_thread.is_alive():
+        _refresh_thread.join(timeout=2)
+    _refresh_thread = None
+    _refresh_stop = None

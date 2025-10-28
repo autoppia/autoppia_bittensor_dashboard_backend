@@ -48,6 +48,7 @@ from app.models.ui.agents import (
 from app.services.ui.rounds_service import AgentRunContext, RoundsService
 from app.services.ui.agent_runs_service import AgentRunsService
 from app.utils.images import resolve_agent_image
+from app.services.subnet_utils import get_price_cached as get_subnet_price
 from app.utils.urls import build_taostats_miner_url
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,8 @@ class AgentAggregate:
     winning_rounds: Set[int] = field(default_factory=set)
     alpha_reward: float = 0.0
     best_round_average: float = 0.0
+    # Track which round achieved best_round_average
+    best_round_number: Optional[int] = None
 
 
 @dataclass
@@ -1076,74 +1079,19 @@ class AgentsService:
                 if existing_entry is None or run_score > existing_entry.get("score", 0.0):
                     round_benchmark_scores[round_identifier][bench_key] = entry
 
-        # Determine winners from persisted round payloads (per-validator),
-        # rather than re-deriving from scores. Award alpha to rank-1 winners.
-        # If a round has no winners metadata, fall back to score-based winner.
-        seen_round_ids: Set[str] = set()
-        awarded_numeric_rounds: Set[int] = set()
-        for context in contexts:
-            round_model = context.round
-            round_id = round_model.validator_round_id
-            if not round_id or round_id in seen_round_ids:
-                continue
-            seen_round_ids.add(round_id)
-
-            # Prefer actual elapsed epochs if available; else fallback to configured/default
-            epochs = self._round_epoch_length(round_model)
-            if epochs <= 0:
-                epochs = self._fallback_round_epochs()
-
-            numeric_round = int(round_model.round_number or _round_id_to_int(round_id))
-            if numeric_round > 0 and numeric_round not in round_epoch_lengths:
-                round_epoch_lengths[numeric_round] = epochs
-
-            winners: List[Dict[str, Any]] = getattr(round_model, "metadata", {}).get("winners") or []
-            # Back-compat: some layers expose winners at top-level `winners`
-            if not winners:
-                winners = getattr(round_model, "winners", []) or []
-
-            top = None
-            for entry in winners:
-                # Accept keys: rank/position/placement with value 1
-                rank_value = entry.get("rank") or entry.get("position") or entry.get("placement")
-                try:
-                    if rank_value is None or int(rank_value) != 1:
-                        continue
-                except (TypeError, ValueError):
-                    continue
-                top = entry
-                break
-
-            if top is None:
-                continue
-
-            # Ensure we only award once per global numeric round
-            if numeric_round in awarded_numeric_rounds:
-                continue
-
-            winner_uid = top.get("miner_uid")
-            if winner_uid is None:
-                continue
-            winner_id = _format_agent_id(winner_uid)
-            reward = ALPHA_EMISSION_PER_EPOCH * epochs
-            winner_aggregate = aggregates.get(winner_id)
-            if winner_aggregate is not None and numeric_round > 0:
-                existing = winner_aggregate.round_rewards.get(numeric_round, 0.0)
-                winner_aggregate.round_rewards[numeric_round] = existing + reward
-                winner_aggregate.alpha_reward += reward
-                winner_aggregate.winning_rounds.add(numeric_round)
-                awarded_numeric_rounds.add(numeric_round)
-
-        # Score-based fallback for rounds without explicit winners
+        # Compute global winners per round using aggregated average scores across all validators.
+        # This avoids relying on per-validator winners payloads and ensures one winner per numeric round.
         round_winners: Dict[int, tuple[str, float]] = {}
         for aggregate in aggregates.values():
             best_avg = aggregate.best_round_average
+            best_round_num = aggregate.best_round_number
             for round_number, scores in aggregate.round_scores.items():
-                if not scores or round_number in awarded_numeric_rounds:
+                if not scores:
                     continue
                 avg_score = sum(scores) / len(scores)
                 if avg_score > best_avg:
                     best_avg = avg_score
+                    best_round_num = round_number
                 if aggregate.is_sota:
                     continue
                 existing_winner = round_winners.get(round_number)
@@ -1154,7 +1102,9 @@ class AgentsService:
                 ):
                     round_winners[round_number] = (aggregate.agent_id, avg_score)
             aggregate.best_round_average = best_avg
+            aggregate.best_round_number = best_round_num
 
+        # Award alpha to the global winner for each round, once per numeric round
         for round_number, (winner_id, _) in round_winners.items():
             epochs = round_epoch_lengths.get(round_number)
             if epochs is None or epochs <= 0:
@@ -1166,7 +1116,10 @@ class AgentsService:
                 winner_aggregate.alpha_reward += reward
                 winner_aggregate.winning_rounds.add(round_number)
 
-        round_best_scores: Dict[int, float] = {}
+        # Compute a full global leaderboard for every round using per-agent averages
+        # across all validators, so bestRankEver and roundsWon align consistently.
+        # Also recompute latest_round_* summaries using those global tops.
+        # First, derive latest round + latest average score per agent
         for aggregate in aggregates.values():
             if aggregate.round_scores:
                 latest_round = max(aggregate.round_scores.keys())
@@ -1175,11 +1128,7 @@ class AgentsService:
                 aggregate.latest_round_score = (
                     sum(latest_scores) / len(latest_scores) if latest_scores else None
                 )
-                latest_ranks = aggregate.round_ranks.get(latest_round, [])
-                if latest_ranks:
-                    aggregate.latest_round_rank = min(latest_ranks)
-                if aggregate.latest_round_score is not None and not aggregate.is_sota:
-                    round_leaderboards[latest_round].append((aggregate.agent_id, aggregate.latest_round_score))
+            # Keep runs ordering for UI
             aggregate.runs.sort(
                 key=lambda ctx: (
                     int(ctx.round.round_number or _round_id_to_int(ctx.round.validator_round_id)),
@@ -1188,16 +1137,24 @@ class AgentsService:
                 reverse=True,
             )
 
+        from collections import defaultdict as _dd
+        round_leaderboards: Dict[int, List[tuple[str, float]]] = _dd(list)
+        for aggregate in aggregates.values():
+            if aggregate.is_sota:
+                continue
+            for round_number, scores in aggregate.round_scores.items():
+                if not scores:
+                    continue
+                avg = sum(scores) / len(scores)
+                round_leaderboards[round_number].append((aggregate.agent_id, avg))
+
+        round_best_scores: Dict[int, float] = {}
         for round_number, entries in round_leaderboards.items():
-            # Deterministic tie-break consistent with winner selection: by score desc, then agent_id asc
             sorted_entries = sorted(entries, key=lambda item: (-item[1], item[0]))
             if sorted_entries:
                 round_best_scores[round_number] = sorted_entries[0][1]
             for rank, (agent_id, _) in enumerate(sorted_entries, start=1):
-                aggregate = aggregates[agent_id]
-                aggregate.global_round_ranks[round_number] = rank
-                if aggregate.latest_round_number == round_number:
-                    aggregate.latest_round_global_rank = rank
+                aggregates[agent_id].global_round_ranks[round_number] = rank
 
         for aggregate in aggregates.values():
             if aggregate.latest_round_number is not None:
@@ -1370,6 +1327,16 @@ class AgentsService:
             if aggregate.global_round_ranks
             else None
         )
+        best_rank_round = 0
+        if aggregate.global_round_ranks and best_rank is not None:
+            try:
+                candidates = [
+                    r for r, v in aggregate.global_round_ranks.items() if v == best_rank
+                ]
+                if candidates:
+                    best_rank_round = int(sorted(candidates)[0])
+            except Exception:
+                best_rank_round = 0
         if aggregate.latest_round_global_rank is not None:
             current_rank_value = aggregate.latest_round_global_rank
         elif aggregate.latest_rank is not None:
@@ -1387,6 +1354,13 @@ class AgentsService:
         )
 
         taostats_url = build_taostats_miner_url(hotkey)
+        # Resolve live subnet price with env fallback; avoid recompute per call via internal cache
+        try:
+            subnet_rate = float(get_subnet_price(settings.VALIDATOR_NETUID))
+            if subnet_rate <= 0:
+                subnet_rate = float(getattr(settings, "SUBNET_PRICE_FALLBACK", 1.0) or 1.0)
+        except Exception:
+            subnet_rate = float(getattr(settings, "SUBNET_PRICE_FALLBACK", 1.0) or 1.0)
 
         return Agent(
             id=aggregate.agent_id,
@@ -1407,9 +1381,13 @@ class AgentsService:
             currentTopScore=latest_round_top_score,
             currentRank=current_rank_value or 0,
             bestRankEver=best_rank or 0,
+            bestRankRoundId=best_rank_round,
             roundsParticipated=len({round_id for round_id in aggregate.rounds if round_id}),
+            roundsWon=len(aggregate.winning_rounds),
             alphaWonInPrizes=aggregate.alpha_reward,
+            taoWonInPrizes=float(aggregate.alpha_reward) * float(subnet_rate),
             bestRoundScore=aggregate.best_round_average,
+            bestRoundId=int(aggregate.best_round_number or 0),
             averageResponseTime=average_duration,
             totalTasks=aggregate.total_tasks,
             completedTasks=aggregate.completed_tasks,
