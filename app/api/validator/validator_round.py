@@ -285,6 +285,27 @@ async def _legacy_to_add_evaluation_request(
     if miner_uid is not None:
         task_solution_data.setdefault("miner_uid", miner_uid)
         task_solution_data.setdefault("miner_hotkey", miner_hotkey)
+
+    # Normalize IWAP raw actions into core {type, attributes} shape
+    try:
+        raw_actions = task_solution_data.get("actions")
+        if isinstance(raw_actions, list):
+            normalized_actions = []
+            for a in raw_actions:
+                if not isinstance(a, dict):
+                    normalized_actions.append({"type": str(a), "attributes": {}})
+                    continue
+                raw_type = str(a.get("type", "other") or "other")
+                normalized_type = (
+                    raw_type.lower().replace("action", "").replace("-", "_").strip() or "other"
+                )
+                attrs = {k: v for k, v in a.items() if k != "type"}
+                normalized_actions.append({"type": normalized_type, "attributes": attrs})
+            task_solution_data["actions"] = normalized_actions
+    except Exception:
+        # Leave original shape on failure
+        pass
+
     task_solution = TaskSolution(**task_solution_data)
 
     evaluation_result_data = dict(payload.evaluation_result)
@@ -882,6 +903,44 @@ async def add_evaluation(
                     request_payload,
                     service,
                 )
+
+            # Heuristic: if actions reached here as AddEvaluationRequest but lost fields
+            # (attributes empty), rebuild attributes from raw JSON body before persisting.
+            try:
+                if not isinstance(payload, LegacyAddEvaluationRequest):
+                    raw_json = await request.json()
+                    raw_ts = (raw_json or {}).get("task_solution") or {}
+                    raw_actions = raw_ts.get("actions") if isinstance(raw_ts, dict) else None
+                    ts = getattr(request_payload, "task_solution", None)
+                    if raw_actions and ts and isinstance(ts.actions, list):
+                        from app.models.core import Action as CoreAction, TaskSolution as CoreTaskSolution
+
+                        def _norm_type(t: str) -> str:
+                            return (t or "other").lower().replace("action", "").replace("-", "_").strip() or "other"
+
+                        new_actions = []
+                        for idx, ra in enumerate(raw_actions):
+                            if isinstance(ra, dict):
+                                rtype = _norm_type(str(ra.get("type", "other") or "other"))
+                                attrs = {k: v for k, v in ra.items() if k != "type"}
+                                new_actions.append(CoreAction(type=rtype, attributes=attrs))
+                            else:
+                                new_actions.append(CoreAction(type=str(ra), attributes={}))
+
+                        # Replace only if current attrs look empty
+                        if all((getattr(a, "attributes", None) in (None, {}, []) for a in ts.actions)):
+                            request_payload = AddEvaluationRequest(
+                                task=request_payload.task,
+                                task_solution=CoreTaskSolution(**{
+                                    **request_payload.task_solution.model_dump(mode="json"),
+                                    "actions": [a.model_dump(mode="json") for a in new_actions],
+                                }),
+                                evaluation=request_payload.evaluation,
+                                evaluation_result=request_payload.evaluation_result,
+                            )
+            except Exception:
+                # Non-fatal: fall back to original payload
+                pass
 
             task = request_payload.task
             task_solution = request_payload.task_solution
