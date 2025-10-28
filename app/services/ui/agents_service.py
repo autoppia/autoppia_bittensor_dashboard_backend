@@ -48,6 +48,7 @@ from app.models.ui.agents import (
 from app.services.ui.rounds_service import AgentRunContext, RoundsService
 from app.services.ui.agent_runs_service import AgentRunsService
 from app.utils.images import resolve_agent_image
+from app.services.subnet_utils import get_price as get_subnet_price
 from app.utils.urls import build_taostats_miner_url
 
 logger = logging.getLogger(__name__)
@@ -1079,71 +1080,14 @@ class AgentsService:
                 if existing_entry is None or run_score > existing_entry.get("score", 0.0):
                     round_benchmark_scores[round_identifier][bench_key] = entry
 
-        # Determine winners from persisted round payloads (per-validator),
-        # rather than re-deriving from scores. Award alpha to rank-1 winners.
-        # If a round has no winners metadata, fall back to score-based winner.
-        seen_round_ids: Set[str] = set()
-        awarded_numeric_rounds: Set[int] = set()
-        for context in contexts:
-            round_model = context.round
-            round_id = round_model.validator_round_id
-            if not round_id or round_id in seen_round_ids:
-                continue
-            seen_round_ids.add(round_id)
-
-            # Prefer actual elapsed epochs if available; else fallback to configured/default
-            epochs = self._round_epoch_length(round_model)
-            if epochs <= 0:
-                epochs = self._fallback_round_epochs()
-
-            numeric_round = int(round_model.round_number or _round_id_to_int(round_id))
-            if numeric_round > 0 and numeric_round not in round_epoch_lengths:
-                round_epoch_lengths[numeric_round] = epochs
-
-            winners: List[Dict[str, Any]] = getattr(round_model, "metadata", {}).get("winners") or []
-            # Back-compat: some layers expose winners at top-level `winners`
-            if not winners:
-                winners = getattr(round_model, "winners", []) or []
-
-            top = None
-            for entry in winners:
-                # Accept keys: rank/position/placement with value 1
-                rank_value = entry.get("rank") or entry.get("position") or entry.get("placement")
-                try:
-                    if rank_value is None or int(rank_value) != 1:
-                        continue
-                except (TypeError, ValueError):
-                    continue
-                top = entry
-                break
-
-            if top is None:
-                continue
-
-            # Ensure we only award once per global numeric round
-            if numeric_round in awarded_numeric_rounds:
-                continue
-
-            winner_uid = top.get("miner_uid")
-            if winner_uid is None:
-                continue
-            winner_id = _format_agent_id(winner_uid)
-            reward = ALPHA_EMISSION_PER_EPOCH * epochs
-            winner_aggregate = aggregates.get(winner_id)
-            if winner_aggregate is not None and numeric_round > 0:
-                existing = winner_aggregate.round_rewards.get(numeric_round, 0.0)
-                winner_aggregate.round_rewards[numeric_round] = existing + reward
-                winner_aggregate.alpha_reward += reward
-                winner_aggregate.winning_rounds.add(numeric_round)
-                awarded_numeric_rounds.add(numeric_round)
-
-        # Score-based fallback for rounds without explicit winners
+        # Compute global winners per round using aggregated average scores across all validators.
+        # This avoids relying on per-validator winners payloads and ensures one winner per numeric round.
         round_winners: Dict[int, tuple[str, float]] = {}
         for aggregate in aggregates.values():
             best_avg = aggregate.best_round_average
             best_round_num = aggregate.best_round_number
             for round_number, scores in aggregate.round_scores.items():
-                if not scores or round_number in awarded_numeric_rounds:
+                if not scores:
                     continue
                 avg_score = sum(scores) / len(scores)
                 if avg_score > best_avg:
@@ -1161,6 +1105,7 @@ class AgentsService:
             aggregate.best_round_average = best_avg
             aggregate.best_round_number = best_round_num
 
+        # Award alpha to the global winner for each round, once per numeric round
         for round_number, (winner_id, _) in round_winners.items():
             epochs = round_epoch_lengths.get(round_number)
             if epochs is None or epochs <= 0:
@@ -1393,6 +1338,13 @@ class AgentsService:
         )
 
         taostats_url = build_taostats_miner_url(hotkey)
+        # Resolve live subnet price with env fallback; avoid recompute per call via internal cache
+        try:
+            subnet_rate = float(get_subnet_price(settings.VALIDATOR_NETUID))
+            if subnet_rate <= 0:
+                subnet_rate = _ALPHA_TO_TAO_RATE
+        except Exception:
+            subnet_rate = _ALPHA_TO_TAO_RATE
 
         return Agent(
             id=aggregate.agent_id,
@@ -1415,7 +1367,7 @@ class AgentsService:
             bestRankEver=best_rank or 0,
             roundsParticipated=len({round_id for round_id in aggregate.rounds if round_id}),
             alphaWonInPrizes=aggregate.alpha_reward,
-            taoWonInPrizes=float(aggregate.alpha_reward) * _ALPHA_TO_TAO_RATE,
+            taoWonInPrizes=float(aggregate.alpha_reward) * float(subnet_rate),
             bestRoundScore=aggregate.best_round_average,
             bestRoundId=int(aggregate.best_round_number or 0),
             averageResponseTime=average_duration,
