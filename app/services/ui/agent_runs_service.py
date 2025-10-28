@@ -145,8 +145,12 @@ class AgentRunsService:
                 or_(
                     func.lower(AgentEvaluationRunORM.agent_run_id).like(like_pattern),
                     func.lower(AgentEvaluationRunORM.miner_hotkey).like(like_pattern),
-                    func.lower(AgentEvaluationRunORM.validator_hotkey).like(like_pattern),
-                    cast(AgentEvaluationRunORM.validator_uid, String).like(like_pattern),
+                    func.lower(AgentEvaluationRunORM.validator_hotkey).like(
+                        like_pattern
+                    ),
+                    cast(AgentEvaluationRunORM.validator_uid, String).like(
+                        like_pattern
+                    ),
                     cast(AgentEvaluationRunORM.miner_uid, String).like(like_pattern),
                 )
             )
@@ -164,7 +168,8 @@ class AgentRunsService:
             "totalTasks": AgentEvaluationRunORM.total_tasks,
             "completedTasks": AgentEvaluationRunORM.completed_tasks,
             "successRate": func.coalesce(
-                AgentEvaluationRunORM.completed_tasks * 100.0
+                AgentEvaluationRunORM.completed_tasks
+                * 100.0
                 / func.nullif(AgentEvaluationRunORM.total_tasks, 0),
                 0.0,
             ),
@@ -179,7 +184,9 @@ class AgentRunsService:
         else:
             order_clause = order_expr.asc()
 
-        base_stmt = base_stmt.order_by(order_clause, AgentEvaluationRunORM.agent_run_id.desc())
+        base_stmt = base_stmt.order_by(
+            order_clause, AgentEvaluationRunORM.agent_run_id.desc()
+        )
         base_stmt = base_stmt.offset(skip).limit(limit)
 
         result_ids = await self.session.scalars(base_stmt)
@@ -258,7 +265,9 @@ class AgentRunsService:
             return None
 
         events: List[Event] = []
-        start_time = _ts_to_iso(context.run.started_at) or datetime.now(timezone.utc).isoformat()
+        start_time = (
+            _ts_to_iso(context.run.started_at) or datetime.now(timezone.utc).isoformat()
+        )
         events.append(
             Event(
                 timestamp=start_time,
@@ -331,7 +340,8 @@ class AgentRunsService:
         ]
 
         duration = int(
-            (context.run.ended_at or context.run.started_at or 0) - (context.run.started_at or 0)
+            (context.run.ended_at or context.run.started_at or 0)
+            - (context.run.started_at or 0)
         )
 
         return Metrics(
@@ -368,13 +378,16 @@ class AgentRunsService:
 
         def _success_rate(run: AgentRun) -> float:
             return (
-                run.successfulTasks / run.totalTasks * 100.0
-                if run.totalTasks
-                else 0.0
+                run.successfulTasks / run.totalTasks * 100.0 if run.totalTasks else 0.0
             )
 
-        best_score_run = max(runs, key=lambda run: run.score if run.score is not None else 0.0)
-        fastest_run = min(runs, key=lambda run: run.duration if run.duration is not None else float("inf"))
+        best_score_run = max(
+            runs, key=lambda run: run.score if run.score is not None else 0.0
+        )
+        fastest_run = min(
+            runs,
+            key=lambda run: run.duration if run.duration is not None else float("inf"),
+        )
         most_tasks_run = max(runs, key=lambda run: run.totalTasks)
         best_success_run = max(runs, key=_success_rate)
 
@@ -398,7 +411,14 @@ class AgentRunsService:
         average_evaluation_time = self._average_evaluation_time(context)
 
         validator_name, validator_image = self._resolve_validator_identity(context)
-        agent_name, agent_image, agent_uid, agent_hotkey, agent_identifier, agent_description = self._resolve_agent_identity(context)
+        (
+            agent_name,
+            agent_image,
+            agent_uid,
+            agent_hotkey,
+            agent_identifier,
+            agent_description,
+        ) = self._resolve_agent_identity(context)
         round_id_value = context.round.round_number
         if round_id_value is None:
             round_id_value = _round_id_to_int(context.round.validator_round_id)
@@ -421,11 +441,17 @@ class AgentRunsService:
             failedTasks=failed_tasks,
             score=average_score,
             ranking=context.run.rank or 0,
-            duration=_safe_int((context.run.ended_at or context.run.started_at or 0) - (context.run.started_at or 0)),
+            duration=_safe_int(
+                (context.run.ended_at or context.run.started_at or 0)
+                - (context.run.started_at or 0)
+            ),
             overallScore=overall_score,
-            averageEvaluationTime=round(average_evaluation_time, 3)
-            if average_evaluation_time is not None
-            else None,
+            averageEvaluationTime=(
+                round(average_evaluation_time, 3)
+                if average_evaluation_time is not None
+                else None
+            ),
+            totalWebsites=len(websites),
             websites=websites,
             tasks=ui_tasks,
             metadata={
@@ -437,7 +463,14 @@ class AgentRunsService:
 
     def _build_personas(self, context: AgentRunContext) -> Personas:
         validator_name, validator_image = self._resolve_validator_identity(context)
-        agent_name, agent_image, agent_uid, agent_hotkey, agent_identifier, agent_description = self._resolve_agent_identity(context)
+        (
+            agent_name,
+            agent_image,
+            agent_uid,
+            agent_hotkey,
+            agent_identifier,
+            agent_description,
+        ) = self._resolve_agent_identity(context)
 
         round_number_value = context.round.round_number
         if round_number_value is None:
@@ -477,10 +510,20 @@ class AgentRunsService:
         ui_tasks: List[UITask],
     ) -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict[str, float]], float]:
         website_stats: Dict[str, Dict[str, float]] = defaultdict(
-            lambda: {"tasks": 0.0, "successful": 0.0, "score_sum": 0.0, "duration_sum": 0.0}
+            lambda: {
+                "tasks": 0.0,
+                "successful": 0.0,
+                "score_sum": 0.0,
+                "duration_sum": 0.0,
+            }
         )
         use_case_stats: Dict[str, Dict[str, float]] = defaultdict(
-            lambda: {"tasks": 0.0, "successful": 0.0, "score_sum": 0.0, "duration_sum": 0.0}
+            lambda: {
+                "tasks": 0.0,
+                "successful": 0.0,
+                "score_sum": 0.0,
+                "duration_sum": 0.0,
+            }
         )
         total_duration = 0.0
 
@@ -513,9 +556,13 @@ class AgentRunsService:
         websites, ui_tasks, success_count = self._build_websites_and_tasks(context)
         total_tasks = len(ui_tasks)
         failed_tasks = max(total_tasks - success_count, 0)
-        overall_score = _safe_int(self._compute_average_score(context.evaluation_results) * 100)
+        overall_score = _safe_int(
+            self._compute_average_score(context.evaluation_results) * 100
+        )
 
-        website_stats_map, use_case_stats_map, total_duration = self._summarize_ui_tasks(ui_tasks)
+        website_stats_map, use_case_stats_map, total_duration = (
+            self._summarize_ui_tasks(ui_tasks)
+        )
 
         performance_by_website = [
             PerformanceByWebsite(
@@ -523,8 +570,14 @@ class AgentRunsService:
                 tasks=int(values["tasks"]),
                 successful=int(values["successful"]),
                 failed=int(max(values["tasks"] - values["successful"], 0)),
-                averageScore=(values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0,
-                averageDuration=(values["duration_sum"] / values["tasks"]) if values["tasks"] else 0.0,
+                averageScore=(
+                    (values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0
+                ),
+                averageDuration=(
+                    (values["duration_sum"] / values["tasks"])
+                    if values["tasks"]
+                    else 0.0
+                ),
             )
             for website_key, values in website_stats_map.items()
         ]
@@ -535,15 +588,27 @@ class AgentRunsService:
                 tasks=int(values["tasks"]),
                 successful=int(values["successful"]),
                 failed=int(max(values["tasks"] - values["successful"], 0)),
-                averageScore=(values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0,
-                averageDuration=(values["duration_sum"] / values["tasks"]) if values["tasks"] else 0.0,
+                averageScore=(
+                    (values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0
+                ),
+                averageDuration=(
+                    (values["duration_sum"] / values["tasks"])
+                    if values["tasks"]
+                    else 0.0
+                ),
             )
             for use_case, values in use_case_stats_map.items()
         ]
 
-        excellent = len([er for er in context.evaluation_results if er.final_score >= 0.9])
-        good = len([er for er in context.evaluation_results if 0.7 <= er.final_score < 0.9])
-        average = len([er for er in context.evaluation_results if 0.5 <= er.final_score < 0.7])
+        excellent = len(
+            [er for er in context.evaluation_results if er.final_score >= 0.9]
+        )
+        good = len(
+            [er for er in context.evaluation_results if 0.7 <= er.final_score < 0.9]
+        )
+        average = len(
+            [er for er in context.evaluation_results if 0.5 <= er.final_score < 0.7]
+        )
         poor = len(context.evaluation_results) - excellent - good - average
 
         score_distribution = ScoreDistribution(
@@ -571,8 +636,12 @@ class AgentRunsService:
         websites, ui_tasks, success_count = self._build_websites_and_tasks(context)
         total_tasks = len(ui_tasks)
         failed_tasks = max(total_tasks - success_count, 0)
-        overall_score = _safe_int(self._compute_average_score(context.evaluation_results) * 100)
-        agent_name, _, agent_uid, agent_hotkey, agent_identifier, _ = self._resolve_agent_identity(context)
+        overall_score = _safe_int(
+            self._compute_average_score(context.evaluation_results) * 100
+        )
+        agent_name, _, agent_uid, agent_hotkey, agent_identifier, _ = (
+            self._resolve_agent_identity(context)
+        )
 
         website_stats_map, use_case_stats_map, _ = self._summarize_ui_tasks(ui_tasks)
 
@@ -581,13 +650,17 @@ class AgentRunsService:
         top_website_tasks = 0
         top_website_entry = max(
             website_stats_map.items(),
-            key=lambda item: (item[1]["score_sum"] / item[1]["tasks"]) if item[1]["tasks"] else 0.0,
+            key=lambda item: (
+                (item[1]["score_sum"] / item[1]["tasks"]) if item[1]["tasks"] else 0.0
+            ),
             default=None,
         )
         if top_website_entry:
             name, values = top_website_entry
             top_website_name = name
-            top_website_score = (values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0
+            top_website_score = (
+                (values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0
+            )
             top_website_tasks = int(values["tasks"])
         elif websites:
             top_candidate = max(websites, key=lambda w: w.score, default=None)
@@ -601,13 +674,17 @@ class AgentRunsService:
         top_use_case_tasks = 0
         top_use_case_entry = max(
             use_case_stats_map.items(),
-            key=lambda item: (item[1]["score_sum"] / item[1]["tasks"]) if item[1]["tasks"] else 0.0,
+            key=lambda item: (
+                (item[1]["score_sum"] / item[1]["tasks"]) if item[1]["tasks"] else 0.0
+            ),
             default=None,
         )
         if top_use_case_entry:
             name, values = top_use_case_entry
             top_use_case_name = name
-            top_use_case_score = (values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0
+            top_use_case_score = (
+                (values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0
+            )
             top_use_case_tasks = int(values["tasks"])
         elif ui_tasks:
             candidate = ui_tasks[0]
@@ -642,7 +719,10 @@ class AgentRunsService:
             totalTasks=total_tasks,
             successfulTasks=success_count,
             failedTasks=failed_tasks,
-            duration=_safe_int((context.run.ended_at or context.run.started_at or 0) - (context.run.started_at or 0)),
+            duration=_safe_int(
+                (context.run.ended_at or context.run.started_at or 0)
+                - (context.run.started_at or 0)
+            ),
             ranking=context.run.rank or 0,
             topPerformingWebsite=TopPerformingWebsite(
                 website=top_website_name,
@@ -672,22 +752,21 @@ class AgentRunsService:
             or 0
         )
         failed_tasks = (
-            getattr(run_model, "n_tasks_failed", None)
-            or run_model.failed_tasks
-            or 0
+            getattr(run_model, "n_tasks_failed", None) or run_model.failed_tasks or 0
         )
 
         if completed_tasks == 0 and context.evaluation_results:
             completed_tasks = sum(
-                1 for evaluation in context.evaluation_results if evaluation.final_score >= 0.5
+                1
+                for evaluation in context.evaluation_results
+                if evaluation.final_score >= 0.5
             )
 
         if failed_tasks == 0 and total_tasks:
             failed_tasks = max(total_tasks - completed_tasks, 0)
 
         average_score = (
-            getattr(run_model, "avg_eval_score", None)
-            or run_model.average_score
+            getattr(run_model, "avg_eval_score", None) or run_model.average_score
         )
         if average_score is None:
             average_score = self._compute_average_score(context.evaluation_results)
@@ -696,7 +775,9 @@ class AgentRunsService:
         average_evaluation_time = self._average_evaluation_time(context)
 
         validator_name, validator_image = self._resolve_validator_identity(context)
-        agent_name, _, agent_uid, agent_hotkey, agent_identifier, _ = self._resolve_agent_identity(context)
+        agent_name, _, agent_uid, agent_hotkey, agent_identifier, _ = (
+            self._resolve_agent_identity(context)
+        )
         success_count = completed_tasks
         success_rate = (success_count / total_tasks * 100.0) if total_tasks else 0.0
         overall_score = _safe_int(average_score * 100)
@@ -709,7 +790,29 @@ class AgentRunsService:
         if getattr(run_model, "elapsed_sec", None) not in (None, 0):
             duration_sec = run_model.elapsed_sec
         if duration_sec is None:
-            duration_sec = (run_model.ended_at or run_model.started_at or 0) - (run_model.started_at or 0)
+            duration_sec = (run_model.ended_at or run_model.started_at or 0) - (
+                run_model.started_at or 0
+            )
+
+        # Calcular websites únicas
+        unique_websites = set()
+        for task in context.tasks:
+            website = (
+                task.relevant_data.get("website")
+                if isinstance(task.relevant_data, dict)
+                else None
+            )
+            if not website:
+                try:
+                    from urllib.parse import urlparse
+
+                    website = urlparse(task.url).netloc or task.url
+                except Exception:
+                    website = task.url
+            if website:
+                unique_websites.add(website)
+
+        total_websites = len(unique_websites)
 
         return {
             "runId": run_model.agent_run_id,
@@ -734,15 +837,22 @@ class AgentRunsService:
             "overallScore": overall_score,
             "ranking": run_model.rank or 0,
             "duration": _safe_int(duration_sec),
-            "averageEvaluationTime": round(average_evaluation_time, 3)
-            if average_evaluation_time is not None
-            else None,
+            "totalWebsites": total_websites,
+            "averageEvaluationTime": (
+                round(average_evaluation_time, 3)
+                if average_evaluation_time is not None
+                else None
+            ),
         }
 
-    def _sort_runs(self, runs: List[Dict[str, object]], sort_by: str, sort_order: str) -> List[Dict[str, object]]:
+    def _sort_runs(
+        self, runs: List[Dict[str, object]], sort_by: str, sort_order: str
+    ) -> List[Dict[str, object]]:
         reverse = sort_order.lower() == "desc"
         try:
-            return sorted(runs, key=lambda item: item.get(sort_by) or 0, reverse=reverse)
+            return sorted(
+                runs, key=lambda item: item.get(sort_by) or 0, reverse=reverse
+            )
         except Exception:  # noqa: BLE001
             return runs
 
@@ -750,7 +860,9 @@ class AgentRunsService:
         self,
         context: AgentRunContext,
     ) -> Tuple[List[Website], List[UITask], int]:
-        host_stats: Dict[str, Dict[str, float]] = defaultdict(lambda: {"tasks": 0, "successful": 0, "score_sum": 0.0})
+        host_stats: Dict[str, Dict[str, float]] = defaultdict(
+            lambda: {"tasks": 0, "successful": 0, "score_sum": 0.0}
+        )
         success_count = 0
 
         evaluation_map, solution_map, task_map = self._index_results(context)
@@ -770,7 +882,9 @@ class AgentRunsService:
 
             host_stats_entry = host_stats[host]
             host_stats_entry["tasks"] += 1
-            host_stats_entry["score_sum"] += evaluation.final_score if evaluation else 0.0
+            host_stats_entry["score_sum"] += (
+                evaluation.final_score if evaluation else 0.0
+            )
             if success:
                 host_stats_entry["successful"] += 1
                 success_count += 1
@@ -794,14 +908,20 @@ class AgentRunsService:
         self,
         context: AgentRunContext,
     ) -> Tuple[Dict[str, EvaluationResult], Dict[str, TaskSolution], Dict[str, UITask]]:
-        evaluation_by_task = {result.task_id: result for result in context.evaluation_results}
-        solution_by_task = {solution.task_id: solution for solution in context.task_solutions}
+        evaluation_by_task = {
+            result.task_id: result for result in context.evaluation_results
+        }
+        solution_by_task = {
+            solution.task_id: solution for solution in context.task_solutions
+        }
         task_map: Dict[str, UITask] = {}
 
         for task in context.tasks:
             evaluation = evaluation_by_task.get(task.task_id)
             solution = solution_by_task.get(task.task_id)
-            task_map[task.task_id] = self._build_ui_task(task, solution, evaluation, context.run)
+            task_map[task.task_id] = self._build_ui_task(
+                task, solution, evaluation, context.run
+            )
 
         return evaluation_by_task, solution_by_task, task_map
 
@@ -812,7 +932,11 @@ class AgentRunsService:
         evaluation: Optional[EvaluationResult],
         run,
     ) -> UITask:
-        status = TaskStatus.COMPLETED if evaluation and evaluation.final_score >= 0.5 else TaskStatus.FAILED
+        status = (
+            TaskStatus.COMPLETED
+            if evaluation and evaluation.final_score >= 0.5
+            else TaskStatus.FAILED
+        )
         score = evaluation.final_score if evaluation else 0.0
         duration = evaluation.evaluation_time if evaluation else 0.0
 
@@ -822,20 +946,32 @@ class AgentRunsService:
                 actions.append(
                     Action(
                         id=f"{task.task_id}_action_{index}",
-                        type=action.type if hasattr(action, "type") else action.get("type", "action"),
-                        selector=getattr(action, "attributes", {}).get("selector")
-                        if hasattr(action, "attributes")
-                        else action.get("attributes", {}).get("selector"),
-                        value=getattr(action, "attributes", {}).get("value")
-                        if hasattr(action, "attributes")
-                        else action.get("attributes", {}).get("value"),
+                        type=(
+                            action.type
+                            if hasattr(action, "type")
+                            else action.get("type", "action")
+                        ),
+                        selector=(
+                            getattr(action, "attributes", {}).get("selector")
+                            if hasattr(action, "attributes")
+                            else action.get("attributes", {}).get("selector")
+                        ),
+                        value=(
+                            getattr(action, "attributes", {}).get("value")
+                            if hasattr(action, "attributes")
+                            else action.get("attributes", {}).get("value")
+                        ),
                         timestamp=_ts_to_iso(run.started_at) or "",
                         duration=float(getattr(action, "duration", 0.0)),
                         success=bool(getattr(action, "success", True)),
                     )
                 )
 
-        website = task.relevant_data.get("website") if isinstance(task.relevant_data, dict) else None
+        website = (
+            task.relevant_data.get("website")
+            if isinstance(task.relevant_data, dict)
+            else None
+        )
         if not website:
             website = task.url
 
@@ -875,7 +1011,9 @@ class AgentRunsService:
     def _compute_average_score(evaluation_results: List[EvaluationResult]) -> float:
         if not evaluation_results:
             return 0.0
-        return sum(result.final_score for result in evaluation_results) / len(evaluation_results)
+        return sum(result.final_score for result in evaluation_results) / len(
+            evaluation_results
+        )
 
     @staticmethod
     def _run_status(context: AgentRunContext) -> RunStatus:
@@ -885,12 +1023,26 @@ class AgentRunsService:
 
     @staticmethod
     def _find_validator(context: AgentRunContext):
-        return next((validator for validator in context.round.validators if validator.uid == context.run.validator_uid), None)
+        return next(
+            (
+                validator
+                for validator in context.round.validators
+                if validator.uid == context.run.validator_uid
+            ),
+            None,
+        )
 
     @staticmethod
     def _find_miner(context: AgentRunContext):
         if context.round.miners:
-            return next((miner for miner in context.round.miners if miner.uid == context.run.miner_uid), None)
+            return next(
+                (
+                    miner
+                    for miner in context.round.miners
+                    if miner.uid == context.run.miner_uid
+                ),
+                None,
+            )
         return context.run.miner_info
 
     def _resolve_agent_identity(
@@ -902,7 +1054,9 @@ class AgentRunsService:
         if agent_uid is None:
             agent_uid = context.run.miner_uid
 
-        agent_hotkey = getattr(miner, "hotkey", None) or getattr(context.run, "miner_hotkey", None)
+        agent_hotkey = getattr(miner, "hotkey", None) or getattr(
+            context.run, "miner_hotkey", None
+        )
         if not agent_hotkey:
             agent_hotkey = getattr(context.run, "miner_agent_key", None)
 
@@ -918,16 +1072,27 @@ class AgentRunsService:
         agent_image = resolve_agent_image(miner)
         agent_description = (getattr(miner, "description", "") or "") if miner else ""
 
-        identifier = agent_hotkey or (f"agent-{agent_uid}" if agent_uid is not None else context.run.agent_run_id)
+        identifier = agent_hotkey or (
+            f"agent-{agent_uid}" if agent_uid is not None else context.run.agent_run_id
+        )
 
-        return agent_name, agent_image, agent_uid, agent_hotkey, identifier, agent_description
+        return (
+            agent_name,
+            agent_image,
+            agent_uid,
+            agent_hotkey,
+            identifier,
+            agent_description,
+        )
 
     def _resolve_validator_identity(self, context: AgentRunContext) -> Tuple[str, str]:
         validator = self._find_validator(context)
         validator_uid = context.run.validator_uid
 
         validator_info = getattr(context.round, "validator_info", None)
-        metadata = get_validator_metadata(validator_uid) if validator_uid is not None else {}
+        metadata = (
+            get_validator_metadata(validator_uid) if validator_uid is not None else {}
+        )
 
         name_candidates = [
             getattr(validator, "name", None) if validator else None,
@@ -935,15 +1100,21 @@ class AgentRunsService:
             metadata.get("name"),
             f"Validator {validator_uid}" if validator_uid is not None else "Validator",
         ]
-        validator_name = next((candidate for candidate in name_candidates if candidate), "Validator")
+        validator_name = next(
+            (candidate for candidate in name_candidates if candidate), "Validator"
+        )
 
         image_candidates = [
             getattr(validator, "image_url", None) if validator else None,
             getattr(validator_info, "image_url", None) if validator_info else None,
             metadata.get("image"),
         ]
-        existing_image = next((candidate for candidate in image_candidates if candidate), None)
-        validator_image = resolve_validator_image(validator_name, existing=existing_image)
+        existing_image = next(
+            (candidate for candidate in image_candidates if candidate), None
+        )
+        validator_image = resolve_validator_image(
+            validator_name, existing=existing_image
+        )
 
         return validator_name, validator_image
 
@@ -953,7 +1124,11 @@ def _format_agent_id(miner_uid: Optional[int]) -> str:
 
 
 def _format_validator_id(validator_uid: Optional[int]) -> str:
-    return f"validator-{validator_uid}" if validator_uid is not None else "validator-unknown"
+    return (
+        f"validator-{validator_uid}"
+        if validator_uid is not None
+        else "validator-unknown"
+    )
 
 
 def _round_id_to_int(round_id: str) -> int:

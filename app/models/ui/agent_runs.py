@@ -119,6 +119,9 @@ class AgentRun(BaseModel):
         default=None,
         description="Average evaluation duration recorded for the run (seconds)",
     )
+    totalWebsites: int = Field(
+        default=0, description="Total number of unique websites in this run"
+    )
     websites: List[Website] = Field(default_factory=list)
     tasks: List[Task] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
