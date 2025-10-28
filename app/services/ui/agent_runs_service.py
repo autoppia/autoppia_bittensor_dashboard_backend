@@ -794,25 +794,40 @@ class AgentRunsService:
                 run_model.started_at or 0
             )
 
-        # Calcular websites únicas
-        unique_websites = set()
-        for task in context.tasks:
-            website = (
-                task.relevant_data.get("website")
-                if isinstance(task.relevant_data, dict)
-                else None
-            )
-            if not website:
-                try:
-                    from urllib.parse import urlparse
+        # Compute unique websites involved in this run only (based on
+        # tasks that have a solution and/or evaluation result).
+        websites_count = 0
+        try:
+            relevant_task_ids = set()
+            try:
+                relevant_task_ids.update(
+                    result.task_id for result in (context.evaluation_results or [])
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                relevant_task_ids.update(
+                    solution.task_id for solution in (context.task_solutions or [])
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
-                    website = urlparse(task.url).netloc or task.url
-                except Exception:
-                    website = task.url
-            if website:
-                unique_websites.add(website)
-
-        total_websites = len(unique_websites)
+            if relevant_task_ids:
+                task_by_id = {getattr(t, "task_id", None): t for t in (context.tasks or [])}
+                hosts = set()
+                for task_id in relevant_task_ids:
+                    task = task_by_id.get(task_id)
+                    if not task:
+                        continue
+                    website = None
+                    if isinstance(getattr(task, "relevant_data", None), dict):
+                        website = task.relevant_data.get("website")
+                    if not website:
+                        website = getattr(task, "url", None)
+                    hosts.add(_extract_host(website))
+                websites_count = len(hosts)
+        except Exception:  # noqa: BLE001
+            websites_count = 0
 
         return {
             "runId": run_model.agent_run_id,
@@ -837,7 +852,9 @@ class AgentRunsService:
             "overallScore": overall_score,
             "ranking": run_model.rank or 0,
             "duration": _safe_int(duration_sec),
-            "totalWebsites": total_websites,
+            # Provide both keys for UI compatibility
+            "websitesCount": websites_count,
+            "totalWebsites": websites_count,
             "averageEvaluationTime": (
                 round(average_evaluation_time, 3)
                 if average_evaluation_time is not None
