@@ -176,8 +176,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="gpt-4o-mini",
-        help="Base model to fine‑tune (e.g., gpt-4o-mini)",
+        default="gpt-4.1-mini",
+        help="Base model to fine‑tune (e.g., gpt-4.1-mini)",
     )
     parser.add_argument(
         "--suffix",
@@ -228,6 +228,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _sanitize_model_name(model: str) -> tuple[str, Optional[str]]:
+    """Return (chosen_model, note) and map deprecated aliases to supported models.
+
+    Currently maps 'gpt-4o-mini' → 'gpt-4.1-mini'.
+    """
+    m = (model or "").strip()
+    mapping = {
+        "gpt-4o-mini": "gpt-4.1-mini",
+        "gpt-4o-mini-2024-07-18": "gpt-4.1-mini",
+    }
+    if m in mapping:
+        new_m = mapping[m]
+        return new_m, f"Model '{m}' is not fine‑tuneable. Using '{new_m}' instead."
+    return m, None
+
+
 def main() -> None:
     # Load .env early so OPENAI_API_KEY and DB envs are ready
     _load_env_from_dotenv()
@@ -265,8 +281,25 @@ def main() -> None:
     print(f"Upload complete. File ID: {file_id}")
 
     # Create fine-tuning job
-    print(f"Starting fine‑tuning job on model {args.model}...")
-    job_resp = _create_ft_job(client_tuple, file_id, args.model, suffix=args.suffix)
+    # Sanitize model name / apply alias mapping
+    chosen_model, note = _sanitize_model_name(args.model)
+    if note:
+        print(note)
+    print(f"Starting fine‑tuning job on model {chosen_model}...")
+    # Try to create the job; fallback once to gpt-4.1-mini if necessary
+    try:
+        job_resp = _create_ft_job(client_tuple, file_id, chosen_model, suffix=args.suffix)
+    except Exception as e:
+        msg = str(e)
+        if "model_not_available" in msg or "not available for fine-tuning" in msg:
+            fallback_model = "gpt-4.1-mini"
+            if chosen_model != fallback_model:
+                print(f"Model '{chosen_model}' unavailable. Falling back to '{fallback_model}'...")
+                job_resp = _create_ft_job(client_tuple, file_id, fallback_model, suffix=args.suffix)
+            else:
+                raise
+        else:
+            raise
     job_id = _job_id_from_resp(job_resp)
     print(f"Fine‑tuning job created: {job_id}")
 
@@ -285,4 +318,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
