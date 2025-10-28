@@ -21,7 +21,6 @@ def _env_fallback(netuid: int) -> float:
     Priority order:
     1) SUBNET_<NETUID>_PRICE (e.g., SUBNET_36_PRICE)
     2) SUBNET_PRICE_FALLBACK
-    3) ALPHA_TO_TAO_RATE
     """
     # Per-netuid price (e.g., SUBNET_36_PRICE)
     specific_key = f"SUBNET_{int(netuid)}_PRICE"
@@ -35,14 +34,6 @@ def _env_fallback(netuid: int) -> float:
     # Generic fallback
     try:
         v = float(getattr(settings, "SUBNET_PRICE_FALLBACK", 0.0) or 0.0)
-        if v > 0:
-            return v
-    except (TypeError, ValueError):
-        pass
-
-    # Back-compat: use ALPHA_TO_TAO_RATE
-    try:
-        v = float(getattr(settings, "ALPHA_TO_TAO_RATE", 1.0) or 1.0)
         if v > 0:
             return v
     except (TypeError, ValueError):
@@ -174,6 +165,7 @@ async def get_price_async(netuid: int = 36, ttl_seconds: int = 300) -> float:
     # Try to use AsyncSubtensor first
     try:
         import bittensor as bt  # type: ignore
+
         AsyncSubtensor = getattr(bt, "AsyncSubtensor", None)
     except Exception:
         AsyncSubtensor = None
@@ -201,7 +193,12 @@ async def get_price_async(netuid: int = 36, ttl_seconds: int = 300) -> float:
                                 _cached_price_at = time.time()
                             return val
                     else:
-                        for key in ("price", "alpha_to_tao_rate", "alpha_price", "tau_price"):
+                        for key in (
+                            "price",
+                            "alpha_to_tao_rate",
+                            "alpha_price",
+                            "tau_price",
+                        ):
                             try:
                                 if isinstance(data, dict) and key in data:
                                     val = float(data[key])

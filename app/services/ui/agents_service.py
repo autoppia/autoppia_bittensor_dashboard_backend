@@ -54,7 +54,6 @@ from app.utils.urls import build_taostats_miner_url
 logger = logging.getLogger(__name__)
 
 ALPHA_EMISSION_PER_EPOCH = 148.0
-_ALPHA_TO_TAO_RATE = float(getattr(settings, "ALPHA_TO_TAO_RATE", 1.0) or 1.0)
 _EPSILON = 1e-6
 
 
@@ -1321,6 +1320,16 @@ class AgentsService:
             if aggregate.global_round_ranks
             else None
         )
+        best_rank_round = 0
+        if aggregate.global_round_ranks and best_rank is not None:
+            try:
+                candidates = [
+                    r for r, v in aggregate.global_round_ranks.items() if v == best_rank
+                ]
+                if candidates:
+                    best_rank_round = int(sorted(candidates)[0])
+            except Exception:
+                best_rank_round = 0
         if aggregate.latest_round_global_rank is not None:
             current_rank_value = aggregate.latest_round_global_rank
         elif aggregate.latest_rank is not None:
@@ -1342,9 +1351,9 @@ class AgentsService:
         try:
             subnet_rate = float(get_subnet_price(settings.VALIDATOR_NETUID))
             if subnet_rate <= 0:
-                subnet_rate = _ALPHA_TO_TAO_RATE
+                subnet_rate = float(getattr(settings, "SUBNET_PRICE_FALLBACK", 1.0) or 1.0)
         except Exception:
-            subnet_rate = _ALPHA_TO_TAO_RATE
+            subnet_rate = float(getattr(settings, "SUBNET_PRICE_FALLBACK", 1.0) or 1.0)
 
         return Agent(
             id=aggregate.agent_id,
@@ -1365,6 +1374,7 @@ class AgentsService:
             currentTopScore=latest_round_top_score,
             currentRank=current_rank_value or 0,
             bestRankEver=best_rank or 0,
+            bestRankRoundId=best_rank_round,
             roundsParticipated=len({round_id for round_id in aggregate.rounds if round_id}),
             alphaWonInPrizes=aggregate.alpha_reward,
             taoWonInPrizes=float(aggregate.alpha_reward) * float(subnet_rate),
