@@ -123,6 +123,8 @@ def get_price(netuid: int = 36, ttl_seconds: int = 300) -> float:
     - Caches the last successful value for `ttl_seconds`.
     - Falls back to environment when chain fetch fails.
     """
+    global _cached_price_value, _cached_price_at, _cached_price_netuid
+
     now = time.time()
 
     # Serve from cache if valid and matching netuid
@@ -150,7 +152,6 @@ def get_price(netuid: int = 36, ttl_seconds: int = 300) -> float:
 
     # Update cache
     with _price_cache_lock:
-        global _cached_price_value, _cached_price_at, _cached_price_netuid
         _cached_price_value = float(value)
         _cached_price_netuid = int(netuid)
         _cached_price_at = now
@@ -162,6 +163,8 @@ async def get_price_async(netuid: int = 36, ttl_seconds: int = 300) -> float:
 
     If AsyncSubtensor is unavailable or fails, falls back to the sync implementation.
     """
+    global _cached_price_value, _cached_price_at, _cached_price_netuid
+
     # Try to use AsyncSubtensor first
     try:
         import bittensor as bt  # type: ignore
@@ -187,7 +190,6 @@ async def get_price_async(netuid: int = 36, ttl_seconds: int = 300) -> float:
                         val = float(data)
                         if val > 0:
                             with _price_cache_lock:
-                                global _cached_price_value, _cached_price_netuid, _cached_price_at
                                 _cached_price_value = val
                                 _cached_price_netuid = int(netuid)
                                 _cached_price_at = time.time()
@@ -206,7 +208,6 @@ async def get_price_async(netuid: int = 36, ttl_seconds: int = 300) -> float:
                                     val = float(getattr(data, key))
                                 if val > 0:
                                     with _price_cache_lock:
-                                        global _cached_price_value, _cached_price_netuid, _cached_price_at
                                         _cached_price_value = val
                                         _cached_price_netuid = int(netuid)
                                         _cached_price_at = time.time()
