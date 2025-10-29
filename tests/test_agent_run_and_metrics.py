@@ -12,7 +12,9 @@ from app.services.validator.validator_auth import (
 
 
 class _StubAuthService:
-    def verify_signature(self, *, hotkey: str, signature_b64: str) -> None:  # noqa: ARG002
+    def verify_signature(
+        self, *, hotkey: str, signature_b64: str
+    ) -> None:  # noqa: ARG002
         return None
 
     def ensure_minimum_stake(self, hotkey: str) -> float:  # noqa: ARG002
@@ -89,7 +91,7 @@ async def test_start_agent_run_non_sota_requires_identity(client, monkeypatch):
             "is_sota": False,
         },
         "miner_identity": {"uid": None, "hotkey": None},
-        "miner_snapshot": {"validator_round_id": round_id, "agent_key": None, "agent_name": "A"},
+        "miner_snapshot": {"validator_round_id": round_id, "agent_name": "A"},
     }
     resp = await client.post(
         f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
@@ -97,9 +99,13 @@ async def test_start_agent_run_non_sota_requires_identity(client, monkeypatch):
         headers=_headers(),
     )
     assert resp.status_code == 400
-    # Pydantic validation enforces agent_key when uid is missing; accept that error surface
+    # Pydantic validation enforces uid/hotkey for non-SOTA miners
     detail = resp.json()["detail"]
-    assert "agent_key is required" in detail or "miner_identity" in detail
+    assert (
+        "uid" in detail.lower()
+        or "hotkey" in detail.lower()
+        or "miner_identity" in detail
+    )
 
     # Consistent identity
     good_payload = {
@@ -113,7 +119,12 @@ async def test_start_agent_run_non_sota_requires_identity(client, monkeypatch):
             "is_sota": False,
         },
         "miner_identity": {"uid": 501, "hotkey": "miner_hotkey_501"},
-        "miner_snapshot": {"validator_round_id": round_id, "miner_uid": 501, "miner_hotkey": "miner_hotkey_501", "agent_name": "B"},
+        "miner_snapshot": {
+            "validator_round_id": round_id,
+            "miner_uid": 501,
+            "miner_hotkey": "miner_hotkey_501",
+            "agent_name": "B",
+        },
     }
     resp2 = await client.post(
         f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
@@ -124,7 +135,7 @@ async def test_start_agent_run_non_sota_requires_identity(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_start_agent_run_sota_requires_agent_key_and_consistency(client, monkeypatch):
+async def test_start_agent_run_sota_allowed(client, monkeypatch):
     from app.config import settings as _settings
     from app.main import app
 
@@ -134,46 +145,7 @@ async def test_start_agent_run_sota_requires_agent_key_and_consistency(client, m
     round_id = "run_sota_requirements"
     await _start_minimal_round(client, round_id=round_id)
 
-    # Missing agent_key
-    bad_payload = {
-        "agent_run": {
-            "agent_run_id": "sota_run_A",
-            "validator_round_id": round_id,
-            "validator_uid": 1001,
-            "validator_hotkey": "5FHeaderHotkey111111111111111111111111111111",
-            "is_sota": True,
-        },
-        "miner_identity": {"agent_key": None},
-        "miner_snapshot": {"validator_round_id": round_id, "agent_name": "Bench"},
-    }
-    resp = await client.post(
-        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
-        json=bad_payload,
-        headers=_headers(),
-    )
-    assert resp.status_code == 400
-
-    # Inconsistent agent_key across payloads
-    inconsistent_payload = {
-        "agent_run": {
-            "agent_run_id": "sota_run_B",
-            "validator_round_id": round_id,
-            "validator_uid": 1001,
-            "validator_hotkey": "5FHeaderHotkey111111111111111111111111111111",
-            "is_sota": True,
-            "miner_agent_key": "key-A",
-        },
-        "miner_identity": {"agent_key": "key-B"},
-        "miner_snapshot": {"validator_round_id": round_id, "agent_name": "Bench", "agent_key": "key-A"},
-    }
-    resp2 = await client.post(
-        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
-        json=inconsistent_payload,
-        headers=_headers(),
-    )
-    assert resp2.status_code == 400
-
-    # Consistent keys
+    # SOTA run without miner_uid/hotkey is allowed
     ok_payload = {
         "agent_run": {
             "agent_run_id": "sota_run_C",
@@ -181,10 +153,9 @@ async def test_start_agent_run_sota_requires_agent_key_and_consistency(client, m
             "validator_uid": 1001,
             "validator_hotkey": "5FHeaderHotkey111111111111111111111111111111",
             "is_sota": True,
-            "miner_agent_key": "agent-xyz",
         },
-        "miner_identity": {"agent_key": "agent-xyz"},
-        "miner_snapshot": {"validator_round_id": round_id, "agent_name": "Bench", "agent_key": "agent-xyz"},
+        "miner_identity": {},
+        "miner_snapshot": {"validator_round_id": round_id, "agent_name": "Bench"},
     }
     resp3 = await client.post(
         f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
@@ -195,7 +166,9 @@ async def test_start_agent_run_sota_requires_agent_key_and_consistency(client, m
 
 
 @pytest.mark.asyncio
-async def test_start_agent_run_idempotent_on_duplicate_same_round(client, db_session, monkeypatch):
+async def test_start_agent_run_idempotent_on_duplicate_same_round(
+    client, db_session, monkeypatch
+):
     from app.config import settings as _settings
     from app.main import app
 
@@ -216,7 +189,12 @@ async def test_start_agent_run_idempotent_on_duplicate_same_round(client, db_ses
             "is_sota": False,
         },
         "miner_identity": {"uid": 123, "hotkey": "miner_hotkey_123"},
-        "miner_snapshot": {"validator_round_id": round_id, "miner_uid": 123, "miner_hotkey": "miner_hotkey_123", "agent_name": "M"},
+        "miner_snapshot": {
+            "validator_round_id": round_id,
+            "miner_uid": 123,
+            "miner_hotkey": "miner_hotkey_123",
+            "agent_name": "M",
+        },
     }
 
     r1 = await client.post(
@@ -235,7 +213,11 @@ async def test_start_agent_run_idempotent_on_duplicate_same_round(client, db_ses
     body2 = r2.json()
     assert body2["message"].lower().startswith("agent run registered")
 
-    row = await db_session.scalar(select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == "duplicate_run"))
+    row = await db_session.scalar(
+        select(AgentEvaluationRunORM).where(
+            AgentEvaluationRunORM.agent_run_id == "duplicate_run"
+        )
+    )
     assert row is not None
 
 
@@ -292,7 +274,12 @@ async def test_add_evaluation_relationship_mismatch_rejected(client, monkeypatch
             "is_sota": False,
         },
         "miner_identity": {"uid": 1, "hotkey": "miner_hotkey_1"},
-        "miner_snapshot": {"validator_round_id": round_id, "miner_uid": 1, "miner_hotkey": "miner_hotkey_1", "agent_name": "M"},
+        "miner_snapshot": {
+            "validator_round_id": round_id,
+            "miner_uid": 1,
+            "miner_hotkey": "miner_hotkey_1",
+            "agent_name": "M",
+        },
     }
     r_start = await client.post(
         f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
@@ -348,15 +335,20 @@ async def test_duplicate_agent_run_id_in_different_round_conflicts(client, monke
     # Helpers to set chain block inside a given round window
     blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
     dz = int(_settings.DZ_STARTING_BLOCK)
+
     def _inside_round(n: int) -> int:
         return dz + (n - 1) * blocks_per_round + 1
 
     # Start round 1 with chain inside round 1
-    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _inside_round(1))
+    monkeypatch.setattr(
+        "app.api.validator.validator_round.get_current_block", lambda: _inside_round(1)
+    )
     await _start_minimal_round(client, round_id="round_A", round_number=1)
 
     # Start round 2 with chain inside round 2
-    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _inside_round(2))
+    monkeypatch.setattr(
+        "app.api.validator.validator_round.get_current_block", lambda: _inside_round(2)
+    )
     await _start_minimal_round(client, round_id="round_B", round_number=2)
 
     payload_A = {
@@ -370,11 +362,22 @@ async def test_duplicate_agent_run_id_in_different_round_conflicts(client, monke
             "is_sota": False,
         },
         "miner_identity": {"uid": 1, "hotkey": "m1"},
-        "miner_snapshot": {"validator_round_id": "round_A", "miner_uid": 1, "miner_hotkey": "m1", "agent_name": "M"},
+        "miner_snapshot": {
+            "validator_round_id": "round_A",
+            "miner_uid": 1,
+            "miner_hotkey": "m1",
+            "agent_name": "M",
+        },
     }
     # Chain must match round 1 window for starting agent run on round_A
-    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _inside_round(1))
-    rA = await client.post("/api/v1/validator-rounds/round_A/agent-runs/start", json=payload_A, headers=_headers())
+    monkeypatch.setattr(
+        "app.api.validator.validator_round.get_current_block", lambda: _inside_round(1)
+    )
+    rA = await client.post(
+        "/api/v1/validator-rounds/round_A/agent-runs/start",
+        json=payload_A,
+        headers=_headers(),
+    )
     assert rA.status_code == 200
 
     payload_B = {
@@ -388,16 +391,29 @@ async def test_duplicate_agent_run_id_in_different_round_conflicts(client, monke
             "is_sota": False,
         },
         "miner_identity": {"uid": 2, "hotkey": "m2"},
-        "miner_snapshot": {"validator_round_id": "round_B", "miner_uid": 2, "miner_hotkey": "m2", "agent_name": "M"},
+        "miner_snapshot": {
+            "validator_round_id": "round_B",
+            "miner_uid": 2,
+            "miner_hotkey": "m2",
+            "agent_name": "M",
+        },
     }
     # Chain must match round 2 window for starting agent run on round_B
-    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _inside_round(2))
-    rB = await client.post("/api/v1/validator-rounds/round_B/agent-runs/start", json=payload_B, headers=_headers())
+    monkeypatch.setattr(
+        "app.api.validator.validator_round.get_current_block", lambda: _inside_round(2)
+    )
+    rB = await client.post(
+        "/api/v1/validator-rounds/round_B/agent-runs/start",
+        json=payload_B,
+        headers=_headers(),
+    )
     assert rB.status_code == 409
 
 
 @pytest.mark.asyncio
-async def test_finish_round_computes_run_metrics_and_top_miners(client, db_session, monkeypatch):
+async def test_finish_round_computes_run_metrics_and_top_miners(
+    client, db_session, monkeypatch
+):
     from app.config import settings as _settings
     from app.main import app
 
@@ -449,7 +465,12 @@ async def test_finish_round_computes_run_metrics_and_top_miners(client, db_sessi
             "is_sota": False,
         },
         "miner_identity": {"uid": 501, "hotkey": "miner_hotkey_501"},
-        "miner_snapshot": {"validator_round_id": round_id, "miner_uid": 501, "miner_hotkey": "miner_hotkey_501", "agent_name": "M"},
+        "miner_snapshot": {
+            "validator_round_id": round_id,
+            "miner_uid": 501,
+            "miner_hotkey": "miner_hotkey_501",
+            "agent_name": "M",
+        },
     }
     r_start = await client.post(
         f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
@@ -512,7 +533,11 @@ async def test_finish_round_computes_run_metrics_and_top_miners(client, db_sessi
     )
     assert r_finish.status_code == 200
 
-    row = await db_session.scalar(select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == run_id))
+    row = await db_session.scalar(
+        select(AgentEvaluationRunORM).where(
+            AgentEvaluationRunORM.agent_run_id == run_id
+        )
+    )
     assert row is not None
     # average of [0.6, 0.8]
     assert row.average_score == pytest.approx(0.7)

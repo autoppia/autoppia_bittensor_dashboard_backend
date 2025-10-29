@@ -78,7 +78,8 @@ class ValidatorStatusInfo:
             state=state,
             label=STATUS_DISPLAY[state],
             default_task=STATUS_DEFAULT_TASK[state],
-            requires_prompt=state not in {ValidatorState.NOT_STARTED, ValidatorState.FINISHED},
+            requires_prompt=state
+            not in {ValidatorState.NOT_STARTED, ValidatorState.FINISHED},
         )
 
 
@@ -121,7 +122,9 @@ class OverviewService:
         self.rounds_service = RoundsService(session)
 
     async def overview_metrics(self) -> OverviewMetrics:
-        records_with_contexts = await self._recent_round_records(limit=50, include_details=True)
+        records_with_contexts = await self._recent_round_records(
+            limit=50, include_details=True
+        )
         if not records_with_contexts:
             now_iso = datetime.now(timezone.utc).isoformat()
             return OverviewMetrics(
@@ -140,19 +143,27 @@ class OverviewService:
             return model.round_number or _round_id_to_int(model.validator_round_id)
 
         # Group records by round so we can easily pick the latest completed set.
-        round_records_by_number: Dict[int, List[Tuple[RoundRecord, List[AgentRunContext]]]] = {}
+        round_records_by_number: Dict[
+            int, List[Tuple[RoundRecord, List[AgentRunContext]]]
+        ] = {}
         completed_round_numbers: set[int] = set()
         for record, contexts in records_with_contexts:
             number = _round_number(record)
             if number:
-                round_records_by_number.setdefault(number, []).append((record, contexts))
+                round_records_by_number.setdefault(number, []).append(
+                    (record, contexts)
+                )
                 if record.model.ended_at:
                     completed_round_numbers.add(number)
 
-        latest_completed_round = max(completed_round_numbers) if completed_round_numbers else None
+        latest_completed_round = (
+            max(completed_round_numbers) if completed_round_numbers else None
+        )
 
         try:
-            current_round_overview = await self.rounds_service.get_current_round_overview()
+            current_round_overview = (
+                await self.rounds_service.get_current_round_overview()
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Unable to resolve current round overview: %s", exc)
             current_round_overview = None
@@ -160,7 +171,9 @@ class OverviewService:
         def _resolve_round_number(payload: Optional[Dict[str, Any]]) -> int:
             if not payload:
                 return 0
-            candidate = payload.get("round") or payload.get("roundNumber") or payload.get("id")
+            candidate = (
+                payload.get("round") or payload.get("roundNumber") or payload.get("id")
+            )
             if isinstance(candidate, int):
                 return candidate
             if isinstance(candidate, float):
@@ -190,7 +203,10 @@ class OverviewService:
         candidate_round_numbers: List[int] = []
         if preferred_previous_round and preferred_previous_round > 0:
             candidate_round_numbers.append(preferred_previous_round)
-        if latest_completed_round is not None and latest_completed_round not in candidate_round_numbers:
+        if (
+            latest_completed_round is not None
+            and latest_completed_round not in candidate_round_numbers
+        ):
             candidate_round_numbers.append(latest_completed_round)
 
         for number in sorted(completed_round_numbers, reverse=True):
@@ -251,8 +267,6 @@ class OverviewService:
                 miner_identifier = None
                 if ctx.run.miner_uid is not None:
                     miner_identifier = f"uid:{ctx.run.miner_uid}"
-                elif getattr(ctx.run, "miner_agent_key", None):
-                    miner_identifier = f"agent:{ctx.run.miner_agent_key}"
                 elif ctx.run.agent_run_id:
                     miner_identifier = f"run:{ctx.run.agent_run_id}"
                 if miner_identifier:
@@ -272,7 +286,9 @@ class OverviewService:
                         unique_websites.add(host.lower())
 
             if not contexts and round_obj.winners:
-                round_top = max(winner.get("score", 0.0) for winner in round_obj.winners)
+                round_top = max(
+                    winner.get("score", 0.0) for winner in round_obj.winners
+                )
                 top_score = max(top_score, round(round_top, 6))
 
         if miner_score_tracker:
@@ -288,7 +304,9 @@ class OverviewService:
             top_score = max(top_score, 0.0)
 
         subnet_version = version_candidates[0] if version_candidates else "1.0.0"
-        total_websites = len(unique_websites) if unique_websites else await self._total_websites()
+        total_websites = (
+            len(unique_websites) if unique_websites else await self._total_websites()
+        )
 
         display_metrics_round_number = int(metrics_round_number or 0)
         if display_metrics_round_number < 0:
@@ -360,14 +378,19 @@ class OverviewService:
             return None
         return self._round_to_info(rounds[0], current=True)
 
-    async def rounds_list(self, page: int, limit: int, status: Optional[str]) -> Tuple[List[RoundInfo], Optional[RoundInfo], int]:
+    async def rounds_list(
+        self, page: int, limit: int, status: Optional[str]
+    ) -> Tuple[List[RoundInfo], Optional[RoundInfo], int]:
         rounds = await self._recent_rounds(limit=100)
         active_rounds = [round_obj for round_obj in rounds if not round_obj.ended_at]
         completed_rounds = [round_obj for round_obj in rounds if round_obj.ended_at]
 
         completed_rounds.sort(key=lambda r: r.started_at or 0, reverse=True)
 
-        round_infos = [self._round_to_info(round_obj, current=False) for round_obj in completed_rounds]
+        round_infos = [
+            self._round_to_info(round_obj, current=False)
+            for round_obj in completed_rounds
+        ]
 
         if status:
             round_infos = [info for info in round_infos if info.status == status]
@@ -384,7 +407,11 @@ class OverviewService:
         elif completed_rounds:
             current_round_obj = completed_rounds[0]
 
-        current_round = self._round_to_info(current_round_obj, current=True) if current_round_obj else None
+        current_round = (
+            self._round_to_info(current_round_obj, current=True)
+            if current_round_obj
+            else None
+        )
         return paginated, current_round, total
 
     async def round_detail(self, identifier: str) -> RoundInfo:
@@ -499,7 +526,9 @@ class OverviewService:
                 tz=timezone.utc,
             ).isoformat()
 
-            round_number = round_obj.round_number or _round_id_to_int(round_obj.validator_round_id)
+            round_number = round_obj.round_number or _round_id_to_int(
+                round_obj.validator_round_id
+            )
             if not round_number or round_number <= 0:
                 round_number = total_rounds - idx
 
@@ -522,17 +551,33 @@ class OverviewService:
         for round_number, round_entries in grouped_entries.items():
             latest_timestamp = max(entry.timestamp for entry in round_entries)
             subnet36_values = [entry.subnet36 for entry in round_entries]
-            openai_values = [value for value in (entry.openai_cua for entry in round_entries) if value is not None]
-            anthropic_values = [value for value in (entry.anthropic_cua for entry in round_entries) if value is not None]
-            browser_values = [value for value in (entry.browser_use for entry in round_entries) if value is not None]
+            openai_values = [
+                value
+                for value in (entry.openai_cua for entry in round_entries)
+                if value is not None
+            ]
+            anthropic_values = [
+                value
+                for value in (entry.anthropic_cua for entry in round_entries)
+                if value is not None
+            ]
+            browser_values = [
+                value
+                for value in (entry.browser_use for entry in round_entries)
+                if value is not None
+            ]
 
             aggregated_entries.append(
                 LeaderboardEntry(
                     round=round_number,
                     subnet36=round(max(subnet36_values), 3) if subnet36_values else 0.0,
                     openai_cua=round(max(openai_values), 3) if openai_values else None,
-                    anthropic_cua=round(max(anthropic_values), 3) if anthropic_values else None,
-                    browser_use=round(max(browser_values), 3) if browser_values else None,
+                    anthropic_cua=(
+                        round(max(anthropic_values), 3) if anthropic_values else None
+                    ),
+                    browser_use=(
+                        round(max(browser_values), 3) if browser_values else None
+                    ),
                     timestamp=latest_timestamp,
                 )
             )
@@ -552,6 +597,7 @@ class OverviewService:
 
     async def statistics(self) -> SubnetStatistics:
         validators = await self._aggregate_validators()
+
         def _to_float(value: Any) -> float:
             if value is None:
                 return 0.0
@@ -562,24 +608,32 @@ class OverviewService:
             except (TypeError, ValueError):
                 return 0.0
 
-        total_stake = int(sum(_to_float(entry.get("stake")) for entry in validators.values()))
-        total_emission = int(sum(_to_float(entry.get("emission")) for entry in validators.values()))
+        total_stake = int(
+            sum(_to_float(entry.get("stake")) for entry in validators.values())
+        )
+        total_emission = int(
+            sum(_to_float(entry.get("emission")) for entry in validators.values())
+        )
         total_runs = await self._total_runs()
         success_total = int(total_runs * 0.85)
 
         average_trust = (
-            sum(_to_float(entry.get("trust")) for entry in validators.values()) / len(validators)
+            sum(_to_float(entry.get("trust")) for entry in validators.values())
+            / len(validators)
             if validators
             else 0.0
         )
         average_uptime = (
-            sum(_to_float(entry.get("uptime", 0.0)) for entry in validators.values()) / len(validators)
+            sum(_to_float(entry.get("uptime", 0.0)) for entry in validators.values())
+            / len(validators)
             if validators
             else 0.0
         )
 
         average_score = await self._average_score()
-        total_tasks_completed = sum(entry["completedTasks"] for entry in validators.values())
+        total_tasks_completed = sum(
+            entry["completedTasks"] for entry in validators.values()
+        )
 
         return SubnetStatistics(
             totalStake=total_stake,
@@ -654,7 +708,9 @@ class OverviewService:
 
             human_delta = _humanize(delta)
             timestamp_label = (
-                last_activity_dt.strftime("%Y-%m-%d %H:%M UTC") if last_activity_dt else "unknown time"
+                last_activity_dt.strftime("%Y-%m-%d %H:%M UTC")
+                if last_activity_dt
+                else "unknown time"
             )
             round_label = _round_id_to_int(last_round.validator_round_id)
 
@@ -711,7 +767,10 @@ class OverviewService:
                 scores = [winner.get("score", 0.0) for winner in round_obj.winners]
                 average_score = sum(scores) / len(scores) if scores else 0.0
             trend = PerformanceTrend(
-                date=datetime.fromtimestamp(round_obj.started_at or datetime.now(timezone.utc).timestamp(), tz=timezone.utc).strftime("%Y-%m-%d"),
+                date=datetime.fromtimestamp(
+                    round_obj.started_at or datetime.now(timezone.utc).timestamp(),
+                    tz=timezone.utc,
+                ).strftime("%Y-%m-%d"),
                 averageScore=round(average_score, 3),
                 totalTasks=round_obj.n_tasks,
                 activeValidators=len(round_obj.validators),
@@ -741,7 +800,9 @@ class OverviewService:
             try:
                 round_model = self.rounds_service._deserialize_round(row)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to parse round %s: %s", row.validator_round_id, exc)
+                logger.warning(
+                    "Failed to parse round %s: %s", row.validator_round_id, exc
+                )
                 continue
 
             if round_model.started_at is None:
@@ -835,7 +896,9 @@ class OverviewService:
                     continue
         return sum(scores) / len(scores) if scores else 0.0
 
-    async def _latest_evaluated_task_meta(self, validator_round_id: str) -> Optional[Dict[str, Optional[str]]]:
+    async def _latest_evaluated_task_meta(
+        self, validator_round_id: str
+    ) -> Optional[Dict[str, Optional[str]]]:
         """Fetch latest evaluated task prompt + website + use case for a validator round.
 
         Returns a dict with keys: prompt, website, useCase.
@@ -849,7 +912,9 @@ class OverviewService:
             )
             .join(EvaluationResultORM, EvaluationResultORM.task_id == TaskORM.task_id)
             .where(EvaluationResultORM.validator_round_id == validator_round_id)
-            .order_by(EvaluationResultORM.created_at.desc(), EvaluationResultORM.id.desc())
+            .order_by(
+                EvaluationResultORM.created_at.desc(), EvaluationResultORM.id.desc()
+            )
             .limit(1)
         )
         result = await self.session.execute(stmt)
@@ -876,13 +941,17 @@ class OverviewService:
         }
 
     async def _aggregate_validators(self) -> Dict[str, Dict[str, Any]]:
-        records_with_contexts = await self._recent_round_records(limit=200, include_details=False)
+        records_with_contexts = await self._recent_round_records(
+            limit=200, include_details=False
+        )
         aggregates: Dict[str, Dict[str, Any]] = {}
 
         # Determine the current (latest) round number present in DB
         round_numbers: List[int] = []
         for record, _ in records_with_contexts:
-            num = record.model.round_number or _round_id_to_int(record.model.validator_round_id)
+            num = record.model.round_number or _round_id_to_int(
+                record.model.validator_round_id
+            )
             if num:
                 round_numbers.append(num)
         round_numbers = sorted(set(round_numbers), reverse=True)
@@ -900,20 +969,28 @@ class OverviewService:
         current_round_entries: Dict[int, Tuple[RoundRecord, List[AgentRunContext]]] = {}
         last_entry_by_uid: Dict[int, Tuple[RoundRecord, List[AgentRunContext]]] = {}
         for record, contexts in records_with_contexts:
-            round_number = record.model.round_number or _round_id_to_int(record.model.validator_round_id)
+            round_number = record.model.round_number or _round_id_to_int(
+                record.model.validator_round_id
+            )
             validator_uid = record.model.validator_uid or record.validator_uid
             if validator_uid is None:
                 continue
             # Track most recent record per validator overall
             prev_last = last_entry_by_uid.get(validator_uid)
-            prev_ts = (prev_last[0].model.ended_at or prev_last[0].model.started_at or 0.0) if prev_last else -1
+            prev_ts = (
+                (prev_last[0].model.ended_at or prev_last[0].model.started_at or 0.0)
+                if prev_last
+                else -1
+            )
             curr_ts = record.model.ended_at or record.model.started_at or 0.0
             if prev_last is None or curr_ts >= prev_ts:
                 last_entry_by_uid[validator_uid] = (record, contexts)
             # Track latest record for the current round only
             if round_number == max_round_number:
                 existing = current_round_entries.get(validator_uid)
-                if existing is None or (record.model.started_at or 0.0) > (existing[0].model.started_at or 0.0):
+                if existing is None or (record.model.started_at or 0.0) > (
+                    existing[0].model.started_at or 0.0
+                ):
                     current_round_entries[validator_uid] = (record, contexts)
 
         now_ts = datetime.now(timezone.utc).timestamp()
@@ -924,17 +1001,21 @@ class OverviewService:
         lookback = settings.OVERVIEW_VALIDATORS_LOOKBACK_ROUNDS or 0
         if lookback < 0:
             lookback = 0
-        recent_round_numbers = set(round_numbers[: lookback]) if round_numbers else set()
+        recent_round_numbers = set(round_numbers[:lookback]) if round_numbers else set()
         recent_participant_uids: set[int] = set()
         for record, _ in records_with_contexts:
-            rn = record.model.round_number or _round_id_to_int(record.model.validator_round_id)
+            rn = record.model.round_number or _round_id_to_int(
+                record.model.validator_round_id
+            )
             uid = record.model.validator_uid or record.validator_uid
             if uid is None:
                 continue
             if rn in recent_round_numbers:
                 recent_participant_uids.add(uid)
 
-        known_validator_uids = set(current_round_entries.keys()) | recent_participant_uids
+        known_validator_uids = (
+            set(current_round_entries.keys()) | recent_participant_uids
+        )
 
         for validator_uid in sorted(known_validator_uids):
             entry = current_round_entries.get(validator_uid)
@@ -945,19 +1026,29 @@ class OverviewService:
 
             display_record = current_record or (last_entry[0] if last_entry else None)
             display_round = display_record.model if display_record else None
-            validator_info = getattr(display_round, "validator_info", None) if display_round else None
+            validator_info = (
+                getattr(display_round, "validator_info", None)
+                if display_round
+                else None
+            )
 
             contexts_flat = current_contexts
 
             # Use last participation for display of last seen round when not currently running
             if last_entry is not None:
-                round_number = last_entry[0].model.round_number or _round_id_to_int(last_entry[0].model.validator_round_id)
+                round_number = last_entry[0].model.round_number or _round_id_to_int(
+                    last_entry[0].model.validator_round_id
+                )
             else:
                 round_number = max_round_number or None
 
-            display_name = validator_info.name if validator_info and validator_info.name else None
+            display_name = (
+                validator_info.name if validator_info and validator_info.name else None
+            )
             if not display_name and display_round:
-                display_name = getattr(display_round, "metadata", {}).get("validator_name") or None
+                display_name = (
+                    getattr(display_round, "metadata", {}).get("validator_name") or None
+                )
             if not display_name:
                 display_name = f"Validator {validator_uid}"
 
@@ -968,9 +1059,13 @@ class OverviewService:
                 hotkey_candidates.append(display_round.validator_hotkey)
             if current_record and current_record.model.validator_hotkey:
                 hotkey_candidates.append(current_record.model.validator_hotkey)
-            hotkey = next((candidate for candidate in hotkey_candidates if candidate), None)
+            hotkey = next(
+                (candidate for candidate in hotkey_candidates if candidate), None
+            )
 
-            existing_icon = getattr(validator_info, "image_url", None) if validator_info else None
+            existing_icon = (
+                getattr(validator_info, "image_url", None) if validator_info else None
+            )
             icon = resolve_validator_image(display_name, existing=existing_icon)
 
             stake_value: float = 0.0
@@ -996,7 +1091,9 @@ class OverviewService:
 
             if display_round:
                 total_tasks = display_round.n_tasks or 0
-                completed_tasks = self.rounds_service._estimate_completed_tasks(display_round)
+                completed_tasks = self.rounds_service._estimate_completed_tasks(
+                    display_round
+                )
                 validator_round_id = display_round.validator_round_id
             else:
                 total_tasks = 0
@@ -1005,9 +1102,15 @@ class OverviewService:
 
             total_runs = len(contexts_flat)
             successful_runs = len(
-                [ctx for ctx in contexts_flat if self.rounds_service._context_score(ctx) >= 0.5]
+                [
+                    ctx
+                    for ctx in contexts_flat
+                    if self.rounds_service._context_score(ctx) >= 0.5
+                ]
             )
-            has_scores = any(self.rounds_service._context_score(ctx) > 0.0 for ctx in contexts_flat)
+            has_scores = any(
+                self.rounds_service._context_score(ctx) > 0.0 for ctx in contexts_flat
+            )
 
             last_activity_candidates: List[float] = []
             # Prefer current round activity; otherwise fall back to last participation
@@ -1025,9 +1128,13 @@ class OverviewService:
                     elif context.run.started_at:
                         last_activity_candidates.append(context.run.started_at)
 
-            last_activity_ts = max(last_activity_candidates) if last_activity_candidates else None
+            last_activity_ts = (
+                max(last_activity_candidates) if last_activity_candidates else None
+            )
             seconds_since_activity = (
-                max(0.0, now_ts - last_activity_ts) if last_activity_ts is not None else None
+                max(0.0, now_ts - last_activity_ts)
+                if last_activity_ts is not None
+                else None
             )
 
             validator_round = current_record.model if current_record else None
@@ -1047,15 +1154,23 @@ class OverviewService:
             current_use_case: Optional[str] = None
             if cache_key and status_info.requires_prompt:
                 if cache_key not in meta_cache:
-                    meta_cache[cache_key] = await self._latest_evaluated_task_meta(cache_key)
+                    meta_cache[cache_key] = await self._latest_evaluated_task_meta(
+                        cache_key
+                    )
                 meta = meta_cache.get(cache_key)
                 if meta:
                     if meta.get("prompt"):
                         current_task = meta.get("prompt") or current_task
-                    current_website = (meta.get("website") or None)
-                    current_use_case = (meta.get("useCase") or None)
+                    current_website = meta.get("website") or None
+                    current_use_case = meta.get("useCase") or None
 
-            uptime = round(min(100.0, (completed_tasks / total_tasks * 100.0) if total_tasks else 0.0), 1)
+            uptime = round(
+                min(
+                    100.0,
+                    (completed_tasks / total_tasks * 100.0) if total_tasks else 0.0,
+                ),
+                1,
+            )
 
             emission_value: Optional[int] = None
             if isinstance(stake_value, (int, float)):
@@ -1106,7 +1221,9 @@ class OverviewService:
             derived_status = "active"
 
         return RoundInfo(
-            id=int(round_obj.round_number or _round_id_to_int(round_obj.validator_round_id)),
+            id=int(
+                round_obj.round_number or _round_id_to_int(round_obj.validator_round_id)
+            ),
             startBlock=round_obj.start_block,
             endBlock=round_obj.end_block or round_obj.start_block + 360,
             current=current,

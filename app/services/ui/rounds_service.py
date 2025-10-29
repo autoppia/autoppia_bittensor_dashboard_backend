@@ -1469,7 +1469,10 @@ class RoundsService:
                             number, records, number
                         )
                     # Synthesize a minimal overview using chain boundaries
-                    if compute_boundaries_for_round is not None and progress_for_block is not None:
+                    if (
+                        compute_boundaries_for_round is not None
+                        and progress_for_block is not None
+                    ):
                         bounds = compute_boundaries_for_round(number)  # type: ignore[arg-type]
                         progress = float(progress_for_block(int(current_block), bounds))  # type: ignore[arg-type]
                         if int(current_block) <= int(bounds.start_block):
@@ -1494,7 +1497,9 @@ class RoundsService:
                             "averageScore": 0.0,
                             "topScore": 0.0,
                             "currentBlock": int(current_block),
-                            "blocksRemaining": max(int(bounds.end_block) - int(current_block), 0),
+                            "blocksRemaining": max(
+                                int(bounds.end_block) - int(current_block), 0
+                            ),
                             "progress": round(progress, 3),
                             "validatorRounds": [],
                             "validatorRoundCount": 0,
@@ -2884,7 +2889,6 @@ class RoundsService:
             validator_hotkey=run_row.validator_hotkey,
             miner_uid=run_row.miner_uid,
             miner_hotkey=run_row.miner_hotkey,
-            miner_agent_key=run_row.miner_agent_key,
             is_sota=bool(run_row.is_sota),
             version=run_row.version,
             started_at=run_row.started_at or datetime.now(timezone.utc).timestamp(),
@@ -2979,7 +2983,6 @@ class RoundsService:
                         validator_hotkey=solution_row.validator_hotkey,
                         miner_uid=solution_row.miner_uid,
                         miner_hotkey=solution_row.miner_hotkey,
-                        miner_agent_key=solution_row.miner_agent_key,
                         actions=actions,
                         web_agent_id=solution_row.web_agent_id,
                         recording=solution_row.recording,
