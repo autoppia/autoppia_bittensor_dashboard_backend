@@ -131,7 +131,13 @@ class ValidatorRoundPersistenceService:
 
         return round_row
 
-    async def add_tasks(self, validator_round_id: str, tasks: List[Task], *, allow_existing: bool = False) -> int:
+    async def add_tasks(
+        self,
+        validator_round_id: str,
+        tasks: List[Task],
+        *,
+        allow_existing: bool = False,
+    ) -> int:
         """Persist or update tasks associated with a validator round."""
         round_row = await self._ensure_round_exists(validator_round_id)
         count = 0
@@ -236,7 +242,8 @@ class ValidatorRoundPersistenceService:
             )
 
         miner_id = await self._resolve_miner_identity_id(
-            task_solution.miner_uid, task_solution.miner_hotkey, task_solution.miner_agent_key
+            task_solution.miner_uid,
+            task_solution.miner_hotkey,
         )
 
         # Task solution
@@ -326,7 +333,8 @@ class ValidatorRoundPersistenceService:
             )
 
         miner_id = await self._resolve_miner_identity_id(
-            task_solution.miner_uid, task_solution.miner_hotkey, task_solution.miner_agent_key
+            task_solution.miner_uid,
+            task_solution.miner_hotkey,
         )
 
         # Task solution upsert/validate
@@ -342,7 +350,9 @@ class ValidatorRoundPersistenceService:
                 )
             solution_row = existing_solution
         else:
-            solution_kwargs = self._task_solution_kwargs(task_solution, miner_id=miner_id)
+            solution_kwargs = self._task_solution_kwargs(
+                task_solution, miner_id=miner_id
+            )
             solution_row = TaskSolutionORM(**solution_kwargs)
             self.session.add(solution_row)
 
@@ -365,7 +375,9 @@ class ValidatorRoundPersistenceService:
             self.session.add(evaluation_row)
 
         # Evaluation result upsert/validate
-        existing_result = await self.get_evaluation_result_row(evaluation_result.result_id)
+        existing_result = await self.get_evaluation_result_row(
+            evaluation_result.result_id
+        )
         if existing_result is not None:
             if (
                 existing_result.validator_round_id != validator_round_id
@@ -391,7 +403,9 @@ class ValidatorRoundPersistenceService:
     # Read-only helpers for idempotency checks
     # ──────────────────────────────────────────────────────────────────────
 
-    async def get_task_solution_row(self, solution_id: str) -> Optional[TaskSolutionORM]:
+    async def get_task_solution_row(
+        self, solution_id: str
+    ) -> Optional[TaskSolutionORM]:
         stmt = select(TaskSolutionORM).where(TaskSolutionORM.solution_id == solution_id)
         return await self.session.scalar(stmt)
 
@@ -399,8 +413,12 @@ class ValidatorRoundPersistenceService:
         stmt = select(EvaluationORM).where(EvaluationORM.evaluation_id == evaluation_id)
         return await self.session.scalar(stmt)
 
-    async def get_evaluation_result_row(self, result_id: str) -> Optional[EvaluationResultORM]:
-        stmt = select(EvaluationResultORM).where(EvaluationResultORM.result_id == result_id)
+    async def get_evaluation_result_row(
+        self, result_id: str
+    ) -> Optional[EvaluationResultORM]:
+        stmt = select(EvaluationResultORM).where(
+            EvaluationResultORM.result_id == result_id
+        )
         return await self.session.scalar(stmt)
 
     async def finish_round(
@@ -420,7 +438,10 @@ class ValidatorRoundPersistenceService:
         # Ensure start/end epoch are populated even when testing overrides bypassed chain-boundary fill
         try:
             round_number = int(getattr(round_row, "round_number", 0) or 0)
-            if getattr(round_row, "start_epoch", None) is None or getattr(round_row, "end_epoch", None) is None:
+            if (
+                getattr(round_row, "start_epoch", None) is None
+                or getattr(round_row, "end_epoch", None) is None
+            ):
                 bounds = compute_boundaries_for_round(round_number)
                 if getattr(round_row, "start_epoch", None) is None:
                     round_row.start_epoch = int(bounds.start_epoch)
@@ -430,7 +451,12 @@ class ValidatorRoundPersistenceService:
             # If boundary computation fails, proceed without blocking finish
             pass
         round_row.status = status
-        round_row.meta = {**round_row.meta, "winners": winners, "winner_scores": winner_scores, "weights": weights}
+        round_row.meta = {
+            **round_row.meta,
+            "winners": winners,
+            "winner_scores": winner_scores,
+            "weights": weights,
+        }
         round_row.n_winners = len(winners)
         round_row.ended_at = ended_at
         if summary is not None:
@@ -528,7 +554,9 @@ class ValidatorRoundPersistenceService:
             row = await self._upsert_validator_snapshot(
                 round_row,
                 snapshot,
-                self._find_validator_id(snapshot.validator_uid, snapshot.validator_hotkey),
+                self._find_validator_id(
+                    snapshot.validator_uid, snapshot.validator_hotkey
+                ),
             )
             validator_snapshot_ids.append(row.id)
 
@@ -537,7 +565,6 @@ class ValidatorRoundPersistenceService:
             miner_id = await self._resolve_miner_identity_id(
                 snapshot.miner_uid,
                 snapshot.miner_hotkey,
-                snapshot.agent_key,
             )
             row = await self._upsert_miner_snapshot(round_row, snapshot, miner_id)
             miner_snapshot_ids.append(row.id)
@@ -548,7 +575,6 @@ class ValidatorRoundPersistenceService:
             miner_id = await self._resolve_miner_identity_id(
                 agent_run.miner_uid,
                 agent_run.miner_hotkey,
-                agent_run.miner_agent_key,
             )
             kwargs = self._agent_run_kwargs(
                 agent_run,
@@ -576,7 +602,6 @@ class ValidatorRoundPersistenceService:
             miner_id = await self._resolve_miner_identity_id(
                 solution.miner_uid,
                 solution.miner_hotkey,
-                solution.miner_agent_key,
             )
             kwargs = self._task_solution_kwargs(solution, miner_id=miner_id)
             stmt = select(TaskSolutionORM).where(
@@ -597,7 +622,6 @@ class ValidatorRoundPersistenceService:
             miner_id = await self._resolve_miner_identity_id(
                 evaluation.miner_uid,
                 evaluation.miner_hotkey,
-                evaluation.miner_agent_key,
             )
             kwargs = self._evaluation_kwargs(evaluation, miner_id=miner_id)
             stmt = select(EvaluationORM).where(
@@ -620,7 +644,6 @@ class ValidatorRoundPersistenceService:
         for result in payload.evaluation_results:
             miner_id = await self._resolve_miner_identity_id(
                 result.miner_uid,
-                None,
                 None,
             )
             evaluation_row = evaluation_rows.get(result.evaluation_id)
@@ -674,13 +697,17 @@ class ValidatorRoundPersistenceService:
         except (TypeError, ValueError):
             return None
 
-    def _compute_agent_run_stats(self, run_row: AgentEvaluationRunORM) -> Dict[str, Any]:
+    def _compute_agent_run_stats(
+        self, run_row: AgentEvaluationRunORM
+    ) -> Dict[str, Any]:
         task_solutions = list(getattr(run_row, "task_solutions", []) or [])
         evaluation_results = list(getattr(run_row, "evaluation_results", []) or [])
 
         task_ids = {solution.task_id for solution in task_solutions if solution.task_id}
         if not task_ids:
-            task_ids = {result.task_id for result in evaluation_results if result.task_id}
+            task_ids = {
+                result.task_id for result in evaluation_results if result.task_id
+            }
 
         total_tasks = len(task_ids)
         if total_tasks == 0:
@@ -733,7 +760,9 @@ class ValidatorRoundPersistenceService:
 
         total_reward = sum(reward_values) if reward_values else None
         average_reward = (
-            (total_reward / len(reward_values)) if reward_values and total_reward is not None else None
+            (total_reward / len(reward_values))
+            if reward_values and total_reward is not None
+            else None
         )
 
         return {
@@ -750,13 +779,17 @@ class ValidatorRoundPersistenceService:
     # Helper utilities
     # ------------------------------------------------------------------
 
-    async def _get_round_row(self, validator_round_id: str) -> Optional[ValidatorRoundORM]:
+    async def _get_round_row(
+        self, validator_round_id: str
+    ) -> Optional[ValidatorRoundORM]:
         stmt = select(ValidatorRoundORM).where(
             ValidatorRoundORM.validator_round_id == validator_round_id
         )
         return await self.session.scalar(stmt)
 
-    async def _get_agent_run_row(self, agent_run_id: str) -> Optional[AgentEvaluationRunORM]:
+    async def _get_agent_run_row(
+        self, agent_run_id: str
+    ) -> Optional[AgentEvaluationRunORM]:
         stmt = select(AgentEvaluationRunORM).where(
             AgentEvaluationRunORM.agent_run_id == agent_run_id
         )
@@ -806,9 +839,7 @@ class ValidatorRoundPersistenceService:
             validator_uid, round_number, exclude_round_id=exclude_round_id
         )
 
-    async def _upsert_validator_identity(
-        self, identity: Validator
-    ) -> ValidatorORM:
+    async def _upsert_validator_identity(self, identity: Validator) -> ValidatorORM:
         stmt = select(ValidatorORM).where(
             ValidatorORM.uid == identity.uid,
             ValidatorORM.hotkey == identity.hotkey,
@@ -833,10 +864,8 @@ class ValidatorRoundPersistenceService:
             stmt = stmt.where(
                 MinerORM.uid == identity.uid, MinerORM.hotkey == identity.hotkey
             )
-        elif identity.agent_key:
-            stmt = stmt.where(MinerORM.agent_key == identity.agent_key)
         else:
-            raise ValueError("Miner identity must include either uid/hotkey or agent_key")
+            raise ValueError("Miner identity must include uid and hotkey")
 
         existing = await self.session.scalar(stmt)
         if existing:
@@ -847,7 +876,6 @@ class ValidatorRoundPersistenceService:
             uid=identity.uid,
             hotkey=identity.hotkey,
             coldkey=identity.coldkey,
-            agent_key=identity.agent_key,
         )
         self.session.add(row)
         await self.session.flush()
@@ -860,7 +888,8 @@ class ValidatorRoundPersistenceService:
         validator_id: Optional[int],
     ) -> ValidatorRoundValidatorORM:
         stmt = select(ValidatorRoundValidatorORM).where(
-            ValidatorRoundValidatorORM.validator_round_id == round_row.validator_round_id,
+            ValidatorRoundValidatorORM.validator_round_id
+            == round_row.validator_round_id,
             ValidatorRoundValidatorORM.validator_uid == snapshot.validator_uid,
             ValidatorRoundValidatorORM.validator_hotkey == snapshot.validator_hotkey,
         )
@@ -897,7 +926,6 @@ class ValidatorRoundPersistenceService:
             ValidatorRoundMinerORM.validator_round_id == round_row.validator_round_id,
             ValidatorRoundMinerORM.miner_uid == snapshot.miner_uid,
             ValidatorRoundMinerORM.miner_hotkey == snapshot.miner_hotkey,
-            ValidatorRoundMinerORM.agent_key == snapshot.agent_key,
         )
         existing = await self.session.scalar(stmt)
         kwargs = {
@@ -906,7 +934,6 @@ class ValidatorRoundPersistenceService:
             "miner_uid": snapshot.miner_uid,
             "miner_hotkey": snapshot.miner_hotkey,
             "miner_coldkey": snapshot.miner_coldkey,
-            "agent_key": snapshot.agent_key,
             "agent_name": snapshot.agent_name,
             "image_url": snapshot.image_url,
             "github_url": snapshot.github_url,
@@ -971,7 +998,6 @@ class ValidatorRoundPersistenceService:
             "miner_id": miner_id,
             "miner_uid": model.miner_uid,
             "miner_hotkey": model.miner_hotkey,
-            "miner_agent_key": model.miner_agent_key,
             "is_sota": model.is_sota,
             "version": model.version,
             "started_at": model.started_at,
@@ -1005,15 +1031,24 @@ class ValidatorRoundPersistenceService:
             "screenshot": model.screenshot,
             "screenshot_description": model.screenshot_description,
             "specifications": _non_empty_dict(model.specifications),
-            "tests": [test.model_dump(mode="json", exclude_none=True) for test in model.tests],
+            "tests": [
+                test.model_dump(mode="json", exclude_none=True) for test in model.tests
+            ],
             "milestones": (
-                [milestone.model_dump(mode="json", exclude_none=True) for milestone in model.milestones]
+                [
+                    milestone.model_dump(mode="json", exclude_none=True)
+                    for milestone in model.milestones
+                ]
                 if model.milestones
                 else None
             ),
             "relevant_data": _non_empty_dict(model.relevant_data),
             "success_criteria": model.success_criteria,
-            "use_case": model.use_case if isinstance(model.use_case, dict) else _optional_dump(model.use_case),
+            "use_case": (
+                model.use_case
+                if isinstance(model.use_case, dict)
+                else _optional_dump(model.use_case)
+            ),
             "should_record": model.should_record,
         }
 
@@ -1032,7 +1067,6 @@ class ValidatorRoundPersistenceService:
             "validator_hotkey": model.validator_hotkey,
             "miner_uid": model.miner_uid,
             "miner_hotkey": model.miner_hotkey,
-            "miner_agent_key": model.miner_agent_key,
             "miner_id": miner_id,
             "actions": _action_dump(model.actions),
             "web_agent_id": model.web_agent_id,
@@ -1063,7 +1097,6 @@ class ValidatorRoundPersistenceService:
             "validator_hotkey": model.validator_hotkey,
             "miner_uid": model.miner_uid,
             "miner_hotkey": model.miner_hotkey,
-            "miner_agent_key": model.miner_agent_key,
             "miner_id": miner_id,
             "final_score": model.final_score,
             "raw_score": model.raw_score,
@@ -1111,9 +1144,8 @@ class ValidatorRoundPersistenceService:
         self,
         uid: Optional[int],
         hotkey: Optional[str],
-        agent_key: Optional[str],
     ) -> Optional[int]:
-        if uid is None and agent_key is None:
+        if uid is None:
             return None
 
         stmt = select(MinerORM)
@@ -1121,8 +1153,6 @@ class ValidatorRoundPersistenceService:
             stmt = stmt.where(MinerORM.uid == uid)
             if hotkey:
                 stmt = stmt.where(MinerORM.hotkey == hotkey)
-        elif agent_key:
-            stmt = stmt.where(MinerORM.agent_key == agent_key)
 
         row = await self.session.scalar(stmt)
         if row:

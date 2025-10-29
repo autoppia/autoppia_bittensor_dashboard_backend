@@ -1,6 +1,7 @@
 """
 Progressive validator round ingestion endpoints aligned with the normalized models.
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,7 +26,10 @@ from app.models.core import (
     ValidatorRound,
     ValidatorRoundValidator,
 )
-from app.services.validator.validator_auth import require_validator_auth, VALIDATOR_HOTKEY_HEADER
+from app.services.validator.validator_auth import (
+    require_validator_auth,
+    VALIDATOR_HOTKEY_HEADER,
+)
 from app.data import get_validator_metadata
 from app.services.chain_state import get_current_block
 from app.services.round_calc import (
@@ -34,7 +38,11 @@ from app.services.round_calc import (
     is_inside_window,
 )
 from app.config import settings
-from app.utils.images import resolve_agent_image, resolve_validator_image, sanitize_miner_image
+from app.utils.images import (
+    resolve_agent_image,
+    resolve_validator_image,
+    sanitize_miner_image,
+)
 from app.services.validator.validator_storage import (
     RoundConflictError,
     DuplicateIdentifierError,
@@ -209,9 +217,7 @@ async def _legacy_to_start_agent_run_request(
     agent_run_data.setdefault("validator_hotkey", validator_hotkey)
 
     miner_info = dict(agent_run_data.get("miner_info") or {})
-    if agent_run_data.get("is_sota"):
-        agent_run_data.setdefault("miner_agent_key", miner_info.get("agent_key"))
-    else:
+    if not agent_run_data.get("is_sota"):
         agent_run_data.setdefault("miner_uid", miner_info.get("uid"))
         agent_run_data.setdefault("miner_hotkey", miner_info.get("hotkey"))
 
@@ -221,7 +227,6 @@ async def _legacy_to_start_agent_run_request(
         uid=miner_info.get("uid"),
         hotkey=miner_info.get("hotkey"),
         coldkey=miner_info.get("coldkey"),
-        agent_key=miner_info.get("agent_key"),
     )
 
     miner_snapshot = ValidatorRoundMiner(
@@ -229,8 +234,9 @@ async def _legacy_to_start_agent_run_request(
         miner_uid=miner_info.get("uid"),
         miner_hotkey=miner_info.get("hotkey"),
         miner_coldkey=miner_info.get("coldkey"),
-        agent_key=miner_info.get("agent_key"),
-        agent_name=miner_info.get("agent_name") or miner_info.get("name") or agent_run.agent_run_id,
+        agent_name=miner_info.get("agent_name")
+        or miner_info.get("name")
+        or agent_run.agent_run_id,
         image_url=miner_info.get("agent_image") or miner_info.get("image"),
         github_url=miner_info.get("github"),
         provider=miner_info.get("provider"),
@@ -297,7 +303,8 @@ async def _legacy_to_add_evaluation_request(
                     continue
                 raw_type = str(a.get("type", "other") or "other")
                 normalized_type = (
-                    raw_type.lower().replace("action", "").replace("-", "_").strip() or "other"
+                    raw_type.lower().replace("action", "").replace("-", "_").strip()
+                    or "other"
                 )
                 # Prefer semantic name for text entry over ambiguous "type"
                 alias_map = {
@@ -307,7 +314,9 @@ async def _legacy_to_add_evaluation_request(
                 }
                 normalized_type = alias_map.get(normalized_type, normalized_type)
                 attrs = {k: v for k, v in a.items() if k != "type"}
-                normalized_actions.append({"type": normalized_type, "attributes": attrs})
+                normalized_actions.append(
+                    {"type": normalized_type, "attributes": attrs}
+                )
             task_solution_data["actions"] = normalized_actions
     except Exception:
         # Leave original shape on failure
@@ -333,7 +342,9 @@ async def _legacy_to_add_evaluation_request(
         evaluation_data["final_score"] = evaluation_result.final_score
         evaluation_data["raw_score"] = evaluation_result.raw_score
         evaluation_data["evaluation_time"] = evaluation_result.evaluation_time
-        evaluation_data["summary"] = evaluation_result.meta if hasattr(evaluation_result, "meta") else {}
+        evaluation_data["summary"] = (
+            evaluation_result.meta if hasattr(evaluation_result, "meta") else {}
+        )
     evaluation_data.setdefault("validator_round_id", validator_round_id)
     evaluation_data.setdefault("validator_uid", validator_uid)
     evaluation_data.setdefault("validator_hotkey", validator_hotkey)
@@ -380,7 +391,9 @@ async def validator_auth_check() -> dict[str, Any]:
 async def start_round(
     payload: Union[StartRoundRequest, LegacyStartRoundRequest],
     request: Request,
-    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
+    force: bool = Query(
+        False, description="TESTING-only override to skip chain round/window checks"
+    ),
     session: AsyncSession = Depends(get_session),
 ):
     """Register a new validator round along with validator identity and snapshot."""
@@ -437,7 +450,10 @@ async def start_round(
     else:
         current_block = get_current_block()
         if current_block is None:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Chain state unavailable",
+            )
 
         backend_round_number = compute_round_number(current_block)
         if validator_round.round_number != backend_round_number:
@@ -545,7 +561,7 @@ async def start_round(
         try:
             existing = await service.get_round_by_validator_and_number(
                 validator_uid=int(validator_round.validator_uid),  # type: ignore[arg-type]
-                round_number=int(validator_round.round_number),    # type: ignore[arg-type]
+                round_number=int(validator_round.round_number),  # type: ignore[arg-type]
             )
         except Exception:
             existing = None
@@ -588,7 +604,9 @@ async def set_tasks(
     validator_round_id: str,
     payload: SetTasksRequest,
     request: Request,
-    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
+    force: bool = Query(
+        False, description="TESTING-only override to skip chain round/window checks"
+    ),
     session: AsyncSession = Depends(get_session),
 ):
     """Add or replace task definitions for a validator round."""
@@ -645,7 +663,9 @@ async def set_tasks(
                     )
 
             # Idempotent: allow existing tasks to be skipped silently
-            count = await service.add_tasks(validator_round_id, payload.tasks, allow_existing=True)
+            count = await service.add_tasks(
+                validator_round_id, payload.tasks, allow_existing=True
+            )
     except DuplicateIdentifierError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
@@ -655,9 +675,7 @@ async def set_tasks(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
 
-    logger.info(
-        "Stored %d tasks for validator round %s", count, validator_round_id
-    )
+    logger.info("Stored %d tasks for validator round %s", count, validator_round_id)
     return {"message": "Tasks stored", "count": count}
 
 
@@ -669,7 +687,9 @@ async def start_agent_run(
     validator_round_id: str,
     payload: Union[StartAgentRunRequest, LegacyStartAgentRunRequest],
     request: Request,
-    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
+    force: bool = Query(
+        False, description="TESTING-only override to skip chain round/window checks"
+    ),
     session: AsyncSession = Depends(get_session),
 ):
     """Register the beginning of an agent evaluation run."""
@@ -679,7 +699,9 @@ async def start_agent_run(
         async with session.begin():
             request_payload = payload
             if isinstance(request_payload, LegacyStartAgentRunRequest):
-                request_payload = await _legacy_to_start_agent_run_request(validator_round_id, request_payload, service)
+                request_payload = await _legacy_to_start_agent_run_request(
+                    validator_round_id, request_payload, service
+                )
 
             agent_run = request_payload.agent_run
             _require_round_match(
@@ -695,15 +717,26 @@ async def start_agent_run(
             if (
                 existing_run is not None
                 and existing_run.validator_round_id == validator_round_id
-                and (existing_run.validator_uid is None or agent_run.validator_uid is None or int(existing_run.validator_uid) == int(agent_run.validator_uid))
-                and (not existing_run.validator_hotkey or not agent_run.validator_hotkey or existing_run.validator_hotkey == agent_run.validator_hotkey)
+                and (
+                    existing_run.validator_uid is None
+                    or agent_run.validator_uid is None
+                    or int(existing_run.validator_uid) == int(agent_run.validator_uid)
+                )
+                and (
+                    not existing_run.validator_hotkey
+                    or not agent_run.validator_hotkey
+                    or existing_run.validator_hotkey == agent_run.validator_hotkey
+                )
             ):
                 logger.info(
                     "Agent run %s already registered (round %s); treating as idempotent",
                     agent_run.agent_run_id,
                     validator_round_id,
                 )
-                return {"message": "Agent run registered", "agent_run_id": agent_run.agent_run_id}
+                return {
+                    "message": "Agent run registered",
+                    "agent_run_id": agent_run.agent_run_id,
+                }
 
             # Ensure agent_run validator identity matches the round's registered validator
             round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
@@ -741,7 +774,10 @@ async def start_agent_run(
             else:
                 current_block = get_current_block()
                 if current_block is None:
-                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Chain state unavailable",
+                    )
                 backend_round_number = compute_round_number(current_block)
                 stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
                 if stored_round_number != backend_round_number:
@@ -770,28 +806,7 @@ async def start_agent_run(
                 "miner_snapshot.validator_round_id",
             )
 
-            if agent_run.is_sota:
-                if agent_run.miner_agent_key is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="miner_agent_key is required for SOTA runs",
-                    )
-                # Cross-check SOTA agent_key across payloads if present
-                agent_key_values = [
-                    v
-                    for v in [
-                        agent_run.miner_agent_key,
-                        request_payload.miner_identity.agent_key,
-                        miner_snapshot.agent_key,
-                    ]
-                    if v is not None
-                ]
-                if agent_key_values and len(set(agent_key_values)) > 1:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Inconsistent agent_key across agent_run, miner_identity, and miner_snapshot",
-                    )
-            else:
+            if not agent_run.is_sota:
                 if agent_run.miner_uid is None:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -811,13 +826,20 @@ async def start_agent_run(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="miner_identity.uid must match agent_run.miner_uid",
                     )
-                if expected_hotkey and identity.hotkey and expected_hotkey != identity.hotkey:
+                if (
+                    expected_hotkey
+                    and identity.hotkey
+                    and expected_hotkey != identity.hotkey
+                ):
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="miner_identity.hotkey must match agent_run.miner_hotkey",
                     )
                 # Snapshot consistency (if provided)
-                if miner_snapshot.miner_uid is not None and miner_snapshot.miner_uid != expected_uid:
+                if (
+                    miner_snapshot.miner_uid is not None
+                    and miner_snapshot.miner_uid != expected_uid
+                ):
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="miner_snapshot.miner_uid must match agent_run.miner_uid",
@@ -864,7 +886,9 @@ async def start_agent_run(
                 f"agent_run_id {agent_run.agent_run_id} is already registered "
                 f"to validator_round {existing_run.validator_round_id}"
             )
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=detail
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
@@ -894,7 +918,9 @@ async def add_evaluation(
     agent_run_id: str,
     payload: Union[AddEvaluationRequest, LegacyAddEvaluationRequest],
     request: Request,
-    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
+    force: bool = Query(
+        False, description="TESTING-only override to skip chain round/window checks"
+    ),
     session: AsyncSession = Depends(get_session),
 ):
     """Persist evaluation data (task, solution, evaluation record, and artefact)."""
@@ -917,13 +943,20 @@ async def add_evaluation(
                 if not isinstance(payload, LegacyAddEvaluationRequest):
                     raw_json = await request.json()
                     raw_ts = (raw_json or {}).get("task_solution") or {}
-                    raw_actions = raw_ts.get("actions") if isinstance(raw_ts, dict) else None
+                    raw_actions = (
+                        raw_ts.get("actions") if isinstance(raw_ts, dict) else None
+                    )
                     ts = getattr(request_payload, "task_solution", None)
                     if raw_actions and ts and isinstance(ts.actions, list):
-                        from app.models.core import Action as CoreAction, TaskSolution as CoreTaskSolution
+                        from app.models.core import (
+                            Action as CoreAction,
+                            TaskSolution as CoreTaskSolution,
+                        )
 
                         def _norm_type(t: str) -> str:
-                            key = (t or "other").lower().replace("action", "").replace("-", "_").strip() or "other"
+                            key = (t or "other").lower().replace("action", "").replace(
+                                "-", "_"
+                            ).strip() or "other"
                             if key in {"type", "type_text", "sendkeysiwa"}:
                                 return "input"
                             return key
@@ -931,20 +964,38 @@ async def add_evaluation(
                         new_actions = []
                         for idx, ra in enumerate(raw_actions):
                             if isinstance(ra, dict):
-                                rtype = _norm_type(str(ra.get("type", "other") or "other"))
+                                rtype = _norm_type(
+                                    str(ra.get("type", "other") or "other")
+                                )
                                 attrs = {k: v for k, v in ra.items() if k != "type"}
-                                new_actions.append(CoreAction(type=rtype, attributes=attrs))
+                                new_actions.append(
+                                    CoreAction(type=rtype, attributes=attrs)
+                                )
                             else:
-                                new_actions.append(CoreAction(type=str(ra), attributes={}))
+                                new_actions.append(
+                                    CoreAction(type=str(ra), attributes={})
+                                )
 
                         # Replace only if current attrs look empty
-                        if all((getattr(a, "attributes", None) in (None, {}, []) for a in ts.actions)):
+                        if all(
+                            (
+                                getattr(a, "attributes", None) in (None, {}, [])
+                                for a in ts.actions
+                            )
+                        ):
                             request_payload = AddEvaluationRequest(
                                 task=request_payload.task,
-                                task_solution=CoreTaskSolution(**{
-                                    **request_payload.task_solution.model_dump(mode="json"),
-                                    "actions": [a.model_dump(mode="json") for a in new_actions],
-                                }),
+                                task_solution=CoreTaskSolution(
+                                    **{
+                                        **request_payload.task_solution.model_dump(
+                                            mode="json"
+                                        ),
+                                        "actions": [
+                                            a.model_dump(mode="json")
+                                            for a in new_actions
+                                        ],
+                                    }
+                                ),
                                 evaluation=request_payload.evaluation,
                                 evaluation_result=request_payload.evaluation_result,
                             )
@@ -961,12 +1012,17 @@ async def add_evaluation(
                 (task.validator_round_id, "task.validator_round_id"),
                 (task_solution.validator_round_id, "task_solution.validator_round_id"),
                 (evaluation.validator_round_id, "evaluation.validator_round_id"),
-                (evaluation_result.validator_round_id, "evaluation_result.validator_round_id"),
+                (
+                    evaluation_result.validator_round_id,
+                    "evaluation_result.validator_round_id",
+                ),
             ]
             for value, label in expected_fields:
                 _require_round_match(value, validator_round_id, label)
 
-            _require_round_match(task_solution.task_id, task.task_id, "task_solution.task_id")
+            _require_round_match(
+                task_solution.task_id, task.task_id, "task_solution.task_id"
+            )
             _require_round_match(evaluation.task_id, task.task_id, "evaluation.task_id")
             _require_round_match(
                 evaluation_result.task_id, task.task_id, "evaluation_result.task_id"
@@ -1002,12 +1058,18 @@ async def add_evaluation(
             round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
             _ensure_request_matches_round_owner(request, round_row)
             check_pairs = [
-                (task_solution.validator_uid, task_solution.validator_hotkey, "task_solution"),
+                (
+                    task_solution.validator_uid,
+                    task_solution.validator_hotkey,
+                    "task_solution",
+                ),
                 (evaluation.validator_uid, evaluation.validator_hotkey, "evaluation"),
                 (evaluation_result.validator_uid, None, "evaluation_result"),
             ]
             for uid_value, hotkey_value, label in check_pairs:
-                if uid_value is not None and int(uid_value) != int(round_row.validator_uid):
+                if uid_value is not None and int(uid_value) != int(
+                    round_row.validator_uid
+                ):
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"{label}.validator_uid must match the round's validator_uid",
@@ -1021,9 +1083,15 @@ async def add_evaluation(
             # Early idempotency: if the entire bundle already exists for this round/run,
             # return success before enforcing window checks to allow safe replays.
             try:
-                existing_solution = await service.get_task_solution_row(task_solution.solution_id)
-                existing_eval = await service.get_evaluation_row(evaluation.evaluation_id)
-                existing_result = await service.get_evaluation_result_row(evaluation_result.result_id)
+                existing_solution = await service.get_task_solution_row(
+                    task_solution.solution_id
+                )
+                existing_eval = await service.get_evaluation_row(
+                    evaluation.evaluation_id
+                )
+                existing_result = await service.get_evaluation_result_row(
+                    evaluation_result.result_id
+                )
             except Exception:
                 existing_solution = existing_eval = existing_result = None
             if (
@@ -1043,7 +1111,10 @@ async def add_evaluation(
                     validator_round_id,
                     agent_run_id,
                 )
-                return {"message": "Evaluation stored", "evaluation_id": existing_eval.evaluation_id}
+                return {
+                    "message": "Evaluation stored",
+                    "evaluation_id": existing_eval.evaluation_id,
+                }
 
             # Enforce chain-derived round window for this submission unless testing override is enabled
             testing_override = settings.TESTING and bool(force)
@@ -1055,7 +1126,10 @@ async def add_evaluation(
             else:
                 current_block = get_current_block()
                 if current_block is None:
-                    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Chain state unavailable",
+                    )
                 backend_round_number = compute_round_number(current_block)
                 stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
                 if stored_round_number != backend_round_number:
@@ -1089,7 +1163,9 @@ async def add_evaluation(
             )
     except DuplicateIdentifierError as exc:
         # Conflicting duplicate (belongs to another round/run), surface as 409
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
@@ -1112,7 +1188,9 @@ async def finish_round(
     validator_round_id: str,
     payload: FinishRoundRequest,
     request: Request,
-    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
+    force: bool = Query(
+        False, description="TESTING-only override to skip chain round/window checks"
+    ),
     session: AsyncSession = Depends(get_session),
 ):
     """Mark a validator round as finished and persist summary data."""
@@ -1124,7 +1202,10 @@ async def finish_round(
     testing_override = settings.TESTING and bool(force)
     current_block = get_current_block()
     if not testing_override and current_block is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Chain state unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chain state unavailable",
+        )
 
     # Begin a transaction BEFORE any DB I/O to avoid implicit autobegin
     async with session.begin():
@@ -1180,7 +1261,10 @@ async def finish_round(
             weights=payload.weights,
             ended_at=end_timestamp,
             summary=payload.summary,
-            agent_runs=[item.model_dump(exclude_none=True) for item in payload.agent_runs] or None,
+            agent_runs=[
+                item.model_dump(exclude_none=True) for item in payload.agent_runs
+            ]
+            or None,
         )
 
     logger.info("Finished validator round %s", validator_round_id)

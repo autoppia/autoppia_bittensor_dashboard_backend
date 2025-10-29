@@ -813,7 +813,9 @@ class AgentRunsService:
                 pass
 
             if relevant_task_ids:
-                task_by_id = {getattr(t, "task_id", None): t for t in (context.tasks or [])}
+                task_by_id = {
+                    getattr(t, "task_id", None): t for t in (context.tasks or [])
+                }
                 hosts = set()
                 for task_id in relevant_task_ids:
                     task = task_by_id.get(task_id)
@@ -962,10 +964,18 @@ class AgentRunsService:
             for index, action in enumerate(solution.actions):
                 # Normalize action type for display (prefer 'input' over ambiguous 'type')
                 raw_type = (
-                    action.type if hasattr(action, "type") else action.get("type", "action")
+                    action.type
+                    if hasattr(action, "type")
+                    else action.get("type", "action")
                 )
                 try:
-                    type_key = str(raw_type).lower().replace("action", "").replace("-", "_").strip()
+                    type_key = (
+                        str(raw_type)
+                        .lower()
+                        .replace("action", "")
+                        .replace("-", "_")
+                        .strip()
+                    )
                 except Exception:
                     type_key = str(raw_type)
                 if type_key in {"type", "type_text", "sendkeysiwa"}:
@@ -1080,8 +1090,6 @@ class AgentRunsService:
         agent_hotkey = getattr(miner, "hotkey", None) or getattr(
             context.run, "miner_hotkey", None
         )
-        if not agent_hotkey:
-            agent_hotkey = getattr(context.run, "miner_agent_key", None)
 
         agent_name = getattr(miner, "agent_name", None) or getattr(miner, "name", None)
         if not agent_name:

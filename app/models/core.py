@@ -42,7 +42,6 @@ def _require_non_empty(value: str, field_name: str) -> str:
     return value_str
 
 
-
 # ---------------------------------------------------------------------------
 # Legacy info models (used in UI/compat layers)
 # ---------------------------------------------------------------------------
@@ -143,34 +142,19 @@ class Validator(BaseModel):
 
 
 class Miner(BaseModel):
-    """Immutable miner identity. Benchmarks may omit UID if they provide agent_key."""
+    """Immutable miner identity."""
 
-    uid: Optional[int] = Field(
-        default=None, description="Optional miner UID (None for benchmark agents)"
-    )
+    uid: Optional[int] = Field(default=None, description="Miner UID")
     hotkey: Optional[str] = Field(
         default=None, description="Miner hotkey for on-chain miners"
     )
-    coldkey: Optional[str] = Field(
-        default=None, description="Optional miner coldkey"
-    )
-    agent_key: Optional[str] = Field(
-        default=None,
-        description=(
-            "Synthetic unique key for agents without an on-chain identity "
-            "(required when uid is None)."
-        ),
-    )
+    coldkey: Optional[str] = Field(default=None, description="Optional miner coldkey")
 
     @model_validator(mode="after")
     def _validate_identity(cls, values: "Miner") -> "Miner":  # type: ignore[override]
         if values.uid is not None:
             if not values.hotkey:
                 raise ValueError("hotkey is required when uid is provided")
-            return values
-
-        if values.agent_key is None:
-            raise ValueError("agent_key is required when uid is not provided")
         return values
 
     @field_validator("hotkey")
@@ -202,7 +186,9 @@ class ValidatorRound(BaseModel):
             "(autoincrementing integer)."
         ),
     )
-    validator_uid: int = Field(..., description="UID of the validator executing the round")
+    validator_uid: int = Field(
+        ..., description="UID of the validator executing the round"
+    )
     validator_hotkey: str = Field(
         ..., description="Hotkey of the validator executing the round"
     )
@@ -284,9 +270,6 @@ class ValidatorRoundValidator(BaseModel):
 class ValidatorRoundMiner(BaseModel):
     """
     Mutable miner information captured for a validator round.
-
-    Evaluated miners can either be on-chain participants (uid/hotkey) or
-    benchmark agents (identified by agent_key).
     """
 
     validator_round_id: str = Field(..., description="Validator round identifier")
@@ -298,10 +281,6 @@ class ValidatorRoundMiner(BaseModel):
     )
     miner_coldkey: Optional[str] = Field(
         default=None, description="Miner coldkey if applicable"
-    )
-    agent_key: Optional[str] = Field(
-        default=None,
-        description="Synthetic identifier for benchmark agents (required when uid is None)",
     )
 
     agent_name: str = Field(..., description="Display name for the agent")
@@ -336,10 +315,6 @@ class ValidatorRoundMiner(BaseModel):
         if values.miner_uid is not None:
             if not values.miner_hotkey:
                 raise ValueError("miner_hotkey is required when miner_uid is provided")
-            return values
-
-        if values.agent_key is None:
-            raise ValueError("agent_key is required for benchmark agents")
         return values
 
 
@@ -362,16 +337,8 @@ class AgentEvaluationRun(BaseModel):
         ..., description="Validator hotkey recorded for the run"
     )
 
-    miner_uid: Optional[int] = Field(
-        default=None, description="Miner UID (None for benchmark agents)"
-    )
-    miner_hotkey: Optional[str] = Field(
-        default=None, description="Miner hotkey (None for benchmark agents)"
-    )
-    miner_agent_key: Optional[str] = Field(
-        default=None,
-        description="Synthetic agent key (required when miner_uid is None)",
-    )
+    miner_uid: Optional[int] = Field(default=None, description="Miner UID")
+    miner_hotkey: Optional[str] = Field(default=None, description="Miner hotkey")
     is_sota: bool = Field(
         default=False, description="Whether this run corresponds to a benchmark agent"
     )
@@ -420,10 +387,6 @@ class AgentEvaluationRun(BaseModel):
     def _validate_identity(cls, values: "AgentEvaluationRun") -> "AgentEvaluationRun":  # type: ignore[override]
         if not values.is_sota and values.miner_uid is None:
             raise ValueError("miner_uid is required for non-SOTA runs")
-        if values.miner_uid is None and values.miner_agent_key is None:
-            raise ValueError(
-                "miner_agent_key is required when miner_uid is not provided"
-            )
         return values
 
 
@@ -610,10 +573,6 @@ class TaskSolution(BaseModel):
     miner_hotkey: Optional[str] = Field(
         default=None, description="Miner hotkey if the agent is on-chain"
     )
-    miner_agent_key: Optional[str] = Field(
-        default=None,
-        description="Synthetic identifier when the agent has no on-chain identity",
-    )
 
     actions: List[Action] = Field(
         default_factory=list,
@@ -636,9 +595,7 @@ class TaskSolution(BaseModel):
         base_dump["actions"] = [action.model_dump() for action in self.actions]
         return base_dump
 
-    def validate_relationships(
-        self, agent_run: AgentEvaluationRun, task: Task
-    ) -> bool:
+    def validate_relationships(self, agent_run: AgentEvaluationRun, task: Task) -> bool:
         return (
             self.task_id == task.task_id
             and self.agent_run_id == agent_run.agent_run_id
@@ -665,7 +622,9 @@ class Evaluation(BaseModel):
         ..., description="Foreign key to the evaluated task solution"
     )
     agent_run_id: str = Field(..., description="Foreign key to the agent run")
-    validator_uid: int = Field(..., description="Validator UID performing the evaluation")
+    validator_uid: int = Field(
+        ..., description="Validator UID performing the evaluation"
+    )
     validator_hotkey: str = Field(
         ..., description="Validator hotkey performing the evaluation"
     )
@@ -674,10 +633,6 @@ class Evaluation(BaseModel):
     )
     miner_hotkey: Optional[str] = Field(
         default=None, description="Miner hotkey associated with the evaluation"
-    )
-    miner_agent_key: Optional[str] = Field(
-        default=None,
-        description="Synthetic agent identifier when no UID is available",
     )
 
     final_score: float = Field(
@@ -731,7 +686,9 @@ class Feedback(BaseModel):
         feedback = f"Task: '{self.task_prompt}'\n"
         feedback += f"Final Score: {self.final_score}/10\n"
         feedback += f"Executed Actions: {self.executed_actions}, Failed Actions: {self.failed_actions}\n"
-        feedback += f"Tests Passed: {self.passed_tests}, Tests Failed: {self.failed_tests}\n"
+        feedback += (
+            f"Tests Passed: {self.passed_tests}, Tests Failed: {self.failed_tests}\n"
+        )
         feedback += f"Total Execution Time: {self.total_execution_time:.2f}s\n"
         feedback += f"Time Penalty: {self.time_penalty:.1f} points\n"
         feedback += f"Critical Test Penalty: {self.critical_test_penalty} points\n"
@@ -772,7 +729,9 @@ class EvaluationStats(BaseModel):
     error_message: str = ""
 
     def get_summary_dict(self) -> Dict[str, Any]:
-        action_time = sum(self.action_execution_times) if self.action_execution_times else 0.0
+        action_time = (
+            sum(self.action_execution_times) if self.action_execution_times else 0.0
+        )
         return {
             "agent_id": self.web_agent_id,
             "task_id": self.task_id,
@@ -813,7 +772,9 @@ class EvaluationResult(BaseModel):
     miner_uid: Optional[int] = Field(
         default=None, description="Miner UID associated with the evaluation"
     )
-    validator_uid: int = Field(..., description="Validator UID that produced the artefact")
+    validator_uid: int = Field(
+        ..., description="Validator UID that produced the artefact"
+    )
 
     final_score: float = Field(
         default=0.0, description="Final score recorded for the evaluation"
@@ -832,9 +793,7 @@ class EvaluationResult(BaseModel):
     web_agent_id: Optional[str] = Field(
         default=None, description="Web agent identifier used during evaluation"
     )
-    raw_score: float = Field(
-        default=0.0, description="Raw score before normalisation"
-    )
+    raw_score: float = Field(default=0.0, description="Raw score before normalisation")
     evaluation_time: float = Field(
         default=0.0, description="Time taken to evaluate the solution (seconds)"
     )
@@ -855,7 +814,9 @@ class EvaluationResult(BaseModel):
         def _serialize_action(action: Any) -> Any:
             return action.model_dump() if hasattr(action, "model_dump") else action
 
-        base_dump["execution_history"] = [_serialize_action(action) for action in self.execution_history]
+        base_dump["execution_history"] = [
+            _serialize_action(action) for action in self.execution_history
+        ]
         return base_dump
 
 
@@ -886,7 +847,8 @@ class ValidatorRoundWithDetails(ValidatorRound):
     """Validator round enriched with identity snapshots and run details."""
 
     validator_snapshots: List[ValidatorRoundValidator] = Field(
-        default_factory=list, description="Validator snapshots captured during the round"
+        default_factory=list,
+        description="Validator snapshots captured during the round",
     )
     miner_snapshots: List[ValidatorRoundMiner] = Field(
         default_factory=list, description="Miner snapshots captured during the round"
