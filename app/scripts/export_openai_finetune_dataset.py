@@ -80,8 +80,8 @@ def _normalize_action_type(raw_type: Optional[str]) -> str:
         "tap": "click",
         "press": "click",
         "select": "click",
-        # Input/typing
-        "type": "type",
+        # Input/typing (use a single semantic label)
+        "type": "input",
         "input": "input",
         "fill": "input",
         "type_text": "input",

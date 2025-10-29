@@ -299,6 +299,13 @@ async def _legacy_to_add_evaluation_request(
                 normalized_type = (
                     raw_type.lower().replace("action", "").replace("-", "_").strip() or "other"
                 )
+                # Prefer semantic name for text entry over ambiguous "type"
+                alias_map = {
+                    "type": "input",
+                    "type_text": "input",
+                    "sendkeysiwa": "input",
+                }
+                normalized_type = alias_map.get(normalized_type, normalized_type)
                 attrs = {k: v for k, v in a.items() if k != "type"}
                 normalized_actions.append({"type": normalized_type, "attributes": attrs})
             task_solution_data["actions"] = normalized_actions
@@ -916,7 +923,10 @@ async def add_evaluation(
                         from app.models.core import Action as CoreAction, TaskSolution as CoreTaskSolution
 
                         def _norm_type(t: str) -> str:
-                            return (t or "other").lower().replace("action", "").replace("-", "_").strip() or "other"
+                            key = (t or "other").lower().replace("action", "").replace("-", "_").strip() or "other"
+                            if key in {"type", "type_text", "sendkeysiwa"}:
+                                return "input"
+                            return key
 
                         new_actions = []
                         for idx, ra in enumerate(raw_actions):

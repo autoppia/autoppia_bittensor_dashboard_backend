@@ -935,7 +935,8 @@ class TasksService:
                 "press": ActionType.CLICK,
                 "select": ActionType.CLICK,
                 # Input/typing actions
-                "type": ActionType.TYPE,
+                # Prefer a single label (INPUT) for entering text
+                "type": ActionType.INPUT,
                 "input": ActionType.INPUT,
                 "fill": ActionType.INPUT,
                 "type_text": ActionType.INPUT,

@@ -35,6 +35,8 @@ from app.models.core import (
 from app.services.cache import CACHE_TTL, api_cache
 from app.utils.images import resolve_agent_image, resolve_validator_image
 from app.config import settings
+from app.services.chain_state import get_current_block_estimate
+from app.services.round_calc import compute_boundaries_for_round
 
 logger = logging.getLogger(__name__)
 
@@ -1054,6 +1056,23 @@ class RoundsService:
 
         statuses = [(record.model.status or "completed") for record in records]
         status = _aggregate_status(statuses)
+
+        # Chain-aware override: if the chain has already moved past this
+        # round's window, mark it as completed regardless of any stale
+        # validator row statuses (e.g., a validator that never called /finish).
+        try:
+            current_block_est = get_current_block_estimate()
+        except Exception:
+            current_block_est = None
+        if current_block_est is not None:
+            bounds = compute_boundaries_for_round(round_number)
+            if current_block_est > bounds.end_block:
+                status = "completed"
+            elif current_block_est <= bounds.start_block:
+                # If chain hasn't reached the window yet, prefer pending
+                # unless DB already says completed (keep completed if so).
+                if status != "completed":
+                    status = "pending"
         total_tasks = sum(record.model.n_tasks or 0 for record in records)
         completed_tasks = sum(
             self._estimate_completed_tasks(record.model) for record in records
@@ -1408,6 +1427,80 @@ class RoundsService:
         return entries, total_rounds
 
     async def get_current_round_overview(self) -> Optional[Dict[str, Any]]:
+        """Return the current round based on chain height, with DB fallback.
+
+        Preference order:
+          1) Use bittensor chain height to compute the current logical round
+             via compute_round_number(). If we have DB records for that round,
+             aggregate them. Otherwise, synthesize a minimal overview from the
+             chain boundaries so the UI can still render.
+          2) If chain height is unavailable, fall back to the latest round
+             inferred from DB rows.
+        """
+        try:
+            from app.services.chain_state import get_current_block_estimate
+            from app.services.round_calc import (
+                compute_round_number,
+                compute_boundaries_for_round,
+                progress_for_block,
+            )
+        except Exception:
+            get_current_block_estimate = None  # type: ignore
+            compute_round_number = None  # type: ignore
+            compute_boundaries_for_round = None  # type: ignore
+            progress_for_block = None  # type: ignore
+
+        # Chain-based path using cached estimate only (no live fetch per request)
+        if get_current_block_estimate is not None and compute_round_number is not None:
+            current_block = get_current_block_estimate()
+            if current_block is not None and int(current_block) > 0:
+                try:
+                    number = int(compute_round_number(int(current_block)))  # type: ignore[arg-type]
+                except Exception:
+                    number = 0
+                if number > 0:
+                    # If we have DB records for this chain-derived round, aggregate
+                    try:
+                        records, _ = await self._fetch_round_records_by_number(number)
+                    except Exception:
+                        records = []
+                    if records:
+                        return self._build_round_day_overview_from_records(
+                            number, records, number
+                        )
+                    # Synthesize a minimal overview using chain boundaries
+                    if compute_boundaries_for_round is not None and progress_for_block is not None:
+                        bounds = compute_boundaries_for_round(number)  # type: ignore[arg-type]
+                        progress = float(progress_for_block(int(current_block), bounds))  # type: ignore[arg-type]
+                        if int(current_block) <= int(bounds.start_block):
+                            status = "pending"
+                        elif int(current_block) <= int(bounds.end_block):
+                            status = "active"
+                        else:
+                            status = "completed"
+                        return {
+                            "id": number,
+                            "round": number,
+                            "roundNumber": number,
+                            "roundKey": f"round_{number}",
+                            "startBlock": int(bounds.start_block),
+                            "endBlock": int(bounds.end_block),
+                            "current": status == "active",
+                            "startTime": _iso_timestamp(None),
+                            "endTime": None,
+                            "status": status,
+                            "totalTasks": 0,
+                            "completedTasks": 0,
+                            "averageScore": 0.0,
+                            "topScore": 0.0,
+                            "currentBlock": int(current_block),
+                            "blocksRemaining": max(int(bounds.end_block) - int(current_block), 0),
+                            "progress": round(progress, 3),
+                            "validatorRounds": [],
+                            "validatorRoundCount": 0,
+                        }
+
+        # Fallback: infer from DB rows
         records = await self._get_all_round_records()
         if not records:
             return None
@@ -2006,14 +2099,14 @@ class RoundsService:
             round_identifier, include_details=False
         )
         try:
-            from app.services.chain_state import get_current_block
+            from app.services.chain_state import get_current_block_estimate
             from app.services.round_calc import (
                 compute_boundaries_for_round,
                 progress_for_block,
                 block_to_epoch,
             )
 
-            current_block = get_current_block()
+            current_block = get_current_block_estimate()
         except Exception:
             current_block = None
 
