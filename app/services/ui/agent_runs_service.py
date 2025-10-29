@@ -980,20 +980,24 @@ class AgentRunsService:
                     type_key = str(raw_type)
                 if type_key in {"type", "type_text", "sendkeysiwa"}:
                     type_key = "input"
+                # Extract selector and normalize dict selectors to readable string
+                attrs = (
+                    getattr(action, "attributes", {})
+                    if hasattr(action, "attributes")
+                    else action.get("attributes", {})
+                ) or {}
+                raw_selector = attrs.get("selector")
+                if isinstance(raw_selector, dict):
+                    selector_val = raw_selector.get("value") or str(raw_selector)
+                else:
+                    selector_val = raw_selector
+
                 actions.append(
                     Action(
                         id=f"{task.task_id}_action_{index}",
                         type=type_key or "action",
-                        selector=(
-                            getattr(action, "attributes", {}).get("selector")
-                            if hasattr(action, "attributes")
-                            else action.get("attributes", {}).get("selector")
-                        ),
-                        value=(
-                            getattr(action, "attributes", {}).get("value")
-                            if hasattr(action, "attributes")
-                            else action.get("attributes", {}).get("value")
-                        ),
+                        selector=selector_val,
+                        value=(attrs.get("value")),
                         timestamp=_ts_to_iso(run.started_at) or "",
                         duration=float(getattr(action, "duration", 0.0)),
                         success=bool(getattr(action, "success", True)),
