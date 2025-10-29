@@ -960,14 +960,20 @@ class AgentRunsService:
         actions = []
         if solution and solution.actions:
             for index, action in enumerate(solution.actions):
+                # Normalize action type for display (prefer 'input' over ambiguous 'type')
+                raw_type = (
+                    action.type if hasattr(action, "type") else action.get("type", "action")
+                )
+                try:
+                    type_key = str(raw_type).lower().replace("action", "").replace("-", "_").strip()
+                except Exception:
+                    type_key = str(raw_type)
+                if type_key in {"type", "type_text", "sendkeysiwa"}:
+                    type_key = "input"
                 actions.append(
                     Action(
                         id=f"{task.task_id}_action_{index}",
-                        type=(
-                            action.type
-                            if hasattr(action, "type")
-                            else action.get("type", "action")
-                        ),
+                        type=type_key or "action",
                         selector=(
                             getattr(action, "attributes", {}).get("selector")
                             if hasattr(action, "attributes")
