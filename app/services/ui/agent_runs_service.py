@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections import defaultdict
@@ -980,20 +981,44 @@ class AgentRunsService:
                     type_key = str(raw_type)
                 if type_key in {"type", "type_text", "sendkeysiwa"}:
                     type_key = "input"
+                
+                # Extract selector and value, ensuring they are strings
+                selector_raw = (
+                    getattr(action, "attributes", {}).get("selector")
+                    if hasattr(action, "attributes")
+                    else action.get("attributes", {}).get("selector")
+                )
+                value_raw = (
+                    getattr(action, "attributes", {}).get("value")
+                    if hasattr(action, "attributes")
+                    else action.get("attributes", {}).get("value")
+                )
+                
+                # Convert to strings if they're dicts or other non-string types
+                selector_str = None
+                if selector_raw is not None:
+                    if isinstance(selector_raw, str):
+                        selector_str = selector_raw
+                    elif isinstance(selector_raw, dict):
+                        selector_str = json.dumps(selector_raw)
+                    else:
+                        selector_str = str(selector_raw)
+                
+                value_str = None
+                if value_raw is not None:
+                    if isinstance(value_raw, str):
+                        value_str = value_raw
+                    elif isinstance(value_raw, dict):
+                        value_str = json.dumps(value_raw)
+                    else:
+                        value_str = str(value_raw)
+                
                 actions.append(
                     Action(
                         id=f"{task.task_id}_action_{index}",
                         type=type_key or "action",
-                        selector=(
-                            getattr(action, "attributes", {}).get("selector")
-                            if hasattr(action, "attributes")
-                            else action.get("attributes", {}).get("selector")
-                        ),
-                        value=(
-                            getattr(action, "attributes", {}).get("value")
-                            if hasattr(action, "attributes")
-                            else action.get("attributes", {}).get("value")
-                        ),
+                        selector=selector_str,
+                        value=value_str,
                         timestamp=_ts_to_iso(run.started_at) or "",
                         duration=float(getattr(action, "duration", 0.0)),
                         success=bool(getattr(action, "success", True)),
