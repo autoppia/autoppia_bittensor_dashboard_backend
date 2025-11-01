@@ -128,7 +128,6 @@ class Settings(BaseSettings):
     # Authentication
     # Reads from .env with environment suffix:
     # MIN_VALIDATOR_STAKE_LOCAL, AUTH_DISABLED_LOCAL, etc.
-    API_KEYS: list[str] = ["dev-token-123"]  # replace with real keys or load from vault
     VALIDATOR_AUTH_MESSAGE: str = "I am a honest validator"
     MIN_VALIDATOR_STAKE: float = float(_env_var("MIN_VALIDATOR_STAKE", "0.0"))
     VALIDATOR_NETUID: int = 36
