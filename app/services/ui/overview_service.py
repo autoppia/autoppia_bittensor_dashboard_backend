@@ -530,6 +530,11 @@ class OverviewService:
         entries: List[LeaderboardEntry] = []
         for idx, (record, contexts) in enumerate(records_with_contexts):
             round_obj = record.model
+
+            # Only include finished rounds
+            if round_obj.status != "finished":
+                continue
+
             run_scores = [self.rounds_service._context_score(ctx) for ctx in contexts]
 
             average_score = (
@@ -537,6 +542,19 @@ class OverviewService:
                 if round_obj.average_score is not None
                 else (sum(run_scores) / len(run_scores) if run_scores else 0.0)
             )
+
+            # Find the winner (highest score)
+            winner_uid: Optional[int] = None
+            winner_name: Optional[str] = None
+            if contexts:
+                winner_ctx = max(
+                    contexts,
+                    key=lambda ctx: self.rounds_service._context_score(ctx),
+                )
+                winner_uid = winner_ctx.run.miner_uid
+                miner_info = getattr(winner_ctx.run, "miner_info", None)
+                if miner_info and miner_info.agent_name:
+                    winner_name = miner_info.agent_name
 
             openai_scores = _scores_for_provider(contexts, ["openai"])
             anthropic_scores = _scores_for_provider(contexts, ["anthropic"])
@@ -562,6 +580,8 @@ class OverviewService:
                 LeaderboardEntry(
                     round=round_number,
                     subnet36=round(average_score, 3),
+                    winnerUid=winner_uid,
+                    winnerName=winner_name,
                     openai_cua=_avg(openai_scores),
                     anthropic_cua=_avg(anthropic_scores),
                     browser_use=_avg(browser_scores),
@@ -593,10 +613,17 @@ class OverviewService:
                 if value is not None
             ]
 
+            # Get winner from the entry with highest score
+            winner_entry = max(round_entries, key=lambda e: e.subnet36, default=None)
+            winner_uid = winner_entry.winnerUid if winner_entry else None
+            winner_name = winner_entry.winnerName if winner_entry else None
+
             aggregated_entries.append(
                 LeaderboardEntry(
                     round=round_number,
                     subnet36=round(max(subnet36_values), 3) if subnet36_values else 0.0,
+                    winnerUid=winner_uid,
+                    winnerName=winner_name,
                     openai_cua=round(max(openai_values), 3) if openai_values else None,
                     anthropic_cua=(
                         round(max(anthropic_values), 3) if anthropic_values else None

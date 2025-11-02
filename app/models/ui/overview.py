@@ -136,6 +136,8 @@ class LeaderboardEntry(BaseModel):
 
     round: int
     subnet36: float
+    winnerUid: Optional[int] = None
+    winnerName: Optional[str] = None
     openai_cua: Optional[float] = None
     anthropic_cua: Optional[float] = None
     browser_use: Optional[float] = None
