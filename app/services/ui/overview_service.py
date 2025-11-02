@@ -1214,7 +1214,7 @@ class OverviewService:
                 average_score = sum(scores) / len(scores)
                 top_score = max(scores)
 
-        derived_status = round_obj.status or ("active" if current else "completed")
+        derived_status = round_obj.status or ("active" if current else "finished")
         if round_obj.ended_at:
             derived_status = "finished"
         elif not round_obj.ended_at and current:

@@ -316,7 +316,7 @@ def _round_number_from_model(
 def _aggregate_status(statuses: List[str]) -> str:
     normalized = [status.lower() for status in statuses if status]
     if not normalized:
-        return "completed"
+        return "finished"
     if any(status == "active" for status in normalized):
         return "active"
     if any(status == "pending" for status in normalized):
@@ -969,7 +969,7 @@ class RoundsService:
         completed = summary.get("completed_tasks") or summary.get("completedTasks")
         if completed is None:
             completed = summary.get("task_solutions")
-        if completed is None and round_obj.status == "completed":
+        if completed is None and round_obj.status == "finished":
             completed = round_obj.n_tasks or 0
         if completed is None:
             completed = 0
@@ -1010,7 +1010,7 @@ class RoundsService:
             "validatorUid": validator_uid,
             "validatorName": validator_name,
             "validatorHotkey": validator_hotkey,
-            "status": (round_obj.status or "completed"),
+            "status": (round_obj.status or "finished"),
             "startTime": _iso_timestamp(round_obj.started_at),
             "endTime": (
                 _iso_timestamp(round_obj.ended_at) if round_obj.ended_at else None
@@ -1054,7 +1054,7 @@ class RoundsService:
         started_at = min(started_at_values) if started_at_values else None
         ended_at = max(ended_at_values) if ended_at_values else None
 
-        statuses = [(record.model.status or "completed") for record in records]
+        statuses = [(record.model.status or "finished") for record in records]
         status = _aggregate_status(statuses)
 
         # Chain-aware override: if the chain has already moved past this
@@ -1067,11 +1067,11 @@ class RoundsService:
         if current_block_est is not None:
             bounds = compute_boundaries_for_round(round_number)
             if current_block_est > bounds.end_block:
-                status = "completed"
+                status = "finished"
             elif current_block_est <= bounds.start_block:
                 # If chain hasn't reached the window yet, prefer pending
                 # unless DB already says completed (keep completed if so).
-                if status != "completed":
+                if status != "finished":
                     status = "pending"
         total_tasks = sum(record.model.n_tasks or 0 for record in records)
         completed_tasks = sum(
@@ -1098,7 +1098,7 @@ class RoundsService:
 
         progress_ratio = (
             1.0
-            if status == "completed"
+            if status == "finished"
             else (min(1.0, completed_tasks / total_tasks) if total_tasks else 0.0)
         )
         current_block = int(
@@ -1287,7 +1287,7 @@ class RoundsService:
         end_block_value = (
             int(max(safe_end_candidates)) if safe_end_candidates else start_block
         )
-        is_completed = all(status == "completed" for status in statuses if status)
+        is_completed = all(status == "finished" for status in statuses if status)
 
         if total_tasks:
             progress_ratio = min(1.0, max(0.0, completed_tasks / total_tasks))
@@ -1480,7 +1480,7 @@ class RoundsService:
                         elif int(current_block) <= int(bounds.end_block):
                             status = "active"
                         else:
-                            status = "completed"
+                            status = "finished"
                         return {
                             "id": number,
                             "round": number,
@@ -2117,12 +2117,22 @@ class RoundsService:
 
         if current_block is not None:
             bounds = compute_boundaries_for_round(aggregated.round_number)
-            progress_value = progress_for_block(current_block, bounds)
-            blocks_remaining = max(bounds.end_block - current_block, 0)
+
+            # If round is officially finished, force 100% progress
+            if aggregated.status == "finished":
+                progress_value = 1.0
+                blocks_remaining = 0
+                display_block = bounds.end_block
+            else:
+                # Active or evaluating_finished: use real current block
+                progress_value = progress_for_block(current_block, bounds)
+                blocks_remaining = max(bounds.end_block - current_block, 0)
+                display_block = current_block
+
             seconds_remaining = blocks_remaining * 12
             return {
                 "roundId": aggregated.round_number,
-                "currentBlock": current_block,
+                "currentBlock": display_block,
                 "startBlock": bounds.start_block,
                 "endBlock": bounds.end_block,
                 "blocksRemaining": blocks_remaining,
@@ -2346,7 +2356,7 @@ class RoundsService:
             records, completed_tasks, total_tasks
         )
         status = _aggregate_status(
-            [entry.round.status or "completed" for entry in aggregated.validator_rounds]
+            [entry.round.status or "finished" for entry in aggregated.validator_rounds]
         )
 
         progress_ratio = progress.get("progress", 0.0)
@@ -2848,7 +2858,7 @@ class RoundsService:
             weights=weights,
             average_score=round_row.average_score,
             top_score=round_row.top_score,
-            status=round_row.status or "completed",
+            status=round_row.status or "finished",
             summary=summary,
             metadata=meta,
             model_extra={
