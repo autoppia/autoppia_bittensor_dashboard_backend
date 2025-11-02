@@ -157,6 +157,11 @@ async def get_task_actions(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     actions = service.build_actions(context)
     total = len(actions)
+    
+    # Count total successful and failed actions (not just paginated)
+    success_count = sum(1 for action in actions if getattr(action, 'success', False))
+    fail_count = sum(1 for action in actions if getattr(action, 'error', False) or not getattr(action, 'success', False))
+    
     start = (page - 1) * limit
     end = start + limit
     paginated = actions[start:end]
@@ -165,6 +170,8 @@ async def get_task_actions(
         "data": {
             "actions": [action.model_dump() for action in paginated],
             "total": total,
+            "successCount": success_count,
+            "failCount": fail_count,
             "page": page,
             "limit": limit,
         },
