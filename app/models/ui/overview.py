@@ -23,6 +23,8 @@ class OverviewMetrics(BaseModel):
     """Overview dashboard metrics."""
 
     topScore: float
+    topMinerUid: Optional[int] = None
+    topMinerName: Optional[str] = None
     totalWebsites: int
     totalValidators: int
     totalMiners: int

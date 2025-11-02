@@ -291,14 +291,36 @@ class OverviewService:
                 )
                 top_score = max(top_score, round(round_top, 6))
 
+        top_miner_uid = None
+        top_miner_name = None
+
         if miner_score_tracker:
-            averaged_scores = [
-                sum(scores) / len(scores)
-                for scores in miner_score_tracker.values()
+            # Calculate average score for each miner and find the top one
+            miner_averages = {
+                identifier: sum(scores) / len(scores)
+                for identifier, scores in miner_score_tracker.items()
                 if scores
-            ]
-            if averaged_scores:
-                top_score = max(top_score, max(averaged_scores))
+            }
+            if miner_averages:
+                top_score = max(miner_averages.values())
+                # Find the miner with the top score
+                for identifier, avg_score in miner_averages.items():
+                    if avg_score == top_score:
+                        # Extract UID from identifier (format: "uid:80" or "run:...")
+                        if identifier.startswith("uid:"):
+                            try:
+                                top_miner_uid = int(identifier.split(":", 1)[1])
+                            except (ValueError, IndexError):
+                                pass
+                        # Try to find miner name from contexts
+                        for record, contexts in target_records:
+                            for ctx in contexts:
+                                if ctx.run.miner_uid == top_miner_uid:
+                                    top_miner_name = ctx.run.miner_name
+                                    break
+                            if top_miner_name:
+                                break
+                        break
         else:
             # If we have no context data, fall back to best single score captured earlier.
             top_score = max(top_score, 0.0)
@@ -314,6 +336,8 @@ class OverviewService:
 
         return OverviewMetrics(
             topScore=round(top_score, 3),
+            topMinerUid=top_miner_uid,
+            topMinerName=top_miner_name,
             totalWebsites=total_websites,
             totalValidators=len(validators),
             totalMiners=len(miners),
