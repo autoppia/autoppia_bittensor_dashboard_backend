@@ -223,12 +223,24 @@ class OverviewService:
             candidates = round_records_by_number.get(number)
             if not candidates:
                 continue
-            completed_candidates = [
+            # Only consider truly finished rounds for metrics
+            finished_candidates = [
                 (record, contexts)
                 for record, contexts in candidates
-                if record.model.ended_at
+                if record.model.status == "finished"
             ]
-            selected_records = completed_candidates or candidates
+            # Fallback to any completed (ended_at set) if no finished found
+            completed_candidates = (
+                [
+                    (record, contexts)
+                    for record, contexts in candidates
+                    if record.model.ended_at
+                ]
+                if not finished_candidates
+                else finished_candidates
+            )
+
+            selected_records = finished_candidates or completed_candidates or candidates
             if not selected_records:
                 continue
             target_records = selected_records
