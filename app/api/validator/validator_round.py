@@ -140,7 +140,7 @@ def _legacy_to_start_request(payload: LegacyStartRoundRequest) -> StartRoundRequ
         if normalized in {"in_progress", "in-progress"}:
             round_data["status"] = "active"
         elif normalized in {"finished", "complete", "completed"}:
-            round_data["status"] = "completed"
+            round_data["status"] = "finished"
         elif normalized == "pending":
             round_data["status"] = "pending"
 
@@ -368,7 +368,7 @@ class FinishRoundAgentRun(BaseModel):
 
 
 class FinishRoundRequest(BaseModel):
-    status: str = Field(default="completed", description="Final status for the round")
+    status: str = Field(default="finished", description="Final status for the round")
     winners: list[Dict[str, Any]] = Field(default_factory=list)
     winner_scores: list[float] = Field(default_factory=list)
     weights: Dict[str, float] = Field(default_factory=dict)
@@ -1253,9 +1253,31 @@ async def finish_round(
                     },
                 )
 
+        # Determine correct status based on current blockchain state
+        # - If current_block >= end_block: "finished" (round officially ended)
+        # - If current_block < end_block: "evaluating_finished" (validator finished but round still active)
+        final_status = "finished"  # Default
+        if current_block is not None and not testing_override:
+            bounds = compute_boundaries_for_round(stored_round_number)
+            if current_block < bounds.end_block:
+                final_status = "evaluating_finished"
+                logger.info(
+                    "Validator finished early: current_block=%s < end_block=%s, status=%s",
+                    current_block,
+                    bounds.end_block,
+                    final_status,
+                )
+            else:
+                logger.info(
+                    "Round officially finished: current_block=%s >= end_block=%s, status=%s",
+                    current_block,
+                    bounds.end_block,
+                    final_status,
+                )
+
         await service.finish_round(
             validator_round_id=validator_round_id,
-            status=payload.status,
+            status=final_status,
             winners=payload.winners,
             winner_scores=payload.winner_scores,
             weights=payload.weights,

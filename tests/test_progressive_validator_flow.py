@@ -9,10 +9,13 @@ from app.db.models import RoundORM, TaskORM, TaskSolutionORM, EvaluationResultOR
 @pytest.mark.asyncio
 async def test_progressive_validator_flow(client, db_session, monkeypatch):
     from app.config import settings as _settings
+
     blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
     dz = int(_settings.DZ_STARTING_BLOCK)
+
     def inside_round(n: int) -> int:
         return dz + (n - 1) * blocks_per_round + 1
+
     base_payload = {
         "round": {
             "validator_round_id": "round_progressive",
@@ -64,8 +67,12 @@ async def test_progressive_validator_flow(client, db_session, monkeypatch):
         "round": base_payload["round"],
     }
     # Patch chain to be inside this test round window (301)
-    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: inside_round(301))
-    start_response = await client.post("/api/v1/validator-rounds/start", json=start_payload)
+    monkeypatch.setattr(
+        "app.api.validator.validator_round.get_current_block", lambda: inside_round(301)
+    )
+    start_response = await client.post(
+        "/api/v1/validator-rounds/start", json=start_payload
+    )
     assert start_response.status_code == 200
 
     # Create tasks and results incrementally
@@ -163,9 +170,9 @@ async def test_progressive_validator_flow(client, db_session, monkeypatch):
     assert finish_response.status_code == 200
 
     round_row = await db_session.scalar(
-        select(RoundORM).where(RoundORM.validator_round_id == base_payload["round"]["validator_round_id"])
+        select(RoundORM).where(
+            RoundORM.validator_round_id == base_payload["round"]["validator_round_id"]
+        )
     )
     assert round_row is not None
-    assert round_row.data["status"] == "completed"
-
-    
+    assert round_row.data["status"] == "finished"
