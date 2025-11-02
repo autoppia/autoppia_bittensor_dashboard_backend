@@ -95,6 +95,7 @@ class AggregatedRound:
     round_number: int
     latest_round_number: int
     validator_rounds: List[ValidatorRoundAggregate]
+    status: str = "active"  # Aggregated status from all validator rounds
 
     @property
     def contexts(self) -> List[AgentRunContext]:
@@ -822,10 +823,15 @@ class RoundsService:
                         contexts=contexts,
                     )
                 )
+            # Calculate aggregated status from all validator rounds
+            statuses = [vr.record.model.status or "finished" for vr in validator_rounds]
+            aggregated_status = _aggregate_status(statuses)
+
             return AggregatedRound(
                 round_number=round_number,
                 latest_round_number=latest_round_number or round_number,
                 validator_rounds=validator_rounds,
+                status=aggregated_status,
             )
 
     def _aggregate_round_data(
