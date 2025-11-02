@@ -2,14 +2,17 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
 
+
 class BaseResponse(BaseModel):
     success: bool
     error: Optional[str] = None
     code: Optional[str] = None
 
+
 # --- Round Models ---
 class ValidatorRoundSummary(BaseModel):
     """Summary of a single validator's round contribution."""
+
     validatorRoundId: str
     validatorUid: Optional[int] = None
     validatorName: Optional[str] = None
@@ -28,6 +31,7 @@ class ValidatorRoundSummary(BaseModel):
 
 class RoundInfo(BaseModel):
     """Round information model."""
+
     id: int
     round: Optional[int] = None
     roundNumber: Optional[int] = None
@@ -37,7 +41,7 @@ class RoundInfo(BaseModel):
     current: bool
     startTime: str  # ISO timestamp
     endTime: Optional[str] = None  # ISO timestamp
-    status: str  # active, completed, pending
+    status: str  # active, finished, pending, evaluating_finished
     totalTasks: int
     completedTasks: int
     averageScore: float
@@ -47,8 +51,10 @@ class RoundInfo(BaseModel):
     progress: float
     validatorRounds: List[ValidatorRoundSummary] = Field(default_factory=list)
 
+
 class RoundStatistics(BaseModel):
     """Round statistics model."""
+
     roundId: int
     totalMiners: int
     activeMiners: int
@@ -67,8 +73,10 @@ class RoundStatistics(BaseModel):
     totalEmission: int
     lastUpdated: str  # ISO timestamp
 
+
 class MinerPerformance(BaseModel):
     """Miner performance in a round."""
+
     uid: int
     hotkey: str
     success: bool
@@ -82,8 +90,10 @@ class MinerPerformance(BaseModel):
     lastSeen: str  # ISO timestamp
     validatorId: str
 
+
 class ValidatorPerformance(BaseModel):
     """Validator performance in a round."""
+
     id: str
     name: str
     hotkey: str
@@ -103,23 +113,29 @@ class ValidatorPerformance(BaseModel):
     lastSeen: str  # ISO timestamp
     uptime: float
 
+
 class ActivityItem(BaseModel):
     """Activity feed item."""
+
     id: str
     type: str
     message: str
     timestamp: str  # ISO timestamp
     metadata: Dict[str, Any]
 
+
 class TimeRemaining(BaseModel):
     """Time remaining breakdown."""
+
     days: int
     hours: int
     minutes: int
     seconds: int
 
+
 class RoundProgress(BaseModel):
     """Round progress information."""
+
     roundId: int
     currentBlock: int
     startBlock: int
@@ -133,8 +149,10 @@ class RoundProgress(BaseModel):
     estimatedTimeRemaining: TimeRemaining
     lastUpdated: str  # ISO timestamp
 
+
 class RoundSummary(BaseModel):
     """Quick round summary."""
+
     roundId: int
     status: str
     progress: float
@@ -143,67 +161,95 @@ class RoundSummary(BaseModel):
     topScore: float
     timeRemaining: str
 
+
 class TimelinePoint(BaseModel):
     """Timeline data point."""
+
     timestamp: str  # ISO timestamp
     block: int
     completedTasks: int
     averageScore: float
     activeMiners: int
 
+
 class TopMiner(BaseModel):
     """Top miner in comparison."""
+
     uid: int
     score: float
     ranking: int
 
+
 class RoundComparison(BaseModel):
     """Round comparison data."""
+
     roundId: int
     statistics: RoundStatistics
     topMiners: List[TopMiner]
 
+
 # --- Response Models ---
 class RoundsListResponse(BaseResponse):
     """Response model for rounds list endpoint."""
+
     data: Optional[Dict[str, Any]] = None
+
 
 class RoundDetailResponse(BaseResponse):
     """Response model for round detail endpoint."""
+
     data: Optional[Dict[str, RoundInfo]] = None
+
 
 class RoundStatisticsResponse(BaseResponse):
     """Response model for round statistics endpoint."""
+
     data: Optional[Dict[str, RoundStatistics]] = None
+
 
 class RoundMinersResponse(BaseResponse):
     """Response model for round miners endpoint."""
+
     data: Optional[Dict[str, Any]] = None
+
 
 class RoundValidatorsResponse(BaseResponse):
     """Response model for round validators endpoint."""
+
     data: Optional[Dict[str, Any]] = None
+
 
 class RoundActivityResponse(BaseResponse):
     """Response model for round activity endpoint."""
+
     data: Optional[Dict[str, Any]] = None
+
 
 class RoundProgressResponse(BaseResponse):
     """Response model for round progress endpoint."""
+
     data: Optional[Dict[str, RoundProgress]] = None
+
 
 class RoundSummaryResponse(BaseResponse):
     """Response model for round summary endpoint."""
+
     data: Optional[RoundSummary] = None
+
 
 class RoundComparisonRequest(BaseModel):
     """Request model for round comparison."""
+
     roundIds: List[int]
+
 
 class RoundComparisonResponse(BaseResponse):
     """Response model for round comparison endpoint."""
+
     data: Optional[Dict[str, List[RoundComparison]]] = None
+
 
 class RoundTimelineResponse(BaseResponse):
     """Response model for round timeline endpoint."""
+
     data: Optional[Dict[str, List[TimelinePoint]]] = None
