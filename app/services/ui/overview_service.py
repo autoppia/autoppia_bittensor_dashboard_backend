@@ -316,8 +316,10 @@ class OverviewService:
                         for record, contexts in target_records:
                             for ctx in contexts:
                                 if ctx.run.miner_uid == top_miner_uid:
-                                    top_miner_name = ctx.run.miner_name
-                                    break
+                                    miner_info = getattr(ctx.run, "miner_info", None)
+                                    if miner_info and miner_info.agent_name:
+                                        top_miner_name = miner_info.agent_name
+                                        break
                             if top_miner_name:
                                 break
                         break
