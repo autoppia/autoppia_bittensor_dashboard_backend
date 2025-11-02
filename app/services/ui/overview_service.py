@@ -80,8 +80,7 @@ class ValidatorStatusInfo:
             state=state,
             label=STATUS_DISPLAY[state],
             default_task=STATUS_DEFAULT_TASK[state],
-            requires_prompt=state
-            not in {ValidatorState.NOT_STARTED, ValidatorState.FINISHED},
+            requires_prompt=state not in {ValidatorState.NOT_STARTED},
         )
 
 
@@ -162,33 +161,29 @@ class OverviewService:
             max(completed_round_numbers) if completed_round_numbers else None
         )
 
+        # ═══════════════════════════════════════════════════════════════════
+        # SINGLE SOURCE OF TRUTH: Calculate current round from blockchain
+        # This value is used for BOTH filtering and the API response
+        # ═══════════════════════════════════════════════════════════════════
         try:
-            current_round_overview = (
-                await self.rounds_service.get_current_round_overview()
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Unable to resolve current round overview: %s", exc)
-            current_round_overview = None
+            current_block = get_current_block_estimate()
+        except Exception:
+            current_block = None
 
-        def _resolve_round_number(payload: Optional[Dict[str, Any]]) -> int:
-            if not payload:
-                return 0
-            candidate = (
-                payload.get("round") or payload.get("roundNumber") or payload.get("id")
-            )
-            if isinstance(candidate, int):
-                return candidate
-            if isinstance(candidate, float):
-                return int(candidate)
-            if isinstance(candidate, str):
-                parsed = _round_id_to_int(candidate)
-                if parsed:
-                    return parsed
-                if candidate.isdigit():
-                    return int(candidate)
-            return 0
+        # Calculate CURRENT round from blockchain (NOT from DB)
+        current_round_value = 0
+        if current_block is not None:
+            try:
+                current_round_value = compute_round_number(current_block)
+                logger.debug(
+                    f"Computed current round from blockchain: block={current_block}, round={current_round_value}"
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to compute current round from blockchain: %s", exc
+                )
 
-        current_round_value = _resolve_round_number(current_round_overview)
+        # Fallback: if we can't get blockchain round, use max from DB
         if current_round_value <= 0:
             current_round_candidates = [
                 _round_number(record)
@@ -197,10 +192,17 @@ class OverviewService:
             ]
             if current_round_candidates:
                 current_round_value = max(current_round_candidates)
+                logger.warning(
+                    f"Using fallback current round from DB max: {current_round_value}"
+                )
 
+        # Latest finished round should be current - 1
         preferred_previous_round: Optional[int] = None
         if current_round_value > 0:
             preferred_previous_round = max(current_round_value - 1, 0)
+            logger.debug(
+                f"Current round: {current_round_value}, Preferred previous (latest finished): {preferred_previous_round}"
+            )
 
         candidate_round_numbers: List[int] = []
         if preferred_previous_round and preferred_previous_round > 0:
@@ -219,67 +221,27 @@ class OverviewService:
             if number not in candidate_round_numbers:
                 candidate_round_numbers.append(number)
 
-        # Get current block to verify rounds are truly finished
-        try:
-            current_block = get_current_block_estimate()
-        except Exception:
-            current_block = None
-
-        # Calculate CURRENT round number (the one in progress)
-        current_round_number = 0
-        if current_block is not None:
-            try:
-                current_round_number = compute_round_number(current_block)
-            except Exception:
-                pass
-
+        # ═══════════════════════════════════════════════════════════════════
+        # Filter candidates: Latest finished MUST be < current round
+        # ═══════════════════════════════════════════════════════════════════
         target_records: List[Tuple[RoundRecord, List[AgentRunContext]]] = []
         metrics_round_number = 0
         for number in candidate_round_numbers:
             # CRITICAL: Latest finished round MUST be < current round
             # They can NEVER be the same
-            if current_round_number > 0 and number >= current_round_number:
+            if current_round_value > 0 and number >= current_round_value:
                 logger.debug(
-                    f"Skipping round {number} for metrics: >= current round {current_round_number}"
+                    f"Skipping round {number} for metrics: >= current round {current_round_value}"
                 )
                 continue
             candidates = round_records_by_number.get(number)
             if not candidates:
                 continue
 
-            # Only consider rounds that are OFFICIALLY finished on the blockchain
-            # Not just validator-finished, but blockchain end_block reached
-            truly_finished_candidates: List[
-                Tuple[RoundRecord, List[AgentRunContext]]
-            ] = []
-
-            if current_block is not None:
-                for record, contexts in candidates:
-                    round_obj = record.model
-                    round_num = round_obj.round_number or 0
-                    if round_num > 0:
-                        try:
-                            bounds = compute_boundaries_for_round(round_num)
-                            # Only include if blockchain says it's finished
-                            if current_block >= bounds.end_block:
-                                truly_finished_candidates.append((record, contexts))
-                        except Exception:
-                            # If we can't compute boundaries, skip
-                            continue
-
-            # Fallback: if no blockchain check possible, use status
-            if not truly_finished_candidates:
-                truly_finished_candidates = [
-                    (record, contexts)
-                    for record, contexts in candidates
-                    if record.model.status == "finished"
-                ]
-
-            if not truly_finished_candidates:
-                # No finished rounds found, try next round number
-                continue
-
-            target_records = truly_finished_candidates
+            # SIMPLE RULE: Round number < current_round_value means it's finished
+            # No need to manually check boundaries - compute_round_number already did that
+            # This candidate is valid for "Latest finished round"
+            target_records = candidates
             metrics_round_number = number
             break
 
@@ -476,7 +438,7 @@ class OverviewService:
         for round_obj in rounds:
             round_num = round_obj.round_number or 0
 
-            # Check if this is the actual current round
+            # Check if this is the actual current round (trust compute_round_number)
             if (
                 actual_current_round_number > 0
                 and round_num == actual_current_round_number
@@ -485,18 +447,13 @@ class OverviewService:
                 if round_obj.status != "finished":
                     return self._round_to_info(round_obj, current=True)
 
-            # Also check by blockchain boundaries if we have current_block
-            if round_num > 0 and current_block is not None:
-                try:
-                    bounds = compute_boundaries_for_round(round_num)
-                    # Is current_block within this round's range?
-                    if bounds.start_block <= current_block < bounds.end_block:
-                        return self._round_to_info(round_obj, current=True)
-                except Exception:
-                    continue
-
         # Fallback: if no active round found, return the most recent one marked as NOT current
-        return self._round_to_info(rounds[0], current=False)
+        # This happens when blockchain is in Round N but DB doesn't have Round N yet
+        # (e.g., current_block says Round 23, but validator hasn't started it)
+        # We return Round 22 with current=False so frontend knows it's not actually active
+        if rounds:
+            return self._round_to_info(rounds[0], current=False)
+        return None
 
     async def rounds_list(
         self, page: int, limit: int, status: Optional[str]
@@ -640,28 +597,18 @@ class OverviewService:
             round_obj = record.model
             round_number = round_obj.round_number or 0
 
-            # CRITICAL: Only include rounds that are < current round
-            # Latest finished round can NEVER be >= current round
-            if current_round_number > 0 and round_number >= current_round_number:
-                logger.debug(
-                    f"Leaderboard: Skipping round {round_number} >= current round {current_round_number}"
-                )
-                continue
-
-            # Only include rounds that have OFFICIALLY finished on the blockchain
-            # (not just validator-finished, but blockchain end_block reached)
-            if round_number > 0 and current_block is not None:
-                try:
-                    bounds = compute_boundaries_for_round(round_number)
-                    # Skip if current block hasn't reached end_block yet
-                    if current_block < bounds.end_block:
-                        continue
-                except Exception:
-                    # If we can't compute boundaries, skip this round
+            # SIMPLE RULE: Only include rounds < current_round_number
+            # If blockchain is in Round N, all rounds < N are finished by definition
+            if current_round_number > 0:
+                if round_number >= current_round_number:
+                    logger.debug(
+                        f"Leaderboard: Skipping round {round_number} (>= current {current_round_number})"
+                    )
                     continue
-            elif round_obj.status not in ("finished", "evaluating_finished"):
-                # Fallback: if no round_number/current_block, use status
-                continue
+            else:
+                # Fallback: if we can't calculate current_round_number, use status
+                if round_obj.status not in ("finished", "evaluating_finished"):
+                    continue
 
             run_scores = [self.rounds_service._context_score(ctx) for ctx in contexts]
 
@@ -1077,13 +1024,38 @@ class OverviewService:
                     continue
         return sum(scores) / len(scores) if scores else 0.0
 
+    @staticmethod
+    def _normalize_task_meta(
+        prompt: Optional[str],
+        url: Optional[str],
+        relevant_data: Optional[Dict[str, Any]],
+        use_case: Optional[Any],
+    ) -> Dict[str, Optional[str]]:
+        """Normalize task metadata into the structure consumed by the UI."""
+
+        website: Optional[str] = None
+        if isinstance(relevant_data, dict):
+            website = relevant_data.get("website") or None
+        if not website:
+            website = url
+
+        use_case_name: Optional[str] = None
+        if isinstance(use_case, dict):
+            use_case_name = use_case.get("name") or None
+        elif isinstance(use_case, str):
+            use_case_name = use_case
+
+        return {
+            "prompt": prompt if prompt else None,
+            "website": website or None,
+            "useCase": use_case_name or None,
+        }
+
     async def _latest_evaluated_task_meta(
         self, validator_round_id: str
     ) -> Optional[Dict[str, Optional[str]]]:
-        """Fetch latest evaluated task prompt + website + use case for a validator round.
+        """Fetch latest evaluated task prompt + website + use case for a validator round."""
 
-        Returns a dict with keys: prompt, website, useCase.
-        """
         stmt = (
             select(
                 TaskORM.prompt,
@@ -1103,23 +1075,38 @@ class OverviewService:
         if not row:
             return None
         prompt, url, relevant_data, use_case = row
-        # Derive website: prefer relevant_data.website, fallback to url
-        website = None
-        if isinstance(relevant_data, dict):
-            website = relevant_data.get("website") or None
-        if not website:
-            website = url
-        # Derive use case name
-        use_case_name = None
-        if isinstance(use_case, dict):
-            use_case_name = use_case.get("name") or None
-        elif isinstance(use_case, str):
-            use_case_name = use_case
-        return {
-            "prompt": prompt or None,
-            "website": website or None,
-            "useCase": use_case_name or None,
-        }
+        return self._normalize_task_meta(prompt, url, relevant_data, use_case)
+
+    async def _latest_task_meta(
+        self, validator_round_id: str
+    ) -> Optional[Dict[str, Optional[str]]]:
+        """Fetch the most recent task metadata, falling back to stored tasks if needed."""
+
+        meta = await self._latest_evaluated_task_meta(validator_round_id)
+        if meta:
+            return meta
+
+        stmt = (
+            select(
+                TaskORM.prompt,
+                TaskORM.url,
+                TaskORM.relevant_data,
+                TaskORM.use_case,
+            )
+            .where(TaskORM.validator_round_id == validator_round_id)
+            .order_by(
+                TaskORM.sequence.desc().nullslast(),
+                TaskORM.created_at.desc(),
+                TaskORM.id.desc(),
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        row = result.first()
+        if not row:
+            return None
+        prompt, url, relevant_data, use_case = row
+        return self._normalize_task_meta(prompt, url, relevant_data, use_case)
 
     async def _aggregate_validators(self) -> Dict[str, Dict[str, Any]]:
         records_with_contexts = await self._recent_round_records(
@@ -1127,7 +1114,26 @@ class OverviewService:
         )
         aggregates: Dict[str, Dict[str, Any]] = {}
 
-        # Determine the current (latest) round number present in DB
+        # ═══════════════════════════════════════════════════════════════════
+        # Determine CURRENT round from blockchain (not max in DB)
+        # This ensures we show validators as "waiting" when DB is behind
+        # ═══════════════════════════════════════════════════════════════════
+        try:
+            current_block = get_current_block_estimate()
+            current_round_from_blockchain = 0
+            if current_block is not None:
+                try:
+                    current_round_from_blockchain = compute_round_number(current_block)
+                    logger.debug(
+                        f"[_aggregate_validators] Current round from blockchain: {current_round_from_blockchain}"
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            current_block = None
+            current_round_from_blockchain = 0
+
+        # Also track max round in DB for fallback
         round_numbers: List[int] = []
         for record, _ in records_with_contexts:
             num = record.model.round_number or _round_id_to_int(
@@ -1136,16 +1142,28 @@ class OverviewService:
             if num:
                 round_numbers.append(num)
         round_numbers = sorted(set(round_numbers), reverse=True)
-        max_round_number = round_numbers[0] if round_numbers else 0
+        max_round_in_db = round_numbers[0] if round_numbers else 0
 
-        if max_round_number == 0 and records_with_contexts:
+        if max_round_in_db == 0 and records_with_contexts:
             fallback_record = records_with_contexts[0][0]
-            max_round_number = fallback_record.model.round_number or _round_id_to_int(
+            max_round_in_db = fallback_record.model.round_number or _round_id_to_int(
                 fallback_record.model.validator_round_id
             )
 
+        # Use blockchain round as "current", fallback to DB max if blockchain unavailable
+        current_round_number = (
+            current_round_from_blockchain
+            if current_round_from_blockchain > 0
+            else max_round_in_db
+        )
+
+        logger.debug(
+            f"[_aggregate_validators] current_round_number={current_round_number}, "
+            f"blockchain={current_round_from_blockchain}, db_max={max_round_in_db}"
+        )
+
         # Build helper maps:
-        # - current_round_entries: entries for the latest round (used for live status)
+        # - current_round_entries: entries for the CURRENT round from blockchain
         # - last_entry_by_uid: last participation for each validator (used for last seen round info)
         current_round_entries: Dict[int, Tuple[RoundRecord, List[AgentRunContext]]] = {}
         last_entry_by_uid: Dict[int, Tuple[RoundRecord, List[AgentRunContext]]] = {}
@@ -1166,8 +1184,9 @@ class OverviewService:
             curr_ts = record.model.ended_at or record.model.started_at or 0.0
             if prev_last is None or curr_ts >= prev_ts:
                 last_entry_by_uid[validator_uid] = (record, contexts)
-            # Track latest record for the current round only
-            if round_number == max_round_number:
+            # Track latest record for the CURRENT BLOCKCHAIN round only
+            # This will be empty if validator hasn't started current round yet
+            if round_number == current_round_number:
                 existing = current_round_entries.get(validator_uid)
                 if existing is None or (record.model.started_at or 0.0) > (
                     existing[0].model.started_at or 0.0
@@ -1216,12 +1235,13 @@ class OverviewService:
             contexts_flat = current_contexts
 
             # Use last participation for display of last seen round when not currently running
+            # If validator has never participated, show current blockchain round
             if last_entry is not None:
                 round_number = last_entry[0].model.round_number or _round_id_to_int(
                     last_entry[0].model.validator_round_id
                 )
             else:
-                round_number = max_round_number or None
+                round_number = current_round_number or None
 
             display_name = (
                 validator_info.name if validator_info and validator_info.name else None
@@ -1335,9 +1355,7 @@ class OverviewService:
             current_use_case: Optional[str] = None
             if cache_key and status_info.requires_prompt:
                 if cache_key not in meta_cache:
-                    meta_cache[cache_key] = await self._latest_evaluated_task_meta(
-                        cache_key
-                    )
+                    meta_cache[cache_key] = await self._latest_task_meta(cache_key)
                 meta = meta_cache.get(cache_key)
                 if meta:
                     if meta.get("prompt"):
