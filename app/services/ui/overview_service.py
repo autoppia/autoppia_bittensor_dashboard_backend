@@ -531,8 +531,8 @@ class OverviewService:
         for idx, (record, contexts) in enumerate(records_with_contexts):
             round_obj = record.model
 
-            # Only include finished rounds
-            if round_obj.status != "finished":
+            # Only include finished or evaluating_finished rounds (skip active/pending)
+            if round_obj.status not in ("finished", "evaluating_finished"):
                 continue
 
             run_scores = [self.rounds_service._context_score(ctx) for ctx in contexts]
