@@ -59,7 +59,7 @@ STATUS_DEFAULT_TASK: Dict[ValidatorState, str] = {
     ValidatorState.STARTING: "Validator connected – awaiting task upload",
     ValidatorState.SENDING_TASKS: "Distributing tasks to agent runs",
     ValidatorState.EVALUATING: "Evaluating miner submissions",
-    ValidatorState.WAITING: "Awaiting next action",
+    ValidatorState.WAITING: "Waiting for consensus",
     ValidatorState.OFFLINE: "No activity detected recently",
     ValidatorState.FINISHED: "Round completed",
 }
@@ -80,7 +80,10 @@ class ValidatorStatusInfo:
             state=state,
             label=STATUS_DISPLAY[state],
             default_task=STATUS_DEFAULT_TASK[state],
-            requires_prompt=state not in {ValidatorState.NOT_STARTED},
+            # Don't fetch task prompts for NOT_STARTED or FINISHED states
+            # These should always show their generic messages
+            requires_prompt=state
+            not in {ValidatorState.NOT_STARTED, ValidatorState.FINISHED},
         )
 
 
@@ -993,9 +996,18 @@ class OverviewService:
             return ValidatorStatusInfo.from_state(ValidatorState.NOT_STARTED)
 
         validator_round = current_record.model
-        if validator_round.ended_at:
-            return ValidatorStatusInfo.from_state(ValidatorState.FINISHED)
 
+        # Check validator_round.status to distinguish between:
+        # - "finished": Round officially ended on blockchain → FINISHED
+        # - "evaluating_finished": Validator finished but round ongoing → WAITING (Waiting Consensus)
+        # - "active": Round in progress → determine state below
+        if validator_round.status == "finished":
+            return ValidatorStatusInfo.from_state(ValidatorState.FINISHED)
+        elif validator_round.status == "evaluating_finished":
+            # Validator finished evaluating but blockchain round hasn't ended
+            return ValidatorStatusInfo.from_state(ValidatorState.WAITING)
+
+        # Round is active - determine state based on activity
         state = ValidatorState.STARTING
         if total_runs > 0:
             state = ValidatorState.SENDING_TASKS
