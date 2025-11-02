@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -999,12 +1000,20 @@ class OverviewService:
 
         # Check validator_round.status to distinguish between:
         # - "finished": Round officially ended on blockchain → FINISHED
-        # - "evaluating_finished": Validator finished but round ongoing → WAITING (Waiting Consensus)
+        # - "evaluating_finished": Validator finished but round ongoing
+        #   → Check if still has activity, otherwise WAITING
         # - "active": Round in progress → determine state below
         if validator_round.status == "finished":
             return ValidatorStatusInfo.from_state(ValidatorState.FINISHED)
         elif validator_round.status == "evaluating_finished":
-            # Validator finished evaluating but blockchain round hasn't ended
+            # Validator called finish_round, but blockchain round hasn't ended
+            # If there's recent activity or scores, still show as EVALUATING
+            # Otherwise, show as WAITING (for consensus)
+            if successful_runs > 0 or has_scores:
+                if seconds_since_activity is None or seconds_since_activity < 3600:
+                    # Recent activity, still evaluating
+                    return ValidatorStatusInfo.from_state(ValidatorState.EVALUATING)
+            # No recent activity, waiting for consensus
             return ValidatorStatusInfo.from_state(ValidatorState.WAITING)
 
         # Round is active - determine state based on activity
@@ -1037,6 +1046,40 @@ class OverviewService:
         return sum(scores) / len(scores) if scores else 0.0
 
     @staticmethod
+    def _map_website_port_to_name(url: Optional[str]) -> Optional[str]:
+        """Map localhost port to website name (e.g., localhost:8005 → AutoMail)."""
+        if not url:
+            return None
+
+        # Port to website name mapping (matches frontend LOCALHOST_PORT_MAPPING)
+        PORT_MAPPING = {
+            "8000": "AutoCinema",
+            "8001": "AutoBooks",
+            "8002": "Autozone",
+            "8003": "AutoDining",
+            "8004": "AutoCRM",
+            "8005": "AutoMail",
+            "8006": "AutoDelivery",
+            "8007": "AutoLodge",
+            "8008": "AutoConnect",
+            "8009": "AutoWork",
+            "8010": "AutoCalendar",
+            "8011": "AutoList",
+            "8012": "AutoDrive",
+            "8013": "AutoHealth",
+            "8014": "AutoFinance",
+        }
+
+        # Extract port from URL (e.g., "http://localhost:8005/?seed=123" → "8005")
+        port_match = re.search(r"localhost:(\d+)", url)
+        if port_match:
+            port = port_match.group(1)
+            return PORT_MAPPING.get(port, f"Web Project ({port})")
+
+        # If not localhost, return cleaned URL
+        return url
+
+    @staticmethod
     def _normalize_task_meta(
         prompt: Optional[str],
         url: Optional[str],
@@ -1050,6 +1093,10 @@ class OverviewService:
             website = relevant_data.get("website") or None
         if not website:
             website = url
+
+        # Map localhost port to friendly name
+        if website:
+            website = OverviewService._map_website_port_to_name(website)
 
         use_case_name: Optional[str] = None
         if isinstance(use_case, dict):
