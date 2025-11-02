@@ -27,7 +27,7 @@ from app.models.ui.overview import (
 )
 from app.services.ui.rounds_service import AgentRunContext, RoundRecord, RoundsService
 from app.services.chain_state import get_current_block_estimate
-from app.services.round_calc import compute_boundaries_for_round
+from app.services.round_calc import compute_boundaries_for_round, compute_round_number
 from app.config import settings
 from app.utils.images import resolve_validator_image
 
@@ -219,33 +219,67 @@ class OverviewService:
             if number not in candidate_round_numbers:
                 candidate_round_numbers.append(number)
 
+        # Get current block to verify rounds are truly finished
+        try:
+            current_block = get_current_block_estimate()
+        except Exception:
+            current_block = None
+
+        # Calculate CURRENT round number (the one in progress)
+        current_round_number = 0
+        if current_block is not None:
+            try:
+                current_round_number = compute_round_number(current_block)
+            except Exception:
+                pass
+
         target_records: List[Tuple[RoundRecord, List[AgentRunContext]]] = []
         metrics_round_number = 0
         for number in candidate_round_numbers:
+            # CRITICAL: Latest finished round MUST be < current round
+            # They can NEVER be the same
+            if current_round_number > 0 and number >= current_round_number:
+                logger.debug(
+                    f"Skipping round {number} for metrics: >= current round {current_round_number}"
+                )
+                continue
             candidates = round_records_by_number.get(number)
             if not candidates:
                 continue
-            # Only consider truly finished rounds for metrics
-            finished_candidates = [
-                (record, contexts)
-                for record, contexts in candidates
-                if record.model.status == "finished"
-            ]
-            # Fallback to any completed (ended_at set) if no finished found
-            completed_candidates = (
-                [
+
+            # Only consider rounds that are OFFICIALLY finished on the blockchain
+            # Not just validator-finished, but blockchain end_block reached
+            truly_finished_candidates: List[
+                Tuple[RoundRecord, List[AgentRunContext]]
+            ] = []
+
+            if current_block is not None:
+                for record, contexts in candidates:
+                    round_obj = record.model
+                    round_num = round_obj.round_number or 0
+                    if round_num > 0:
+                        try:
+                            bounds = compute_boundaries_for_round(round_num)
+                            # Only include if blockchain says it's finished
+                            if current_block >= bounds.end_block:
+                                truly_finished_candidates.append((record, contexts))
+                        except Exception:
+                            # If we can't compute boundaries, skip
+                            continue
+
+            # Fallback: if no blockchain check possible, use status
+            if not truly_finished_candidates:
+                truly_finished_candidates = [
                     (record, contexts)
                     for record, contexts in candidates
-                    if record.model.ended_at
+                    if record.model.status == "finished"
                 ]
-                if not finished_candidates
-                else finished_candidates
-            )
 
-            selected_records = finished_candidates or completed_candidates or candidates
-            if not selected_records:
+            if not truly_finished_candidates:
+                # No finished rounds found, try next round number
                 continue
-            target_records = selected_records
+
+            target_records = truly_finished_candidates
             metrics_round_number = number
             break
 
@@ -413,10 +447,56 @@ class OverviewService:
         return items
 
     async def current_round(self) -> Optional[RoundInfo]:
-        rounds = await self._recent_rounds(limit=1)
+        """Get the ACTUAL current round (the one that's active on the blockchain).
+
+        A round is only "current" if:
+        1. The blockchain is within its start_block and end_block range
+        2. It has NOT ended (ended_at is None or status is not "finished")
+        """
+        # Get current block from blockchain
+        try:
+            current_block = get_current_block_estimate()
+        except Exception:
+            current_block = None
+
+        # Calculate which round SHOULD be active right now
+        actual_current_round_number = 0
+        if current_block is not None:
+            try:
+                actual_current_round_number = compute_round_number(current_block)
+            except Exception:
+                pass
+
+        # Get recent rounds and find the one that matches the current round number
+        rounds = await self._recent_rounds(limit=10)
         if not rounds:
             return None
-        return self._round_to_info(rounds[0], current=True)
+
+        # Look for the round that matches the current round number
+        for round_obj in rounds:
+            round_num = round_obj.round_number or 0
+
+            # Check if this is the actual current round
+            if (
+                actual_current_round_number > 0
+                and round_num == actual_current_round_number
+            ):
+                # Verify it's not finished
+                if round_obj.status != "finished":
+                    return self._round_to_info(round_obj, current=True)
+
+            # Also check by blockchain boundaries if we have current_block
+            if round_num > 0 and current_block is not None:
+                try:
+                    bounds = compute_boundaries_for_round(round_num)
+                    # Is current_block within this round's range?
+                    if bounds.start_block <= current_block < bounds.end_block:
+                        return self._round_to_info(round_obj, current=True)
+                except Exception:
+                    continue
+
+        # Fallback: if no active round found, return the most recent one marked as NOT current
+        return self._round_to_info(rounds[0], current=False)
 
     async def rounds_list(
         self, page: int, limit: int, status: Optional[str]
@@ -546,14 +626,30 @@ class OverviewService:
         except Exception:
             current_block = None
 
+        # Calculate CURRENT round number (the one in progress)
+        current_round_number = 0
+        if current_block is not None:
+            try:
+                current_round_number = compute_round_number(current_block)
+            except Exception:
+                pass
+
         total_rounds = len(records_with_contexts)
         entries: List[LeaderboardEntry] = []
         for idx, (record, contexts) in enumerate(records_with_contexts):
             round_obj = record.model
+            round_number = round_obj.round_number or 0
+
+            # CRITICAL: Only include rounds that are < current round
+            # Latest finished round can NEVER be >= current round
+            if current_round_number > 0 and round_number >= current_round_number:
+                logger.debug(
+                    f"Leaderboard: Skipping round {round_number} >= current round {current_round_number}"
+                )
+                continue
 
             # Only include rounds that have OFFICIALLY finished on the blockchain
             # (not just validator-finished, but blockchain end_block reached)
-            round_number = round_obj.round_number or 0
             if round_number > 0 and current_block is not None:
                 try:
                     bounds = compute_boundaries_for_round(round_number)
