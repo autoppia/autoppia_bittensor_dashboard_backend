@@ -1253,27 +1253,45 @@ async def finish_round(
                     },
                 )
 
-        # Determine correct status based on current blockchain state
-        # - If current_block >= end_block: "finished" (round officially ended)
-        # - If current_block < end_block: "evaluating_finished" (validator finished but round still active)
+        # Determine correct status based on current blockchain state and work done
         final_status = "finished"  # Default
         if current_block is not None and not testing_override:
             bounds = compute_boundaries_for_round(stored_round_number)
-            if current_block < bounds.end_block:
-                final_status = "evaluating_finished"
-                logger.info(
-                    "Validator finished early: current_block=%s < end_block=%s, status=%s",
-                    current_block,
-                    bounds.end_block,
-                    final_status,
-                )
-            else:
+
+            if current_block >= bounds.end_block:
+                # Round officially ended
+                final_status = "finished"
                 logger.info(
                     "Round officially finished: current_block=%s >= end_block=%s, status=%s",
                     current_block,
                     bounds.end_block,
                     final_status,
                 )
+            else:
+                # Round window still active - check if validator did meaningful work
+                tasks_completed = (
+                    payload.summary.get("tasks_completed", 0) if payload.summary else 0
+                )
+
+                if tasks_completed > 0:
+                    # Validator finished tasks but round window is still open
+                    final_status = "evaluating_finished"
+                    logger.info(
+                        "Validator finished early: current_block=%s < end_block=%s, tasks=%s, status=%s",
+                        current_block,
+                        bounds.end_block,
+                        tasks_completed,
+                        final_status,
+                    )
+                else:
+                    # No tasks completed yet - keep as active
+                    final_status = "active"
+                    logger.info(
+                        "Round still active (no tasks completed): current_block=%s < end_block=%s, status=%s",
+                        current_block,
+                        bounds.end_block,
+                        final_status,
+                    )
 
         await service.finish_round(
             validator_round_id=validator_round_id,

@@ -29,26 +29,41 @@ def _fetch_current_block() -> Optional[int]:
     """
     try:
         import bittensor as bt  # type: ignore
-    except Exception:
+    except Exception as exc:
+        _logger.warning("Bittensor library not available: %s", exc)
         return None
 
     kwargs = {}
     if settings.SUBTENSOR_NETWORK:
         kwargs["network"] = settings.SUBTENSOR_NETWORK
+        _logger.debug("Connecting to Subtensor network: %s", settings.SUBTENSOR_NETWORK)
 
     try:
         subtensor = bt.subtensor(**kwargs)  # type: ignore[attr-defined]
         try:
             # Preferred path
-            return int(subtensor.get_current_block())
-        except Exception:
+            block = int(subtensor.get_current_block())
+            _logger.debug("Fetched current block from subtensor: %s", block)
+            return block
+        except Exception as exc:
+            _logger.warning(
+                "subtensor.get_current_block() failed: %s, trying metagraph fallback",
+                exc,
+            )
             # Fallback path: heavier call
             try:
                 mg = subtensor.metagraph(settings.VALIDATOR_NETUID)
-                return int(getattr(mg, "block", 0) or 0)
-            except Exception:
+                block = int(getattr(mg, "block", 0) or 0)
+                _logger.debug("Fetched current block from metagraph: %s", block)
+                return block if block > 0 else None
+            except Exception as fallback_exc:
+                _logger.error(
+                    "Both subtensor.get_current_block() and metagraph fallback failed: %s",
+                    fallback_exc,
+                )
                 return None
-    except Exception:
+    except Exception as exc:
+        _logger.error("Failed to create subtensor connection: %s", exc)
         return None
 
 
@@ -101,7 +116,9 @@ def get_current_block() -> Optional[int]:
     estimate: Optional[int] = _estimate_from_cache(now, block_time)
 
     ttl_expired = base_block is not None and (now - base_ts) >= ttl
-    retry_delay = min(ttl, _FAILURE_RETRY_SECONDS) if ttl > 0 else _FAILURE_RETRY_SECONDS
+    retry_delay = (
+        min(ttl, _FAILURE_RETRY_SECONDS) if ttl > 0 else _FAILURE_RETRY_SECONDS
+    )
     should_retry_failure = base_block is None and (now - last_attempt) >= retry_delay
     need_refresh = ttl_expired or should_retry_failure
 
@@ -119,7 +136,9 @@ def get_current_block() -> Optional[int]:
         base_ts = _cached_at
         last_attempt = _last_fetch_attempt
         ttl_expired = base_block is not None and (now - base_ts) >= ttl
-        should_retry_failure = base_block is None and (now - last_attempt) >= retry_delay
+        should_retry_failure = (
+            base_block is None and (now - last_attempt) >= retry_delay
+        )
         if not ttl_expired and not should_retry_failure:
             return estimate
         reason = "ttl_expired" if ttl_expired else "retry_failure"
@@ -184,7 +203,9 @@ def start_block_refresher(period_seconds: Optional[int] = None) -> None:
         return
     if period_seconds is None:
         try:
-            period_seconds = int(getattr(settings, "CHAIN_BLOCK_REFRESH_PERIOD", 30) or 30)
+            period_seconds = int(
+                getattr(settings, "CHAIN_BLOCK_REFRESH_PERIOD", 30) or 30
+            )
         except Exception:
             period_seconds = 30
     period_seconds = max(5, int(period_seconds))
@@ -195,8 +216,14 @@ def start_block_refresher(period_seconds: Optional[int] = None) -> None:
         while _refresh_stop and not _refresh_stop.is_set():
             try:
                 refresh_block_now()
-            except Exception:
-                pass
+            except Exception as exc:
+                # Log failures but keep thread alive
+                _logger.error(
+                    "Background block refresh failed: %s - will retry in %ss",
+                    exc,
+                    period_seconds,
+                    exc_info=False,
+                )
             # Sleep in small intervals to allow quick shutdown
             for _ in range(period_seconds):
                 if _refresh_stop and _refresh_stop.is_set():
