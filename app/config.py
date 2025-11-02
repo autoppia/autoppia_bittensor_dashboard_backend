@@ -171,6 +171,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
         "https://dev-infinitewebarena.autoppia.com",
         "https://infinitewebarena.autoppia.com",
+        "https://devdeviwa.autoppia.com",  # Frontend development
     ]
     # Optional regex to allow subdomains (e.g., all *.autoppia.com)
     CORS_ALLOW_ORIGIN_REGEX: Optional[str] = None
@@ -260,6 +261,7 @@ class Settings(BaseSettings):
             required_origins = {
                 "https://dev-infinitewebarena.autoppia.com",
                 "https://infinitewebarena.autoppia.com",
+                "https://devdeviwa.autoppia.com",  # IWA Frontend
             }
             # Avoid duplicates and preserve values from env
             existing = set(self.CORS_ORIGINS or [])
