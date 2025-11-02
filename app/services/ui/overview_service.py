@@ -26,6 +26,8 @@ from app.models.ui.overview import (
     ValidatorInfo,
 )
 from app.services.ui.rounds_service import AgentRunContext, RoundRecord, RoundsService
+from app.services.chain_state import get_current_block_estimate
+from app.services.round_calc import compute_boundaries_for_round
 from app.config import settings
 from app.utils.images import resolve_validator_image
 
@@ -538,13 +540,31 @@ class OverviewService:
                     scores.append(self.rounds_service._context_score(ctx))
             return scores
 
+        # Get current block to determine which rounds are officially finished
+        try:
+            current_block = get_current_block_estimate()
+        except Exception:
+            current_block = None
+
         total_rounds = len(records_with_contexts)
         entries: List[LeaderboardEntry] = []
         for idx, (record, contexts) in enumerate(records_with_contexts):
             round_obj = record.model
 
-            # Only include finished or evaluating_finished rounds (skip active/pending)
-            if round_obj.status not in ("finished", "evaluating_finished"):
+            # Only include rounds that have OFFICIALLY finished on the blockchain
+            # (not just validator-finished, but blockchain end_block reached)
+            round_number = round_obj.round_number or 0
+            if round_number > 0 and current_block is not None:
+                try:
+                    bounds = compute_boundaries_for_round(round_number)
+                    # Skip if current block hasn't reached end_block yet
+                    if current_block < bounds.end_block:
+                        continue
+                except Exception:
+                    # If we can't compute boundaries, skip this round
+                    continue
+            elif round_obj.status not in ("finished", "evaluating_finished"):
+                # Fallback: if no round_number/current_block, use status
                 continue
 
             run_scores = [self.rounds_service._context_score(ctx) for ctx in contexts]
