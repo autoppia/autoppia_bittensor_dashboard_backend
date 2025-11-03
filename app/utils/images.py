@@ -257,11 +257,17 @@ def _fallback_miner_image(info: Optional[MinerInfo], existing: Optional[str]) ->
     if existing:
         return _ensure_absolute_url(existing)
 
+    # Use UID directly for deterministic image selection
+    # UID 1 -> /miners/1.svg, UID 80 -> /miners/30.svg (80 % 50), etc.
+    if info and hasattr(info, "uid") and info.uid is not None:
+        index = int(info.uid) % len(FALLBACK_MINER_IMAGES)
+        return _ensure_absolute_url(FALLBACK_MINER_IMAGES[index])
+
+    # Fallback: use hash if UID is not available
     identifier: Optional[str] = None
     if info:
         candidates = [
             getattr(info, "hotkey", None),
-            str(info.uid) if getattr(info, "uid", None) is not None else None,
             getattr(info, "agent_name", None),
             getattr(info, "provider", None),
         ]
