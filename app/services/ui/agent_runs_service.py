@@ -509,7 +509,12 @@ class AgentRunsService:
     def _summarize_ui_tasks(
         self,
         ui_tasks: List[UITask],
-    ) -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict[str, float]], float]:
+    ) -> Tuple[
+        Dict[str, Dict[str, float]],
+        Dict[str, Dict[str, float]],
+        Dict[str, Dict[str, Dict[str, float]]],
+        float,
+    ]:
         website_stats: Dict[str, Dict[str, float]] = defaultdict(
             lambda: {
                 "tasks": 0.0,
@@ -525,6 +530,17 @@ class AgentRunsService:
                 "score_sum": 0.0,
                 "duration_sum": 0.0,
             }
+        )
+        # New: website + use_case combined stats
+        website_usecase_stats: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(
+            lambda: defaultdict(
+                lambda: {
+                    "tasks": 0.0,
+                    "successful": 0.0,
+                    "score_sum": 0.0,
+                    "duration_sum": 0.0,
+                }
+            )
         )
         total_duration = 0.0
 
@@ -551,7 +567,15 @@ class AgentRunsService:
             if success:
                 use_case_entry["successful"] += 1
 
-        return website_stats, use_case_stats, total_duration
+            # Track stats for (website, use_case) combination
+            website_uc_entry = website_usecase_stats[host][use_case]
+            website_uc_entry["tasks"] += 1
+            website_uc_entry["score_sum"] += score
+            website_uc_entry["duration_sum"] += duration
+            if success:
+                website_uc_entry["successful"] += 1
+
+        return website_stats, use_case_stats, website_usecase_stats, total_duration
 
     def _build_statistics(self, context: AgentRunContext) -> Statistics:
         websites, ui_tasks, success_count = self._build_websites_and_tasks(context)
@@ -561,27 +585,56 @@ class AgentRunsService:
             self._compute_average_score(context.evaluation_results) * 100
         )
 
-        website_stats_map, use_case_stats_map, total_duration = (
+        website_stats_map, use_case_stats_map, website_usecase_stats, total_duration = (
             self._summarize_ui_tasks(ui_tasks)
         )
 
-        performance_by_website = [
-            PerformanceByWebsite(
-                website=website_key,
-                tasks=int(values["tasks"]),
-                successful=int(values["successful"]),
-                failed=int(max(values["tasks"] - values["successful"], 0)),
-                averageScore=(
-                    (values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0
-                ),
-                averageDuration=(
-                    (values["duration_sum"] / values["tasks"])
-                    if values["tasks"]
-                    else 0.0
-                ),
+        performance_by_website = []
+        for website_key, values in website_stats_map.items():
+            # Build use cases specific to this website
+            use_cases_for_website = []
+            if website_key in website_usecase_stats:
+                for uc_name, uc_values in website_usecase_stats[website_key].items():
+                    use_cases_for_website.append(
+                        PerformanceByUseCase(
+                            useCase=uc_name,
+                            tasks=int(uc_values["tasks"]),
+                            successful=int(uc_values["successful"]),
+                            failed=int(
+                                max(uc_values["tasks"] - uc_values["successful"], 0)
+                            ),
+                            averageScore=(
+                                (uc_values["score_sum"] / uc_values["tasks"])
+                                if uc_values["tasks"]
+                                else 0.0
+                            ),
+                            averageDuration=(
+                                (uc_values["duration_sum"] / uc_values["tasks"])
+                                if uc_values["tasks"]
+                                else 0.0
+                            ),
+                        )
+                    )
+
+            performance_by_website.append(
+                PerformanceByWebsite(
+                    website=website_key,
+                    tasks=int(values["tasks"]),
+                    successful=int(values["successful"]),
+                    failed=int(max(values["tasks"] - values["successful"], 0)),
+                    averageScore=(
+                        (values["score_sum"] / values["tasks"])
+                        if values["tasks"]
+                        else 0.0
+                    ),
+                    averageDuration=(
+                        (values["duration_sum"] / values["tasks"])
+                        if values["tasks"]
+                        else 0.0
+                    ),
+                    useCases=use_cases_for_website,
+                )
             )
-            for website_key, values in website_stats_map.items()
-        ]
 
         performance_by_use_case = [
             PerformanceByUseCase(
@@ -644,7 +697,7 @@ class AgentRunsService:
             self._resolve_agent_identity(context)
         )
 
-        website_stats_map, use_case_stats_map, _ = self._summarize_ui_tasks(ui_tasks)
+        website_stats_map, use_case_stats_map, _, _ = self._summarize_ui_tasks(ui_tasks)
 
         top_website_name = "unknown"
         top_website_score = 0.0
@@ -958,7 +1011,48 @@ class AgentRunsService:
             else TaskStatus.FAILED
         )
         score = evaluation.final_score if evaluation else 0.0
-        duration = evaluation.evaluation_time if evaluation else 0.0
+
+        # Calculate duration as miner execution time (from first to last action)
+        duration = 0.0
+        if solution and solution.actions and len(solution.actions) > 0:
+            try:
+                # Parse timestamps from first and last actions
+                from datetime import datetime
+
+                first_action = solution.actions[0]
+                last_action = solution.actions[-1]
+
+                # Get timestamp from action (could be in different formats)
+                first_ts_str = None
+                last_ts_str = None
+
+                if hasattr(first_action, "timestamp"):
+                    first_ts_str = first_action.timestamp
+                elif isinstance(first_action, dict):
+                    first_ts_str = first_action.get("timestamp")
+
+                if hasattr(last_action, "timestamp"):
+                    last_ts_str = last_action.timestamp
+                elif isinstance(last_action, dict):
+                    last_ts_str = last_action.get("timestamp")
+
+                if first_ts_str and last_ts_str:
+                    # Parse ISO timestamps
+                    first_dt = datetime.fromisoformat(
+                        str(first_ts_str).replace("Z", "+00:00")
+                    )
+                    last_dt = datetime.fromisoformat(
+                        str(last_ts_str).replace("Z", "+00:00")
+                    )
+                    duration = (last_dt - first_dt).total_seconds()
+                    # Ensure duration is at least 0
+                    duration = max(0.0, duration)
+            except Exception:
+                # Fallback to evaluation time if calculation fails
+                duration = evaluation.evaluation_time if evaluation else 0.0
+        elif evaluation:
+            # Fallback to evaluation time if no solution actions
+            duration = evaluation.evaluation_time
 
         actions = []
         if solution and solution.actions:
@@ -981,7 +1075,7 @@ class AgentRunsService:
                     type_key = str(raw_type)
                 if type_key in {"type", "type_text", "sendkeysiwa"}:
                     type_key = "input"
-                
+
                 # Extract selector and value, ensuring they are strings
                 selector_raw = (
                     getattr(action, "attributes", {}).get("selector")
@@ -993,7 +1087,7 @@ class AgentRunsService:
                     if hasattr(action, "attributes")
                     else action.get("attributes", {}).get("value")
                 )
-                
+
                 # Convert to strings if they're dicts or other non-string types
                 selector_str = None
                 if selector_raw is not None:
@@ -1003,7 +1097,7 @@ class AgentRunsService:
                         selector_str = json.dumps(selector_raw)
                     else:
                         selector_str = str(selector_raw)
-                
+
                 value_str = None
                 if value_raw is not None:
                     if isinstance(value_raw, str):
@@ -1012,7 +1106,7 @@ class AgentRunsService:
                         value_str = json.dumps(value_raw)
                     else:
                         value_str = str(value_raw)
-                
+
                 actions.append(
                     Action(
                         id=f"{task.task_id}_action_{index}",
