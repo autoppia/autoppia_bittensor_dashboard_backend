@@ -63,6 +63,47 @@ def _extract_host(url: Optional[str]) -> str:
     return parsed.netloc or parsed.path or "unknown"
 
 
+def _map_website_port_to_name(url: Optional[str]) -> str:
+    """
+    Map localhost:PORT URLs to friendly website names.
+    Returns the friendly name if found, otherwise returns the host as-is.
+    """
+    if not url:
+        return "unknown"
+
+    # Port to name mapping (aligned with overview_service.py and frontend)
+    PORT_TO_NAME = {
+        "8000": "AutoCinema",
+        "8001": "AutoBooks",
+        "8002": "Autozone",
+        "8003": "AutoDining",
+        "8004": "AutoCRM",
+        "8005": "AutoMail",
+        "8006": "AutoDelivery",
+        "8007": "AutoLodge",
+        "8008": "AutoConnect",
+        "8009": "AutoWork",
+        "8010": "AutoCalendar",
+        "8011": "AutoList",
+        "8012": "AutoDrive",
+        "8013": "AutoHealth",
+        "8014": "AutoFinance",
+    }
+
+    try:
+        # Extract port from URL
+        parsed = urlparse(url if url.startswith("http") else f"http://{url}")
+        port = str(parsed.port) if parsed.port else None
+
+        if port and port in PORT_TO_NAME:
+            return PORT_TO_NAME[port]
+    except Exception:
+        pass
+
+    # Fallback to extracting host
+    return _extract_host(url)
+
+
 def _safe_int(value: Optional[float]) -> int:
     if value is None:
         return 0
@@ -551,7 +592,7 @@ class AgentRunsService:
 
             total_duration += duration
 
-            host = _extract_host(task.website)
+            host = _map_website_port_to_name(task.website)
             host_stats = website_stats[host]
             host_stats["tasks"] += 1
             host_stats["score_sum"] += score
@@ -880,7 +921,7 @@ class AgentRunsService:
                         website = task.relevant_data.get("website")
                     if not website:
                         website = getattr(task, "url", None)
-                    hosts.add(_extract_host(website))
+                    hosts.add(_map_website_port_to_name(website))
                 websites_count = len(hosts)
         except Exception:  # noqa: BLE001
             websites_count = 0
@@ -951,7 +992,7 @@ class AgentRunsService:
                 continue
             evaluation = evaluation_map.get(task_id)
             success = evaluation is not None and evaluation.final_score >= 0.5
-            host = _extract_host(ui_task.website)
+            host = _map_website_port_to_name(ui_task.website)
 
             host_stats_entry = host_stats[host]
             host_stats_entry["tasks"] += 1
@@ -1126,6 +1167,9 @@ class AgentRunsService:
         )
         if not website:
             website = task.url
+
+        # Normalize website to friendly name
+        website = _map_website_port_to_name(website)
 
         use_case = _extract_use_case(task)
 
