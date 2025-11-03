@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, parse_qs
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -212,31 +212,73 @@ class TasksService:
         # Order by ID descending for now (we'll sort in memory if needed)
         stmt = stmt.order_by(TaskORM.id.desc())
 
-        # Add a reasonable limit to prevent loading entire database
-        # We'll load more than the page size to account for filtering,
-        # but cap it to prevent excessive memory usage
-        max_fetch_limit = max(limit * 10, 1000) if query or website else 10000
-        stmt = stmt.limit(max_fetch_limit)
+        # Determine if we need to load extra for Python-level filtering
+        needs_python_filtering = (
+            agent_run_id
+            or agent_id
+            or validator_id
+            or use_case
+            or status
+            or min_score is not None
+            or max_score is not None
+            or start_date is not None
+            or end_date is not None
+        )
 
-        # Execute query
-        task_rows_result = await self.session.scalars(stmt)
-        task_rows = list(task_rows_result)
+        if needs_python_filtering:
+            # Need to load more for filtering in Python
+            max_fetch_limit = max(limit * 10, 1000)
+            stmt = stmt.limit(max_fetch_limit)
+            # Execute query
+            task_rows_result = await self.session.scalars(stmt)
+            task_rows = list(task_rows_result)
+            # Total will be calculated after filtering
+            total_count = None
+        else:
+            # No Python filtering needed - get accurate count first
+            count_stmt = select(func.count()).select_from(TaskORM)
+            
+            # Apply same filters as main query for accurate count
+            if website:
+                count_stmt = count_stmt.where(TaskORM.url == website)
+            if query:
+                count_stmt = count_stmt.where(
+                    TaskORM.task_id.ilike(f"%{query}%")
+                    | TaskORM.prompt.ilike(f"%{query}%")
+                    | TaskORM.url.ilike(f"%{query}%")
+                )
+            
+            # Get total count
+            total_count = await self.session.scalar(count_stmt)
+            
+            # Now fetch the paginated data
+            # Add a bit extra to account for tasks with missing agent runs
+            stmt = stmt.limit(limit * 2).offset((page - 1) * limit)
+            task_rows_result = await self.session.scalars(stmt)
+            task_rows = list(task_rows_result)
 
         query_lower = query.lower() if query else None
         start_ts = _to_timestamp(start_date)
         end_ts = _to_timestamp(end_date)
 
-        website_counts: Dict[str, int] = defaultdict(int)
-        use_case_counts: Dict[str, int] = defaultdict(int)
-        status_counts: Dict[str, int] = defaultdict(int)
-        score_buckets: Dict[str, int] = defaultdict(int)
-
-        score_ranges = [
-            ("0.0-0.25", 0.0, 0.25),
-            ("0.25-0.5", 0.25, 0.5),
-            ("0.5-0.75", 0.5, 0.75),
-            ("0.75-1.0", 0.75, 1.01),
-        ]
+        # Only initialize facet tracking if needed
+        if include_facets and needs_python_filtering:
+            website_counts: Dict[str, int] = defaultdict(int)
+            use_case_counts: Dict[str, int] = defaultdict(int)
+            status_counts: Dict[str, int] = defaultdict(int)
+            score_buckets: Dict[str, int] = defaultdict(int)
+            score_ranges = [
+                ("0.0-0.25", 0.0, 0.25),
+                ("0.25-0.5", 0.25, 0.5),
+                ("0.5-0.75", 0.5, 0.75),
+                ("0.75-1.0", 0.75, 1.01),
+            ]
+        else:
+            website_counts = {}
+            use_case_counts = {}
+            status_counts = {}
+            score_buckets = {}
+            score_ranges = []
 
         context_cache: Dict[str, AgentRunContext] = {}
         items: List[UITask] = []
@@ -300,7 +342,8 @@ class TasksService:
 
             items.append(ui_task)
 
-            if include_facets:
+            # Only count facets if we're filtering and need accurate counts
+            if include_facets and needs_python_filtering:
                 website_counts[ui_task.website] += 1
                 use_case_counts[ui_task.useCase] += 1
                 status_counts[ui_task.status.value] += 1
@@ -311,10 +354,17 @@ class TasksService:
 
         items = self._sort_tasks(items, sort_by, sort_order)
 
-        total = len(items)
-        start_index = (page - 1) * limit
-        end_index = start_index + limit
-        paginated = items[start_index:end_index]
+        if needs_python_filtering:
+            # We loaded extra, now paginate in Python
+            total = len(items)
+            start_index = (page - 1) * limit
+            end_index = start_index + limit
+            paginated = items[start_index:end_index]
+        else:
+            # Already offset at DB level, just take what we need
+            paginated = items[:limit]
+            # Use the accurate count we fetched earlier
+            total = total_count or 0
 
         result: Dict[str, Any] = {
             "tasks": [task.model_dump() for task in paginated],
@@ -323,7 +373,9 @@ class TasksService:
             "limit": limit,
         }
 
-        if include_facets:
+        # Only include facets if we loaded the full filtered dataset
+        # Otherwise facets would be misleading (only representing current page)
+        if include_facets and needs_python_filtering:
             result["facets"] = {
                 "websites": [
                     {"name": name, "count": count}
@@ -347,6 +399,14 @@ class TasksService:
                     {"name": name, "count": score_buckets.get(name, 0)}
                     for name, _, _ in score_ranges
                 ],
+            }
+        elif include_facets:
+            # Return empty facets for DB-paginated results
+            result["facets"] = {
+                "websites": [],
+                "useCases": [],
+                "statuses": [],
+                "scoreRanges": [],
             }
 
         return result
