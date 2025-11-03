@@ -1326,7 +1326,18 @@ class OverviewService:
             existing_icon = (
                 getattr(validator_info, "image_url", None) if validator_info else None
             )
+
+            # DEBUG: Log validator image resolution
+            logger.debug(
+                f"[Validator {validator_uid}] Image resolution: "
+                f"validator_info={validator_info is not None}, "
+                f"existing_icon={existing_icon}, "
+                f"display_name={display_name}"
+            )
+
             icon = resolve_validator_image(display_name, existing=existing_icon)
+
+            logger.debug(f"[Validator {validator_uid}] Final icon={icon}")
 
             stake_value: float = 0.0
             if validator_info and validator_info.stake is not None:

@@ -292,13 +292,21 @@ def _validate_validator_image_url(url: Optional[str]) -> Optional[str]:
     - ❌ Other S3 folders (backups, gifs, images-miner, etc.)
     - ❌ Relative paths (/validators/Other.png) - validators must use S3
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     if not url:
+        logger.debug(f"[_validate_validator_image_url] URL is None or empty")
         return None
 
     url_clean = url.strip()
 
     # REJECT relative paths - validators MUST use S3
     if not url_clean.startswith("http"):
+        logger.debug(
+            f"[_validate_validator_image_url] Rejecting relative path: {url_clean}"
+        )
         return None
 
     # ONLY allow HTTPS S3 URLs in images-validator folder
@@ -313,18 +321,33 @@ def _validate_validator_image_url(url: Optional[str]) -> Optional[str]:
                 "autoppia-subnet.s3.eu-west-1.amazonaws.com",
                 "autoppia-subnet.s3.amazonaws.com",
             ):
+                logger.debug(
+                    f"[_validate_validator_image_url] Rejecting external hostname: {hostname}"
+                )
                 return None  # ❌ Reject external URLs
 
             # MUST be in /images-validator/ folder
             if not path.startswith("/images-validator/"):
+                logger.debug(
+                    f"[_validate_validator_image_url] Rejecting non-validator path: {path}"
+                )
                 return None  # ❌ Reject other S3 folders
 
             # ✅ Valid S3 validator image
+            logger.debug(
+                f"[_validate_validator_image_url] ✅ Valid S3 URL: {url_clean}"
+            )
             return url_clean
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                f"[_validate_validator_image_url] Failed to parse URL {url_clean}: {exc}"
+            )
             return None
 
     # Reject anything else (http://, malformed, etc.)
+    logger.debug(
+        f"[_validate_validator_image_url] Rejecting non-https URL: {url_clean}"
+    )
     return None
 
 
@@ -337,22 +360,38 @@ def resolve_validator_image(name: Optional[str], existing: Optional[str] = None)
     2. Use name-based override if configured
     3. Use default placeholder
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
 
     # Validate and sanitize the existing URL
     validated_existing = _validate_validator_image_url(existing)
     default_url = _ensure_absolute_url(DEFAULT_VALIDATOR_IMAGE)
 
+    logger.debug(
+        f"[resolve_validator_image] name={name}, existing={existing}, "
+        f"validated={validated_existing}, default={default_url}"
+    )
+
     # PRIORITY 1: Always prefer explicit image_url from validator (if valid)
     if validated_existing:
+        logger.debug(
+            f"[resolve_validator_image] Using validated S3 URL: {validated_existing}"
+        )
         return validated_existing
 
     # PRIORITY 2: Use name-based override if no explicit image
     if name:
         slug = _slugify(name)
         if slug in VALIDATOR_IMAGE_OVERRIDES:
-            return _ensure_absolute_url(
+            override = _ensure_absolute_url(
                 VALIDATOR_IMAGE_OVERRIDES[slug], fallback=default_url
             )
+            logger.debug(
+                f"[resolve_validator_image] Using name override for '{slug}': {override}"
+            )
+            return override
 
     # PRIORITY 3: Default placeholder
+    logger.debug(f"[resolve_validator_image] Using default placeholder: {default_url}")
     return default_url

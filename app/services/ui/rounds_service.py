@@ -2787,6 +2787,7 @@ class RoundsService:
             vtrust=float(profile.get("vtrust") or 0.0),
             name=profile.get("name"),
             version=profile.get("version"),
+            image_url=profile.get("image_url"),
         )
 
         miners: List[MinerInfo] = []
