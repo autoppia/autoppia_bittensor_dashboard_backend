@@ -60,7 +60,7 @@ from app.models.ui.tasks import (
     WebsitePerformance,
 )
 from app.services.ui.rounds_service import AgentRunContext, RoundsService
-from app.utils.images import resolve_agent_image
+from app.utils.images import resolve_agent_image, resolve_validator_image
 from app.config import settings
 from app.services.round_calc import compute_boundaries_for_round
 
@@ -562,7 +562,9 @@ class TasksService:
             try:
                 status_lower = str(context.round.status or "").lower()
                 if status_lower in {"completed", "finished", "complete"}:
-                    bounds = compute_boundaries_for_round(int(context.round.round_number or 0))
+                    bounds = compute_boundaries_for_round(
+                        int(context.round.round_number or 0)
+                    )
                     end_epoch_val = int(bounds.end_epoch)
                     if start_epoch_val is None:
                         start_epoch_val = int(bounds.start_epoch)
@@ -605,7 +607,7 @@ class TasksService:
                 version=None,
             )
 
-        # Ensure UID is non-negative
+        # Ensure UID is non-negative and resolve validator image with fallback
         validator_summary = TaskValidatorSummary(
             uid=abs(int(validator_model.uid)) if validator_model.uid is not None else 0,
             hotkey=validator_model.hotkey,
@@ -614,12 +616,18 @@ class TasksService:
             stake=float(getattr(validator_model, "stake", 0.0) or 0.0),
             vtrust=float(getattr(validator_model, "vtrust", 0.0) or 0.0),
             version=getattr(validator_model, "version", None),
+            image=resolve_validator_image(
+                name=validator_model.name,
+                existing=getattr(validator_model, "image_url", None),
+            ),
         )
 
         miner_model = context.agent_run.miner_info
         miner_summary = TaskMinerSummary(
             uid=(
-                abs(int(miner_model.uid)) if (miner_model and miner_model.uid is not None) else abs(int(context.agent_run.miner_uid))
+                abs(int(miner_model.uid))
+                if (miner_model and miner_model.uid is not None)
+                else abs(int(context.agent_run.miner_uid))
             ),
             hotkey=miner_model.hotkey if miner_model else None,
             name=(
@@ -1016,7 +1024,9 @@ class TasksService:
                     selector = str(selector_obj)
 
             if not selector:
-                sel_attr = attributes.get("selector") if isinstance(attributes, dict) else None
+                sel_attr = (
+                    attributes.get("selector") if isinstance(attributes, dict) else None
+                )
                 if isinstance(sel_attr, dict):
                     selector = sel_attr.get("value") or str(sel_attr)
                 else:
