@@ -1307,6 +1307,32 @@ class TasksService:
         except Exception:
             seed_val = None
 
+        # Get validator info
+        validator_name = None
+        validator_image = None
+        if context.round.validators:
+            validator_model = next(
+                (
+                    v
+                    for v in context.round.validators
+                    if v.uid == context.agent_run.validator_uid
+                ),
+                context.round.validators[0] if context.round.validators else None,
+            )
+            if validator_model:
+                validator_name = validator_model.name
+                validator_image = resolve_validator_image(
+                    name=validator_model.name,
+                    existing=getattr(validator_model, "image_url", None),
+                )
+
+        # Get miner info
+        miner_name = None
+        miner_image = None
+        if context.agent_run.miner_info:
+            miner_name = context.agent_run.miner_info.agent_name
+            miner_image = resolve_agent_image(context.agent_run.miner_info)
+
         return UITask(
             taskId=context.task.task_id,
             agentRunId=context.agent_run.agent_run_id,
@@ -1326,6 +1352,10 @@ class TasksService:
             screenshots=[],
             logs=[],
             metadata=None,
+            validatorName=validator_name,
+            validatorImage=validator_image,
+            minerName=miner_name,
+            minerImage=miner_image,
         )
 
     @staticmethod
