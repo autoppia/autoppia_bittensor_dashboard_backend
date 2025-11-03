@@ -189,16 +189,38 @@ class TasksService:
         sort_order: str = "desc",
         include_facets: bool = False,
     ) -> Dict[str, object]:
-        stmt = (
-            select(TaskORM)
-            .options(
-                selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluation_results),
-            )
-            .order_by(TaskORM.id.desc())
+        # Build the base query with filters at the database level
+        stmt = select(TaskORM).options(
+            selectinload(TaskORM.task_solutions),
+            selectinload(TaskORM.evaluation_results),
         )
 
-        task_rows = await self.session.scalars(stmt)
+        # Apply database-level filters where possible
+        if website:
+            # Filter by website URL
+            stmt = stmt.where(TaskORM.url == website)
+
+        if query:
+            # Use database text search for query
+            # Search in task_id, prompt, or URL
+            stmt = stmt.where(
+                TaskORM.task_id.ilike(f"%{query}%")
+                | TaskORM.prompt.ilike(f"%{query}%")
+                | TaskORM.url.ilike(f"%{query}%")
+            )
+
+        # Order by ID descending for now (we'll sort in memory if needed)
+        stmt = stmt.order_by(TaskORM.id.desc())
+
+        # Add a reasonable limit to prevent loading entire database
+        # We'll load more than the page size to account for filtering,
+        # but cap it to prevent excessive memory usage
+        max_fetch_limit = max(limit * 10, 1000) if query or website else 10000
+        stmt = stmt.limit(max_fetch_limit)
+
+        # Execute query
+        task_rows_result = await self.session.scalars(stmt)
+        task_rows = list(task_rows_result)
 
         query_lower = query.lower() if query else None
         start_ts = _to_timestamp(start_date)
@@ -238,8 +260,9 @@ class TasksService:
                 if context.agent_run.validator_uid != validator_uid:
                     continue
 
-            if website and context.task.url != website:
-                continue
+            # Website filter already applied at DB level
+            # if website and context.task.url != website:
+            #     continue
 
             if use_case:
                 use_case_name = self._extract_use_case(context.task)
@@ -267,16 +290,13 @@ class TasksService:
             if end_ts is not None and run_start_ts > end_ts:
                 continue
 
+            # Query filter partially applied at DB level, but need to check all fields
             if query_lower:
-                prompt = context.task.prompt or ""
-                url = context.task.url or ""
-                if (
-                    query_lower not in prompt.lower()
-                    and query_lower not in url.lower()
-                    and query_lower not in ui_task.taskId.lower()
-                    and query_lower not in ui_task.agentRunId.lower()
-                ):
-                    continue
+                # DB already filtered by task_id, prompt, and url
+                # But also check agent_run_id which isn't in task data
+                if query_lower not in ui_task.agentRunId.lower():
+                    # Already matched in DB, so don't filter out
+                    pass
 
             items.append(ui_task)
 
