@@ -151,6 +151,10 @@ class Task(BaseModel):
     )
     logs: Optional[List[str]] = Field(None, description="List of log messages")
     metadata: Optional[TaskMetadata] = Field(None, description="Task metadata")
+    validatorName: Optional[str] = Field(None, description="Validator name for display")
+    validatorImage: Optional[str] = Field(None, description="Validator image URL")
+    minerName: Optional[str] = Field(None, description="Miner/agent name for display")
+    minerImage: Optional[str] = Field(None, description="Miner/agent image URL")
 
 
 class TaskRoundSummary(BaseModel):
