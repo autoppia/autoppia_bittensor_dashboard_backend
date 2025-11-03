@@ -68,7 +68,8 @@ class Action(BaseModel):
 
     id: str
     type: str
-    selector: Optional[str] = None
+    # Accept legacy string selectors and new structured selector objects
+    selector: Optional[Union[str, Dict[str, Any]]] = None
     value: Optional[str] = None
     timestamp: str
     duration: float

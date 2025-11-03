@@ -98,9 +98,9 @@ class Settings(BaseSettings):
     # ═══════════════════════════════════════════════════════════════════════════
     # Reads from .env with environment suffix:
     # ROUND_SIZE_EPOCHS_LOCAL, ROUND_SIZE_EPOCHS_DEVELOPMENT, etc.
-    ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.2"))
+    ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "2.0"))
     BLOCKS_PER_EPOCH: int = int(_env_var("BLOCKS_PER_EPOCH", "360"))
-    DZ_STARTING_BLOCK: int = int(_env_var("DZ_STARTING_BLOCK", "6717750"))
+    DZ_STARTING_BLOCK: int = int(_env_var("DZ_STARTING_BLOCK", "6794450"))
 
     # Chain state
     CHAIN_BLOCK_CACHE_TTL_SECONDS: int = 15 * 60
@@ -128,7 +128,6 @@ class Settings(BaseSettings):
     # Authentication
     # Reads from .env with environment suffix:
     # MIN_VALIDATOR_STAKE_LOCAL, AUTH_DISABLED_LOCAL, etc.
-    API_KEYS: list[str] = ["dev-token-123"]  # replace with real keys or load from vault
     VALIDATOR_AUTH_MESSAGE: str = "I am a honest validator"
     MIN_VALIDATOR_STAKE: float = float(_env_var("MIN_VALIDATOR_STAKE", "0.0"))
     VALIDATOR_NETUID: int = 36
@@ -172,6 +171,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
         "https://dev-infinitewebarena.autoppia.com",
         "https://infinitewebarena.autoppia.com",
+        "https://devdeviwa.autoppia.com",  # Frontend development
     ]
     # Optional regex to allow subdomains (e.g., all *.autoppia.com)
     CORS_ALLOW_ORIGIN_REGEX: Optional[str] = None
@@ -261,6 +261,7 @@ class Settings(BaseSettings):
             required_origins = {
                 "https://dev-infinitewebarena.autoppia.com",
                 "https://infinitewebarena.autoppia.com",
+                "https://devdeviwa.autoppia.com",  # IWA Frontend
             }
             # Avoid duplicates and preserve values from env
             existing = set(self.CORS_ORIGINS or [])

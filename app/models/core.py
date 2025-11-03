@@ -55,6 +55,7 @@ class ValidatorInfo(BaseModel):
     vtrust: float = 0.0
     name: Optional[str] = None
     version: Optional[str] = None
+    image_url: Optional[str] = None
 
 
 class MinerInfo(BaseModel):
