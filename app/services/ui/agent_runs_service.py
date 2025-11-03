@@ -1180,7 +1180,7 @@ class AgentRunsService:
             prompt=task.prompt,
             status=status,
             score=score,
-            duration=_safe_int(duration),
+            duration=round(duration, 2),  # Keep as float with 2 decimal places
             startTime=_ts_to_iso(run.started_at) or "",
             endTime=_ts_to_iso(run.ended_at),
             actions=actions,

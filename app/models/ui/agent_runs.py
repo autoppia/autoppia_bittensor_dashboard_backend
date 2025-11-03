@@ -85,7 +85,7 @@ class Task(BaseModel):
     prompt: str
     status: TaskStatus
     score: float
-    duration: int
+    duration: float
     startTime: str
     endTime: Optional[str] = None
     actions: List[Action] = Field(default_factory=list)
