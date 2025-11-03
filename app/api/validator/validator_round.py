@@ -165,10 +165,15 @@ def _legacy_to_start_request(payload: LegacyStartRoundRequest) -> StartRoundRequ
         image_url=primary_validator.get("image") or primary_validator.get("image_url"),
         version=primary_validator.get("version"),
     )
-    # Override validator snapshot fields from canonical directory
+    # Use canonical directory as FALLBACK only (don't override validator-provided values)
     metadata = get_validator_metadata(uid)
-    validator_snapshot.name = metadata.get("name") or validator_snapshot.name
-    validator_snapshot.image_url = metadata.get("image") or validator_snapshot.image_url
+    # Only use directory name if validator didn't provide one
+    if not validator_snapshot.name:
+        validator_snapshot.name = metadata.get("name")
+    # Only use directory image as fallback
+    if not validator_snapshot.image_url:
+        validator_snapshot.image_url = metadata.get("image")
+    # Resolve/validate the final image URL
     validator_snapshot.image_url = resolve_validator_image(
         validator_snapshot.name,
         existing=validator_snapshot.image_url,
@@ -478,24 +483,6 @@ async def start_round(
                 },
             )
 
-    # Canonicalize validator snapshot fields using directory
-    try:
-        directory = get_validator_metadata(int(validator_identity.uid))  # type: ignore[arg-type]
-    except Exception:
-        directory = {}
-    if directory:
-        snapshot_name = directory.get("name")
-        snapshot_image = directory.get("image")
-        if snapshot_name:
-            validator_snapshot.name = snapshot_name
-        if snapshot_image:
-            validator_snapshot.image_url = snapshot_image
-
-    validator_snapshot.image_url = resolve_validator_image(
-        validator_snapshot.name,
-        existing=validator_snapshot.image_url,
-    )
-
     # Override payload boundaries to chain-derived values unless testing override is enabled
     if not testing_override and bounds is not None:
         validator_round.round_number = backend_round_number
@@ -506,19 +493,20 @@ async def start_round(
         validator_round.max_epochs = int(settings.ROUND_SIZE_EPOCHS)
         validator_round.max_blocks = settings.BLOCKS_PER_EPOCH
 
-    # Canonicalize validator snapshot fields (name, image) using our directory
+    # Use canonical directory as FALLBACK only (don't override validator-provided values)
     try:
         directory = get_validator_metadata(int(validator_identity.uid))  # type: ignore[arg-type]
     except Exception:
         directory = {}
     if directory:
-        snapshot_name = directory.get("name")
-        snapshot_image = directory.get("image")
-        if snapshot_name:
-            validator_snapshot.name = snapshot_name
-        if snapshot_image:
-            validator_snapshot.image_url = snapshot_image
+        # Only use directory name if validator didn't provide one
+        if not validator_snapshot.name:
+            validator_snapshot.name = directory.get("name")
+        # Only use directory image as fallback
+        if not validator_snapshot.image_url:
+            validator_snapshot.image_url = directory.get("image")
 
+    # Resolve/validate the final image URL
     validator_snapshot.image_url = resolve_validator_image(
         validator_snapshot.name,
         existing=validator_snapshot.image_url,
