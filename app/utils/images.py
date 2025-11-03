@@ -30,16 +30,13 @@ FALLBACK_MINER_IMAGES = tuple(f"/miners/{index}.svg" for index in range(50))
 DEFAULT_ALLOWED_IMAGE_HOSTS = {
     "infinitewebarena.autoppia.com",
     "dev-infinitewebarena.autoppia.com",
+    "autoppia-subnet.s3.eu-west-1.amazonaws.com",  # S3 bucket for validators/miners/gifs
+    "autoppia-subnet.s3.amazonaws.com",  # S3 default region URL
 }
 
 
 def _slugify(value: str) -> str:
-    return (
-        value.strip()
-        .lower()
-        .replace(" ", "-")
-        .replace("_", "-")
-    )
+    return value.strip().lower().replace(" ", "-").replace("_", "-")
 
 
 def _normalize_allowed_host(entry: Optional[str]) -> Optional[str]:
@@ -85,7 +82,9 @@ def _is_allowed_host(hostname: Optional[str]) -> bool:
 
 def _rewrite_github_blob(url: str) -> str:
     if url.startswith("https://github.com/") and "/blob/" in url:
-        return url.replace("https://github.com/", "https://raw.githubusercontent.com/").replace("/blob/", "/")
+        return url.replace(
+            "https://github.com/", "https://raw.githubusercontent.com/"
+        ).replace("/blob/", "/")
     return url
 
 
@@ -115,6 +114,18 @@ def _sanitize_url(candidate: Optional[str]) -> str:
             return ""
         if _is_allowed_host(parsed.hostname):
             path = parsed.path or "/"
+            # Block access to backups folder for security
+            if path.startswith("/backups/"):
+                return ""
+            # For S3 URLs, return the FULL URL (not relative path)
+            # This allows Next.js Image component to load from S3
+            hostname_lower = (parsed.hostname or "").lower()
+            if (
+                "s3.amazonaws.com" in hostname_lower
+                or "s3.eu-west-1.amazonaws.com" in hostname_lower
+            ):
+                return rewritten  # Return full S3 URL
+            # For other allowed hosts, convert to relative path
             query = f"?{parsed.query}" if parsed.query else ""
             return _normalize_relative_path(f"{path}{query}")
         return ""
@@ -122,7 +133,9 @@ def _sanitize_url(candidate: Optional[str]) -> str:
     return _normalize_relative_path(value)
 
 
-def _ensure_absolute_url(candidate: Optional[str], fallback: Optional[str] = None) -> str:
+def _ensure_absolute_url(
+    candidate: Optional[str], fallback: Optional[str] = None
+) -> str:
     primary = _sanitize_url(candidate)
     if primary:
         return primary
@@ -137,7 +150,9 @@ def normalize_asset_path(candidate: Optional[str]) -> str:
     return _sanitize_url(candidate)
 
 
-def resolve_agent_image(info: Optional[MinerInfo], existing: Optional[str] = None) -> str:
+def resolve_agent_image(
+    info: Optional[MinerInfo], existing: Optional[str] = None
+) -> str:
     """
     Determine the most appropriate image URL for a miner/agent.
 
@@ -164,7 +179,9 @@ def resolve_agent_image(info: Optional[MinerInfo], existing: Optional[str] = Non
                 continue
             slug = _slugify(candidate)
             if slug in SOTA_IMAGE_OVERRIDES:
-                return _ensure_absolute_url(SOTA_IMAGE_OVERRIDES[slug], fallback=existing_url)
+                return _ensure_absolute_url(
+                    SOTA_IMAGE_OVERRIDES[slug], fallback=existing_url
+                )
             if slug.startswith("sota/"):
                 return _ensure_absolute_url(f"/{slug}", fallback=existing_url)
 
@@ -185,31 +202,55 @@ def resolve_agent_image(info: Optional[MinerInfo], existing: Optional[str] = Non
 
 def sanitize_miner_image(candidate: Optional[str]) -> str:
     """
-    Enforce miner image allowed hosts. If not allowed, return the blocked asset URL.
+    Validate that miner image URL is from authorized S3 paths ONLY.
 
-    - Root-relative paths are accepted as-is (served by ASSET_BASE_URL).
-    - Absolute URLs must have a hostname in settings.MINER_IMAGE_ALLOWED_HOSTS.
-    - Otherwise returns ASSET_BASE_URL/BLOCKED_IMAGE_PATH.
+    ONLY allows ABSOLUTE S3 URLs:
+    - https://autoppia-subnet.s3.eu-west-1.amazonaws.com/images-miner/*
+    - https://autoppia-subnet.s3.amazonaws.com/images-miner/*
+
+    Blocks everything else:
+    - ❌ GitHub, imgur, other external URLs
+    - ❌ Other S3 folders (backups, gifs, images-validator, etc.)
+    - ❌ Relative paths (/miners/1.svg) - miners must use S3
+
+    Returns empty string if invalid (triggers fallback to generated image).
     """
-    blocked = _ensure_absolute_url(settings.BLOCKED_IMAGE_PATH or "/blocked.png")
     if not candidate or not isinstance(candidate, str):
         return ""
+
     value = candidate.strip()
     if not value:
         return ""
-    if value.startswith("//"):
-        value = f"https:{value}"
-    if value.startswith("/"):
-        return _ensure_absolute_url(value)
-    try:
-        parsed = urlparse(value)
-    except Exception:
-        return blocked
-    host = (parsed.hostname or "").lower()
-    allowed = {h.lower() for h in (settings.MINER_IMAGE_ALLOWED_HOSTS or [])}
-    if host and host in allowed:
-        return _ensure_absolute_url(value)
-    return blocked
+
+    # REJECT relative paths - miners MUST use S3
+    if not value.startswith("http"):
+        return ""
+
+    # ONLY allow HTTPS S3 URLs in images-miner folder
+    if value.startswith("https://"):
+        try:
+            parsed = urlparse(value)
+            hostname = (parsed.hostname or "").lower()
+            path = parsed.path or "/"
+
+            # MUST be our S3 bucket
+            if hostname not in (
+                "autoppia-subnet.s3.eu-west-1.amazonaws.com",
+                "autoppia-subnet.s3.amazonaws.com",
+            ):
+                return ""  # ❌ Reject external URLs
+
+            # MUST be in /images-miner/ folder
+            if not path.startswith("/images-miner/"):
+                return ""  # ❌ Reject other S3 folders
+
+            # ✅ Valid S3 miner image - return full URL
+            return value
+        except Exception:
+            return ""
+
+    # Reject anything else (http://, malformed, etc.)
+    return ""
 
 
 def _fallback_miner_image(info: Optional[MinerInfo], existing: Optional[str]) -> str:
@@ -238,23 +279,80 @@ def _fallback_miner_image(info: Optional[MinerInfo], existing: Optional[str]) ->
     return _ensure_absolute_url(FALLBACK_MINER_IMAGES[index])
 
 
+def _validate_validator_image_url(url: Optional[str]) -> Optional[str]:
+    """
+    Validate that validator image URL is from authorized S3 paths ONLY.
+
+    ONLY allows ABSOLUTE S3 URLs:
+    - https://autoppia-subnet.s3.eu-west-1.amazonaws.com/images-validator/*
+    - https://autoppia-subnet.s3.amazonaws.com/images-validator/*
+
+    Blocks everything else:
+    - ❌ GitHub, imgur, other external URLs
+    - ❌ Other S3 folders (backups, gifs, images-miner, etc.)
+    - ❌ Relative paths (/validators/Other.png) - validators must use S3
+    """
+    if not url:
+        return None
+
+    url_clean = url.strip()
+
+    # REJECT relative paths - validators MUST use S3
+    if not url_clean.startswith("http"):
+        return None
+
+    # ONLY allow HTTPS S3 URLs in images-validator folder
+    if url_clean.startswith("https://"):
+        try:
+            parsed = urlparse(url_clean)
+            hostname = (parsed.hostname or "").lower()
+            path = parsed.path or "/"
+
+            # MUST be our S3 bucket
+            if hostname not in (
+                "autoppia-subnet.s3.eu-west-1.amazonaws.com",
+                "autoppia-subnet.s3.amazonaws.com",
+            ):
+                return None  # ❌ Reject external URLs
+
+            # MUST be in /images-validator/ folder
+            if not path.startswith("/images-validator/"):
+                return None  # ❌ Reject other S3 folders
+
+            # ✅ Valid S3 validator image
+            return url_clean
+        except Exception:
+            return None
+
+    # Reject anything else (http://, malformed, etc.)
+    return None
+
+
 def resolve_validator_image(name: Optional[str], existing: Optional[str] = None) -> str:
     """
     Determine the best image for a validator card.
 
-    We preserve explicit assets when available and otherwise fall back to
-    bundled validator logos keyed by name.
+    Priority:
+    1. Use existing URL from validator_snapshot.image_url (ONLY if from S3 images-validator/)
+    2. Use name-based override if configured
+    3. Use default placeholder
     """
 
-    existing_url = _ensure_absolute_url(existing)
+    # Validate and sanitize the existing URL
+    validated_existing = _validate_validator_image_url(existing)
     default_url = _ensure_absolute_url(DEFAULT_VALIDATOR_IMAGE)
 
+    # PRIORITY 1: Always prefer explicit image_url from validator (if valid)
+    if validated_existing:
+        return validated_existing
+
+    # PRIORITY 2: Use name-based override if no explicit image
     if name:
         slug = _slugify(name)
         if slug in VALIDATOR_IMAGE_OVERRIDES:
-            return _ensure_absolute_url(VALIDATOR_IMAGE_OVERRIDES[slug], fallback=existing_url or default_url)
+            return _ensure_absolute_url(
+                VALIDATOR_IMAGE_OVERRIDES[slug], fallback=default_url
+            )
 
-    if existing_url:
-        return existing_url
-
+    # PRIORITY 3: Default placeholder
     return default_url
