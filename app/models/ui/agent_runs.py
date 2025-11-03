@@ -187,6 +187,7 @@ class PerformanceByWebsite(BaseModel):
     failed: int
     averageScore: float
     averageDuration: float
+    useCases: List["PerformanceByUseCase"] = Field(default_factory=list)
 
 
 class PerformanceByUseCase(BaseModel):
