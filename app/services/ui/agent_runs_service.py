@@ -677,24 +677,6 @@ class AgentRunsService:
                 )
             )
 
-        performance_by_use_case = [
-            PerformanceByUseCase(
-                useCase=use_case,
-                tasks=int(values["tasks"]),
-                successful=int(values["successful"]),
-                failed=int(max(values["tasks"] - values["successful"], 0)),
-                averageScore=(
-                    (values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0
-                ),
-                averageDuration=(
-                    (values["duration_sum"] / values["tasks"])
-                    if values["tasks"]
-                    else 0.0
-                ),
-            )
-            for use_case, values in use_case_stats_map.items()
-        ]
-
         excellent = len(
             [er for er in context.evaluation_results if er.final_score >= 0.9]
         )
@@ -724,7 +706,6 @@ class AgentRunsService:
             successRate=(success_count / total_tasks * 100) if total_tasks else 0.0,
             scoreDistribution=score_distribution,
             performanceByWebsite=performance_by_website,
-            performanceByUseCase=performance_by_use_case,
         )
 
     def _build_summary(self, context: AgentRunContext) -> Summary:

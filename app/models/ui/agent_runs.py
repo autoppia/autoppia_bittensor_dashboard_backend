@@ -214,7 +214,6 @@ class Statistics(BaseModel):
     successRate: float
     scoreDistribution: ScoreDistribution
     performanceByWebsite: List[PerformanceByWebsite]
-    performanceByUseCase: List[PerformanceByUseCase]
 
 
 class TopPerformingWebsite(BaseModel):
