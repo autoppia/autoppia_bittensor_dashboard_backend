@@ -424,6 +424,34 @@ class RoundsService:
 
         return rounds
 
+    async def list_round_ids(
+        self,
+        limit: int = 500,
+        status: Optional[str] = None,
+        sort_order: str = "desc",
+    ) -> List[int]:
+        """
+        Get lightweight list of round numbers only (no nested data).
+        Super fast - use this for dropdowns and lists.
+        Returns up to 500 round IDs.
+        """
+        stmt = select(RoundORM.round_number).distinct()
+
+        if status:
+            stmt = stmt.where(RoundORM.status == status)
+
+        if sort_order.lower() == "desc":
+            stmt = stmt.order_by(RoundORM.round_number.desc())
+        else:
+            stmt = stmt.order_by(RoundORM.round_number.asc())
+
+        if limit > 0:
+            stmt = stmt.limit(limit)
+
+        result = await self.session.execute(stmt)
+        round_numbers = [row[0] for row in result.all() if row[0] is not None]
+        return round_numbers
+
     async def get_round_basic(
         self, round_identifier: Union[str, int]
     ) -> Dict[str, Any]:
