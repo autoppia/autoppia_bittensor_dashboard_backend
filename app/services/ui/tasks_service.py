@@ -188,6 +188,7 @@ class TasksService:
         sort_by: str = "startTime",
         sort_order: str = "desc",
         include_facets: bool = False,
+        include_details: bool = True,
     ) -> Dict[str, object]:
         stmt = (
             select(TaskORM)
@@ -246,7 +247,12 @@ class TasksService:
                 if use_case_name != use_case:
                     continue
 
-            ui_task = self._build_ui_task(context)
+            # Use summary version (without actions/screenshots/logs) for fast searches
+            if include_details:
+                ui_task = self._build_ui_task(context)
+            else:
+                ui_task = self._build_ui_task_summary(context)
+
             evaluation_score = (
                 context.evaluation.final_score if context.evaluation else 0.0
             )
@@ -335,12 +341,14 @@ class TasksService:
         self,
         page: int,
         limit: int,
+        include_details: bool = False,
         **filters: Any,
     ) -> Dict[str, object]:
         return await self.list_tasks(
             page=page,
             limit=limit,
             include_facets=True,
+            include_details=include_details,
             **filters,
         )
 
@@ -1349,6 +1357,83 @@ class TasksService:
             createdAt=_parse_iso(start_time),
             updatedAt=_parse_iso(end_time),
             actions=actions,
+            screenshots=[],
+            logs=[],
+            metadata=None,
+            validatorName=validator_name,
+            validatorImage=validator_image,
+            minerName=miner_name,
+            minerImage=miner_image,
+        )
+
+    def _build_ui_task_summary(self, context: TaskContext) -> UITask:
+        """
+        Lightweight version of _build_ui_task for search/list views.
+        Omits actions, screenshots, logs to improve performance ~50-100x.
+        """
+        evaluation = context.evaluation
+        score = evaluation.final_score if evaluation else 0.0
+        status = TaskStatus.COMPLETED if score >= 0.5 else TaskStatus.FAILED
+        success_rate = int(score * 100)
+
+        start_time = context.agent_run.started_at or context.round.started_at
+        end_time = context.agent_run.ended_at or start_time
+
+        # Extract seed from URL if present
+        seed_val: Optional[str] = None
+        try:
+            parsed = urlparse(context.task.url or "")
+            if parsed and parsed.query:
+                q = parse_qs(parsed.query)
+                if isinstance(q.get("seed"), list):
+                    seed_val = q.get("seed")[0]
+                elif q.get("seed"):
+                    seed_val = str(q.get("seed"))
+        except Exception:
+            seed_val = None
+
+        # Get validator info
+        validator_name = None
+        validator_image = None
+        if context.round.validators:
+            validator_model = next(
+                (
+                    v
+                    for v in context.round.validators
+                    if v.uid == context.agent_run.validator_uid
+                ),
+                context.round.validators[0] if context.round.validators else None,
+            )
+            if validator_model:
+                validator_name = validator_model.name
+                validator_image = resolve_validator_image(
+                    name=validator_model.name,
+                    existing=getattr(validator_model, "image_url", None),
+                )
+
+        # Get miner info
+        miner_name = None
+        miner_image = None
+        if context.agent_run.miner_info:
+            miner_name = context.agent_run.miner_info.agent_name
+            miner_image = resolve_agent_image(context.agent_run.miner_info)
+
+        return UITask(
+            taskId=context.task.task_id,
+            agentRunId=context.agent_run.agent_run_id,
+            website=context.task.url,
+            seed=seed_val,
+            useCase=self._extract_use_case(context.task) or "unknown",
+            prompt=context.task.prompt,
+            status=status,
+            score=score,
+            successRate=success_rate,
+            duration=_safe_int(getattr(evaluation, "evaluation_time", 0.0)),
+            startTime=_parse_iso(start_time),
+            endTime=_parse_iso(end_time),
+            createdAt=_parse_iso(start_time),
+            updatedAt=_parse_iso(end_time),
+            actions=[],  # Omit for performance
             screenshots=[],
             logs=[],
             metadata=None,
