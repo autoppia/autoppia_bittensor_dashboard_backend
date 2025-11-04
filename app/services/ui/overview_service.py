@@ -128,7 +128,7 @@ class OverviewService:
 
     async def overview_metrics(self) -> OverviewMetrics:
         records_with_contexts = await self._recent_round_records(
-            limit=50, include_details=True
+            limit=50, include_details=False
         )
         if not records_with_contexts:
             now_iso = datetime.now(timezone.utc).isoformat()

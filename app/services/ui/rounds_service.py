@@ -424,6 +424,50 @@ class RoundsService:
 
         return rounds
 
+    async def get_round_basic(
+        self, round_identifier: Union[str, int]
+    ) -> Dict[str, Any]:
+        """
+        Get basic round info without nested agent runs, tasks, solutions, or evaluations.
+        Returns only essential fields for round page header and status display.
+        """
+        aggregated = await self._fetch_aggregated_round(round_identifier)
+
+        current = await self.get_current_round_overview()
+        latest_round_number = current["round"] if current else aggregated.round_number
+        records = [entry.record for entry in aggregated.validator_rounds]
+        overview = self._build_round_day_overview_from_records(
+            aggregated.round_number,
+            records,
+            latest_round_number,
+        )
+
+        # Only include basic validator round info without nested agent runs
+        basic_validator_rounds: List[Dict[str, Any]] = []
+        for entry in aggregated.validator_rounds:
+            summary = self._summarize_validator_round(entry.record)
+            # Only include status, no nested agentEvaluationRuns
+            basic_validator_rounds.append(
+                {
+                    "validatorRoundId": summary.get("validatorRoundId"),
+                    "validatorUid": summary.get("validatorUid"),
+                    "validatorName": summary.get("validatorName"),
+                    "validatorHotkey": summary.get("validatorHotkey"),
+                    "status": summary.get("status"),
+                    "startTime": summary.get("startTime"),
+                    "endTime": summary.get("endTime"),
+                    "totalTasks": summary.get("totalTasks"),
+                    "completedTasks": summary.get("completedTasks"),
+                }
+            )
+
+        overview["validatorRounds"] = basic_validator_rounds
+        overview["id"] = aggregated.round_number
+        overview["round"] = aggregated.round_number
+        overview["roundNumber"] = aggregated.round_number
+
+        return overview
+
     async def get_round(self, round_identifier: Union[str, int]) -> Dict[str, Any]:
         aggregated = await self._fetch_aggregated_round(round_identifier)
 
