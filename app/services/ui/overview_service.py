@@ -29,6 +29,7 @@ from app.models.ui.overview import (
 from app.services.ui.rounds_service import AgentRunContext, RoundRecord, RoundsService
 from app.services.chain_state import get_current_block_estimate
 from app.services.round_calc import compute_boundaries_for_round, compute_round_number
+from app.services.cache import CACHE_TTL, api_cache
 from app.config import settings
 from app.utils.images import resolve_validator_image
 
@@ -127,6 +128,12 @@ class OverviewService:
         self.rounds_service = RoundsService(session)
 
     async def overview_metrics(self) -> OverviewMetrics:
+        # Try to get from cache first (30 second TTL)
+        cache_key = "overview:metrics:aggregate"
+        cached = api_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         records_with_contexts = await self._recent_round_records(
             limit=50, include_details=False
         )
@@ -350,7 +357,7 @@ class OverviewService:
         if display_metrics_round_number < 0:
             display_metrics_round_number = 0
 
-        return OverviewMetrics(
+        metrics = OverviewMetrics(
             topScore=round(top_score, 3),
             topMinerUid=top_miner_uid,
             topMinerName=top_miner_name,
@@ -362,6 +369,10 @@ class OverviewService:
             subnetVersion=subnet_version,
             lastUpdated=datetime.now(timezone.utc).isoformat(),
         )
+
+        # Cache metrics for 30 seconds
+        api_cache.set(cache_key, metrics, ttl=30)
+        return metrics
 
     async def validators_list(
         self,
@@ -1174,8 +1185,16 @@ class OverviewService:
         return self._normalize_task_meta(prompt, url, relevant_data, use_case)
 
     async def _aggregate_validators(self) -> Dict[str, Dict[str, Any]]:
+        # Try to get from cache first (30 second TTL)
+        cache_key = "overview:validators:aggregate"
+        cached = api_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # Optimized: Only fetch recent rounds needed to determine current validator state
+        # Reduced from 200 to 20 rounds - validators info is in the most recent rounds anyway
         records_with_contexts = await self._recent_round_records(
-            limit=200, include_details=False
+            limit=20, include_details=False
         )
         aggregates: Dict[str, Dict[str, Any]] = {}
 
@@ -1476,6 +1495,8 @@ class OverviewService:
                 "validatorUid": validator_uid,
             }
 
+        # Cache the aggregated validators for 30 seconds
+        api_cache.set(cache_key, aggregates, ttl=30)
         return aggregates
 
     def _round_to_info(self, round_obj: ValidatorRound, current: bool) -> RoundInfo:
