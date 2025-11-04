@@ -1474,42 +1474,9 @@ class RoundsService:
                         return self._build_round_day_overview_from_records(
                             number, records, number
                         )
-                    # Synthesize a minimal overview using chain boundaries
-                    if (
-                        compute_boundaries_for_round is not None
-                        and progress_for_block is not None
-                    ):
-                        bounds = compute_boundaries_for_round(number)  # type: ignore[arg-type]
-                        progress = float(progress_for_block(int(current_block), bounds))  # type: ignore[arg-type]
-                        if int(current_block) <= int(bounds.start_block):
-                            status = "pending"
-                        elif int(current_block) <= int(bounds.end_block):
-                            status = "active"
-                        else:
-                            status = "finished"
-                        return {
-                            "id": number,
-                            "round": number,
-                            "roundNumber": number,
-                            "roundKey": f"round_{number}",
-                            "startBlock": int(bounds.start_block),
-                            "endBlock": int(bounds.end_block),
-                            "current": status == "active",
-                            "startTime": _iso_timestamp(None),
-                            "endTime": None,
-                            "status": status,
-                            "totalTasks": 0,
-                            "completedTasks": 0,
-                            "averageScore": 0.0,
-                            "topScore": 0.0,
-                            "currentBlock": int(current_block),
-                            "blocksRemaining": max(
-                                int(bounds.end_block) - int(current_block), 0
-                            ),
-                            "progress": round(progress, 3),
-                            "validatorRounds": [],
-                            "validatorRoundCount": 0,
-                        }
+                    # Don't synthesize a minimal overview for rounds without data
+                    # Instead, fall through to DB fallback to return the most recent round with actual data
+                    # This prevents showing empty rounds that validators haven't started yet
 
         # Fallback: infer from DB rows
         records = await self._get_all_round_records()
