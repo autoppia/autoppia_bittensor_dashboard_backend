@@ -33,6 +33,32 @@ async def _service(session: AsyncSession) -> RoundsService:
     return RoundsService(session)
 
 
+@router.get("/ids")
+async def list_round_ids(
+    session: AsyncSession = Depends(get_session),
+    limit: int = Query(500, ge=1, le=1000),
+    status: Optional[str] = Query(None),
+    sortOrder: str = Query("desc"),
+):
+    """
+    Get lightweight list of round IDs only (no nested data).
+    Much faster than full /rounds endpoint - use this for dropdowns and lists.
+    """
+    service = await _service(session)
+    round_ids = await service.list_round_ids(
+        limit=limit,
+        status=status,
+        sort_order=sortOrder,
+    )
+    return {
+        "success": True,
+        "data": {
+            "roundIds": round_ids,
+            "total": len(round_ids),
+        },
+    }
+
+
 @router.get("/")
 async def list_rounds(
     session: AsyncSession = Depends(get_session),
