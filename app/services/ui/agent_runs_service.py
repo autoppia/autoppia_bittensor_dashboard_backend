@@ -1034,47 +1034,15 @@ class AgentRunsService:
         )
         score = evaluation.final_score if evaluation else 0.0
 
-        # Calculate duration as miner execution time (from first to last action)
+        # Use evaluation_time directly from the database
+        # This is the time the evaluator took to process the task
         duration = 0.0
-        if solution and solution.actions and len(solution.actions) > 0:
-            try:
-                # Parse timestamps from first and last actions
-                from datetime import datetime
+        if evaluation and evaluation.evaluation_time:
+            duration = float(evaluation.evaluation_time)
 
-                first_action = solution.actions[0]
-                last_action = solution.actions[-1]
-
-                # Get timestamp from action (could be in different formats)
-                first_ts_str = None
-                last_ts_str = None
-
-                if hasattr(first_action, "timestamp"):
-                    first_ts_str = first_action.timestamp
-                elif isinstance(first_action, dict):
-                    first_ts_str = first_action.get("timestamp")
-
-                if hasattr(last_action, "timestamp"):
-                    last_ts_str = last_action.timestamp
-                elif isinstance(last_action, dict):
-                    last_ts_str = last_action.get("timestamp")
-
-                if first_ts_str and last_ts_str:
-                    # Parse ISO timestamps
-                    first_dt = datetime.fromisoformat(
-                        str(first_ts_str).replace("Z", "+00:00")
-                    )
-                    last_dt = datetime.fromisoformat(
-                        str(last_ts_str).replace("Z", "+00:00")
-                    )
-                    duration = (last_dt - first_dt).total_seconds()
-                    # Ensure duration is at least 0
-                    duration = max(0.0, duration)
-            except Exception:
-                # Fallback to evaluation time if calculation fails
-                duration = evaluation.evaluation_time if evaluation else 0.0
-        elif evaluation:
-            # Fallback to evaluation time if no solution actions
-            duration = evaluation.evaluation_time
+        logger.debug(
+            f"📊 Task {task.task_id}: duration={duration}s (from evaluation_time)"
+        )
 
         actions = []
         if solution and solution.actions:
