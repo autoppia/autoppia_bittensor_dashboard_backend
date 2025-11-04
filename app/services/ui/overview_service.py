@@ -447,8 +447,14 @@ class OverviewService:
                 actual_current_round_number > 0
                 and round_num == actual_current_round_number
             ):
-                # Verify it's not finished
-                if round_obj.status != "finished":
+                # Verify it's not finished AND has actual data
+                # A round is only "current" if it has started processing (has validator_rounds)
+                has_data = (
+                    round_obj.start_block is not None
+                    and round_obj.start_block > 0
+                    and len(round_obj.validators or []) > 0
+                )
+                if round_obj.status != "finished" and has_data:
                     return self._round_to_info(round_obj, current=True)
 
         # Fallback: if no active round found, return the most recent one marked as NOT current
