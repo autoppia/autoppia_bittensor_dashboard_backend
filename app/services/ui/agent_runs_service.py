@@ -1015,7 +1015,7 @@ class AgentRunsService:
             evaluation = evaluation_by_task.get(task.task_id)
             solution = solution_by_task.get(task.task_id)
             task_map[task.task_id] = self._build_ui_task(
-                task, solution, evaluation, context.run
+                task, solution, evaluation, context.run, context.round
             )
 
         return evaluation_by_task, solution_by_task, task_map
@@ -1026,6 +1026,7 @@ class AgentRunsService:
         solution: Optional[TaskSolution],
         evaluation: Optional[EvaluationResult],
         run,
+        round_obj: ValidatorRound,
     ) -> UITask:
         status = (
             TaskStatus.COMPLETED
@@ -1124,6 +1125,7 @@ class AgentRunsService:
 
         return UITask(
             taskId=task.task_id,
+            roundNumber=round_obj.round_number or _round_id_to_int(round_obj.validator_round_id),
             website=website,
             useCase=use_case,
             prompt=task.prompt,

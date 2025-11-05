@@ -1424,7 +1424,7 @@ class TasksService:
         return UITask(
             taskId=context.task.task_id,
             agentRunId=context.agent_run.agent_run_id,
-            roundNumber=context.round.round_number,
+            roundNumber=context.round.round_number or _round_id_to_int(context.round.validator_round_id),
             website=context.task.url,
             seed=seed_val,
             useCase=self._extract_use_case(context.task) or "unknown",
@@ -1502,6 +1502,7 @@ class TasksService:
         return UITask(
             taskId=context.task.task_id,
             agentRunId=context.agent_run.agent_run_id,
+            roundNumber=context.round.round_number or _round_id_to_int(context.round.validator_round_id),
             website=context.task.url,
             seed=seed_val,
             useCase=self._extract_use_case(context.task) or "unknown",
