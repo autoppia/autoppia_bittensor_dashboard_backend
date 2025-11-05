@@ -1175,6 +1175,7 @@ async def test_overview_endpoints(client):
     assert len(leaderboard["data"]["leaderboard"]) >= 1
     assert "timeRange" in leaderboard["data"]
 
+    # Test with "7D" (legacy format - still supported)
     leaderboard_7d_response = await client.get(
         "/api/v1/overview/leaderboard", params={"timeRange": "7D"}
     )
@@ -1182,6 +1183,15 @@ async def test_overview_endpoints(client):
     leaderboard_7d = leaderboard_7d_response.json()
     assert leaderboard_7d["success"] is True
     assert len(leaderboard_7d["data"]["leaderboard"]) <= 7
+
+    # Test with "7R" (new rounds format)
+    leaderboard_7r_response = await client.get(
+        "/api/v1/overview/leaderboard", params={"timeRange": "7R"}
+    )
+    assert leaderboard_7r_response.status_code == 200
+    leaderboard_7r = leaderboard_7r_response.json()
+    assert leaderboard_7r["success"] is True
+    assert len(leaderboard_7r["data"]["leaderboard"]) <= 7
 
     leaderboard_all_response = await client.get(
         "/api/v1/overview/leaderboard", params={"timeRange": "all"}
