@@ -33,6 +33,32 @@ async def _service(session: AsyncSession) -> RoundsService:
     return RoundsService(session)
 
 
+@router.get("/ids")
+async def list_round_ids(
+    session: AsyncSession = Depends(get_session),
+    limit: int = Query(500, ge=1, le=1000),
+    status: Optional[str] = Query(None),
+    sortOrder: str = Query("desc"),
+):
+    """
+    Get lightweight list of round IDs only (no nested data).
+    Much faster than full /rounds endpoint - use this for dropdowns and lists.
+    """
+    service = await _service(session)
+    round_ids = await service.list_round_ids(
+        limit=limit,
+        status=status,
+        sort_order=sortOrder,
+    )
+    return {
+        "success": True,
+        "data": {
+            "roundIds": round_ids,
+            "total": len(round_ids),
+        },
+    }
+
+
 @router.get("/")
 async def list_rounds(
     session: AsyncSession = Depends(get_session),
@@ -58,7 +84,9 @@ async def list_rounds(
         # Filter to started rounds only (based on chain state)
         current_block = get_current_block_estimate()
         if current_block is not None:
-            entries = [e for e in entries if int(e.get("startBlock", 0) or 0) < current_block]
+            entries = [
+                e for e in entries if int(e.get("startBlock", 0) or 0) < current_block
+            ]
         sliced = entries[offset:]
         return sliced
 
@@ -72,7 +100,9 @@ async def list_rounds(
     # Filter to started rounds only (based on chain state)
     current_block = get_current_block_estimate()
     if current_block is not None:
-        entries = [e for e in entries if int(e.get("startBlock", 0) or 0) < current_block]
+        entries = [
+            e for e in entries if int(e.get("startBlock", 0) or 0) < current_block
+        ]
         total = len(entries)
     current = await service.get_current_round_overview()
     payload = {
@@ -88,6 +118,7 @@ async def list_rounds(
         "data": payload,
     }
 
+
 router.add_api_route(
     "",
     list_rounds,
@@ -97,12 +128,34 @@ router.add_api_route(
 
 
 @router.get("/current", response_model=RoundDetailResponse)
-async def get_current_round(session: AsyncSession = Depends(get_session)) -> RoundDetailResponse:
+async def get_current_round(
+    session: AsyncSession = Depends(get_session),
+) -> RoundDetailResponse:
     service = await _service(session)
     current = await service.get_current_round_overview()
     if current is None:
         raise HTTPException(status_code=404, detail="No rounds available")
     return RoundDetailResponse(success=True, data={"round": current})
+
+
+@router.get("/{round_id}/basic")
+async def get_round_basic(
+    round_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """
+    Get basic round info without nested agent runs, tasks, solutions, or evaluations.
+    Use this for round page header and status display.
+    """
+    service = await _service(session)
+    try:
+        basic_data = await service.get_round_basic(round_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "success": True,
+        "data": {"round": basic_data},
+    }
 
 
 @router.get("/{round_id}")
@@ -204,7 +257,9 @@ async def get_round_validators(
     return RoundValidatorsResponse(success=True, data=data)
 
 
-@router.get("/{round_id}/validators/{validator_id}", response_model=RoundValidatorsResponse)
+@router.get(
+    "/{round_id}/validators/{validator_id}", response_model=RoundValidatorsResponse
+)
 async def get_round_validator(
     round_id: str,
     validator_id: str,
@@ -319,7 +374,9 @@ async def list_round_agent_runs(
             round_id,
             exc,
         )
-        raise HTTPException(status_code=500, detail="Failed to fetch agent runs") from exc
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch agent runs"
+        ) from exc
 
 
 @router.get(
@@ -337,4 +394,6 @@ async def get_agent_run(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to fetch agent run %s: %s", agent_run_id, exc)
-        raise HTTPException(status_code=500, detail="Failed to fetch agent run") from exc
+        raise HTTPException(
+            status_code=500, detail="Failed to fetch agent run"
+        ) from exc

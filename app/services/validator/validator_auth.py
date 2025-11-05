@@ -39,7 +39,8 @@ class ValidatorAuthService:
         self._stakes_cache: Dict[str, float] = {}
         self._cache_expiry = 0.0
         self._log_signature_payloads = bool(
-            str(getattr(settings, "LOG_VALIDATOR_SIGNATURES", "")).lower() not in {"", "0", "false", "none"}
+            str(getattr(settings, "LOG_VALIDATOR_SIGNATURES", "")).lower()
+            not in {"", "0", "false", "none"}
         )
 
     @staticmethod
@@ -56,7 +57,9 @@ class ValidatorAuthService:
         try:
             return base64.b64decode(signature_b64, validate=True)
         except Exception as exc:  # pragma: no cover - defensive
-            raise InvalidSignatureError("Signature must be a valid base64-encoded string") from exc
+            raise InvalidSignatureError(
+                "Signature must be a valid base64-encoded string"
+            ) from exc
 
     def _load_metagraph_stakes(self) -> Dict[str, float]:
         try:
@@ -107,7 +110,11 @@ class ValidatorAuthService:
             if index < len(stake_values):
                 candidate = stake_values[index]
                 try:
-                    raw_value = float(candidate.item()) if hasattr(candidate, "item") else float(candidate)
+                    raw_value = (
+                        float(candidate.item())
+                        if hasattr(candidate, "item")
+                        else float(candidate)
+                    )
                 except Exception:
                     logger.debug(
                         "Unable to coerce stake value for hotkey=%s candidate=%r",
@@ -150,13 +157,20 @@ class ValidatorAuthService:
         try:
             keypair = bt.Keypair(ss58_address=hotkey)  # type: ignore[attr-defined]
         except Exception as exc:
-            raise InvalidSignatureError(f"Invalid validator hotkey address: {exc}") from exc
+            raise InvalidSignatureError(
+                f"Invalid validator hotkey address: {exc}"
+            ) from exc
 
         try:
             is_valid = bool(keypair.verify(message_bytes, signature))
         except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("Validator signature verification failed unexpectedly for hotkey=%s", hotkey)
-            raise AuthUnavailableError(f"Signature verification unavailable: {exc}") from exc
+            logger.exception(
+                "Validator signature verification failed unexpectedly for hotkey=%s",
+                hotkey,
+            )
+            raise AuthUnavailableError(
+                f"Signature verification unavailable: {exc}"
+            ) from exc
 
         if not is_valid:
             logger.warning("Validator signature did not verify for hotkey=%s", hotkey)

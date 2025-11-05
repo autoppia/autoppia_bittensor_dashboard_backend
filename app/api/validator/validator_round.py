@@ -140,7 +140,7 @@ def _legacy_to_start_request(payload: LegacyStartRoundRequest) -> StartRoundRequ
         if normalized in {"in_progress", "in-progress"}:
             round_data["status"] = "active"
         elif normalized in {"finished", "complete", "completed"}:
-            round_data["status"] = "completed"
+            round_data["status"] = "finished"
         elif normalized == "pending":
             round_data["status"] = "pending"
 
@@ -165,10 +165,15 @@ def _legacy_to_start_request(payload: LegacyStartRoundRequest) -> StartRoundRequ
         image_url=primary_validator.get("image") or primary_validator.get("image_url"),
         version=primary_validator.get("version"),
     )
-    # Override validator snapshot fields from canonical directory
+    # Use canonical directory as FALLBACK only (don't override validator-provided values)
     metadata = get_validator_metadata(uid)
-    validator_snapshot.name = metadata.get("name") or validator_snapshot.name
-    validator_snapshot.image_url = metadata.get("image") or validator_snapshot.image_url
+    # Only use directory name if validator didn't provide one
+    if not validator_snapshot.name:
+        validator_snapshot.name = metadata.get("name")
+    # Only use directory image as fallback
+    if not validator_snapshot.image_url:
+        validator_snapshot.image_url = metadata.get("image")
+    # Resolve/validate the final image URL
     validator_snapshot.image_url = resolve_validator_image(
         validator_snapshot.name,
         existing=validator_snapshot.image_url,
@@ -368,7 +373,7 @@ class FinishRoundAgentRun(BaseModel):
 
 
 class FinishRoundRequest(BaseModel):
-    status: str = Field(default="completed", description="Final status for the round")
+    status: str = Field(default="finished", description="Final status for the round")
     winners: list[Dict[str, Any]] = Field(default_factory=list)
     winner_scores: list[float] = Field(default_factory=list)
     weights: Dict[str, float] = Field(default_factory=dict)
@@ -478,24 +483,6 @@ async def start_round(
                 },
             )
 
-    # Canonicalize validator snapshot fields using directory
-    try:
-        directory = get_validator_metadata(int(validator_identity.uid))  # type: ignore[arg-type]
-    except Exception:
-        directory = {}
-    if directory:
-        snapshot_name = directory.get("name")
-        snapshot_image = directory.get("image")
-        if snapshot_name:
-            validator_snapshot.name = snapshot_name
-        if snapshot_image:
-            validator_snapshot.image_url = snapshot_image
-
-    validator_snapshot.image_url = resolve_validator_image(
-        validator_snapshot.name,
-        existing=validator_snapshot.image_url,
-    )
-
     # Override payload boundaries to chain-derived values unless testing override is enabled
     if not testing_override and bounds is not None:
         validator_round.round_number = backend_round_number
@@ -506,19 +493,20 @@ async def start_round(
         validator_round.max_epochs = int(settings.ROUND_SIZE_EPOCHS)
         validator_round.max_blocks = settings.BLOCKS_PER_EPOCH
 
-    # Canonicalize validator snapshot fields (name, image) using our directory
+    # Use canonical directory as FALLBACK only (don't override validator-provided values)
     try:
         directory = get_validator_metadata(int(validator_identity.uid))  # type: ignore[arg-type]
     except Exception:
         directory = {}
     if directory:
-        snapshot_name = directory.get("name")
-        snapshot_image = directory.get("image")
-        if snapshot_name:
-            validator_snapshot.name = snapshot_name
-        if snapshot_image:
-            validator_snapshot.image_url = snapshot_image
+        # Only use directory name if validator didn't provide one
+        if not validator_snapshot.name:
+            validator_snapshot.name = directory.get("name")
+        # Only use directory image as fallback
+        if not validator_snapshot.image_url:
+            validator_snapshot.image_url = directory.get("image")
 
+    # Resolve/validate the final image URL
     validator_snapshot.image_url = resolve_validator_image(
         validator_snapshot.name,
         existing=validator_snapshot.image_url,
@@ -1253,9 +1241,49 @@ async def finish_round(
                     },
                 )
 
+        # Determine correct status based on current blockchain state and work done
+        final_status = "finished"  # Default
+        if current_block is not None and not testing_override:
+            bounds = compute_boundaries_for_round(stored_round_number)
+
+            if current_block >= bounds.end_block:
+                # Round officially ended
+                final_status = "finished"
+                logger.info(
+                    "Round officially finished: current_block=%s >= end_block=%s, status=%s",
+                    current_block,
+                    bounds.end_block,
+                    final_status,
+                )
+            else:
+                # Round window still active - check if validator did meaningful work
+                tasks_completed = (
+                    payload.summary.get("tasks_completed", 0) if payload.summary else 0
+                )
+
+                if tasks_completed > 0:
+                    # Validator finished tasks but round window is still open
+                    final_status = "evaluating_finished"
+                    logger.info(
+                        "Validator finished early: current_block=%s < end_block=%s, tasks=%s, status=%s",
+                        current_block,
+                        bounds.end_block,
+                        tasks_completed,
+                        final_status,
+                    )
+                else:
+                    # No tasks completed yet - keep as active
+                    final_status = "active"
+                    logger.info(
+                        "Round still active (no tasks completed): current_block=%s < end_block=%s, status=%s",
+                        current_block,
+                        bounds.end_block,
+                        final_status,
+                    )
+
         await service.finish_round(
             validator_round_id=validator_round_id,
-            status=payload.status,
+            status=final_status,
             winners=payload.winners,
             winner_scores=payload.winner_scores,
             weights=payload.weights,

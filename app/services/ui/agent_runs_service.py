@@ -63,6 +63,47 @@ def _extract_host(url: Optional[str]) -> str:
     return parsed.netloc or parsed.path or "unknown"
 
 
+def _map_website_port_to_name(url: Optional[str]) -> str:
+    """
+    Map localhost:PORT URLs to friendly website names.
+    Returns the friendly name if found, otherwise returns the host as-is.
+    """
+    if not url:
+        return "unknown"
+
+    # Port to name mapping (aligned with overview_service.py and frontend)
+    PORT_TO_NAME = {
+        "8000": "AutoCinema",
+        "8001": "AutoBooks",
+        "8002": "Autozone",
+        "8003": "AutoDining",
+        "8004": "AutoCRM",
+        "8005": "AutoMail",
+        "8006": "AutoDelivery",
+        "8007": "AutoLodge",
+        "8008": "AutoConnect",
+        "8009": "AutoWork",
+        "8010": "AutoCalendar",
+        "8011": "AutoList",
+        "8012": "AutoDrive",
+        "8013": "AutoHealth",
+        "8014": "AutoFinance",
+    }
+
+    try:
+        # Extract port from URL
+        parsed = urlparse(url if url.startswith("http") else f"http://{url}")
+        port = str(parsed.port) if parsed.port else None
+
+        if port and port in PORT_TO_NAME:
+            return PORT_TO_NAME[port]
+    except Exception:
+        pass
+
+    # Fallback to extracting host
+    return _extract_host(url)
+
+
 def _safe_int(value: Optional[float]) -> int:
     if value is None:
         return 0
@@ -509,7 +550,12 @@ class AgentRunsService:
     def _summarize_ui_tasks(
         self,
         ui_tasks: List[UITask],
-    ) -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict[str, float]], float]:
+    ) -> Tuple[
+        Dict[str, Dict[str, float]],
+        Dict[str, Dict[str, float]],
+        Dict[str, Dict[str, Dict[str, float]]],
+        float,
+    ]:
         website_stats: Dict[str, Dict[str, float]] = defaultdict(
             lambda: {
                 "tasks": 0.0,
@@ -526,6 +572,17 @@ class AgentRunsService:
                 "duration_sum": 0.0,
             }
         )
+        # New: website + use_case combined stats
+        website_usecase_stats: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(
+            lambda: defaultdict(
+                lambda: {
+                    "tasks": 0.0,
+                    "successful": 0.0,
+                    "score_sum": 0.0,
+                    "duration_sum": 0.0,
+                }
+            )
+        )
         total_duration = 0.0
 
         for task in ui_tasks:
@@ -535,7 +592,7 @@ class AgentRunsService:
 
             total_duration += duration
 
-            host = _extract_host(task.website)
+            host = _map_website_port_to_name(task.website)
             host_stats = website_stats[host]
             host_stats["tasks"] += 1
             host_stats["score_sum"] += score
@@ -551,7 +608,15 @@ class AgentRunsService:
             if success:
                 use_case_entry["successful"] += 1
 
-        return website_stats, use_case_stats, total_duration
+            # Track stats for (website, use_case) combination
+            website_uc_entry = website_usecase_stats[host][use_case]
+            website_uc_entry["tasks"] += 1
+            website_uc_entry["score_sum"] += score
+            website_uc_entry["duration_sum"] += duration
+            if success:
+                website_uc_entry["successful"] += 1
+
+        return website_stats, use_case_stats, website_usecase_stats, total_duration
 
     def _build_statistics(self, context: AgentRunContext) -> Statistics:
         websites, ui_tasks, success_count = self._build_websites_and_tasks(context)
@@ -561,45 +626,56 @@ class AgentRunsService:
             self._compute_average_score(context.evaluation_results) * 100
         )
 
-        website_stats_map, use_case_stats_map, total_duration = (
+        website_stats_map, use_case_stats_map, website_usecase_stats, total_duration = (
             self._summarize_ui_tasks(ui_tasks)
         )
 
-        performance_by_website = [
-            PerformanceByWebsite(
-                website=website_key,
-                tasks=int(values["tasks"]),
-                successful=int(values["successful"]),
-                failed=int(max(values["tasks"] - values["successful"], 0)),
-                averageScore=(
-                    (values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0
-                ),
-                averageDuration=(
-                    (values["duration_sum"] / values["tasks"])
-                    if values["tasks"]
-                    else 0.0
-                ),
-            )
-            for website_key, values in website_stats_map.items()
-        ]
+        performance_by_website = []
+        for website_key, values in website_stats_map.items():
+            # Build use cases specific to this website
+            use_cases_for_website = []
+            if website_key in website_usecase_stats:
+                for uc_name, uc_values in website_usecase_stats[website_key].items():
+                    use_cases_for_website.append(
+                        PerformanceByUseCase(
+                            useCase=uc_name,
+                            tasks=int(uc_values["tasks"]),
+                            successful=int(uc_values["successful"]),
+                            failed=int(
+                                max(uc_values["tasks"] - uc_values["successful"], 0)
+                            ),
+                            averageScore=(
+                                (uc_values["score_sum"] / uc_values["tasks"])
+                                if uc_values["tasks"]
+                                else 0.0
+                            ),
+                            averageDuration=(
+                                (uc_values["duration_sum"] / uc_values["tasks"])
+                                if uc_values["tasks"]
+                                else 0.0
+                            ),
+                        )
+                    )
 
-        performance_by_use_case = [
-            PerformanceByUseCase(
-                useCase=use_case,
-                tasks=int(values["tasks"]),
-                successful=int(values["successful"]),
-                failed=int(max(values["tasks"] - values["successful"], 0)),
-                averageScore=(
-                    (values["score_sum"] / values["tasks"]) if values["tasks"] else 0.0
-                ),
-                averageDuration=(
-                    (values["duration_sum"] / values["tasks"])
-                    if values["tasks"]
-                    else 0.0
-                ),
+            performance_by_website.append(
+                PerformanceByWebsite(
+                    website=website_key,
+                    tasks=int(values["tasks"]),
+                    successful=int(values["successful"]),
+                    failed=int(max(values["tasks"] - values["successful"], 0)),
+                    averageScore=(
+                        (values["score_sum"] / values["tasks"])
+                        if values["tasks"]
+                        else 0.0
+                    ),
+                    averageDuration=(
+                        (values["duration_sum"] / values["tasks"])
+                        if values["tasks"]
+                        else 0.0
+                    ),
+                    useCases=use_cases_for_website,
+                )
             )
-            for use_case, values in use_case_stats_map.items()
-        ]
 
         excellent = len(
             [er for er in context.evaluation_results if er.final_score >= 0.9]
@@ -630,7 +706,6 @@ class AgentRunsService:
             successRate=(success_count / total_tasks * 100) if total_tasks else 0.0,
             scoreDistribution=score_distribution,
             performanceByWebsite=performance_by_website,
-            performanceByUseCase=performance_by_use_case,
         )
 
     def _build_summary(self, context: AgentRunContext) -> Summary:
@@ -644,7 +719,7 @@ class AgentRunsService:
             self._resolve_agent_identity(context)
         )
 
-        website_stats_map, use_case_stats_map, _ = self._summarize_ui_tasks(ui_tasks)
+        website_stats_map, use_case_stats_map, _, _ = self._summarize_ui_tasks(ui_tasks)
 
         top_website_name = "unknown"
         top_website_score = 0.0
@@ -827,7 +902,7 @@ class AgentRunsService:
                         website = task.relevant_data.get("website")
                     if not website:
                         website = getattr(task, "url", None)
-                    hosts.add(_extract_host(website))
+                    hosts.add(_map_website_port_to_name(website))
                 websites_count = len(hosts)
         except Exception:  # noqa: BLE001
             websites_count = 0
@@ -898,7 +973,7 @@ class AgentRunsService:
                 continue
             evaluation = evaluation_map.get(task_id)
             success = evaluation is not None and evaluation.final_score >= 0.5
-            host = _extract_host(ui_task.website)
+            host = _map_website_port_to_name(ui_task.website)
 
             host_stats_entry = host_stats[host]
             host_stats_entry["tasks"] += 1
@@ -958,7 +1033,16 @@ class AgentRunsService:
             else TaskStatus.FAILED
         )
         score = evaluation.final_score if evaluation else 0.0
-        duration = evaluation.evaluation_time if evaluation else 0.0
+
+        # Use evaluation_time directly from the database
+        # This is the time the evaluator took to process the task
+        duration = 0.0
+        if evaluation and evaluation.evaluation_time:
+            duration = float(evaluation.evaluation_time)
+
+        logger.debug(
+            f"📊 Task {task.task_id}: duration={duration}s (from evaluation_time)"
+        )
 
         actions = []
         if solution and solution.actions:
@@ -981,7 +1065,7 @@ class AgentRunsService:
                     type_key = str(raw_type)
                 if type_key in {"type", "type_text", "sendkeysiwa"}:
                     type_key = "input"
-                
+
                 # Extract selector and value, ensuring they are strings
                 selector_raw = (
                     getattr(action, "attributes", {}).get("selector")
@@ -993,7 +1077,7 @@ class AgentRunsService:
                     if hasattr(action, "attributes")
                     else action.get("attributes", {}).get("value")
                 )
-                
+
                 # Convert to strings if they're dicts or other non-string types
                 selector_str = None
                 if selector_raw is not None:
@@ -1003,7 +1087,7 @@ class AgentRunsService:
                         selector_str = json.dumps(selector_raw)
                     else:
                         selector_str = str(selector_raw)
-                
+
                 value_str = None
                 if value_raw is not None:
                     if isinstance(value_raw, str):
@@ -1012,7 +1096,7 @@ class AgentRunsService:
                         value_str = json.dumps(value_raw)
                     else:
                         value_str = str(value_raw)
-                
+
                 actions.append(
                     Action(
                         id=f"{task.task_id}_action_{index}",
@@ -1033,6 +1117,9 @@ class AgentRunsService:
         if not website:
             website = task.url
 
+        # Normalize website to friendly name
+        website = _map_website_port_to_name(website)
+
         use_case = _extract_use_case(task)
 
         return UITask(
@@ -1042,7 +1129,7 @@ class AgentRunsService:
             prompt=task.prompt,
             status=status,
             score=score,
-            duration=_safe_int(duration),
+            duration=round(duration, 2),  # Keep as float with 2 decimal places
             startTime=_ts_to_iso(run.started_at) or "",
             endTime=_ts_to_iso(run.ended_at),
             actions=actions,

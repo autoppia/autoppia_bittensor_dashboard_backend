@@ -77,7 +77,16 @@ async def search_tasks(
     endDate: Optional[datetime] = Query(None),
     sortBy: str = Query("startTime"),
     sortOrder: str = Query("desc"),
+    includeDetails: bool = Query(
+        False, description="Include actions, screenshots, logs (SLOW)"
+    ),
 ):
+    """
+    Search tasks with optional detailed data.
+
+    Set includeDetails=false for fast searches (dropdowns, lists).
+    Set includeDetails=true for full task details (task detail pages).
+    """
     service = await _service(session)
     data = await service.search_tasks(
         page=page,
@@ -95,6 +104,7 @@ async def search_tasks(
         end_date=endDate,
         sort_by=sortBy,
         sort_order=sortOrder,
+        include_details=includeDetails,
     )
     return {"success": True, "data": data}
 
@@ -133,7 +143,9 @@ async def get_task_personas(task_id: str, session: AsyncSession = Depends(get_se
 
 
 @router.get("/{task_id}/statistics")
-async def get_task_statistics(task_id: str, session: AsyncSession = Depends(get_session)):
+async def get_task_statistics(
+    task_id: str, session: AsyncSession = Depends(get_session)
+):
     service = await _service(session)
     try:
         context = await service.get_task(task_id)
@@ -157,6 +169,15 @@ async def get_task_actions(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     actions = service.build_actions(context)
     total = len(actions)
+
+    # Count total successful and failed actions (not just paginated)
+    success_count = sum(1 for action in actions if getattr(action, "success", False))
+    fail_count = sum(
+        1
+        for action in actions
+        if getattr(action, "error", False) or not getattr(action, "success", False)
+    )
+
     start = (page - 1) * limit
     end = start + limit
     paginated = actions[start:end]
@@ -165,6 +186,8 @@ async def get_task_actions(
         "data": {
             "actions": [action.model_dump() for action in paginated],
             "total": total,
+            "successCount": success_count,
+            "failCount": fail_count,
             "page": page,
             "limit": limit,
         },
@@ -172,7 +195,9 @@ async def get_task_actions(
 
 
 @router.get("/{task_id}/screenshots")
-async def get_task_screenshots(task_id: str, session: AsyncSession = Depends(get_session)):
+async def get_task_screenshots(
+    task_id: str, session: AsyncSession = Depends(get_session)
+):
     service = await _service(session)
     try:
         context = await service.get_task(task_id)
@@ -215,7 +240,10 @@ async def get_task_timeline(task_id: str, session: AsyncSession = Depends(get_se
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     timeline = service.build_timeline(context)
-    return {"success": True, "data": {"timeline": [item.model_dump() for item in timeline]}}
+    return {
+        "success": True,
+        "data": {"timeline": [item.model_dump() for item in timeline]},
+    }
 
 
 @router.get("/{task_id}/metrics")
