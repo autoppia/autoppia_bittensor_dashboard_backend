@@ -206,7 +206,9 @@ def sanitize_miner_image(candidate: Optional[str]) -> str:
 
     ONLY allows ABSOLUTE S3 URLs:
     - https://autoppia-subnet.s3.eu-west-1.amazonaws.com/images-miner/*
+    - https://autoppia-subnet.s3.eu-west-1.amazonaws.com/images-miners/*
     - https://autoppia-subnet.s3.amazonaws.com/images-miner/*
+    - https://autoppia-subnet.s3.amazonaws.com/images-miners/*
 
     Blocks everything else:
     - ❌ GitHub, imgur, other external URLs
@@ -240,8 +242,11 @@ def sanitize_miner_image(candidate: Optional[str]) -> str:
             ):
                 return ""  # ❌ Reject external URLs
 
-            # MUST be in /images-miner/ folder
-            if not path.startswith("/images-miner/"):
+            # MUST be in /images-miner/ or /images-miners/ folder
+            # Accept both singular and plural for backwards compatibility
+            if not (
+                path.startswith("/images-miner/") or path.startswith("/images-miners/")
+            ):
                 return ""  # ❌ Reject other S3 folders
 
             # ✅ Valid S3 miner image - return full URL
@@ -291,7 +296,9 @@ def _validate_validator_image_url(url: Optional[str]) -> Optional[str]:
 
     ONLY allows ABSOLUTE S3 URLs:
     - https://autoppia-subnet.s3.eu-west-1.amazonaws.com/images-validator/*
+    - https://autoppia-subnet.s3.eu-west-1.amazonaws.com/images-validators/*
     - https://autoppia-subnet.s3.amazonaws.com/images-validator/*
+    - https://autoppia-subnet.s3.amazonaws.com/images-validators/*
 
     Blocks everything else:
     - ❌ GitHub, imgur, other external URLs
@@ -332,8 +339,12 @@ def _validate_validator_image_url(url: Optional[str]) -> Optional[str]:
                 )
                 return None  # ❌ Reject external URLs
 
-            # MUST be in /images-validator/ folder
-            if not path.startswith("/images-validator/"):
+            # MUST be in /images-validator/ or /images-validators/ folder
+            # Accept both singular and plural for backwards compatibility
+            if not (
+                path.startswith("/images-validator/")
+                or path.startswith("/images-validators/")
+            ):
                 logger.debug(
                     f"[_validate_validator_image_url] Rejecting non-validator path: {path}"
                 )
