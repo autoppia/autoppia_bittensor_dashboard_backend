@@ -129,6 +129,7 @@ class Task(BaseModel):
 
     taskId: str = Field(..., description="Unique task identifier")
     agentRunId: str = Field(..., description="Associated agent run ID")
+    roundNumber: Optional[int] = Field(None, description="Round number this task belongs to")
     website: str = Field(..., description="Target website")
     seed: Optional[str] = Field(
         None, description="Seed parameter extracted from website URL"
