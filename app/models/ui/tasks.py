@@ -2,7 +2,7 @@
 Task models for AutoPPIA Bittensor Dashboard
 """
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
@@ -44,7 +44,10 @@ class TaskAction(BaseModel):
 
     id: str = Field(..., description="Unique action identifier")
     type: ActionType = Field(..., description="Type of action")
-    selector: Optional[str] = Field(None, description="CSS selector for the element")
+    # Accept legacy string selectors and new structured selector objects
+    selector: Optional[Union[str, Dict[str, Any]]] = Field(
+        None, description="CSS selector (string) or structured selector object"
+    )
     value: Optional[str] = Field(None, description="Value to input or navigate to")
     timestamp: datetime = Field(..., description="When the action was performed")
     duration: float = Field(..., description="Duration of the action in seconds")
@@ -128,7 +131,9 @@ class Task(BaseModel):
     agentRunId: str = Field(..., description="Associated agent run ID")
     roundNumber: Optional[int] = Field(None, description="Round number this task belongs to")
     website: str = Field(..., description="Target website")
-    seed: Optional[str] = Field(None, description="Seed parameter extracted from website URL")
+    seed: Optional[str] = Field(
+        None, description="Seed parameter extracted from website URL"
+    )
     useCase: str = Field(..., description="Use case or scenario")
     prompt: str = Field(..., description="Task prompt or description")
     status: TaskStatus = Field(..., description="Current task status")
@@ -147,6 +152,10 @@ class Task(BaseModel):
     )
     logs: Optional[List[str]] = Field(None, description="List of log messages")
     metadata: Optional[TaskMetadata] = Field(None, description="Task metadata")
+    validatorName: Optional[str] = Field(None, description="Validator name for display")
+    validatorImage: Optional[str] = Field(None, description="Validator image URL")
+    minerName: Optional[str] = Field(None, description="Miner/agent name for display")
+    minerImage: Optional[str] = Field(None, description="Miner/agent image URL")
 
 
 class TaskRoundSummary(BaseModel):
@@ -171,6 +180,7 @@ class TaskValidatorSummary(BaseModel):
     stake: float = Field(..., description="Validator stake at evaluation time")
     vtrust: float = Field(..., description="Validator vtrust score")
     version: Optional[str] = Field(None, description="Validator software version")
+    image: Optional[str] = Field(None, description="Avatar or logo for the validator")
 
 
 class TaskMinerSummary(BaseModel):

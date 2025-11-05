@@ -55,6 +55,7 @@ class ValidatorInfo(BaseModel):
     vtrust: float = 0.0
     name: Optional[str] = None
     version: Optional[str] = None
+    image_url: Optional[str] = None
 
 
 class MinerInfo(BaseModel):
@@ -227,7 +228,7 @@ class ValidatorRound(BaseModel):
     n_winners: int = Field(..., description="Number of winners selected")
 
     # Summary metrics
-    status: Literal["active", "completed", "pending", "evaluating_finished"] = Field(
+    status: Literal["active", "finished", "pending", "evaluating_finished"] = Field(
         default="active", description="Lifecycle status for the validator round"
     )
     average_score: Optional[float] = Field(

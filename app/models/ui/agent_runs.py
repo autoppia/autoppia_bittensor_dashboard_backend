@@ -68,7 +68,8 @@ class Action(BaseModel):
 
     id: str
     type: str
-    selector: Optional[str] = None
+    # Accept legacy string selectors and new structured selector objects
+    selector: Optional[Union[str, Dict[str, Any]]] = None
     value: Optional[str] = None
     timestamp: str
     duration: float
@@ -84,7 +85,7 @@ class Task(BaseModel):
     prompt: str
     status: TaskStatus
     score: float
-    duration: int
+    duration: float
     startTime: str
     endTime: Optional[str] = None
     actions: List[Action] = Field(default_factory=list)
@@ -186,6 +187,7 @@ class PerformanceByWebsite(BaseModel):
     failed: int
     averageScore: float
     averageDuration: float
+    useCases: List["PerformanceByUseCase"] = Field(default_factory=list)
 
 
 class PerformanceByUseCase(BaseModel):
@@ -212,7 +214,6 @@ class Statistics(BaseModel):
     successRate: float
     scoreDistribution: ScoreDistribution
     performanceByWebsite: List[PerformanceByWebsite]
-    performanceByUseCase: List[PerformanceByUseCase]
 
 
 class TopPerformingWebsite(BaseModel):
