@@ -538,10 +538,14 @@ class OverviewService:
         limit: Optional[int] = None,
     ) -> Tuple[List[LeaderboardEntry], Dict[str, str]]:
         normalized_range = (time_range or "").strip().lower()
+        # Support both "D" (legacy) and "R" (rounds) - both mean "last N rounds"
         range_limits = {
             "7d": 7,
             "15d": 15,
             "30d": 30,
+            "7r": 7,
+            "15r": 15,
+            "30r": 30,
         }
 
         derived_limit: Optional[int] = None
@@ -551,11 +555,11 @@ class OverviewService:
             unlimited = True
         elif normalized_range in range_limits:
             derived_limit = range_limits[normalized_range]
-        elif normalized_range.endswith("d"):
+        elif normalized_range.endswith("d") or normalized_range.endswith("r"):
             try:
-                parsed_days = int(normalized_range[:-1])
-                if parsed_days > 0:
-                    derived_limit = parsed_days
+                parsed_rounds = int(normalized_range[:-1])
+                if parsed_rounds > 0:
+                    derived_limit = parsed_rounds
             except ValueError:
                 derived_limit = None
 
