@@ -200,6 +200,14 @@ class Settings(BaseSettings):
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
 
+    # UI caching toggles
+    ENABLE_FINAL_ROUND_CACHE: bool = _str_to_bool(
+        os.getenv("ENABLE_FINAL_ROUND_CACHE", "true")
+    )
+    ENABLE_CURRENT_ROUND_CACHE: bool = _str_to_bool(
+        os.getenv("ENABLE_CURRENT_ROUND_CACHE", "true")
+    )
+
     # Subnet price fallback (alpha → τ). Used when on-chain query fails.
     SUBNET_PRICE_FALLBACK: float = float(_env_var("SUBNET_PRICE_FALLBACK", "0.004178"))
 
