@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.services.ui.tasks_service import TasksService
+from app.services.redis_cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,7 @@ async def search_tasks(
 
 
 @router.get("/{task_id}")
+@cache("task", ttl=300)  # Cache 5 minutes
 async def get_task(task_id: str, session: AsyncSession = Depends(get_session)):
     service = await _service(session)
     try:
@@ -121,6 +123,7 @@ async def get_task(task_id: str, session: AsyncSession = Depends(get_session)):
 
 
 @router.get("/{task_id}/details")
+@cache("task_details", ttl=300)  # Cache 5 minutes
 async def get_task_details(task_id: str, session: AsyncSession = Depends(get_session)):
     service = await _service(session)
     try:
@@ -143,6 +146,7 @@ async def get_task_personas(task_id: str, session: AsyncSession = Depends(get_se
 
 
 @router.get("/{task_id}/statistics")
+@cache("task_statistics", ttl=180)  # Cache 3 minutes
 async def get_task_statistics(
     task_id: str, session: AsyncSession = Depends(get_session)
 ):

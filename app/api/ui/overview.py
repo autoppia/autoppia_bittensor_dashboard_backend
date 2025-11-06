@@ -22,6 +22,7 @@ from app.models.ui.overview import (
     ValidatorsFilterResponse,
 )
 from app.services.ui.overview_service import OverviewService
+from app.services.redis_cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +34,19 @@ async def _service(session: AsyncSession) -> OverviewService:
 
 
 @router.get("", response_model=OverviewMetricsResponse)
-async def get_overview(session: AsyncSession = Depends(get_session)) -> OverviewMetricsResponse:
+@cache("overview", ttl=60)  # Cache 1 minute
+async def get_overview(
+    session: AsyncSession = Depends(get_session),
+) -> OverviewMetricsResponse:
     service = await _service(session)
     metrics = await service.overview_metrics()
     return OverviewMetricsResponse(success=True, data={"metrics": metrics})
 
 
 @router.get("/metrics", response_model=OverviewMetricsResponse)
-async def get_overview_metrics(session: AsyncSession = Depends(get_session)) -> OverviewMetricsResponse:
+async def get_overview_metrics(
+    session: AsyncSession = Depends(get_session),
+) -> OverviewMetricsResponse:
     service = await _service(session)
     metrics = await service.overview_metrics()
     return OverviewMetricsResponse(success=True, data={"metrics": metrics})
@@ -75,14 +81,18 @@ async def get_validators(
 
 
 @router.get("/validators/filter", response_model=ValidatorsFilterResponse)
-async def get_validators_filter(session: AsyncSession = Depends(get_session)) -> ValidatorsFilterResponse:
+async def get_validators_filter(
+    session: AsyncSession = Depends(get_session),
+) -> ValidatorsFilterResponse:
     service = await _service(session)
     items = await service.validators_filter()
     return ValidatorsFilterResponse(success=True, data={"validators": items})
 
 
 @router.get("/validators/{validator_id}", response_model=ValidatorDetailResponse)
-async def get_validator_detail(validator_id: str, session: AsyncSession = Depends(get_session)) -> ValidatorDetailResponse:
+async def get_validator_detail(
+    validator_id: str, session: AsyncSession = Depends(get_session)
+) -> ValidatorDetailResponse:
     service = await _service(session)
     try:
         validator = await service.validator_detail(validator_id)
@@ -92,7 +102,9 @@ async def get_validator_detail(validator_id: str, session: AsyncSession = Depend
 
 
 @router.get("/rounds/current", response_model=CurrentRoundResponse)
-async def get_current_round(session: AsyncSession = Depends(get_session)) -> CurrentRoundResponse:
+async def get_current_round(
+    session: AsyncSession = Depends(get_session),
+) -> CurrentRoundResponse:
     service = await _service(session)
     round_info = await service.current_round()
     if round_info is None:
@@ -108,7 +120,9 @@ async def list_rounds(
     status: Optional[str] = Query(None),
 ) -> RoundsListResponse:
     service = await _service(session)
-    rounds, current, total = await service.rounds_list(page=page, limit=limit, status=status)
+    rounds, current, total = await service.rounds_list(
+        page=page, limit=limit, status=status
+    )
     return RoundsListResponse(
         success=True,
         data={
@@ -133,6 +147,7 @@ async def get_round_detail(
 
 
 @router.get("/leaderboard", response_model=LeaderboardResponse)
+@cache("leaderboard", ttl=300)  # Cache 5 minutes
 async def get_leaderboard(
     session: AsyncSession = Depends(get_session),
     time_range: Optional[str] = Query(None, alias="timeRange"),
@@ -151,14 +166,19 @@ async def get_leaderboard(
 
 
 @router.get("/statistics", response_model=StatisticsResponse)
-async def get_statistics(session: AsyncSession = Depends(get_session)) -> StatisticsResponse:
+@cache("statistics", ttl=180)  # Cache 3 minutes
+async def get_statistics(
+    session: AsyncSession = Depends(get_session),
+) -> StatisticsResponse:
     service = await _service(session)
     stats = await service.statistics()
     return StatisticsResponse(success=True, data={"statistics": stats})
 
 
 @router.get("/network-status", response_model=NetworkStatusResponse)
-async def get_network_status(session: AsyncSession = Depends(get_session)) -> NetworkStatusResponse:
+async def get_network_status(
+    session: AsyncSession = Depends(get_session),
+) -> NetworkStatusResponse:
     service = await _service(session)
     status = await service.network_status()
     return NetworkStatusResponse(success=True, data=status)

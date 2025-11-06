@@ -218,3 +218,4 @@ async def get_cache_info() -> dict:
             "static_data_ttl": 300,
         },
     }
+

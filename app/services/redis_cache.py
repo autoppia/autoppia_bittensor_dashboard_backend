@@ -421,3 +421,20 @@ def cached_redis(
             return sync_wrapper
 
     return decorator
+
+
+# Simple alias for easier use
+def cache(prefix: str, ttl: int = 300):
+    """
+    Simple cache decorator using Redis.
+
+    Args:
+        prefix: Cache key prefix
+        ttl: Time to live in seconds (default: 5 minutes)
+
+    Example:
+        @cache("rounds_list", ttl=180)
+        async def get_rounds():
+            return await db.query(...)
+    """
+    return cached_redis(prefix, ttl=ttl, is_final=False)

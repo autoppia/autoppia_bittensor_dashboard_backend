@@ -23,6 +23,7 @@ from app.models.ui.rounds import (
 )
 from app.services.ui.rounds_service import RoundsService
 from app.services.chain_state import get_current_block_estimate
+from app.services.redis_cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ async def list_round_ids(
 
 
 @router.get("/")
+@cache("rounds_list", ttl=180)  # Cache 3 minutes
 async def list_rounds(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),
@@ -128,6 +130,7 @@ router.add_api_route(
 
 
 @router.get("/current", response_model=RoundDetailResponse)
+@cache("current_round", ttl=60)  # Cache 1 minute
 async def get_current_round(
     session: AsyncSession = Depends(get_session),
 ) -> RoundDetailResponse:
@@ -139,6 +142,7 @@ async def get_current_round(
 
 
 @router.get("/{round_id}/basic")
+@cache("round_basic", ttl=300)  # Cache 5 minutes
 async def get_round_basic(
     round_id: str,
     session: AsyncSession = Depends(get_session),
@@ -159,6 +163,7 @@ async def get_round_basic(
 
 
 @router.get("/{round_id}")
+@cache("round_detail", ttl=300)  # Cache 5 minutes
 async def get_round(
     round_id: str,
     session: AsyncSession = Depends(get_session),
@@ -175,6 +180,7 @@ async def get_round(
 
 
 @router.get("/{round_id}/statistics", response_model=RoundStatisticsResponse)
+@cache("round_statistics", ttl=180)  # Cache 3 minutes
 async def get_round_statistics(
     round_id: str,
     session: AsyncSession = Depends(get_session),
