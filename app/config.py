@@ -179,6 +179,23 @@ class Settings(BaseSettings):
     # Idempotency Configuration (seconds to keep)
     IDEMPOTENCY_TTL: int = int(os.getenv("IDEMPOTENCY_TTL", "600"))
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # REDIS CONFIGURATION
+    # ═══════════════════════════════════════════════════════════════════════════
+    REDIS_ENABLED: bool = _str_to_bool(_env_var("REDIS_ENABLED", "true"))
+    REDIS_HOST: str = _env_var("REDIS_HOST", "localhost")
+    REDIS_PORT: int = int(_env_var("REDIS_PORT", "6379"))
+    REDIS_DB: int = int(_env_var("REDIS_DB", "0"))
+    REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD")
+    REDIS_SOCKET_TIMEOUT: int = int(os.getenv("REDIS_SOCKET_TIMEOUT", "2"))
+    REDIS_SOCKET_CONNECT_TIMEOUT: int = int(
+        os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "2")
+    )
+    # Default TTL for completed/immutable rounds and tasks (7 days)
+    REDIS_FINAL_DATA_TTL: int = int(
+        os.getenv("REDIS_FINAL_DATA_TTL", str(7 * 24 * 3600))
+    )
+
     # Server Configuration
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
