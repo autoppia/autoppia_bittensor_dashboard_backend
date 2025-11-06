@@ -47,7 +47,7 @@ from app.models.ui.agents import (
 )
 from app.services.ui.rounds_service import AgentRunContext, RoundsService
 from app.services.ui.agent_runs_service import AgentRunsService
-from app.utils.images import resolve_agent_image
+from app.utils.images import resolve_agent_image, sanitize_miner_image
 from app.services.subnet_utils import get_price_cached as get_subnet_price
 from app.utils.urls import build_taostats_miner_url
 
@@ -1736,8 +1736,45 @@ class AgentsService:
         return None
 
     @staticmethod
+    def _miner_image_priority(info: Optional[MinerInfo]) -> int:
+        """
+        Provide an ordering so we can favour true S3/override assets over
+        generated fallbacks. Higher number means higher priority.
+        """
+        if info is None:
+            return 0
+
+        value = (info.agent_image or "").strip()
+        if not value:
+            return 0
+
+        lowered = value.lower()
+
+        # Inline data URLs are better than generic placeholders.
+        if lowered.startswith("data:image/"):
+            return 3
+
+        # Prefer canonical S3 miner assets above everything else.
+        if sanitize_miner_image(value):
+            return 4
+
+        # Next prefer explicitly bundled SOTA assets.
+        if lowered.startswith("/sota/"):
+            return 3
+
+        # Generic /miners/*.svg fallbacks should lose to any richer asset.
+        if lowered.startswith("/miners/"):
+            return 1
+
+        # Root-relative or other valid URLs sit between fallback and rich assets.
+        if lowered.startswith("/"):
+            return 2
+
+        return 2
+
+    @classmethod
     def _is_more_complete_miner_info(
-        new_info: Optional[MinerInfo], old_info: Optional[MinerInfo]
+        cls, new_info: Optional[MinerInfo], old_info: Optional[MinerInfo]
     ) -> bool:
         """
         Check if new_info has more complete data than old_info.
@@ -1754,6 +1791,14 @@ class AgentsService:
 
         if not old_has_image and new_has_image:
             return True
+
+        # Prefer richer assets over generated fallbacks (e.g. S3 over /miners/N.svg)
+        old_priority = cls._miner_image_priority(old_info)
+        new_priority = cls._miner_image_priority(new_info)
+        if new_priority > old_priority:
+            return True
+        if new_priority < old_priority:
+            return False
 
         # If both have images or both don't have images, prefer the one with more fields populated
         if old_has_image == new_has_image:
