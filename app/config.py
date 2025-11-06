@@ -137,6 +137,7 @@ class Settings(BaseSettings):
     # Common typo alias to reduce friction
     ITTENSOR_NETWORK: Optional[str] = os.getenv("ITTENSOR_NETWORK")
     VALIDATOR_AUTH_CACHE_TTL: int = 180
+    API_CACHE_DISABLED: bool = _str_to_bool(_env_var("API_CACHE_DISABLED", "false"))
     AUTH_DISABLED: bool = _str_to_bool(_env_var("AUTH_DISABLED", "false"))
 
     # ---------- Logging configuration (all configurable via env) ----------
