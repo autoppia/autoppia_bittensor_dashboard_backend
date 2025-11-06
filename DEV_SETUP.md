@@ -21,9 +21,10 @@ Este script automáticamente:
 
 1. ✅ Crea el túnel SSH si no existe
 2. ✅ Verifica la conexión a la base de datos
-3. ✅ Activa el entorno virtual
-4. ✅ Verifica las dependencias
-5. ✅ Inicia la aplicación en `http://localhost:8000`
+3. ✅ Asegura que el contenedor Redis (`autoppia-redis`) esté corriendo
+4. ✅ Activa el entorno virtual
+5. ✅ Verifica las dependencias
+6. ✅ Inicia la aplicación en `http://localhost:8000`
 
 ### Detener el servidor
 
@@ -57,6 +58,15 @@ source venv/bin/activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+### (Opcional) Iniciar Redis en Docker
+
+Si necesitas iniciar el contenedor manualmente:
+
+```bash
+docker compose up -d redis
+# o docker-compose up -d redis
+```
+
 ## 📊 URLs Disponibles
 
 Una vez iniciado:
@@ -80,6 +90,19 @@ netstat -an | grep 5434
 ```bash
 curl http://localhost:8000/health
 # Debería retornar: {"status":"healthy",...}
+```
+
+### Verificar Redis en ejecución
+
+```bash
+docker ps --filter name=autoppia-redis --format "{{.Names}}"
+# Debería mostrar: autoppia-redis
+```
+
+### Probar la caché Redis desde Python
+
+```bash
+python test_redis_setup.py
 ```
 
 ## 🛠️ Solución de Problemas
@@ -123,6 +146,12 @@ POSTGRES_PORT_DEVELOPMENT=5434
 POSTGRES_USER_DEVELOPMENT=autoppia_user
 POSTGRES_PASSWORD_DEVELOPMENT=Autoppia2025.Leaderboard
 POSTGRES_DB_DEVELOPMENT=autoppia_dev
+
+# REDIS (Docker local)
+REDIS_ENABLED_DEVELOPMENT=true
+REDIS_HOST_DEVELOPMENT=127.0.0.1
+REDIS_PORT_DEVELOPMENT=6379
+REDIS_DB_DEVELOPMENT=0
 
 # SERVER
 HOST=0.0.0.0
