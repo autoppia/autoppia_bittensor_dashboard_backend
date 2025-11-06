@@ -11,6 +11,9 @@ pydantic-settings>=2.4.0
 SQLAlchemy>=2.0.30
 asyncpg>=0.29.0
 
+# Redis cache support
+redis>=5.0.0
+
 # Environment management
 python-dotenv>=1.0.0
 

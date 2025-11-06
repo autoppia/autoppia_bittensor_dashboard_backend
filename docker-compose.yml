@@ -1,0 +1,51 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: autoppia-redis
+    restart: unless-stopped
+
+    # Puerto Redis - solo localhost para seguridad
+    ports:
+      - "127.0.0.1:6379:6379"
+
+    # Persistencia de datos
+    volumes:
+      - ./data/redis:/data
+
+    # Configuración de Redis
+    command: >
+      redis-server
+      --appendonly yes
+      --save 60 1000
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+
+    # Limitar logs para no llenar disco
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+    # Recursos límite (opcional, ajustar según necesidad)
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+# Volumen para persistencia
+volumes:
+  redis_data:
+    driver: local
