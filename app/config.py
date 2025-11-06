@@ -137,7 +137,6 @@ class Settings(BaseSettings):
     # Common typo alias to reduce friction
     ITTENSOR_NETWORK: Optional[str] = os.getenv("ITTENSOR_NETWORK")
     VALIDATOR_AUTH_CACHE_TTL: int = 180
-    API_CACHE_DISABLED: bool = _str_to_bool(_env_var("API_CACHE_DISABLED", "false"))
     AUTH_DISABLED: bool = _str_to_bool(_env_var("AUTH_DISABLED", "false"))
 
     # ---------- Logging configuration (all configurable via env) ----------
@@ -199,14 +198,6 @@ class Settings(BaseSettings):
     # Server Configuration
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
-
-    # UI caching toggles
-    ENABLE_FINAL_ROUND_CACHE: bool = _str_to_bool(
-        os.getenv("ENABLE_FINAL_ROUND_CACHE", "true")
-    )
-    ENABLE_CURRENT_ROUND_CACHE: bool = _str_to_bool(
-        os.getenv("ENABLE_CURRENT_ROUND_CACHE", "true")
-    )
 
     # Subnet price fallback (alpha → τ). Used when on-chain query fails.
     SUBNET_PRICE_FALLBACK: float = float(_env_var("SUBNET_PRICE_FALLBACK", "0.004178"))
