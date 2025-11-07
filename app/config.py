@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
@@ -176,7 +176,7 @@ class Settings(BaseSettings):
     # Optional regex to allow subdomains (e.g., all *.autoppia.com)
     CORS_ALLOW_ORIGIN_REGEX: Optional[str] = os.getenv(
         "CORS_ALLOW_ORIGIN_REGEX",
-        r"^https://(?:devdeviwa|dev-infinitewebarena|infinitewebarena)\.autoppia\.com(?:/.*)?$",
+        None,
     )
 
     # Idempotency Configuration (seconds to keep)
@@ -190,7 +190,7 @@ class Settings(BaseSettings):
     REDIS_PORT: int = int(_env_var("REDIS_PORT", "6379"))
     REDIS_DB: int = int(_env_var("REDIS_DB", "0"))
     # Redis password - reads from REDIS_PASSWORD_{ENVIRONMENT}
-    redis_password_raw = _env_var("REDIS_PASSWORD", "")
+    redis_password_raw: ClassVar[str] = _env_var("REDIS_PASSWORD", "")
     REDIS_PASSWORD: Optional[str] = redis_password_raw if redis_password_raw else None
     REDIS_SOCKET_TIMEOUT: int = int(_env_var("REDIS_SOCKET_TIMEOUT", "2"))
     REDIS_SOCKET_CONNECT_TIMEOUT: int = int(
