@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   redis:
     image: redis:7-alpine
@@ -18,14 +16,15 @@ services:
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
 
-    # Configuración de Redis - lee la contraseña del .env según el entorno
+    # Configuración de Redis - solo usa requirepass si hay contraseña
     command: >
-      redis-server
-      --requirepass ${REDIS_PASSWORD:-}
-      --appendonly yes
-      --save 60 1000
-      --maxmemory 2gb
-      --maxmemory-policy allkeys-lru
+      sh -c "
+      if [ -n \"$$REDIS_PASSWORD\" ]; then
+        redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes --save 60 1000 --maxmemory 2gb --maxmemory-policy allkeys-lru
+      else
+        redis-server --appendonly yes --save 60 1000 --maxmemory 2gb --maxmemory-policy allkeys-lru
+      fi
+      "
 
     # Limitar logs para no llenar disco
     logging:
