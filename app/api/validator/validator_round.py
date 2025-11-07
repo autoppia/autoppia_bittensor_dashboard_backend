@@ -469,12 +469,13 @@ async def start_round(
                 "receivedRoundNumber": validator_round.round_number,
                 "currentBlock": current_block,
                 "backendDzStartingBlock": settings.DZ_STARTING_BLOCK,
-                "message": "Update your validator to use DZ_STARTING_BLOCK=" + str(settings.DZ_STARTING_BLOCK),
+                "message": "Update your validator to use DZ_STARTING_BLOCK="
+                + str(settings.DZ_STARTING_BLOCK),
             },
         )
 
     bounds = compute_boundaries_for_round(backend_round_number)
-    
+
     # Allow testing override ONLY for window timing, not round number validation
     testing_override = settings.TESTING and bool(force)
     if testing_override:
@@ -789,9 +790,9 @@ async def start_agent_run(
                         "backendDzStartingBlock": settings.DZ_STARTING_BLOCK,
                     },
                 )
-            
+
             bounds = compute_boundaries_for_round(backend_round_number)
-            
+
             # Allow testing override ONLY for window timing, not round number validation
             testing_override = settings.TESTING and bool(force)
             if testing_override:
