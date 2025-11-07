@@ -186,14 +186,16 @@ class Settings(BaseSettings):
     REDIS_HOST: str = _env_var("REDIS_HOST", "localhost")
     REDIS_PORT: int = int(_env_var("REDIS_PORT", "6379"))
     REDIS_DB: int = int(_env_var("REDIS_DB", "0"))
-    REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD")
-    REDIS_SOCKET_TIMEOUT: int = int(os.getenv("REDIS_SOCKET_TIMEOUT", "2"))
+    # Redis password - reads from REDIS_PASSWORD_{ENVIRONMENT}
+    redis_password_raw = _env_var("REDIS_PASSWORD", "")
+    REDIS_PASSWORD: Optional[str] = redis_password_raw if redis_password_raw else None
+    REDIS_SOCKET_TIMEOUT: int = int(_env_var("REDIS_SOCKET_TIMEOUT", "2"))
     REDIS_SOCKET_CONNECT_TIMEOUT: int = int(
-        os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "2")
+        _env_var("REDIS_SOCKET_CONNECT_TIMEOUT", "2")
     )
     # Default TTL for completed/immutable rounds and tasks (7 days)
     REDIS_FINAL_DATA_TTL: int = int(
-        os.getenv("REDIS_FINAL_DATA_TTL", str(7 * 24 * 3600))
+        _env_var("REDIS_FINAL_DATA_TTL", str(7 * 24 * 3600))
     )
 
     # Server Configuration
