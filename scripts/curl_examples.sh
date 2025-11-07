@@ -76,16 +76,16 @@ curl -s "$API_URL?key=$API_KEY&website=autocinema&success=true&limit=1"
 echo ""
 echo ""
 
-# 7. Test sin API key (debe fallar)
-echo "7️⃣ Sin API key (debe devolver 401)"
+# 7. Test sin API key (debe fallar con 422 - FastAPI valida parámetros antes)
+echo "7️⃣ Sin API key (debe devolver 422 - parámetro requerido faltante)"
 echo "----------------------------------"
 RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" "$API_URL?website=autocinema&limit=1")
 HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE" | cut -d: -f2)
-if [ "$HTTP_CODE" = "401" ]; then
-    echo "✅ OK - Devuelve 401 como esperado"
+if [ "$HTTP_CODE" = "422" ]; then
+    echo "✅ OK - Devuelve 422 como esperado (parámetro 'key' requerido faltante)"
     echo "Respuesta: $(echo "$RESPONSE" | grep -v "HTTP_CODE")"
 else
-    echo "❌ Error: Esperaba 401, recibió $HTTP_CODE"
+    echo "❌ Error: Esperaba 422, recibió $HTTP_CODE"
     echo "Respuesta: $RESPONSE"
 fi
 echo ""
