@@ -82,8 +82,14 @@ else
             exit 1
         fi
 
-        ${COMPOSE_CMD} -f "${COMPOSE_FILE}" up -d redis
-        echo -e "${GREEN}✓${NC} Redis iniciado con '${COMPOSE_CMD} up -d redis'"
+        # Usar el script helper para Redis que lee la contraseña según el entorno
+        if [ -f "./scripts/redis_compose.sh" ]; then
+            ./scripts/redis_compose.sh up -d redis
+            echo -e "${GREEN}✓${NC} Redis iniciado con contraseña según entorno (${ENVIRONMENT:-local})"
+        else
+            ${COMPOSE_CMD} -f "${COMPOSE_FILE}" up -d redis
+            echo -e "${GREEN}✓${NC} Redis iniciado con '${COMPOSE_CMD} up -d redis'"
+        fi
         sleep 2
     fi
 fi
