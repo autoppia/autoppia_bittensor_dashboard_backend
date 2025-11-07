@@ -443,45 +443,56 @@ async def start_round(
             detail="Validator header hotkey does not match payload hotkey",
         )
 
-    # Enforce chain-derived round constraints unless testing override is enabled
+    # ALWAYS enforce chain-derived round constraints (no bypass allowed)
+    # This ensures ALL validators use the same DZ_STARTING_BLOCK and round calculation
+    current_block = get_current_block()
+    if current_block is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chain state unavailable",
+        )
+
+    backend_round_number = compute_round_number(current_block)
+    if validator_round.round_number != backend_round_number:
+        logger.error(
+            "Round number mismatch: validator sent round %s but backend expects round %s (block=%s, DZ_STARTING_BLOCK=%s)",
+            validator_round.round_number,
+            backend_round_number,
+            current_block,
+            settings.DZ_STARTING_BLOCK,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "round_number mismatch - validator must use same DZ_STARTING_BLOCK as backend",
+                "expectedRoundNumber": backend_round_number,
+                "receivedRoundNumber": validator_round.round_number,
+                "currentBlock": current_block,
+                "backendDzStartingBlock": settings.DZ_STARTING_BLOCK,
+                "message": "Update your validator to use DZ_STARTING_BLOCK=" + str(settings.DZ_STARTING_BLOCK),
+            },
+        )
+
+    bounds = compute_boundaries_for_round(backend_round_number)
+    
+    # Allow testing override ONLY for window timing, not round number validation
     testing_override = settings.TESTING and bool(force)
     if testing_override:
         logger.warning(
-            "TESTING override enabled: accepting start_round for validator_round_id=%s with round_number=%s without chain checks",
+            "TESTING override enabled: skipping window check for validator_round_id=%s with round_number=%s",
             validator_round.validator_round_id,
             validator_round.round_number,
         )
-        bounds = None  # do not override payload values when forced
-    else:
-        current_block = get_current_block()
-        if current_block is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Chain state unavailable",
-            )
-
-        backend_round_number = compute_round_number(current_block)
-        if validator_round.round_number != backend_round_number:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": "round_number mismatch",
-                    "expectedRoundNumber": backend_round_number,
-                    "got": validator_round.round_number,
-                },
-            )
-
-        bounds = compute_boundaries_for_round(backend_round_number)
-        if not is_inside_window(current_block, bounds):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "error": "round window not active",
-                    "currentBlock": current_block,
-                    "startBlock": bounds.start_block,
-                    "endBlock": bounds.end_block,
-                },
-            )
+    elif not is_inside_window(current_block, bounds):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "round window not active",
+                "currentBlock": current_block,
+                "startBlock": bounds.start_block,
+                "endBlock": bounds.end_block,
+            },
+        )
 
     # Override payload boundaries to chain-derived values unless testing override is enabled
     if not testing_override and bounds is not None:
@@ -752,42 +763,52 @@ async def start_agent_run(
             # Canonicalize miner image on non-legacy path as well
             _resolve_miner_snapshot_image(miner_snapshot)
 
-            # Enforce chain-derived round is current and inside window unless testing override is enabled
+            # ALWAYS enforce chain-derived round constraints (no bypass allowed)
+            current_block = get_current_block()
+            if current_block is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Chain state unavailable",
+                )
+            backend_round_number = compute_round_number(current_block)
+            stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
+            if stored_round_number != backend_round_number:
+                logger.error(
+                    "Round number mismatch in agent_run: stored round %s but backend expects round %s (block=%s)",
+                    stored_round_number,
+                    backend_round_number,
+                    current_block,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": "round_number mismatch - validator must use same DZ_STARTING_BLOCK as backend",
+                        "expectedRoundNumber": backend_round_number,
+                        "storedRoundNumber": stored_round_number,
+                        "currentBlock": current_block,
+                        "backendDzStartingBlock": settings.DZ_STARTING_BLOCK,
+                    },
+                )
+            
+            bounds = compute_boundaries_for_round(backend_round_number)
+            
+            # Allow testing override ONLY for window timing, not round number validation
             testing_override = settings.TESTING and bool(force)
             if testing_override:
                 logger.warning(
-                    "TESTING override enabled: accepting start_agent_run for validator_round_id=%s without chain checks",
+                    "TESTING override enabled: skipping window check for validator_round_id=%s",
                     validator_round_id,
                 )
-            else:
-                current_block = get_current_block()
-                if current_block is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail="Chain state unavailable",
-                    )
-                backend_round_number = compute_round_number(current_block)
-                stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
-                if stored_round_number != backend_round_number:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail={
-                            "error": "round_number mismatch",
-                            "expectedRoundNumber": backend_round_number,
-                            "got": stored_round_number,
-                        },
-                    )
-                bounds = compute_boundaries_for_round(backend_round_number)
-                if not is_inside_window(current_block, bounds):
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail={
-                            "error": "round window not active",
-                            "currentBlock": current_block,
-                            "startBlock": bounds.start_block,
-                            "endBlock": bounds.end_block,
-                        },
-                    )
+            elif not is_inside_window(current_block, bounds):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "round window not active",
+                        "currentBlock": current_block,
+                        "startBlock": bounds.start_block,
+                        "endBlock": bounds.end_block,
+                    },
+                )
             _require_round_match(
                 miner_snapshot.validator_round_id,
                 validator_round_id,
