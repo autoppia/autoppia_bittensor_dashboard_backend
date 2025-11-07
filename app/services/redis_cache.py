@@ -342,6 +342,9 @@ REDIS_CACHE_TTL = {
     "agents_list": 600,  # 10 minutes
     "leaderboard": 300,  # 5 minutes
     "overview": 300,  # 5 minutes
+    # Agent run scoped caches
+    "agent_run_statistics_final": settings.REDIS_FINAL_DATA_TTL,  # 7 days
+    "agent_run_summary_final": settings.REDIS_FINAL_DATA_TTL,  # 7 days
 }
 
 
