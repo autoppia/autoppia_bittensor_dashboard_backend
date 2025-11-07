@@ -590,6 +590,47 @@ class TasksService:
             performanceOverTime=performance_over_time,
         )
 
+    async def get_tasks_with_solutions(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        task_id: Optional[str] = None,
+        website: Optional[str] = None,
+        use_case: Optional[str] = None,
+        miner_uid: Optional[int] = None,
+        agent_id: Optional[str] = None,
+        validator_id: Optional[str] = None,
+        round_id: Optional[int] = None,
+        min_score: Optional[float] = None,
+        max_score: Optional[float] = None,
+        status: Optional[str] = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Dict[str, Any]:
+        """
+        Get tasks with their solutions, applying multiple filters.
+        Delegates to extension module for implementation.
+        """
+        from app.services.ui.tasks_service_extension import get_tasks_with_solutions
+        
+        return await get_tasks_with_solutions(
+            session=self.session,
+            page=page,
+            limit=limit,
+            task_id=task_id,
+            website=website,
+            use_case=use_case,
+            miner_uid=miner_uid,
+            agent_id=agent_id,
+            validator_id=validator_id,
+            round_id=round_id,
+            min_score=min_score,
+            max_score=max_score,
+            status=status,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+
     async def compare_tasks(self, task_ids: List[str]) -> CompareTasksResponse:
         contexts: List[TaskContext] = []
         for task_id in task_ids:
