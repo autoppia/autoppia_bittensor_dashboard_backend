@@ -110,6 +110,104 @@ async def search_tasks(
     return {"success": True, "data": data}
 
 
+@router.get("/with-solutions")
+async def get_tasks_with_solutions(
+    session: AsyncSession = Depends(get_session),
+    key: str = Query(..., description="API key required"),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=500, description="Items per page"),
+    taskId: Optional[str] = Query(None, description="Filter by task ID"),
+    website: Optional[str] = Query(
+        None, description="Filter by website (e.g., 'autocinema', 'autobooks')"
+    ),
+    useCase: Optional[str] = Query(
+        None, description="Filter by use case (e.g., 'FILM DETAIL')"
+    ),
+    minerUid: Optional[int] = Query(None, description="Filter by miner UID"),
+    validatorId: Optional[str] = Query(None, description="Filter by validator ID"),
+    roundId: Optional[int] = Query(None, description="Filter by round number"),
+    success: Optional[bool] = Query(
+        None, description="Filter by result: true (score=1), false (score=0)"
+    ),
+    sort: str = Query(
+        "created_at_desc",
+        description="Sort: created_at_desc, created_at_asc, score_desc, score_asc",
+    ),
+):
+    """
+    Get tasks with solutions for RL training.
+
+    Response structure:
+        task:
+            - taskId, website, useCase, intent
+            - startUrl, requiredUrl (with seed parameter)
+            - createdAt
+        solution:
+            - taskSolutionId
+            - actions (array of actions taken)
+            - trajectory (array of state transitions)
+        evaluation:
+            - evaluationResultId
+            - score (0-100)
+            - passed (true/false)
+        agentRun:
+            - agentRunId, minerUid, minerHotkey
+            - validatorUid, validatorHotkey
+
+    Filters:
+        taskId: Specific task ID
+        website: Project (autocinema, autobooks)
+        useCase: Use case (FILM DETAIL, SEARCH BOOK)
+        minerUid: Miner UID
+        validatorId: Validator hotkey
+        roundId: Round number
+        success: true (passed), false (failed), null (all)
+        sort: created_at_desc, created_at_asc, score_desc, score_asc
+
+    Examples:
+        ?key=AIagent2025&website=autocinema&success=true&limit=500
+        ?key=AIagent2025&minerUid=42
+        ?key=AIagent2025&useCase=FILM%20DETAIL&success=false
+    """
+    # Validate API key
+    if key != "AIagent2025":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key"
+        )
+
+    # Parse sort
+    sort_mapping = {
+        "created_at_desc": ("created_at", "desc"),
+        "created_at_asc": ("created_at", "asc"),
+        "score_desc": ("score", "desc"),
+        "score_asc": ("score", "asc"),
+    }
+    sort_by, sort_order = sort_mapping.get(sort, ("created_at", "desc"))
+
+    # Convert success to status
+    status_filter = None
+    if success is True:
+        status_filter = "completed"  # score = 1
+    elif success is False:
+        status_filter = "failed"  # score = 0
+
+    service = await _service(session)
+    data = await service.get_tasks_with_solutions(
+        page=page,
+        limit=limit,
+        task_id=taskId,
+        website=website,
+        use_case=useCase,
+        miner_uid=minerUid,
+        validator_id=validatorId,
+        round_id=roundId,
+        status=status_filter,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return {"success": True, "data": data}
+
+
 @router.get("/{task_id}")
 @cache("task", ttl=300)  # Cache 5 minutes
 async def get_task(task_id: str, session: AsyncSession = Depends(get_session)):
@@ -276,101 +374,3 @@ async def compare_tasks(payload: dict, session: AsyncSession = Depends(get_sessi
     service = await _service(session)
     comparison = await service.compare_tasks(task_ids)
     return {"success": True, "data": comparison.model_dump()}
-
-
-@router.get("/with-solutions")
-async def get_tasks_with_solutions(
-    session: AsyncSession = Depends(get_session),
-    key: str = Query(..., description="API key required"),
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(50, ge=1, le=500, description="Items per page"),
-    taskId: Optional[str] = Query(None, description="Filter by task ID"),
-    website: Optional[str] = Query(
-        None, description="Filter by website (e.g., 'autocinema', 'autobooks')"
-    ),
-    useCase: Optional[str] = Query(
-        None, description="Filter by use case (e.g., 'FILM DETAIL')"
-    ),
-    minerUid: Optional[int] = Query(None, description="Filter by miner UID"),
-    validatorId: Optional[str] = Query(None, description="Filter by validator ID"),
-    roundId: Optional[int] = Query(None, description="Filter by round number"),
-    success: Optional[bool] = Query(
-        None, description="Filter by result: true (score=1), false (score=0)"
-    ),
-    sort: str = Query(
-        "created_at_desc",
-        description="Sort: created_at_desc, created_at_asc, score_desc, score_asc",
-    ),
-):
-    """
-    Get tasks with solutions for RL training.
-
-    Response structure:
-        task:
-            - taskId, website, useCase, intent
-            - startUrl, requiredUrl (with seed parameter)
-            - createdAt
-        solution:
-            - taskSolutionId
-            - actions (array of actions taken)
-            - trajectory (array of state transitions)
-        evaluation:
-            - evaluationResultId
-            - score (0-100)
-            - passed (true/false)
-        agentRun:
-            - agentRunId, minerUid, minerHotkey
-            - validatorUid, validatorHotkey
-
-    Filters:
-        taskId: Specific task ID
-        website: Project (autocinema, autobooks)
-        useCase: Use case (FILM DETAIL, SEARCH BOOK)
-        minerUid: Miner UID
-        validatorId: Validator hotkey
-        roundId: Round number
-        success: true (passed), false (failed), null (all)
-        sort: created_at_desc, created_at_asc, score_desc, score_asc
-
-    Examples:
-        ?key=AIagent2025&website=autocinema&success=true&limit=500
-        ?key=AIagent2025&minerUid=42
-        ?key=AIagent2025&useCase=FILM%20DETAIL&success=false
-    """
-    # Validate API key
-    if key != "AIagent2025":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key"
-        )
-
-    # Parse sort
-    sort_mapping = {
-        "created_at_desc": ("created_at", "desc"),
-        "created_at_asc": ("created_at", "asc"),
-        "score_desc": ("score", "desc"),
-        "score_asc": ("score", "asc"),
-    }
-    sort_by, sort_order = sort_mapping.get(sort, ("created_at", "desc"))
-
-    # Convert success to status
-    status_filter = None
-    if success is True:
-        status_filter = "completed"  # score = 1
-    elif success is False:
-        status_filter = "failed"  # score = 0
-
-    service = await _service(session)
-    data = await service.get_tasks_with_solutions(
-        page=page,
-        limit=limit,
-        task_id=taskId,
-        website=website,
-        use_case=useCase,
-        miner_uid=minerUid,
-        validator_id=validatorId,
-        round_id=roundId,
-        status=status_filter,
-        sort_by=sort_by,
-        sort_order=sort_order,
-    )
-    return {"success": True, "data": data}
