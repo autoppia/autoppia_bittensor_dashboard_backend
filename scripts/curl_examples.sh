@@ -12,43 +12,82 @@ echo ""
 # 1. Tareas exitosas de autocinema
 echo "1️⃣ Tareas exitosas (success=true)"
 echo "----------------------------------"
-curl -s "$API_URL?key=$API_KEY&website=autocinema&success=true&limit=5" | jq '.data.tasks | length'
+RESPONSE=$(curl -s "$API_URL?key=$API_KEY&website=autocinema&success=true&limit=5")
+if echo "$RESPONSE" | grep -q '"success":true'; then
+    echo "✅ OK - Respuesta recibida"
+    echo "Respuesta: $(echo "$RESPONSE" | head -c 200)..."
+else
+    echo "❌ Error: $RESPONSE"
+fi
 echo ""
 
 # 2. Tareas fallidas
 echo "2️⃣ Tareas fallidas (success=false)"
 echo "----------------------------------"
-curl -s "$API_URL?key=$API_KEY&website=autocinema&success=false&limit=5" | jq '.data.tasks | length'
+RESPONSE=$(curl -s "$API_URL?key=$API_KEY&website=autocinema&success=false&limit=5")
+if echo "$RESPONSE" | grep -q '"success":true'; then
+    echo "✅ OK - Respuesta recibida"
+    echo "Respuesta: $(echo "$RESPONSE" | head -c 200)..."
+else
+    echo "❌ Error: $RESPONSE"
+fi
 echo ""
 
 # 3. Todas las tareas (sin filtro success)
 echo "3️⃣ Todas las tareas"
 echo "----------------------------------"
-curl -s "$API_URL?key=$API_KEY&website=autocinema&limit=5" | jq '.data.tasks | length'
+RESPONSE=$(curl -s "$API_URL?key=$API_KEY&website=autocinema&limit=5")
+if echo "$RESPONSE" | grep -q '"success":true'; then
+    echo "✅ OK - Respuesta recibida"
+    echo "Respuesta: $(echo "$RESPONSE" | head -c 200)..."
+else
+    echo "❌ Error: $RESPONSE"
+fi
 echo ""
 
 # 4. Filtrar por caso de uso
 echo "4️⃣ Por caso de uso"
 echo "----------------------------------"
-curl -s "$API_URL?key=$API_KEY&useCase=FILM%20DETAIL&limit=5" | jq '.data.tasks | length'
+RESPONSE=$(curl -s "$API_URL?key=$API_KEY&useCase=FILM%20DETAIL&limit=5")
+if echo "$RESPONSE" | grep -q '"success":true'; then
+    echo "✅ OK - Respuesta recibida"
+    echo "Respuesta: $(echo "$RESPONSE" | head -c 200)..."
+else
+    echo "❌ Error: $RESPONSE"
+fi
 echo ""
 
 # 5. Por miner UID
 echo "5️⃣ Por miner UID"
 echo "----------------------------------"
-curl -s "$API_URL?key=$API_KEY&minerUid=42&limit=5" | jq '.data.tasks | length'
+RESPONSE=$(curl -s "$API_URL?key=$API_KEY&minerUid=42&limit=5")
+if echo "$RESPONSE" | grep -q '"success":true'; then
+    echo "✅ OK - Respuesta recibida"
+    echo "Respuesta: $(echo "$RESPONSE" | head -c 200)..."
+else
+    echo "❌ Error: $RESPONSE"
+fi
 echo ""
 
 # 6. Ver estructura completa (1 tarea)
 echo "6️⃣ Estructura de respuesta (primera tarea)"
 echo "----------------------------------"
-curl -s "$API_URL?key=$API_KEY&website=autocinema&success=true&limit=1" | jq '.data.tasks[0]'
+curl -s "$API_URL?key=$API_KEY&website=autocinema&success=true&limit=1"
+echo ""
 echo ""
 
 # 7. Test sin API key (debe fallar)
 echo "7️⃣ Sin API key (debe devolver 401)"
 echo "----------------------------------"
-curl -s "$API_URL?website=autocinema&limit=1" | jq '.detail'
+RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" "$API_URL?website=autocinema&limit=1")
+HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE" | cut -d: -f2)
+if [ "$HTTP_CODE" = "401" ]; then
+    echo "✅ OK - Devuelve 401 como esperado"
+    echo "Respuesta: $(echo "$RESPONSE" | grep -v "HTTP_CODE")"
+else
+    echo "❌ Error: Esperaba 401, recibió $HTTP_CODE"
+    echo "Respuesta: $RESPONSE"
+fi
 echo ""
 
 echo "=========================================="
