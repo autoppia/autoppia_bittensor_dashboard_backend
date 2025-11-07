@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentEvaluationRunORM,
-    EvaluationResultORM,
+    EvaluationORM,
     RoundORM,
     TaskORM,
     TaskSolutionORM,
@@ -78,33 +78,27 @@ async def get_tasks_with_solutions(
     skip = max(0, (page - 1) * limit)
 
     # Build base query with eager loading
-    base_stmt = select(EvaluationResultORM).options(
-        selectinload(EvaluationResultORM.task),
-        selectinload(EvaluationResultORM.task_solution),
-        selectinload(EvaluationResultORM.agent_run).selectinload(
+    # Use EvaluationORM instead of EvaluationResultORM (more likely to have data)
+    base_stmt = select(EvaluationORM).options(
+        selectinload(EvaluationORM.task),
+        selectinload(EvaluationORM.task_solution),
+        selectinload(EvaluationORM.agent_run).selectinload(
             AgentEvaluationRunORM.validator_round
         ),
     )
 
-    count_stmt = select(func.count()).select_from(EvaluationResultORM)
+    count_stmt = select(func.count()).select_from(EvaluationORM)
 
     filters = []
 
     # Filter by task_id
     if task_id:
-        filters.append(EvaluationResultORM.task_id == task_id)
+        filters.append(EvaluationORM.task_id == task_id)
 
     # Filter by website/project
-    if website:
-        website_lower = website.lower()
-        # Join with TaskORM to filter by url
-        base_stmt = base_stmt.join(
-            TaskORM, EvaluationResultORM.task_id == TaskORM.task_id
-        )
-        count_stmt = count_stmt.join(
-            TaskORM, EvaluationResultORM.task_id == TaskORM.task_id
-        )
-        filters.append(func.lower(TaskORM.url).like(f"%{website_lower}%"))
+    # Note: This filter will be applied in Python after fetching results
+    # because website is mapped from port numbers (8000=autocinema, 8001=autobooks, etc.)
+    website_filter = website.lower() if website else None
 
     # Filter by use_case (use_case is a JSON dict, extract 'name' field)
     # Note: This filter will be applied in Python after fetching results
@@ -115,11 +109,11 @@ async def get_tasks_with_solutions(
     if miner_uid is not None:
         base_stmt = base_stmt.join(
             AgentEvaluationRunORM,
-            EvaluationResultORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
+            EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
         )
         count_stmt = count_stmt.join(
             AgentEvaluationRunORM,
-            EvaluationResultORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
+            EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
         )
         filters.append(AgentEvaluationRunORM.miner_uid == miner_uid)
 
@@ -128,11 +122,11 @@ async def get_tasks_with_solutions(
         if AgentEvaluationRunORM not in [t for t in base_stmt.froms]:
             base_stmt = base_stmt.join(
                 AgentEvaluationRunORM,
-                EvaluationResultORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
+                EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
             )
             count_stmt = count_stmt.join(
                 AgentEvaluationRunORM,
-                EvaluationResultORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
+                EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
             )
         filters.append(
             func.lower(AgentEvaluationRunORM.miner_hotkey) == agent_id.lower()
@@ -143,11 +137,11 @@ async def get_tasks_with_solutions(
         if AgentEvaluationRunORM not in [t for t in base_stmt.froms]:
             base_stmt = base_stmt.join(
                 AgentEvaluationRunORM,
-                EvaluationResultORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
+                EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
             )
             count_stmt = count_stmt.join(
                 AgentEvaluationRunORM,
-                EvaluationResultORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
+                EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
             )
         filters.append(
             func.lower(AgentEvaluationRunORM.validator_hotkey) == validator_id.lower()
@@ -158,11 +152,11 @@ async def get_tasks_with_solutions(
         if AgentEvaluationRunORM not in [t for t in base_stmt.froms]:
             base_stmt = base_stmt.join(
                 AgentEvaluationRunORM,
-                EvaluationResultORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
+                EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
             )
             count_stmt = count_stmt.join(
                 AgentEvaluationRunORM,
-                EvaluationResultORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
+                EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
             )
         base_stmt = base_stmt.join(
             RoundORM,
@@ -176,19 +170,19 @@ async def get_tasks_with_solutions(
 
     # Filter by score range
     if min_score is not None:
-        filters.append(EvaluationResultORM.final_score >= (min_score / 100.0))
+        filters.append(EvaluationORM.final_score >= (min_score / 100.0))
     if max_score is not None:
-        filters.append(EvaluationResultORM.final_score <= (max_score / 100.0))
+        filters.append(EvaluationORM.final_score <= (max_score / 100.0))
 
     # Filter by status
     if status:
         status_lower = status.lower()
         if status_lower == "completed":
-            filters.append(EvaluationResultORM.final_score >= 0.7)
+            filters.append(EvaluationORM.final_score >= 0.7)
         elif status_lower == "failed":
-            filters.append(EvaluationResultORM.final_score < 0.7)
+            filters.append(EvaluationORM.final_score < 0.7)
         elif status_lower == "pending":
-            filters.append(EvaluationResultORM.final_score.is_(None))
+            filters.append(EvaluationORM.final_score.is_(None))
 
     # Apply all filters
     for flt in filters:
@@ -197,38 +191,53 @@ async def get_tasks_with_solutions(
 
     # Sorting
     sort_columns = {
-        "created_at": EvaluationResultORM.created_at,
-        "score": EvaluationResultORM.final_score,
-        "duration": EvaluationResultORM.created_at,  # Fallback to created_at
+        "created_at": EvaluationORM.created_at,
+        "score": EvaluationORM.final_score,
+        "duration": EvaluationORM.created_at,  # Fallback to created_at
     }
 
-    order_expr = sort_columns.get(sort_by, EvaluationResultORM.created_at)
+    order_expr = sort_columns.get(sort_by, EvaluationORM.created_at)
     if sort_order.lower() == "desc":
         order_clause = order_expr.desc()
     else:
         order_clause = order_expr.asc()
 
     base_stmt = base_stmt.order_by(order_clause)
-    base_stmt = base_stmt.offset(skip).limit(limit)
+
+    # If we have Python-side filters (website or use_case), we need to fetch more records
+    # because filtering happens after DB fetch
+    if website_filter or use_case_filter:
+        # Fetch more records to account for filtering
+        # Use a multiplier to ensure we get enough records
+        fetch_limit = limit * 10  # Fetch 10x more to account for filtering
+        base_stmt = base_stmt.offset(0).limit(
+            fetch_limit
+        )  # Always start from page 1 when filtering
+    else:
+        base_stmt = base_stmt.offset(skip).limit(limit)
 
     # Execute queries
     result = await session.execute(base_stmt)
-    evaluation_results = result.scalars().all()
+    evaluations = result.scalars().all()
 
     total = int(await session.scalar(count_stmt) or 0)
 
     # Build response
     tasks_with_solutions = []
-    for eval_result in evaluation_results:
-        task_orm = eval_result.task
-        solution_orm = eval_result.task_solution
-        agent_run_orm = eval_result.agent_run
+    for eval_orm in evaluations:
+        task_orm = eval_orm.task
+        solution_orm = eval_orm.task_solution
+        agent_run_orm = eval_orm.agent_run
 
         if not task_orm:
             continue
 
         # Extract website from url
         website_name = _map_website_port_to_name(task_orm.url)
+
+        # Apply website filter if specified
+        if website_filter and website_name.lower() != website_filter:
+            continue
 
         # Extract use_case name from dict
         use_case_name = "unknown"
@@ -255,9 +264,14 @@ async def get_tasks_with_solutions(
 
         solution_data = None
         if solution_orm:
+            # Extract trajectory from recording if available, otherwise use empty list
+            trajectory = []
+            if solution_orm.recording and isinstance(solution_orm.recording, dict):
+                trajectory = solution_orm.recording.get("trajectory", [])
+
             solution_data = {
                 "taskSolutionId": solution_orm.solution_id,
-                "trajectory": solution_orm.trajectory or [],
+                "trajectory": trajectory,
                 "actions": solution_orm.actions or [],
                 "createdAt": (
                     solution_orm.created_at.isoformat()
@@ -266,10 +280,12 @@ async def get_tasks_with_solutions(
                 ),
             }
 
+        # Score is binary: 0 or 1 (stored as 0.0 or 1.0 in DB)
+        final_score = eval_orm.final_score or 0.0
         evaluation_data = {
-            "evaluationResultId": eval_result.result_id,
-            "score": round((eval_result.final_score or 0.0) * 100, 2),
-            "passed": (eval_result.final_score or 0.0) >= 0.7,
+            "evaluationResultId": eval_orm.evaluation_id,  # Use evaluation_id instead of result_id
+            "score": int(final_score),  # Convert to 0 or 1
+            "passed": final_score >= 1.0,  # True if score = 1, False if score = 0
         }
 
         agent_data = None
@@ -291,9 +307,13 @@ async def get_tasks_with_solutions(
             }
         )
 
-    # If use_case filter was applied in Python, update total
-    if use_case_filter:
+    # If website or use_case filters were applied in Python, update total and apply pagination
+    if website_filter or use_case_filter:
         total = len(tasks_with_solutions)
+        # Apply pagination after filtering
+        start_idx = skip
+        end_idx = skip + limit
+        tasks_with_solutions = tasks_with_solutions[start_idx:end_idx]
 
     return {
         "tasks": tasks_with_solutions,

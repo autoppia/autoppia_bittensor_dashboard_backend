@@ -1,7 +1,7 @@
 #!/bin/bash
 # Ejemplos de uso del endpoint /api/v1/tasks/with-solutions
 
-API_URL="http://localhost:8080/api/v1/tasks/with-solutions"
+API_URL="http://localhost:8002/api/v1/tasks/with-solutions"
 API_KEY="AIagent2025"
 
 echo "=========================================="
