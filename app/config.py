@@ -174,7 +174,10 @@ class Settings(BaseSettings):
         "https://devdeviwa.autoppia.com",  # Frontend development
     ]
     # Optional regex to allow subdomains (e.g., all *.autoppia.com)
-    CORS_ALLOW_ORIGIN_REGEX: Optional[str] = None
+    CORS_ALLOW_ORIGIN_REGEX: Optional[str] = os.getenv(
+        "CORS_ALLOW_ORIGIN_REGEX",
+        r"^https://(?:devdeviwa|dev-infinitewebarena|infinitewebarena)\.autoppia\.com(?:/.*)?$",
+    )
 
     # Idempotency Configuration (seconds to keep)
     IDEMPOTENCY_TTL: int = int(os.getenv("IDEMPOTENCY_TTL", "600"))
