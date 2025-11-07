@@ -23,7 +23,7 @@ http://localhost:8002/api/v1/tasks/with-solutions
 ### Desarrollo (DEV)
 
 ```
-https://api-dev-leaderboard.autoppia.com/api/v1/tasks/with-solutions
+https://dev-api-leaderboard.autoppia.com/api/v1/tasks/with-solutions
 ```
 
 ### Producción (PROD)
@@ -274,5 +274,5 @@ curl "http://localhost:8002/api/v1/tasks/with-solutions?key=AIagent2025&page=1&l
 Usa la URL correspondiente según el entorno:
 
 - **Local**: `http://localhost:8002/api/v1/tasks/with-solutions`
-- **Desarrollo**: `https://api-dev-leaderboard.autoppia.com/api/v1/tasks/with-solutions`
+- **Desarrollo**: `https://dev-api-leaderboard.autoppia.com/api/v1/tasks/with-solutions`
 - **Producción**: `https://api-leaderboard.autoppia.com/api/v1/tasks/with-solutions`
