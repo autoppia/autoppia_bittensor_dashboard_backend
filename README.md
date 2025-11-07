@@ -5,7 +5,7 @@ Backend service that powers the Autoppia validator dashboard. It exposes FastAPI
 ## 📋 Prerequisites
 
 - **Python 3.11 or higher** (Python 3.13+ recommended)
-- **PostgreSQL 12+** (for production) or SQLite (for local development)
+- **PostgreSQL 12+** (required - no SQLite support)
 - **Git**
 
 ### Windows Additional Requirements
@@ -342,16 +342,7 @@ Once the server is running, you can access:
 
 ## 🗃️ Database Setup
 
-### Using SQLite (Quick Start - Local Only)
-
-The project includes SQLite database files for quick local development:
-
-- `autoppia.db` - Main database
-- `test.db` - Test database
-
-No additional setup required!
-
-### Using PostgreSQL (Recommended)
+### PostgreSQL (Required)
 
 #### Linux
 
@@ -444,7 +435,7 @@ source venv/bin/activate
    - **Linux**: `sudo systemctl status postgresql`
    - **Windows**: Check Services for PostgreSQL service
 2. Check your `.env` file has correct database credentials
-3. For local development, you can use the included SQLite databases
+3. Ensure DATABASE_URL is properly configured in your `.env` file
 
 ### Permission Denied (Linux)
 

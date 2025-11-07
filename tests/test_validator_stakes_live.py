@@ -23,8 +23,9 @@ def test_live_validator_stakes_and_threshold_printout():
     stakes are present and non-negative.
     """
 
-    # Ensure we use a lightweight, file-based SQLite DB (avoid Postgres requirement in CI/local)
-    os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///test.db")
+    # Ensure DATABASE_URL is set (PostgreSQL required for tests)
+    if not os.environ.get("DATABASE_URL"):
+        pytest.skip("DATABASE_URL not configured - PostgreSQL required for tests")
 
     # Network selection: default to finney unless overridden via env
     network = settings.SUBTENSOR_NETWORK or "finney"

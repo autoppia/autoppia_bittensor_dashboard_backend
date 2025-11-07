@@ -32,7 +32,7 @@ def _dsn_from_env_file() -> str | None:
     if db_url and isinstance(db_url, str) and db_url.strip():
         if db_url.startswith("postgres"):
             return db_url.strip()
-        # If an unexpected driver is present (e.g., sqlite), ignore in favor of POSTGRES_*
+        # If an unexpected driver is present, ignore in favor of POSTGRES_*
     # Build from POSTGRES_* if present
     user = (values.get("POSTGRES_USER") or "").strip()
     password = (values.get("POSTGRES_PASSWORD") or "").strip().strip('"')

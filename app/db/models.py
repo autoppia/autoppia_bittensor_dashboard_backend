@@ -16,25 +16,18 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 
-# Use PostgreSQL JSONB when targeting Postgres; fall back to generic JSON for SQLite/testing
-from sqlalchemy import JSON as _GENERIC_JSON
-
+# Always use PostgreSQL JSONB (PostgreSQL is required)
 try:
     from sqlalchemy.dialects.postgresql import JSONB as _PG_JSONB  # type: ignore
-except Exception:  # pragma: no cover - optional import
-    _PG_JSONB = None  # type: ignore
+except ImportError:
+    raise ImportError("PostgreSQL dialect not available - install asyncpg")
 
 from app.config import settings as _settings
 
 
 def _select_json_type():
-    url = (_settings.DATABASE_URL or "").lower()
-    # Prefer generic JSON for SQLite or unknown backends
-    if url.startswith("sqlite"):
-        return _GENERIC_JSON
-    if "postgres" in url and _PG_JSONB is not None:
-        return _PG_JSONB
-    return _GENERIC_JSON
+    """Always return JSONB for PostgreSQL."""
+    return _PG_JSONB
 
 
 JSON = _select_json_type()

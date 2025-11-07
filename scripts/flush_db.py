@@ -23,7 +23,7 @@ def _build_engine(dsn: Optional[str] = None) -> AsyncEngine:
     """Create an async engine for the given DSN, normalizing the driver.
 
     Falls back to `settings.DATABASE_URL` when `dsn` is not provided.
-    Ensures an async driver variant is used (e.g., postgresql+asyncpg, sqlite+aiosqlite).
+    Ensures async PostgreSQL driver (postgresql+asyncpg) is used.
     """
     raw_url = dsn or settings.DATABASE_URL
     url = make_url(raw_url)
@@ -32,8 +32,8 @@ def _build_engine(dsn: Optional[str] = None) -> AsyncEngine:
         driver.startswith("postgresql") and "+asyncpg" not in driver
     ):
         url = url.set(drivername="postgresql+asyncpg")
-    elif driver == "sqlite":
-        url = url.set(drivername="sqlite+aiosqlite")
+    else:
+        raise ValueError(f"Unsupported database driver: {driver}. Only PostgreSQL is supported.")
     return create_async_engine(str(url), echo=False, future=True)
 
 

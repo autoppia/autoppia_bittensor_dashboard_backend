@@ -48,29 +48,19 @@ def event_loop():
 
 @pytest.fixture(autouse=True)
 async def reset_database():
-    """Ensure the SQL schema is rebuilt and clean for every test."""
+    """Ensure the PostgreSQL schema is rebuilt and clean for every test."""
     await engine.dispose()
-    drivername = engine.url.drivername if hasattr(engine, "url") else ""
     async with engine.begin() as conn:
-        if "sqlite" in drivername:
-            # SQLite: drop and recreate all tables
-            await conn.run_sync(Base.metadata.drop_all)
-            await conn.run_sync(Base.metadata.create_all)
-        else:
-            # Postgres: reset schema
-            await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-            await conn.execute(text("CREATE SCHEMA public"))
-            await conn.run_sync(Base.metadata.create_all)
+        # PostgreSQL: reset schema
+        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
+        await conn.run_sync(Base.metadata.create_all)
     yield
     await engine.dispose()
     async with engine.begin() as conn:
-        if "sqlite" in drivername:
-            await conn.run_sync(Base.metadata.drop_all)
-            await conn.run_sync(Base.metadata.create_all)
-        else:
-            await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-            await conn.execute(text("CREATE SCHEMA public"))
-            await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
+        await conn.run_sync(Base.metadata.create_all)
 
 
 @pytest.fixture

@@ -62,7 +62,7 @@ def _resolve_cli_dsn() -> str:
     if user and db:
         auth = f"{user}:{password}@" if password else f"{user}@"
         return f"postgresql+asyncpg://{auth}{host}:{port}/{db}"
-    # As a last resort, fail fast rather than defaulting to SQLite
+    # As a last resort, fail fast - PostgreSQL is required
     print("❌ Unable to resolve Postgres DATABASE_URL from .env. Set POSTGRES_* or DATABASE_URL=postgresql+asyncpg://...")
     raise SystemExit(2)
 

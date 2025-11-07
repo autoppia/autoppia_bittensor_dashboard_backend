@@ -23,27 +23,27 @@ def _redact_dsn(dsn: str) -> str:
         return dsn.replace("@", "@***:") if "://" in dsn else dsn
 
 
-# Ensure we are using the async variant of the configured driver (e.g. postgresql+asyncpg)
+# Ensure we are using the async variant of PostgreSQL (postgresql+asyncpg)
 database_url = settings.DATABASE_URL
+if not database_url:
+    raise ValueError("DATABASE_URL must be configured - PostgreSQL is required")
+
 try:
     url = make_url(database_url)
     driver = url.drivername
-except Exception:
-    url = make_url("sqlite:///./autoppia.db")
-    driver = url.drivername
+except Exception as e:
+    raise ValueError(f"Invalid DATABASE_URL: {e}") from e
 
 # Log the configured URL (redacted)
-try:
-    logger.info("DB init: configured DATABASE_URL=%s", _redact_dsn(settings.DATABASE_URL))
-except Exception:
-    pass
+logger.info("DB init: configured DATABASE_URL=%s", _redact_dsn(settings.DATABASE_URL))
 
+# Force asyncpg driver for PostgreSQL
 if driver in {"postgres", "postgresql"} or (
     driver.startswith("postgresql") and "+asyncpg" not in driver
 ):
     database_url = str(url.set(drivername="postgresql+asyncpg"))
-elif driver == "sqlite":
-    database_url = str(url.set(drivername="sqlite+aiosqlite"))
+else:
+    raise ValueError(f"Unsupported database driver: {driver}. Only PostgreSQL is supported.")
 
 # Log the resolved driver/DSN that will actually be used
 try:
