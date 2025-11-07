@@ -40,11 +40,20 @@ from app.models.ui.agent_runs import (
     ValidatorInfo,
     Website,
 )
+from app.services.redis_cache import REDIS_CACHE_TTL, redis_cache
 from app.services.ui.rounds_service import AgentRunContext, RoundsService
 from app.data import get_validator_metadata
 from app.utils.images import resolve_agent_image, resolve_validator_image
 
 logger = logging.getLogger(__name__)
+
+
+AGENT_RUN_STATS_CACHE_PREFIX = "agent_run_statistics"
+AGENT_RUN_STATS_CACHE_TTL = REDIS_CACHE_TTL.get(
+    "agent_run_statistics_final",
+    7 * 24 * 3600,
+)
+AGENT_RUN_STATS_ACTIVE_TTL = 60
 
 
 def _ts_to_iso(ts: Optional[float]) -> Optional[str]:
@@ -279,11 +288,34 @@ class AgentRunsService:
         return self._build_personas(context)
 
     async def get_statistics(self, agent_run_id: str) -> Optional[Statistics]:
+        cache_key = f"{AGENT_RUN_STATS_CACHE_PREFIX}:{agent_run_id}"
+
+        cached_stats = redis_cache.get(cache_key)
+        if cached_stats is not None:
+            logger.debug("agent_run_statistics cache hit for %s", agent_run_id)
+            return cached_stats
+
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
         except ValueError:
             return None
-        return self._build_statistics(context)
+
+        statistics = self._build_statistics(context)
+
+        if statistics is None:
+            return None
+
+        run_finished = bool(getattr(context.run, "ended_at", None))
+        ttl = AGENT_RUN_STATS_CACHE_TTL if run_finished else AGENT_RUN_STATS_ACTIVE_TTL
+        redis_cache.set(cache_key, statistics, ttl=ttl)
+        logger.debug(
+            "agent_run_statistics cached for %s (ttl=%ss, finished=%s)",
+            agent_run_id,
+            ttl,
+            run_finished,
+        )
+
+        return statistics
 
     async def get_summary(self, agent_run_id: str) -> Optional[Summary]:
         try:
@@ -1125,7 +1157,8 @@ class AgentRunsService:
 
         return UITask(
             taskId=task.task_id,
-            roundNumber=round_obj.round_number or _round_id_to_int(round_obj.validator_round_id),
+            roundNumber=round_obj.round_number
+            or _round_id_to_int(round_obj.validator_round_id),
             website=website,
             useCase=use_case,
             prompt=task.prompt,
