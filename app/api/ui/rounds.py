@@ -194,6 +194,7 @@ async def get_round_statistics(
 
 
 @router.get("/{round_id}/miners", response_model=RoundMinersResponse)
+@cache("round_miners", ttl=300)  # Cache 5 minutes (smart_cache will extend for completed rounds)
 async def get_round_miners(
     round_id: str,
     session: AsyncSession = Depends(get_session),
