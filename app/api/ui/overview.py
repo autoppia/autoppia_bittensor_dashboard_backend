@@ -53,6 +53,7 @@ async def get_overview_metrics(
 
 
 @router.get("/validators", response_model=ValidatorsListResponse)
+@cache("validators_list", ttl=180)  # Cache 3 minutes
 async def get_validators(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),
