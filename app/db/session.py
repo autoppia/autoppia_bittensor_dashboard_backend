@@ -38,9 +38,12 @@ except Exception as e:
 logger.info("DB init: configured DATABASE_URL=%s", _redact_dsn(settings.DATABASE_URL))
 
 # Force asyncpg driver for PostgreSQL
-if driver in {"postgres", "postgresql"} or (
-    driver.startswith("postgresql") and "+asyncpg" not in driver
-):
+if driver.startswith("postgresql"):
+    # If already using asyncpg, keep it; otherwise force it
+    if "+asyncpg" not in driver:
+        database_url = str(url.set(drivername="postgresql+asyncpg"))
+elif driver in {"postgres"}:
+    # Convert generic 'postgres' to 'postgresql+asyncpg'
     database_url = str(url.set(drivername="postgresql+asyncpg"))
 else:
     raise ValueError(f"Unsupported database driver: {driver}. Only PostgreSQL is supported.")
