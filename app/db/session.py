@@ -46,7 +46,9 @@ elif driver in {"postgres"}:
     # Convert generic 'postgres' to 'postgresql+asyncpg'
     database_url = str(url.set(drivername="postgresql+asyncpg"))
 else:
-    raise ValueError(f"Unsupported database driver: {driver}. Only PostgreSQL is supported.")
+    raise ValueError(
+        f"Unsupported database driver: {driver}. Only PostgreSQL is supported."
+    )
 
 # Log the resolved driver/DSN that will actually be used
 try:
