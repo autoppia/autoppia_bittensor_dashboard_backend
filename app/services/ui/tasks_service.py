@@ -190,10 +190,14 @@ class TasksService:
         include_facets: bool = False,
         include_details: bool = True,
     ) -> Dict[str, object]:
-        # Build the base query with filters at the database level
-        stmt = select(TaskORM).options(
-            selectinload(TaskORM.task_solutions),
-            selectinload(TaskORM.evaluation_results),
+        # Build the base query with filters at the database level.
+        stmt = (
+            select(TaskORM)
+            .where(TaskORM.evaluation_results.any())
+            .options(
+                selectinload(TaskORM.task_solutions),
+                selectinload(TaskORM.evaluation_results),
+            )
         )
 
         # Apply database-level filters where possible
@@ -237,7 +241,11 @@ class TasksService:
             total_count = None
         else:
             # No Python filtering needed - get accurate count first
-            count_stmt = select(func.count()).select_from(TaskORM)
+            count_stmt = (
+                select(func.count(TaskORM.id))
+                .select_from(TaskORM)
+                .where(TaskORM.evaluation_results.any())
+            )
             
             # Apply same filters as main query for accurate count
             if website:
