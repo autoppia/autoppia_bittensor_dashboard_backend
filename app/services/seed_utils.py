@@ -371,11 +371,6 @@ def _build_validator_identity_and_snapshot(
         vtrust=_random_vtrust(),
         image_url=record.image,
         version=record.version,
-        metadata={
-            "round_number": round_number,
-            "seeded": True,
-            "generated_at": started_at,
-        },
     )
     return identity, snapshot
 
