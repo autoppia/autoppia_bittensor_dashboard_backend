@@ -593,12 +593,23 @@ class OverviewService:
             scores: List[float] = []
             for ctx in contexts:
                 miner_info = ctx.run.miner_info
-                provider = ""
+                source_parts: List[str] = []
                 if miner_info:
-                    provider = str(
-                        miner_info.provider or miner_info.agent_name or ""
-                    ).lower()
-                if provider and any(token in provider for token in provider_tokens):
+                    if getattr(miner_info, "agent_name", None):
+                        source_parts.append(str(miner_info.agent_name))
+                    if getattr(miner_info, "github", None):
+                        source_parts.append(str(miner_info.github))
+
+                metadata = getattr(ctx.run, "metadata", None)
+                if isinstance(metadata, dict):
+                    for value in metadata.values():
+                        if isinstance(value, str):
+                            source_parts.append(value)
+
+                provider_hint = " ".join(source_parts).lower()
+                if provider_hint and any(
+                    token in provider_hint for token in provider_tokens
+                ):
                     scores.append(self.rounds_service._context_score(ctx))
             return scores
 
