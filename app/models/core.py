@@ -259,9 +259,6 @@ class ValidatorRoundValidator(BaseModel):
     version: Optional[str] = Field(
         default=None, description="Validator software version during the round"
     )
-    role: Literal["primary", "observer"] = Field(
-        default="primary", description="Role of the validator in the round"
-    )
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Extensible metadata for the snapshot"
     )
