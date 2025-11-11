@@ -1,6 +1,7 @@
 """
 Evaluation-centric UI models for the dashboard.
 """
+
 from __future__ import annotations
 
 from enum import Enum
@@ -31,7 +32,6 @@ class EvaluationTaskInfo(BaseModel):
     id: str
     url: str
     prompt: str
-    scope: str
     useCase: Optional[str] = None
     useCaseMetadata: Dict[str, Any] = Field(default_factory=dict)
 

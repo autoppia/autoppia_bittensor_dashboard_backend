@@ -443,28 +443,18 @@
                       {
                         "task_id": "task_1001",
                         "validator_round_id": "round_1001",
-                        "sequence": null,
-                        "scope": "local",
                         "is_web_real": false,
                         "web_project_id": null,
                         "url": "https://example.com",
                         "prompt": "Execute integration test task.",
-                        "html": "<html></html>",
-                        "clean_html": "<html></html>",
-                        "interactive_elements": null,
-                        "screenshot": null,
-                        "screenshot_description": null,
                         "specifications": {
                           "browser": "chrome"
                         },
                         "tests": [],
-                        "milestones": null,
                         "relevant_data": {},
-                        "success_criteria": "Complete successfully",
                         "use_case": {
                           "name": "Example"
-                        },
-                        "should_record": false
+                        }
                       }
                     ],
                     "task_solutions": [
@@ -488,9 +478,7 @@
                             }
                           }
                         ],
-                        "web_agent_id": "agent",
-                        "recording": null,
-                        "metadata": {}
+                        "web_agent_id": "agent"
                       }
                     ],
                     "evaluations": [],
@@ -530,9 +518,7 @@
                         "metadata": {}
                       }
                     ],
-                    "task_ids": [
-                      "task_1001"
-                    ],
+                    "task_ids": ["task_1001"],
                     "avg_eval_score": null,
                     "avg_execution_time": null,
                     "avg_reward": null,
@@ -547,8 +533,7 @@
                       "agent_image": "",
                       "github": "https://github.com/agent1001",
                       "is_sota": false,
-                      "description": null,
-                      "provider": null
+                      "description": null
                     }
                   }
                 ],
@@ -596,9 +581,7 @@
                         "agent_run_id": "agent_run_1001"
                       }
                     ],
-                    "winner_scores": [
-                      0.92
-                    ]
+                    "winner_scores": [0.92]
                   },
                   "validators": [
                     {
@@ -629,8 +612,7 @@
                       "agent_image": "",
                       "github": "https://github.com/agent1001",
                       "is_sota": false,
-                      "description": null,
-                      "provider": null
+                      "description": null
                     }
                   ],
                   "sota_agents": [],
@@ -720,7 +702,6 @@
               "lastSeen": "1970-01-01T00:17:00+00:00",
               "validatorId": "validator-1901",
               "isSota": false,
-              "provider": null,
               "imageUrl": "https://assets.example.com/miners/3.svg"
             }
           ],
@@ -776,7 +757,6 @@
                 "lastSeen": "1970-01-01T00:17:00+00:00",
                 "validatorId": "validator-1901",
                 "isSota": false,
-                "provider": null,
                 "imageUrl": "https://assets.example.com/miners/3.svg"
               }
             }
@@ -1243,11 +1223,7 @@
           "total": 3,
           "page": 1,
           "limit": 20,
-          "availableRounds": [
-            1003,
-            1002,
-            1001
-          ],
+          "availableRounds": [1003, 1002, 1001],
           "selectedRound": 1003
         }
       }
@@ -1338,11 +1314,7 @@
           "total": 3,
           "page": 1,
           "limit": 20,
-          "availableRounds": [
-            1003,
-            1002,
-            1001
-          ],
+          "availableRounds": [1003, 1002, 1001],
           "selectedRound": null
         },
         "error": null,
@@ -1768,8 +1740,6 @@
                 "hotkey": "miner_hotkey_1001",
                 "name": "Agent 1001",
                 "github": "https://github.com/agent1001",
-                "provider": null,
-                "image": "https://assets.example.com/miners/3.svg",
                 "isSota": false
               },
               "agentRun": {
@@ -1803,8 +1773,7 @@
                 "minerUid": 1701,
                 "validatorUid": 1901,
                 "actionsCount": 1,
-                "webAgentId": "agent",
-                "hasRecording": false
+                "webAgentId": "agent"
               }
             }
           }

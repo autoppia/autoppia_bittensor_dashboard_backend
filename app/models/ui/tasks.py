@@ -129,7 +129,9 @@ class Task(BaseModel):
 
     taskId: str = Field(..., description="Unique task identifier")
     agentRunId: str = Field(..., description="Associated agent run ID")
-    roundNumber: Optional[int] = Field(None, description="Round number this task belongs to")
+    roundNumber: Optional[int] = Field(
+        None, description="Round number this task belongs to"
+    )
     website: str = Field(..., description="Target website")
     seed: Optional[str] = Field(
         None, description="Seed parameter extracted from website URL"
@@ -252,9 +254,6 @@ class TaskSolutionSummary(BaseModel):
     actionsCount: int = Field(..., description="Number of actions in the solution")
     webAgentId: Optional[str] = Field(
         None, description="Web agent identifier used during execution"
-    )
-    hasRecording: bool = Field(
-        False, description="Indicates if the solution carries a recording"
     )
 
 

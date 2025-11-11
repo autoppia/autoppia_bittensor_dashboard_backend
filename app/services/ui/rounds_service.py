@@ -113,7 +113,6 @@ class MinerAggregate:
     name: str
     hotkey: Optional[str]
     image_url: Optional[str]
-    provider: Optional[str]
     is_sota: bool
     total_score: float = 0.0
     score_count: int = 0
@@ -148,10 +147,6 @@ class MinerAggregate:
         hotkey = performance.get("hotkey")
         if hotkey and not self.hotkey:
             self.hotkey = hotkey
-
-        provider = performance.get("provider")
-        if provider and not self.provider:
-            self.provider = provider
 
         image_url = performance.get("imageUrl")
         if image_url and not self.image_url:
@@ -223,7 +218,6 @@ class MinerAggregate:
             "lastSeen": self.last_seen_iso or _iso_timestamp(None),
             "validatorId": self.best_validator_id,
             "isSota": self.is_sota,
-            "provider": self.provider,
             "imageUrl": self.image_url,
         }
 
@@ -966,7 +960,6 @@ class RoundsService:
                         name=performance.get("name") or f"Miner {uid}",
                         hotkey=performance.get("hotkey"),
                         image_url=performance.get("imageUrl"),
-                        provider=performance.get("provider"),
                         is_sota=bool(performance.get("isSota")),
                     )
                     miner_aggregates[uid] = aggregate
@@ -1705,41 +1698,41 @@ class RoundsService:
             weights = round_obj.weights or {}
 
             for ctx in entry_data.contexts:
-                entry = self._build_miner_performance(ctx, round_obj, weights)
+                miner_entry = self._build_miner_performance(ctx, round_obj, weights)
 
-                if success is not None and entry["success"] != success:
+                if success is not None and miner_entry["success"] != success:
                     continue
-                if min_score is not None and entry["score"] < min_score:
+                if min_score is not None and miner_entry["score"] < min_score:
                     continue
-                if max_score is not None and entry["score"] > max_score:
+                if max_score is not None and miner_entry["score"] > max_score:
                     continue
 
-                if entry.get("isSota"):
+                if miner_entry.get("isSota"):
                     key = (
-                        entry.get("provider")
-                        or entry.get("name")
-                        or str(entry.get("uid"))
+                        entry_data.validator_round_id
+                        or str(entry_data.validator_uid)
+                        or str(miner_entry.get("uid"))
                     )
                     existing = benchmark_map.get(key)
                     if existing is None:
-                        record = dict(entry)
+                        record = dict(miner_entry)
                         sources = []
-                        if entry.get("validatorId"):
-                            sources.append(entry["validatorId"])
+                        if miner_entry.get("validatorId"):
+                            sources.append(miner_entry["validatorId"])
                         record["validatorSources"] = sources
                         benchmark_map[key] = record
                     else:
-                        if entry["score"] > existing.get("score", 0.0):
-                            existing.update(entry)
+                        if miner_entry["score"] > existing.get("score", 0.0):
+                            existing.update(miner_entry)
                         sources = existing.get("validatorSources") or []
                         if (
-                            entry.get("validatorId")
-                            and entry["validatorId"] not in sources
+                            miner_entry.get("validatorId")
+                            and miner_entry["validatorId"] not in sources
                         ):
-                            sources.append(entry["validatorId"])
+                            sources.append(miner_entry["validatorId"])
                         existing["validatorSources"] = sources
                 else:
-                    miners.append(entry)
+                    miners.append(miner_entry)
 
         reverse = sort_order.lower() == "desc"
         key_map = {
@@ -2659,7 +2652,6 @@ class RoundsService:
             else f"Miner {miner_uid}"
         )
         hotkey = miner_info.hotkey if miner_info else None
-        provider = getattr(miner_info, "provider", None) if miner_info else None
         image_url = resolve_agent_image(miner_info)
 
         score = context.run.avg_eval_score
@@ -2707,7 +2699,6 @@ class RoundsService:
             "lastSeen": _iso_timestamp(context.run.ended_at or context.run.started_at),
             "validatorId": f"validator-{context.run.validator_uid}",
             "isSota": context.run.is_sota,
-            "provider": provider,
             "imageUrl": image_url,
         }
 
@@ -2841,7 +2832,6 @@ class RoundsService:
                     github=miner_snapshot.github_url or "",
                     is_sota=bool(getattr(miner_snapshot, "is_sota", False)),
                     description=getattr(miner_snapshot, "description", None),
-                    provider=getattr(miner_snapshot, "provider", None),
                 )
             )
 
@@ -2983,23 +2973,14 @@ class RoundsService:
                     Task(
                         task_id=task_row.task_id,
                         validator_round_id=task_row.validator_round_id,
-                        scope=task_row.scope or "local",
                         is_web_real=bool(task_row.is_web_real),
                         web_project_id=task_row.web_project_id,
                         url=task_row.url or "",
                         prompt=task_row.prompt or "",
-                        html=task_row.html or "",
-                        clean_html=task_row.clean_html or task_row.html or "",
-                        interactive_elements=task_row.interactive_elements,
-                        screenshot=task_row.screenshot,
-                        screenshot_description=task_row.screenshot_description,
                         specifications=task_row.specifications or {},
                         tests=[],
-                        milestones=None,
                         relevant_data=task_row.relevant_data or {},
-                        success_criteria=task_row.success_criteria,
                         use_case=task_row.use_case or {},
-                        should_record=bool(task_row.should_record),
                     )
                 )
             except Exception as exc:  # noqa: BLE001
@@ -3041,8 +3022,6 @@ class RoundsService:
                         miner_hotkey=solution_row.miner_hotkey,
                         actions=actions,
                         web_agent_id=solution_row.web_agent_id,
-                        recording=solution_row.recording,
-                        metadata=dict(solution_row.meta or {}),
                     )
                 )
             except Exception as exc:  # noqa: BLE001

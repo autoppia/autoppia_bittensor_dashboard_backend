@@ -1175,7 +1175,6 @@ class OverviewService:
             )
             .where(TaskORM.validator_round_id == validator_round_id)
             .order_by(
-                TaskORM.sequence.desc().nullslast(),
                 TaskORM.created_at.desc(),
                 TaskORM.id.desc(),
             )

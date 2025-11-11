@@ -96,23 +96,14 @@ def _make_submission_payload(prefix: str = "001") -> dict:
     task_payload = {
         "task_id": task_id,
         "validator_round_id": validator_round_id,
-        "scope": "local",
         "is_web_real": False,
         "web_project_id": None,
         "url": "https://example.com",
         "prompt": "Execute integration test task.",
-        "html": "<html></html>",
-        "clean_html": "<html></html>",
-        "interactive_elements": None,
-        "screenshot": None,
-        "screenshot_description": None,
         "specifications": {"browser": "chrome"},
         "tests": [],
-        "milestones": None,
         "relevant_data": {},
-        "success_criteria": "Complete successfully",
         "use_case": {"name": "Example"},
-        "should_record": False,
     }
 
     task_solution_payload = {
@@ -124,7 +115,6 @@ def _make_submission_payload(prefix: str = "001") -> dict:
         "validator_uid": validator_uid,
         "actions": [{"type": "click", "attributes": {"selector": "#submit"}}],
         "web_agent_id": "agent",
-        "recording": None,
     }
 
     evaluation_payload = {

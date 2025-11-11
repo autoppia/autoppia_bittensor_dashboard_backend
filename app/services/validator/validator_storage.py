@@ -905,7 +905,6 @@ class ValidatorRoundPersistenceService:
             "image_url": snapshot.image_url,
             "version": snapshot.version,
             "role": snapshot.role,
-            "meta": _non_empty_dict(snapshot.metadata),
         }
         if existing:
             for key, value in kwargs.items():
@@ -937,12 +936,10 @@ class ValidatorRoundPersistenceService:
             "agent_name": snapshot.agent_name,
             "image_url": snapshot.image_url,
             "github_url": snapshot.github_url,
-            "provider": snapshot.provider,
             "description": snapshot.description,
             "is_sota": snapshot.is_sota,
             "first_seen_at": snapshot.first_seen_at,
             "last_seen_at": snapshot.last_seen_at,
-            "meta": _non_empty_dict(snapshot.metadata),
         }
         if existing:
             for key, value in kwargs.items():
@@ -1019,37 +1016,20 @@ class ValidatorRoundPersistenceService:
         return {
             "task_id": model.task_id,
             "validator_round_id": model.validator_round_id,
-            "sequence": model.sequence,
-            "scope": model.scope,
             "is_web_real": model.is_web_real,
             "web_project_id": model.web_project_id,
             "url": model.url,
             "prompt": model.prompt,
-            "html": model.html,
-            "clean_html": model.clean_html,
-            "interactive_elements": model.interactive_elements,
-            "screenshot": model.screenshot,
-            "screenshot_description": model.screenshot_description,
             "specifications": _non_empty_dict(model.specifications),
             "tests": [
                 test.model_dump(mode="json", exclude_none=True) for test in model.tests
             ],
-            "milestones": (
-                [
-                    milestone.model_dump(mode="json", exclude_none=True)
-                    for milestone in model.milestones
-                ]
-                if model.milestones
-                else None
-            ),
             "relevant_data": _non_empty_dict(model.relevant_data),
-            "success_criteria": model.success_criteria,
             "use_case": (
                 model.use_case
                 if isinstance(model.use_case, dict)
                 else _optional_dump(model.use_case)
             ),
-            "should_record": model.should_record,
         }
 
     def _task_solution_kwargs(
@@ -1070,8 +1050,6 @@ class ValidatorRoundPersistenceService:
             "miner_id": miner_id,
             "actions": _action_dump(model.actions),
             "web_agent_id": model.web_agent_id,
-            "recording": _optional_dump(model.recording),
-            "meta": _non_empty_dict(model.metadata),
         }
 
     def _evaluation_kwargs(

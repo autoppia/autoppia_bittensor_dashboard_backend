@@ -48,7 +48,11 @@ def _format_agent_id(miner_uid: Optional[int]) -> str:
 
 
 def _format_validator_id(validator_uid: Optional[int]) -> str:
-    return f"validator-{validator_uid}" if validator_uid is not None else "validator-unknown"
+    return (
+        f"validator-{validator_uid}"
+        if validator_uid is not None
+        else "validator-unknown"
+    )
 
 
 def _round_id_to_int(round_id: str) -> int:
@@ -255,7 +259,9 @@ class EvaluationsService:
             status=status,
             score=_safe_round(context.evaluation.final_score),
             reward=_safe_round(getattr(context.evaluation, "raw_score", 0.0)),
-            responseTime=_safe_round(getattr(context.evaluation, "evaluation_time", 0.0)),
+            responseTime=_safe_round(
+                getattr(context.evaluation, "evaluation_time", 0.0)
+            ),
             createdAt=self._format_timestamp(created),
             updatedAt=self._format_timestamp(updated),
         )
@@ -266,12 +272,12 @@ class EvaluationsService:
             id=context.task.task_id,
             url=context.task.url,
             prompt=context.task.prompt,
-            scope=context.task.scope,
             useCase=self._extract_use_case(context.task),
-            useCaseMetadata=
+            useCaseMetadata=(
                 dict(context.task.use_case)
                 if isinstance(context.task.use_case, dict)
-                else {},
+                else {}
+            ),
         )
 
         actions: List[Action] = []
@@ -352,7 +358,9 @@ class EvaluationsService:
         return TaskSolution(**data)
 
     @staticmethod
-    def _deserialize_evaluation(evaluation_row: EvaluationResultORM) -> EvaluationResult:
+    def _deserialize_evaluation(
+        evaluation_row: EvaluationResultORM,
+    ) -> EvaluationResult:
         data = dict(evaluation_row.data or {})
         data.setdefault("evaluation_id", evaluation_row.evaluation_id)
         data.setdefault("task_id", evaluation_row.task_id)

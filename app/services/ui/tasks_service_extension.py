@@ -294,14 +294,9 @@ async def get_tasks_with_solutions(
 
         solution_data = None
         if solution_orm:
-            # Extract trajectory from recording if available, otherwise use empty list
-            trajectory = []
-            if solution_orm.recording and isinstance(solution_orm.recording, dict):
-                trajectory = solution_orm.recording.get("trajectory", [])
-
             solution_data = {
                 "taskSolutionId": solution_orm.solution_id,
-                "trajectory": trajectory,
+                "trajectory": [],
                 "actions": solution_orm.actions or [],
                 "createdAt": (
                     solution_orm.created_at.isoformat()
