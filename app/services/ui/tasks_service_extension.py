@@ -52,6 +52,35 @@ def _map_website_port_to_name(url: Optional[str]) -> str:
     return "unknown"
 
 
+def _normalize_tests(raw_tests: Optional[List[Any]]) -> List[Dict[str, Any]]:
+    """Ensure task tests are returned as plain dicts."""
+    normalized: List[Dict[str, Any]] = []
+    if not raw_tests:
+        return normalized
+
+    for item in raw_tests:
+        if item is None:
+            continue
+        if isinstance(item, dict):
+            normalized.append(item)
+            continue
+        if hasattr(item, "model_dump"):
+            try:
+                normalized.append(item.model_dump())
+                continue
+            except Exception:  # noqa: BLE001
+                pass
+        if hasattr(item, "dict"):
+            try:
+                normalized.append(item.dict())
+                continue
+            except Exception:  # noqa: BLE001
+                pass
+        normalized.append({"value": item})
+
+    return normalized
+
+
 async def get_tasks_with_solutions(
     session: AsyncSession,
     page: int = 1,
@@ -257,6 +286,7 @@ async def get_tasks_with_solutions(
             "intent": task_orm.prompt or "",
             "startUrl": task_orm.url or "",
             "requiredUrl": None,  # Not available in TaskORM
+            "tests": _normalize_tests(task_orm.tests),
             "createdAt": (
                 task_orm.created_at.isoformat() if task_orm.created_at else None
             ),
