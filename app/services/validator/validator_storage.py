@@ -904,7 +904,6 @@ class ValidatorRoundPersistenceService:
             "vtrust": snapshot.vtrust,
             "image_url": snapshot.image_url,
             "version": snapshot.version,
-            "meta": _non_empty_dict(snapshot.metadata),
         }
         if existing:
             for key, value in kwargs.items():
