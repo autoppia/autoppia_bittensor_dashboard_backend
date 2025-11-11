@@ -245,7 +245,6 @@ class ValidatorRoundValidatorORM(TimestampMixin, Base):
     vtrust: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    role: Mapped[str] = mapped_column(String(32), nullable=False, default="primary")
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
