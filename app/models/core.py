@@ -71,9 +71,6 @@ class MinerInfo(BaseModel):
     description: Optional[str] = Field(
         default=None, description="Optional description for the agent"
     )
-    provider: Optional[str] = Field(
-        default=None, description="Company or provider for the agent"
-    )
 
     @field_validator("agent_image")
     @classmethod
@@ -112,8 +109,10 @@ class MinerInfo(BaseModel):
     def _normalize_uid(cls, v):
         return v if v is not None else None
 
-    @model_validator(mode="after")
-    def _enforce_identity(cls, values: "MinerInfo") -> "MinerInfo":  # type: ignore[override]
+    @model_validator(mode="after")  # type: ignore[misc]
+    def _enforce_identity(  # type: ignore[override]
+        cls, values: "MinerInfo"
+    ) -> "MinerInfo":
         if not values.is_sota:
             if values.uid is None:
                 raise ValueError("uid is required for non-SOTA miners")
@@ -151,7 +150,7 @@ class Miner(BaseModel):
     )
     coldkey: Optional[str] = Field(default=None, description="Optional miner coldkey")
 
-    @model_validator(mode="after")
+    @model_validator(mode="after")  # type: ignore[misc]
     def _validate_identity(cls, values: "Miner") -> "Miner":  # type: ignore[override]
         if values.uid is not None:
             if not values.hotkey:
@@ -291,9 +290,6 @@ class ValidatorRoundMiner(BaseModel):
     github_url: Optional[str] = Field(
         default=None, description="Repository URL or source code reference"
     )
-    provider: Optional[str] = Field(
-        default=None, description="Organisation/provider responsible for the agent"
-    )
     description: Optional[str] = Field(
         default=None, description="Free-form agent description"
     )
@@ -307,12 +303,11 @@ class ValidatorRoundMiner(BaseModel):
     last_seen_at: Optional[float] = Field(
         default=None, description="Timestamp when the miner was last observed"
     )
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict, description="Extensible metadata captured for the agent"
-    )
 
-    @model_validator(mode="after")
-    def _validate_identity(cls, values: "ValidatorRoundMiner") -> "ValidatorRoundMiner":  # type: ignore[override]
+    @model_validator(mode="after")  # type: ignore[misc]
+    def _validate_identity(  # type: ignore[override]
+        cls, values: "ValidatorRoundMiner"
+    ) -> "ValidatorRoundMiner":
         if values.miner_uid is not None:
             if not values.miner_hotkey:
                 raise ValueError("miner_hotkey is required when miner_uid is provided")
@@ -384,8 +379,10 @@ class AgentEvaluationRun(BaseModel):
         default_factory=dict, description="Extensible metadata for the run"
     )
 
-    @model_validator(mode="after")
-    def _validate_identity(cls, values: "AgentEvaluationRun") -> "AgentEvaluationRun":  # type: ignore[override]
+    @model_validator(mode="after")  # type: ignore[misc]
+    def _validate_identity(  # type: ignore[override]
+        cls, values: "AgentEvaluationRun"
+    ) -> "AgentEvaluationRun":
         if not values.is_sota and values.miner_uid is None:
             raise ValueError("miner_uid is required for non-SOTA runs")
         return values
@@ -453,15 +450,6 @@ class Task(BaseModel):
     validator_round_id: str = Field(
         ..., description="Validator round that owns this task"
     )
-
-    sequence: Optional[int] = Field(
-        default=None,
-        description="Optional ordering for tasks within the validator round",
-    )
-    scope: Literal["global", "local"] = Field(
-        default="local",
-        description="Task scope: 'global' shared across all, 'local' for contextual tasks",
-    )
     is_web_real: bool = Field(
         default=False,
         description="Whether the task operates on a real web environment",
@@ -473,24 +461,6 @@ class Task(BaseModel):
     prompt: str = Field(
         ..., description="Natural language description of the task objectives"
     )
-    html: str = Field(
-        default_factory=str, description="Full HTML snapshot of the target page"
-    )
-    clean_html: str = Field(
-        default_factory=str,
-        description="Optimised HTML content for processing and inspection",
-    )
-    interactive_elements: Optional[str] = Field(
-        default=None,
-        description="Serialized mapping of interactive elements detected in the page",
-    )
-    screenshot: Optional[str] = Field(
-        default=None,
-        description="Optional base64 screenshot representing the task context",
-    )
-    screenshot_description: Optional[str] = Field(
-        default=None, description="Textual description of the screenshot"
-    )
     specifications: Dict[str, Any] = Field(
         default_factory=dict,
         description="Browser configuration and additional task requirements",
@@ -499,23 +469,12 @@ class Task(BaseModel):
         default_factory=list,
         description="Collection of validation tests associated with the task",
     )
-    milestones: Optional[List["Task"]] = Field(
-        default=None,
-        description="Optional ordered list of sub-tasks required for completion",
-    )
     relevant_data: Dict[str, Any] = Field(
         default_factory=dict,
         description="Additional contextual data the agent may need to solve the task",
     )
-    success_criteria: Optional[str] = Field(
-        default=None, description="Definition of successful completion"
-    )
     use_case: Any = Field(
         default=None, description="Associated use case metadata for the task"
-    )
-    should_record: bool = Field(
-        default=False,
-        description="Whether screen recording should be performed for the task",
     )
 
     _original_prompt: str = PrivateAttr(default="")
@@ -581,12 +540,6 @@ class TaskSolution(BaseModel):
     )
     web_agent_id: Optional[str] = Field(
         default=None, description="Identifier for the web agent instance"
-    )
-    recording: Optional[Any] = Field(
-        default=None, description="Optional recording payload associated with the run"
-    )
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict, description="Extensible metadata for the solution"
     )
 
     model_config = {"extra": "allow"}

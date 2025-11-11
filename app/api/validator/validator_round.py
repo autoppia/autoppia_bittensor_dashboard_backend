@@ -104,7 +104,6 @@ def _resolve_miner_snapshot_image(snapshot: ValidatorRoundMiner) -> None:
         agent_image=sanitized or "",
         is_sota=bool(snapshot.is_sota),
         agent_name=(snapshot.agent_name or "").strip(),
-        provider=(snapshot.provider or "").strip() or None,
         hotkey=snapshot.miner_hotkey,
         uid=snapshot.miner_uid,
     )
@@ -244,10 +243,8 @@ async def _legacy_to_start_agent_run_request(
         or agent_run.agent_run_id,
         image_url=miner_info.get("agent_image") or miner_info.get("image"),
         github_url=miner_info.get("github"),
-        provider=miner_info.get("provider"),
         description=miner_info.get("description"),
         is_sota=bool(miner_info.get("is_sota")),
-        metadata=miner_info.get("metadata") or {},
     )
     # Canonicalize miner image asset (allowlist + fallback)
     _resolve_miner_snapshot_image(miner_snapshot)

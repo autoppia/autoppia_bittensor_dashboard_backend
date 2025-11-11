@@ -24,7 +24,9 @@ ICON48_GIF_BYTES = base64.b64decode("".join(ICON48_GIF_BASE64.split()))
 @pytest.mark.asyncio
 async def test_validator_round_flow_with_gif_upload(client, db_session, monkeypatch):
     original_prefix = settings.AWS_S3_GIF_PREFIX
-    prefixed_value = "tests" if not original_prefix else f"tests/{original_prefix.strip('/')}"
+    prefixed_value = (
+        "tests" if not original_prefix else f"tests/{original_prefix.strip('/')}"
+    )
     settings.AWS_S3_GIF_PREFIX = prefixed_value
 
     try:
@@ -55,23 +57,14 @@ async def test_validator_round_flow_with_gif_upload(client, db_session, monkeypa
                 {
                     "task_id": "task_gif_flow",
                     "validator_round_id": "round_gif_flow",
-                    "scope": "local",
                     "is_web_real": False,
                     "web_project_id": None,
                     "url": "https://example.com/gif-flow",
                     "prompt": "Validate GIF upload workflow.",
-                    "html": "<html></html>",
-                    "clean_html": "<html></html>",
-                    "interactive_elements": None,
-                    "screenshot": None,
-                    "screenshot_description": None,
                     "specifications": {},
                     "tests": [],
-                    "milestones": None,
                     "relevant_data": {},
-                    "success_criteria": "Complete upload",
                     "use_case": {"name": "GifFlow"},
-                    "should_record": False,
                 }
             ],
             "agent_run": {
@@ -102,13 +95,21 @@ async def test_validator_round_flow_with_gif_upload(client, db_session, monkeypa
         }
         # Ensure chain inside the requested round window (777)
         from app.config import settings as _settings
+
         blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
         dz = int(_settings.DZ_STARTING_BLOCK)
+
         def inside_round(n: int) -> int:
             return dz + (n - 1) * blocks_per_round + 1
-        monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: inside_round(777))
 
-        start_response = await client.post("/api/v1/validator-rounds/start", json=start_payload)
+        monkeypatch.setattr(
+            "app.api.validator.validator_round.get_current_block",
+            lambda: inside_round(777),
+        )
+
+        start_response = await client.post(
+            "/api/v1/validator-rounds/start", json=start_payload
+        )
         assert start_response.status_code == 200
 
         tasks_response = await client.post(
@@ -166,7 +167,9 @@ async def test_validator_round_flow_with_gif_upload(client, db_session, monkeypa
         evaluation_id = evaluation_payload["evaluation_result"]["evaluation_id"]
 
         stored_before = await db_session.scalar(
-            select(EvaluationResultORM).where(EvaluationResultORM.evaluation_id == evaluation_id)
+            select(EvaluationResultORM).where(
+                EvaluationResultORM.evaluation_id == evaluation_id
+            )
         )
         assert stored_before is not None
         assert stored_before.gif_recording is None
@@ -205,10 +208,15 @@ async def test_validator_round_flow_with_gif_upload(client, db_session, monkeypa
 
         async with AsyncSessionLocal() as verify_session:
             stored_after = await verify_session.scalar(
-                select(EvaluationResultORM).where(EvaluationResultORM.evaluation_id == evaluation_id)
+                select(EvaluationResultORM).where(
+                    EvaluationResultORM.evaluation_id == evaluation_id
+                )
             )
             assert stored_after is not None
             assert stored_after.gif_recording == gif_url
-            assert stored_after.validator_round_id == base_payload["round"]["validator_round_id"]
+            assert (
+                stored_after.validator_round_id
+                == base_payload["round"]["validator_round_id"]
+            )
     finally:
         settings.AWS_S3_GIF_PREFIX = original_prefix

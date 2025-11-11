@@ -114,7 +114,6 @@ class TaskTemplate:
     website_slug: str
     url: str
     prompt: str
-    success_criteria: str
     use_case_label: str
     use_case_slug: str
     default_actions: List[Dict[str, Any]]
@@ -351,18 +350,6 @@ def _random_vtrust() -> float:
     return round(random.uniform(0.55, 0.99), 4)
 
 
-def _random_provider(seed_record: MinerSeedRecord) -> str:
-    providers = [
-        "Neuron Labs",
-        "Synapse Collective",
-        "Autoppia Community",
-        "Tensor Guild",
-    ]
-    if seed_record.provider:
-        return seed_record.provider
-    return random.choice(providers)
-
-
 def _build_validator_identity_and_snapshot(
     validator_round_id: str,
     record: ValidatorSeedRecord,
@@ -416,12 +403,10 @@ def _build_miner_identity_and_snapshot(
         agent_name=record.name,
         image_url=record.image,
         github_url=record.github,
-        provider=_random_provider(record),
         description=record.description,
         is_sota=False,
         first_seen_at=first_seen,
         last_seen_at=last_seen,
-        metadata={"seeded": True},
     )
     return identity, snapshot
 
@@ -432,7 +417,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="autocinema",
         url="https://autoppia.example/cinema",
         prompt="Find the next available showtime for 'Interstellar' and note the auditorium.",
-        success_criteria="Showtime card for Interstellar lists auditorium information.",
         use_case_label="Find Showtimes",
         use_case_slug="find-showtimes",
         default_actions=[
@@ -446,7 +430,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="autobooks",
         url="https://autoppia.example/books",
         prompt="Search for 'Neural Horizons' and add it to the shopping cart.",
-        success_criteria="Shopping cart contains 'Neural Horizons'.",
         use_case_label="Add to Cart",
         use_case_slug="add-to-cart",
         default_actions=[
@@ -460,7 +443,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="autoconnect",
         url="https://autoppia.example/connect",
         prompt="Send a connection request to the profile of 'Ada Lovelace'.",
-        success_criteria="Pending requests list includes Ada Lovelace.",
         use_case_label="Send Connection",
         use_case_slug="send-connection",
         default_actions=[
@@ -474,7 +456,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="autodrive",
         url="https://autoppia.example/fleet",
         prompt="Schedule maintenance for vehicle 'Fleet-204' next Monday.",
-        success_criteria="Vehicle Fleet-204 maintenance calendar shows appointment.",
         use_case_label="Schedule Maintenance",
         use_case_slug="schedule-maintenance",
         default_actions=[
@@ -488,7 +469,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="autozone",
         url="https://autoppia.example/store",
         prompt="Filter laptops priced under $1500 and capture the first result.",
-        success_criteria="First filtered laptop card is captured with price under $1500.",
         use_case_label="Filter Products",
         use_case_slug="filter-products",
         default_actions=[
@@ -502,7 +482,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="autodining",
         url="https://autoppia.example/dining",
         prompt="Book a table for two at 'La Aurora' tomorrow at 8pm.",
-        success_criteria="Reservation summary shows La Aurora at 8pm for two guests.",
         use_case_label="Book Table",
         use_case_slug="book-table",
         default_actions=[
@@ -516,7 +495,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="automail",
         url="https://autoppia.example/mail",
         prompt="Compose an email draft to 'ops@autoppia.com' with subject 'Deployment complete'.",
-        success_criteria="Drafts folder contains email to ops@autoppia.com with the subject set.",
         use_case_label="Compose Email",
         use_case_slug="compose-email",
         default_actions=[
@@ -530,7 +508,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="autocrm",
         url="https://autoppia.example/crm",
         prompt="Create a new case for client 'Orion Labs' with priority high.",
-        success_criteria="Cases list includes Orion Labs marked as high priority.",
         use_case_label="Create Case",
         use_case_slug="create-case",
         default_actions=[
@@ -544,7 +521,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="autolodge",
         url="https://autoppia.example/lodge",
         prompt="Find a weekend stay in Barcelona with free cancellation and save it to favorites.",
-        success_criteria="Favorites list includes Barcelona property with free cancellation badge.",
         use_case_label="Save Stay",
         use_case_slug="save-stay",
         default_actions=[
@@ -558,7 +534,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="autowork",
         url="https://autoppia.example/work",
         prompt="Apply to the 'Data Strategist' job posting with a short proposal.",
-        success_criteria="Proposals page shows submission for Data Strategist.",
         use_case_label="Submit Proposal",
         use_case_slug="submit-proposal",
         default_actions=[
@@ -572,7 +547,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="autodelivery",
         url="https://autoppia.example/delivery",
         prompt="Order two spicy ramen bowls from 'Noodle Craft' for delivery.",
-        success_criteria="Order summary lists two spicy ramen bowls from Noodle Craft.",
         use_case_label="Place Order",
         use_case_slug="place-order",
         default_actions=[
@@ -586,7 +560,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="autolist",
         url="https://autoppia.example/list",
         prompt="Create a new task 'Launch blog' in the 'Marketing' board and assign it to Maya.",
-        success_criteria="Marketing board shows 'Launch blog' assigned to Maya.",
         use_case_label="Create Task",
         use_case_slug="create-task",
         default_actions=[
@@ -600,7 +573,6 @@ TASK_LIBRARY: List[TaskTemplate] = [
         website_slug="autocalendar",
         url="https://autoppia.example/calendar",
         prompt="Schedule a meeting titled 'Sprint Retro' for Friday at 3pm and invite the ops team.",
-        success_criteria="Calendar agenda lists 'Sprint Retro' Friday at 3pm with ops team invited.",
         use_case_label="Schedule Meeting",
         use_case_slug="schedule-meeting",
         default_actions=[
@@ -624,30 +596,20 @@ def _build_tasks(
         task = Task(
             task_id=task_id,
             validator_round_id=validator_round_id,
-            sequence=index,
-            scope="global",
             is_web_real=False,
             web_project_id=None,
             url=template.url,
             prompt=template.prompt,
-            html=f"<html><body>{template.website_name} task {index}</body></html>",
-            clean_html=f"<html><body>{template.website_name} task {index}</body></html>",
-            interactive_elements=None,
-            screenshot=None,
-            screenshot_description=None,
             specifications={"browser": "chromium"},
             tests=[],
-            milestones=None,
             relevant_data={
                 "website": template.website_slug,
                 "use_case": template.use_case_slug,
             },
-            success_criteria=template.success_criteria,
             use_case={
                 "name": template.use_case_label,
                 "slug": template.use_case_slug,
             },
-            should_record=False,
         )
         tasks.append(task)
         templates.append(template)
@@ -724,8 +686,6 @@ def _build_agent_run_bundle(
             miner_hotkey=miner_identity.hotkey,
             actions=actions,
             web_agent_id=f"web-agent-{agent_run_id}",
-            recording=None,
-            metadata={"template": template.website_slug},
         )
         task_solutions.append(task_solution)
 

@@ -81,23 +81,14 @@ async def test_progressive_validator_flow(client, db_session, monkeypatch):
         task_payload = {
             "task_id": task_id,
             "validator_round_id": base_payload["round"]["validator_round_id"],
-            "scope": "local",
             "is_web_real": False,
             "web_project_id": None,
             "url": f"https://example.com/{idx}",
             "prompt": f"Progressive task {idx}",
-            "html": "<html></html>",
-            "clean_html": "<html></html>",
-            "interactive_elements": None,
-            "screenshot": None,
-            "screenshot_description": None,
             "specifications": {},
             "tests": [],
-            "milestones": None,
             "relevant_data": {},
-            "success_criteria": "seeded",
             "use_case": {"name": "Progressive"},
-            "should_record": False,
         }
 
         tasks_response = await client.post(

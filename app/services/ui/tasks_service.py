@@ -246,7 +246,7 @@ class TasksService:
                 .select_from(TaskORM)
                 .where(TaskORM.evaluation_results.any())
             )
-            
+
             # Apply same filters as main query for accurate count
             if website:
                 count_stmt = count_stmt.where(TaskORM.url == website)
@@ -256,10 +256,10 @@ class TasksService:
                     | TaskORM.prompt.ilike(f"%{query}%")
                     | TaskORM.url.ilike(f"%{query}%")
                 )
-            
+
             # Get total count
             total_count = await self.session.scalar(count_stmt)
-            
+
             # Now fetch the paginated data
             # Add a bit extra to account for tasks with missing agent runs
             stmt = stmt.limit(limit * 2).offset((page - 1) * limit)
@@ -620,7 +620,7 @@ class TasksService:
         Delegates to extension module for implementation.
         """
         from app.services.ui.tasks_service_extension import get_tasks_with_solutions
-        
+
         return await get_tasks_with_solutions(
             session=self.session,
             page=page,
@@ -773,7 +773,6 @@ class TasksService:
                 else _format_agent_id(context.agent_run.miner_uid)
             ),
             github=getattr(miner_model, "github", None) if miner_model else None,
-            provider=getattr(miner_model, "provider", None) if miner_model else None,
             image=resolve_agent_image(miner_model),
             isSota=context.agent_run.is_sota,
         )
@@ -845,7 +844,6 @@ class TasksService:
                 validatorUid=context.solution.validator_uid,
                 actionsCount=len(context.solution.actions or []),
                 webAgentId=context.solution.web_agent_id,
-                hasRecording=bool(context.solution.recording),
             )
 
         relationships = TaskRelationships(
@@ -1473,7 +1471,8 @@ class TasksService:
         return UITask(
             taskId=context.task.task_id,
             agentRunId=context.agent_run.agent_run_id,
-            roundNumber=context.round.round_number or _round_id_to_int(context.round.validator_round_id),
+            roundNumber=context.round.round_number
+            or _round_id_to_int(context.round.validator_round_id),
             website=context.task.url,
             seed=seed_val,
             useCase=self._extract_use_case(context.task) or "unknown",
@@ -1551,7 +1550,8 @@ class TasksService:
         return UITask(
             taskId=context.task.task_id,
             agentRunId=context.agent_run.agent_run_id,
-            roundNumber=context.round.round_number or _round_id_to_int(context.round.validator_round_id),
+            roundNumber=context.round.round_number
+            or _round_id_to_int(context.round.validator_round_id),
             website=context.task.url,
             seed=seed_val,
             useCase=self._extract_use_case(context.task) or "unknown",
