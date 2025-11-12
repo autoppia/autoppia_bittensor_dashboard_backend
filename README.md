@@ -271,7 +271,7 @@ MIN_VALIDATOR_STAKE_LOCAL=0.0
 # ═══════════════════════════════════════════════════════════════
 ROUND_SIZE_EPOCHS_LOCAL=0.2
 BLOCKS_PER_EPOCH_LOCAL=360
-DZ_STARTING_BLOCK_LOCAL=6717750
+DZ_STARTING_BLOCK_LOCAL=6873314
 
 # ═══════════════════════════════════════════════════════════════
 # CACHING
