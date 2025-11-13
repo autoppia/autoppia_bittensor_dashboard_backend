@@ -376,8 +376,15 @@ def cached_redis(
     def decorator(func: Callable):
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
-            # Generate cache key
-            cache_key = redis_cache._generate_key(prefix, *args, **kwargs)
+            # Filter out session/db objects from cache key
+            # These change on every request and shouldn't affect caching
+            filtered_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k not in ("session", "db") and not str(type(v).__name__).endswith("Session")
+            }
+            
+            # Generate cache key (without session)
+            cache_key = redis_cache._generate_key(prefix, *args, **filtered_kwargs)
 
             # Try to get from cache
             cached_result = redis_cache.get(cache_key)
@@ -397,8 +404,14 @@ def cached_redis(
 
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
-            # Generate cache key
-            cache_key = redis_cache._generate_key(prefix, *args, **kwargs)
+            # Filter out session/db objects from cache key
+            filtered_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k not in ("session", "db") and not str(type(v).__name__).endswith("Session")
+            }
+            
+            # Generate cache key (without session)
+            cache_key = redis_cache._generate_key(prefix, *args, **filtered_kwargs)
 
             # Try to get from cache
             cached_result = redis_cache.get(cache_key)
