@@ -355,6 +355,23 @@ class ValidatorRoundPersistenceService:
             )
             solution_row = TaskSolutionORM(**solution_kwargs)
             self.session.add(solution_row)
+            
+            # Handle race condition: another request may have inserted between SELECT and INSERT
+            try:
+                await self.session.flush()
+            except Exception as e:
+                from sqlalchemy.exc import IntegrityError
+                if isinstance(e, IntegrityError) and "uq_solution_id" in str(e):
+                    # Race condition: solution was inserted by concurrent request
+                    await self.session.rollback()
+                    # Reload the existing solution
+                    existing_solution = await self.get_task_solution_row(task_solution.solution_id)
+                    if existing_solution:
+                        solution_row = existing_solution
+                    else:
+                        raise  # Unexpected error
+                else:
+                    raise
 
         # Evaluation upsert/validate
         existing_eval = await self.get_evaluation_row(evaluation.evaluation_id)
@@ -373,6 +390,21 @@ class ValidatorRoundPersistenceService:
             evaluation_kwargs = self._evaluation_kwargs(evaluation, miner_id=miner_id)
             evaluation_row = EvaluationORM(**evaluation_kwargs)
             self.session.add(evaluation_row)
+            
+            # Handle race condition for evaluation
+            try:
+                await self.session.flush()
+            except Exception as e:
+                from sqlalchemy.exc import IntegrityError
+                if isinstance(e, IntegrityError) and "uq_evaluation_id" in str(e):
+                    await self.session.rollback()
+                    existing_eval = await self.get_evaluation_row(evaluation.evaluation_id)
+                    if existing_eval:
+                        evaluation_row = existing_eval
+                    else:
+                        raise
+                else:
+                    raise
 
         # Evaluation result upsert/validate
         existing_result = await self.get_evaluation_result_row(
@@ -397,7 +429,20 @@ class ValidatorRoundPersistenceService:
                 evaluation_result,
                 miner_id=miner_id,
             )
-            self.session.add(EvaluationResultORM(**result_kwargs))
+            result_orm = EvaluationResultORM(**result_kwargs)
+            self.session.add(result_orm)
+            
+            # Handle race condition for evaluation_result
+            try:
+                await self.session.flush()
+            except Exception as e:
+                from sqlalchemy.exc import IntegrityError
+                if isinstance(e, IntegrityError) and "uq_result_id" in str(e):
+                    # Race condition handled - result already exists
+                    await self.session.rollback()
+                    # Continue without error (result is already saved)
+                else:
+                    raise
 
     # ──────────────────────────────────────────────────────────────────────
     # Read-only helpers for idempotency checks

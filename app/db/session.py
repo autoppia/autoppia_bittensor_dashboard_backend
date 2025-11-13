@@ -62,7 +62,16 @@ except Exception:
     pass
 
 # Create async engine and session factory
-engine = create_async_engine(database_url, echo=False, future=True)
+# Increased pool size to handle multiple validators calling simultaneously
+engine = create_async_engine(
+    database_url,
+    echo=False,
+    future=True,
+    pool_size=20,          # Increased from default 5 to handle 4+ validators
+    max_overflow=40,       # Increased from default 10 for burst capacity
+    pool_timeout=90,       # Increased from default 30s to match validator timeout
+    pool_pre_ping=True,    # Verify connections before use
+)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
