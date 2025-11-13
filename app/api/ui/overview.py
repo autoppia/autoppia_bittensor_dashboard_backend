@@ -177,6 +177,7 @@ async def get_statistics(
 
 
 @router.get("/network-status", response_model=NetworkStatusResponse)
+@cache("network_status", ttl=60)  # Cache 1 minute
 async def get_network_status(
     session: AsyncSession = Depends(get_session),
 ) -> NetworkStatusResponse:

@@ -982,7 +982,7 @@ class OverviewService:
                 contexts = await self.rounds_service.list_agent_run_contexts(
                     validator_round_id=row.validator_round_id,
                     include_details=include_details,
-                    limit=None,
+                    limit=100,  # Limit to 100 to avoid loading thousands of runs
                     skip=0,
                 )
             except Exception as exc:  # noqa: BLE001
