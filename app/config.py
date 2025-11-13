@@ -98,10 +98,10 @@ class Settings(BaseSettings):
     # ═══════════════════════════════════════════════════════════════════════════
     # Reads from .env with environment suffix:
     # ROUND_SIZE_EPOCHS_LOCAL, ROUND_SIZE_EPOCHS_DEVELOPMENT, etc.
-    ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "2.0"))
+    ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "3.0"))
     BLOCKS_PER_EPOCH: int = int(_env_var("BLOCKS_PER_EPOCH", "360"))
     DZ_STARTING_BLOCK: int = int(
-        _env_var("DZ_STARTING_BLOCK", "6870000")
+        _env_var("DZ_STARTING_BLOCK", "6872820")
     )  # Synced with validator config
 
     # Chain state
