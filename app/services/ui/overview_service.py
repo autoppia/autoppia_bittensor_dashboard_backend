@@ -1398,17 +1398,17 @@ class OverviewService:
             trust_value: float = 0.0
             version = None
 
+            # Get stake and vtrust from metagraph (preferred) or DB (fallback)
             if fresh_data:
-                # Use fresh metagraph data (preferred)
+                # Use fresh metagraph data for stake/vtrust (preferred)
                 stake_value = fresh_data.get("stake") or 0.0
                 trust_value = fresh_data.get("vtrust") or 0.0
-                version = fresh_data.get("version")  # Keep as string: "10.1.0"
                 logger.debug(
                     f"[Validator {validator_uid}] Using fresh metagraph data: "
-                    f"stake={stake_value:.2f}, vtrust={trust_value:.4f}, version={version}"
+                    f"stake={stake_value:.2f}, vtrust={trust_value:.4f}"
                 )
             else:
-                # Fallback to DB snapshot data
+                # Fallback to DB snapshot data for stake/vtrust
                 if validator_info and validator_info.stake is not None:
                     try:
                         stake_value = float(validator_info.stake)
@@ -1421,13 +1421,14 @@ class OverviewService:
                     except (TypeError, ValueError):
                         trust_value = 0.0
 
-                if validator_info and validator_info.version:
-                    version = str(validator_info.version)  # Keep as string
-
                 logger.debug(
                     f"[Validator {validator_uid}] Using DB snapshot data: "
-                    f"stake={stake_value:.2f}, vtrust={trust_value:.4f}, version={version}"
+                    f"stake={stake_value:.2f}, vtrust={trust_value:.4f}"
                 )
+
+            # Version is ALWAYS from DB (not in metagraph)
+            if validator_info and validator_info.version:
+                version = str(validator_info.version)
 
             if display_round:
                 total_tasks = display_round.n_tasks or 0
