@@ -1,21 +1,12 @@
 from __future__ import annotations
 
 import logging
-import threading
-import time
 from typing import Optional
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_price_cache_lock = threading.Lock()
-_cached_price_value: Optional[float] = None
-_cached_price_netuid: Optional[int] = None
-_cached_price_at: float = 0.0
-_price_fetch_in_progress: bool = False
-_last_price_attempt: float = 0.0
-_FAILURE_RETRY_SECONDS = 30.0
 _MAX_REASONABLE_PRICE = 0.05  # 1 alpha -> at most 0.05 τ unless configured via env
 
 
@@ -121,189 +112,39 @@ def _try_fetch_price_sync(netuid: int) -> Optional[float]:
 
 
 def get_price(netuid: int = 36, ttl_seconds: int = 300) -> float:
-    """Return subnet price for `netuid` with caching and env fallback.
+    """Get subnet price from Redis (managed by background thread).
 
-    - Tries bittensor (sync) first.
-    - Caches the last successful value for `ttl_seconds`.
-    - Falls back to environment when chain fetch fails.
+    GET endpoints should use this - it never calls the blockchain.
+    Falls back to env if Redis has no data.
+
+    Returns:
+        Cached price from Redis or env fallback
     """
-    global _cached_price_value, _cached_price_at, _cached_price_netuid
-
-    now = time.time()
-
-    # Serve from cache if valid and matching netuid
-    with _price_cache_lock:
-        if (
-            _cached_price_value is not None
-            and _cached_price_netuid == int(netuid)
-            and (now - _cached_price_at) < max(60, int(ttl_seconds))
-        ):
-            return float(_cached_price_value)
-
-    # Try chain
-    value = _try_fetch_price_sync(int(netuid))
-    source = "chain"
-    if value is None or value <= 0:
-        # Prefer stale cache if we have one
-        with _price_cache_lock:
-            if _cached_price_value is not None and _cached_price_netuid == int(netuid):
-                logger.warning(
-                    "Using stale cached subnet price for netuid=%s (fetch failed)",
-                    netuid,
-                )
-                return float(_cached_price_value)
-        # No cache: fallback to env
-        value = _env_fallback(int(netuid))
-        source = "env-fallback"
-    else:
-        # Sanity clamp: if chain returns an out-of-range price, fallback to env
-        if value > _MAX_REASONABLE_PRICE:
-            logger.warning(
-                "Ignoring unreasonable subnet price from chain (netuid=%s, value=%s)",
-                netuid,
-                value,
-            )
-            value = _env_fallback(int(netuid))
-            source = "env-fallback-clamped"
-
-    # Update cache
-    with _price_cache_lock:
-        _cached_price_value = float(value)
-        _cached_price_netuid = int(netuid)
-        _cached_price_at = now
+    # Try to get from Redis (populated by background thread)
     try:
-        logger.info(
-            "Subnet price updated: netuid=%s value=%.6f source=%s",
-            netuid,
-            float(value),
-            source,
-        )
+        from app.services.metagraph_updater_thread import get_price_from_redis
+
+        price = get_price_from_redis()
+        if price is not None and price > 0:
+            return float(price)
     except Exception:
         pass
-    return float(value)
+
+    # Fallback to env
+    return _env_fallback(int(netuid))
 
 
 async def get_price_async(netuid: int = 36, ttl_seconds: int = 300) -> float:
-    """Async variant using AsyncSubtensor when available, with the same fallback rules.
+    """Async variant - just returns sync version (reads from Redis).
 
-    If AsyncSubtensor is unavailable or fails, falls back to the sync implementation.
+    No async needed since we only read from Redis now.
     """
-    global _cached_price_value, _cached_price_at, _cached_price_netuid
-
-    # Try to use AsyncSubtensor first
-    try:
-        import bittensor as bt  # type: ignore
-
-        AsyncSubtensor = getattr(bt, "AsyncSubtensor", None)
-    except Exception:
-        AsyncSubtensor = None
-
-    if AsyncSubtensor is not None:
-        kwargs = {}
-        if settings.SUBTENSOR_NETWORK:
-            kwargs["network"] = settings.SUBTENSOR_NETWORK
-        try:
-            st = AsyncSubtensor(**kwargs)
-            # Try candidate async methods
-            for method_name in ("get_subnet_price", "get_subnet_hyperparameters"):
-                fn = getattr(st, method_name, None)
-                if fn is None:
-                    continue
-                try:
-                    data = await fn(int(netuid))
-                    if method_name == "get_subnet_price":
-                        val = float(data)
-                        if val > 0:
-                            with _price_cache_lock:
-                                _cached_price_value = val
-                                _cached_price_netuid = int(netuid)
-                                _cached_price_at = time.time()
-                            return val
-                    else:
-                        for key in (
-                            "price",
-                            "alpha_to_tao_rate",
-                            "alpha_price",
-                            "tau_price",
-                        ):
-                            try:
-                                if isinstance(data, dict) and key in data:
-                                    val = float(data[key])
-                                else:
-                                    val = float(getattr(data, key))
-                                if val > 0:
-                                    with _price_cache_lock:
-                                        _cached_price_value = val
-                                        _cached_price_netuid = int(netuid)
-                                        _cached_price_at = time.time()
-                                    return val
-                            except Exception:
-                                continue
-                except Exception:
-                    continue
-        except Exception:
-            pass
-
-    # Fallback to sync path
     return get_price(netuid=netuid, ttl_seconds=ttl_seconds)
 
 
-def _kick_price_refresh_if_needed(netuid: int = 36, ttl_seconds: int = 300) -> None:
-    """If cache is missing or stale, trigger a background refresh.
-
-    Never blocks the caller; uses a best-effort backoff when previous attempts failed.
-    """
-    global _price_fetch_in_progress, _last_price_attempt
-    now = time.time()
-    with _price_cache_lock:
-        cached_ts = _cached_price_at
-        cached_uid = _cached_price_netuid
-        in_progress = _price_fetch_in_progress
-        last_attempt = _last_price_attempt
-
-    ttl = max(60, int(ttl_seconds))
-    is_stale = (cached_uid != int(netuid)) or (cached_ts <= 0) or ((now - cached_ts) >= ttl)
-    retry_delay = min(ttl, _FAILURE_RETRY_SECONDS)
-    should_retry_failure = (cached_ts <= 0) and ((now - last_attempt) >= retry_delay)
-
-    if not is_stale and not should_retry_failure:
-        return
-    if in_progress:
-        return
-
-    def _bg_refresh():
-        global _price_fetch_in_progress, _last_price_attempt
-        try:
-            _ = get_price(netuid=netuid, ttl_seconds=ttl_seconds)
-        finally:
-            with _price_cache_lock:
-                _price_fetch_in_progress = False
-
-    with _price_cache_lock:
-        if _price_fetch_in_progress:
-            return
-        _price_fetch_in_progress = True
-        _last_price_attempt = now
-
-    thread = threading.Thread(target=_bg_refresh, daemon=True)
-    thread.start()
-
-
 def get_price_cached(netuid: int = 36, ttl_seconds: int = 300) -> float:
-    """Return cached subnet price if present; otherwise env fallback.
+    """Alias for get_price() - now they both only read from Redis.
 
-    - Does NOT trigger any bittensor calls or state changes.
-    - Safe for GET endpoints where we want to avoid chain I/O.
+    Safe for GET endpoints - never calls blockchain.
     """
-    # If env fallback is explicitly configured (>0), prefer it over cache/chain for UI reads
-    env_price = _env_fallback(int(netuid))
-    if env_price > 0:
-        _kick_price_refresh_if_needed(netuid=netuid, ttl_seconds=ttl_seconds)
-        return env_price
-
-    with _price_cache_lock:
-        if _cached_price_value is not None and _cached_price_netuid == int(netuid):
-            return float(_cached_price_value)
-    # Schedule a background refresh and serve env fallback now
-    _kick_price_refresh_if_needed(netuid=netuid, ttl_seconds=ttl_seconds)
-    return env_price or 1.0
+    return get_price(netuid=netuid, ttl_seconds=ttl_seconds)

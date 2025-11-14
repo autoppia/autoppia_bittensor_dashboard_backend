@@ -149,9 +149,15 @@ async def clear_cache():
     return {"message": f"Cleared {cleared} cache entries", "cleared": cleared}
 
 
+@app.get("/debug/background-updater-status")
+async def background_updater_status():
+    """Get the status of the background updater thread (metagraph + price)."""
+    return get_updater_status()
+
+
 @app.get("/debug/metagraph-status")
 async def metagraph_status():
-    """Get the status of the metagraph updater background thread."""
+    """Get the status of metagraph data (deprecated, use /debug/background-updater-status)."""
     return get_updater_status()
 
 
@@ -182,25 +188,16 @@ async def on_startup():
         logger.info("SQL schema ready")
         logger.info(f"API server ready on {settings.HOST}:{settings.PORT}")
         logger.info("API documentation available at /docs")
-        # Start background chain block refresher (non-blocking)
-        try:
-            from app.services.chain_state import start_block_refresher
+        # NOTE: Block refresher is now part of the metagraph_updater thread (consolidated)
 
-            if int(getattr(settings, "CHAIN_BLOCK_REFRESH_PERIOD", 30) or 30) > 0:
-                start_block_refresher(settings.CHAIN_BLOCK_REFRESH_PERIOD)
-                logger.info(
-                    "Chain block refresher started (period=%ss)",
-                    settings.CHAIN_BLOCK_REFRESH_PERIOD,
-                )
-        except Exception as exc:
-            logger.warning("Could not start chain block refresher: %s", exc)
-
-        # Start metagraph updater background thread
+        # Start background updater thread (metagraph + price + block)
         try:
             start_metagraph_updater()
-            logger.info("✅ Metagraph updater background thread started")
+            logger.info(
+                "✅ Background data updater thread started (metagraph + price + block)"
+            )
         except Exception as exc:
-            logger.warning("Could not start metagraph updater: %s", exc)
+            logger.warning("Could not start background updater: %s", exc)
 
     except Exception as e:
         logger.error(f"Failed to initialize application: {e}", exc_info=True)
@@ -211,19 +208,13 @@ async def on_startup():
 async def on_shutdown():
     logger.info("Shutting down Autoppia IWA Platform API...")
 
-    # Stop metagraph updater
+    # Stop background updater
     try:
         stop_metagraph_updater()
     except Exception:
         pass
 
-    # Stop chain block refresher
-    try:
-        from app.services.chain_state import stop_block_refresher
-
-        stop_block_refresher()
-    except Exception:
-        pass
+    # NOTE: Block refresher is part of metagraph_updater (already stopped above)
 
 
 # Global exception handler
