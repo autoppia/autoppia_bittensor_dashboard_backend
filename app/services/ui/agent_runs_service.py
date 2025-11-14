@@ -507,7 +507,7 @@ class AgentRunsService:
             validatorName=validator_name,
             validatorImage=validator_image,
             startTime=_ts_to_iso(context.run.started_at) or "",
-            endTime=_ts_to_iso(context.run.ended_at),
+            endTime=_ts_to_iso(context.run.ended_at) or "",
             status=self._run_status(context),
             totalTasks=total_tasks,
             completedTasks=success_count,
