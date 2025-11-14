@@ -30,6 +30,7 @@ from app.services.ui.rounds_service import AgentRunContext, RoundRecord, RoundsS
 from app.services.chain_state import get_current_block_estimate
 from app.services.round_calc import compute_boundaries_for_round, compute_round_number
 from app.services.cache import CACHE_TTL, api_cache
+from app.services.metagraph_service import get_all_validators_data, MetagraphError
 from app.config import settings
 from app.utils.images import resolve_validator_image
 
@@ -1315,6 +1316,18 @@ class OverviewService:
             set(current_round_entries.keys()) | recent_participant_uids
         )
 
+        # Fetch fresh metagraph data for all validators
+        fresh_metagraph_data: Dict[int, Dict[str, Any]] = {}
+        try:
+            fresh_metagraph_data = get_all_validators_data()
+            logger.info(
+                f"Loaded fresh metagraph data for {len(fresh_metagraph_data)} validators"
+            )
+        except MetagraphError as exc:
+            logger.warning(
+                f"Failed to fetch fresh metagraph data, will use DB snapshots: {exc}"
+            )
+
         for validator_uid in sorted(known_validator_uids):
             entry = current_round_entries.get(validator_uid)
             last_entry = last_entry_by_uid.get(validator_uid)
@@ -1378,26 +1391,43 @@ class OverviewService:
 
             logger.debug(f"[Validator {validator_uid}] Final icon={icon}")
 
+            # Get fresh data from metagraph, fallback to DB snapshot if unavailable
+            fresh_data = fresh_metagraph_data.get(validator_uid)
+
             stake_value: float = 0.0
-            if validator_info and validator_info.stake is not None:
-                try:
-                    stake_value = float(validator_info.stake)
-                except (TypeError, ValueError):
-                    stake_value = 0.0
-
             trust_value: float = 0.0
-            if validator_info and validator_info.vtrust is not None:
-                try:
-                    trust_value = float(validator_info.vtrust)
-                except (TypeError, ValueError):
-                    trust_value = 0.0
-
             version = None
-            if validator_info and validator_info.version:
-                try:
-                    version = int(str(validator_info.version).split(".")[0])
-                except ValueError:
-                    version = None
+
+            if fresh_data:
+                # Use fresh metagraph data (preferred)
+                stake_value = fresh_data.get("stake") or 0.0
+                trust_value = fresh_data.get("vtrust") or 0.0
+                version = fresh_data.get("version")  # Keep as string: "10.1.0"
+                logger.debug(
+                    f"[Validator {validator_uid}] Using fresh metagraph data: "
+                    f"stake={stake_value:.2f}, vtrust={trust_value:.4f}, version={version}"
+                )
+            else:
+                # Fallback to DB snapshot data
+                if validator_info and validator_info.stake is not None:
+                    try:
+                        stake_value = float(validator_info.stake)
+                    except (TypeError, ValueError):
+                        stake_value = 0.0
+
+                if validator_info and validator_info.vtrust is not None:
+                    try:
+                        trust_value = float(validator_info.vtrust)
+                    except (TypeError, ValueError):
+                        trust_value = 0.0
+
+                if validator_info and validator_info.version:
+                    version = str(validator_info.version)  # Keep as string
+
+                logger.debug(
+                    f"[Validator {validator_uid}] Using DB snapshot data: "
+                    f"stake={stake_value:.2f}, vtrust={trust_value:.4f}, version={version}"
+                )
 
             if display_round:
                 total_tasks = display_round.n_tasks or 0

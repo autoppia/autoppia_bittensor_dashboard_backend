@@ -30,6 +30,11 @@ from app.api.ui.tasks import router as tasks_router
 from app.api.validator.validator_round import router as validator_rounds_router
 from app.db.session import init_db
 from app.services.idempotency import get_cache_stats
+from app.services.metagraph_updater_thread import (
+    start_metagraph_updater,
+    stop_metagraph_updater,
+    get_updater_status,
+)
 
 
 app = FastAPI(
@@ -144,6 +149,27 @@ async def clear_cache():
     return {"message": f"Cleared {cleared} cache entries", "cleared": cleared}
 
 
+@app.get("/debug/metagraph-status")
+async def metagraph_status():
+    """Get the status of the metagraph updater background thread."""
+    return get_updater_status()
+
+
+@app.post("/debug/metagraph-force-refresh")
+async def metagraph_force_refresh():
+    """Force an immediate refresh of metagraph data (takes 2-3 seconds)."""
+    from app.services.metagraph_service import force_refresh
+
+    success = force_refresh()
+    if success:
+        return {"ok": True, "message": "Metagraph data refreshed successfully"}
+    else:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": "Failed to refresh metagraph data"},
+        )
+
+
 # Startup / Shutdown
 @app.on_event("startup")
 async def on_startup():
@@ -168,6 +194,14 @@ async def on_startup():
                 )
         except Exception as exc:
             logger.warning("Could not start chain block refresher: %s", exc)
+
+        # Start metagraph updater background thread
+        try:
+            start_metagraph_updater()
+            logger.info("✅ Metagraph updater background thread started")
+        except Exception as exc:
+            logger.warning("Could not start metagraph updater: %s", exc)
+
     except Exception as e:
         logger.error(f"Failed to initialize application: {e}", exc_info=True)
         raise
@@ -176,7 +210,14 @@ async def on_startup():
 @app.on_event("shutdown")
 async def on_shutdown():
     logger.info("Shutting down Autoppia IWA Platform API...")
-    # add cleanup as needed
+
+    # Stop metagraph updater
+    try:
+        stop_metagraph_updater()
+    except Exception:
+        pass
+
+    # Stop chain block refresher
     try:
         from app.services.chain_state import stop_block_refresher
 

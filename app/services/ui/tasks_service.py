@@ -60,6 +60,7 @@ from app.models.ui.tasks import (
     WebsitePerformance,
 )
 from app.services.ui.rounds_service import AgentRunContext, RoundsService
+from app.services.metagraph_service import get_validator_data, MetagraphError
 from app.utils.images import resolve_agent_image, resolve_validator_image
 from app.config import settings
 from app.services.round_calc import compute_boundaries_for_round
@@ -744,15 +745,34 @@ class TasksService:
                 version=None,
             )
 
+        # Try to get fresh metagraph data for more accurate stake/vtrust/version
+        stake_value = float(getattr(validator_model, "stake", 0.0) or 0.0)
+        vtrust_value = float(getattr(validator_model, "vtrust", 0.0) or 0.0)
+        version_value = getattr(validator_model, "version", None)
+
+        try:
+            fresh_data = get_validator_data(uid=context.agent_run.validator_uid)
+            if fresh_data:
+                if fresh_data.get("stake") is not None:
+                    stake_value = float(fresh_data["stake"])
+                if fresh_data.get("vtrust") is not None:
+                    vtrust_value = float(fresh_data["vtrust"])
+                if fresh_data.get("version") is not None:
+                    version_value = str(
+                        fresh_data["version"]
+                    )  # Keep as string: "10.1.0"
+        except MetagraphError:
+            pass  # Fallback to DB snapshot data
+
         # Ensure UID is non-negative and resolve validator image with fallback
         validator_summary = TaskValidatorSummary(
             uid=abs(int(validator_model.uid)) if validator_model.uid is not None else 0,
             hotkey=validator_model.hotkey,
             coldkey=validator_model.coldkey,
             name=validator_model.name,
-            stake=float(getattr(validator_model, "stake", 0.0) or 0.0),
-            vtrust=float(getattr(validator_model, "vtrust", 0.0) or 0.0),
-            version=getattr(validator_model, "version", None),
+            stake=stake_value,
+            vtrust=vtrust_value,
+            version=version_value,
             image=resolve_validator_image(
                 name=validator_model.name,
                 existing=getattr(validator_model, "image_url", None),
