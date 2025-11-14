@@ -106,7 +106,7 @@ class AgentRun(BaseModel):
     validatorName: str
     validatorImage: str
     startTime: str
-    endTime: str
+    endTime: Optional[str] = ""
     status: RunStatus
     totalTasks: int
     completedTasks: int

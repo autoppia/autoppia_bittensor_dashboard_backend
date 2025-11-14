@@ -1772,7 +1772,9 @@ class RoundsService:
         self,
         round_identifier: Union[str, int],
     ) -> Dict[str, Any]:
-        aggregated = await self._fetch_aggregated_round(round_identifier)
+        aggregated = await self._fetch_aggregated_round(
+            round_identifier, include_details=True
+        )
 
         cache_key: Optional[str] = None
         if self._is_final_round(aggregated):
@@ -2137,10 +2139,6 @@ class RoundsService:
         self,
         round_identifier: Union[str, int],
     ) -> Dict[str, Any]:
-        # Prefer chain-derived progress
-        aggregated = await self._fetch_aggregated_round(
-            round_identifier, include_details=False
-        )
         try:
             from app.services.chain_state import get_current_block_estimate
             from app.services.round_calc import (
@@ -2154,10 +2152,18 @@ class RoundsService:
             current_block = None
 
         if current_block is not None:
-            bounds = compute_boundaries_for_round(aggregated.round_number)
+            round_number = await self._resolve_round_number(round_identifier)
+            records, _ = await self._fetch_round_records_by_number(round_number)
+            if not records:
+                raise ValueError(f"Round {round_identifier} not found")
+            
+            statuses = [record.model.status or "finished" for record in records]
+            aggregated_status = _aggregate_status(statuses)
+            
+            bounds = compute_boundaries_for_round(round_number)
 
             # If round is officially finished, force 100% progress
-            if aggregated.status == "finished":
+            if aggregated_status == "finished":
                 progress_value = 1.0
                 blocks_remaining = 0
                 display_block = bounds.end_block
@@ -2169,7 +2175,7 @@ class RoundsService:
 
             seconds_remaining = blocks_remaining * 12
             return {
-                "roundId": aggregated.round_number,
+                "roundId": round_number,
                 "currentBlock": display_block,
                 "startBlock": bounds.start_block,
                 "endBlock": bounds.end_block,
@@ -2181,6 +2187,10 @@ class RoundsService:
                 "estimatedTimeRemaining": _time_remaining(seconds_remaining),
                 "lastUpdated": datetime.now(timezone.utc).isoformat(),
             }
+
+        aggregated = await self._fetch_aggregated_round(
+            round_identifier, include_details=False
+        )
 
         # Fallback to task-based estimate when chain is unavailable
         records = [entry.record for entry in aggregated.validator_rounds]
