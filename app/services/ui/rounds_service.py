@@ -1091,12 +1091,15 @@ class RoundsService:
         round_obj = record.model
         validator_uid = round_obj.validator_uid or record.validator_uid
         validator_info = getattr(round_obj, "validator_info", None)
+        # For completed rounds, use DB data only (no fresh metagraph lookups)
+        use_fresh = round_obj.ended_at is None
         profile = self._build_validator_profile(
             round_row=record.row,
             validator_uid=validator_uid,
             fallback_hotkey=round_obj.validator_hotkey
             or (validator_info.hotkey if validator_info else None),
             fallback_name=validator_info.name if validator_info else None,
+            use_fresh_data=use_fresh,
         )
 
         validator_name = profile.get("name")
@@ -1920,11 +1923,14 @@ class RoundsService:
                 elif round_obj.status == "active":
                     status = "active"
 
+                # For completed rounds, use DB data only (no fresh metagraph lookups)
+                use_fresh = round_obj.ended_at is None
                 profile = self._build_validator_profile(
                     round_row=entry.record.row,
                     validator_uid=validator.uid,
                     fallback_hotkey=validator.hotkey,
                     fallback_name=validator.name,
+                    use_fresh_data=use_fresh,
                 )
                 validator_name = (
                     validator.name
@@ -2850,10 +2856,13 @@ class RoundsService:
         meta = dict(round_row.meta or {})
         summary = dict(round_row.summary or {})
 
+        # For completed rounds, use DB data only (no fresh metagraph lookups)
+        use_fresh = round_row.ended_at is None
         profile = self._build_validator_profile(
             round_row=round_row,
             validator_uid=round_row.validator_uid,
             fallback_hotkey=round_row.validator_hotkey,
+            use_fresh_data=use_fresh,
         )
 
         validator_info = ValidatorInfo(
