@@ -368,7 +368,8 @@ class RoundsService:
             "image_url": None,
         }
 
-        # First, try to get fresh data from metagraph if requested
+        # First, try to get fresh stake/vtrust from metagraph if requested
+        # NOTE: version is NOT in metagraph, only in DB
         if use_fresh_data and validator_uid is not None:
             try:
                 fresh_data = get_validator_data(uid=validator_uid)
@@ -377,13 +378,9 @@ class RoundsService:
                         profile["stake"] = float(fresh_data["stake"])
                     if fresh_data.get("vtrust") is not None:
                         profile["vtrust"] = float(fresh_data["vtrust"])
-                    if fresh_data.get("version") is not None:
-                        profile["version"] = str(
-                            fresh_data["version"]
-                        )  # Keep as string
                     logger.debug(
                         f"[Validator {validator_uid}] Using fresh metagraph data in profile: "
-                        f"stake={profile['stake']:.2f}, vtrust={profile['vtrust']:.4f}, version={profile['version']}"
+                        f"stake={profile['stake']:.2f}, vtrust={profile['vtrust']:.4f}"
                     )
             except MetagraphError as exc:
                 logger.debug(

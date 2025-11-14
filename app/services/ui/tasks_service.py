@@ -745,7 +745,8 @@ class TasksService:
                 version=None,
             )
 
-        # Try to get fresh metagraph data for more accurate stake/vtrust/version
+        # Try to get fresh metagraph data for more accurate stake/vtrust
+        # NOTE: version is NOT in metagraph, only in DB
         stake_value = float(getattr(validator_model, "stake", 0.0) or 0.0)
         vtrust_value = float(getattr(validator_model, "vtrust", 0.0) or 0.0)
         version_value = getattr(validator_model, "version", None)
@@ -757,10 +758,7 @@ class TasksService:
                     stake_value = float(fresh_data["stake"])
                 if fresh_data.get("vtrust") is not None:
                     vtrust_value = float(fresh_data["vtrust"])
-                if fresh_data.get("version") is not None:
-                    version_value = str(
-                        fresh_data["version"]
-                    )  # Keep as string: "10.1.0"
+                # version stays from DB (validator_model.version)
         except MetagraphError:
             pass  # Fallback to DB snapshot data
 
