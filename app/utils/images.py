@@ -170,7 +170,6 @@ def resolve_agent_image(
     if info.is_sota:
         candidates = [
             info.agent_name or "",
-            info.provider or "",
             existing_url or "",
         ]
 
@@ -188,7 +187,7 @@ def resolve_agent_image(
         if existing_url:
             return existing_url
 
-        slug = _slugify(info.agent_name or info.provider or "sota-agent")
+        slug = _slugify(info.agent_name or "sota-agent")
         return _ensure_absolute_url(f"/sota/{slug}.webp", fallback=existing_url)
 
     if info.agent_image:
