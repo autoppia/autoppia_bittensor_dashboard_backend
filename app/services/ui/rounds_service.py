@@ -37,6 +37,7 @@ from app.utils.images import resolve_agent_image, resolve_validator_image
 from app.config import settings
 from app.services.chain_state import get_current_block_estimate
 from app.services.round_calc import compute_boundaries_for_round
+from app.services.metagraph_service import get_validator_data, MetagraphError
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +343,21 @@ class RoundsService:
         validator_uid: Optional[int],
         fallback_hotkey: Optional[str] = None,
         fallback_name: Optional[str] = None,
+        use_fresh_data: bool = True,
     ) -> Dict[str, Any]:
+        """
+        Build validator profile combining DB snapshot data with optional fresh metagraph data.
+
+        Args:
+            round_row: Database round row containing validator snapshots
+            validator_uid: UID of the validator
+            fallback_hotkey: Hotkey to use if not found in snapshots
+            fallback_name: Name to use if not found in snapshots
+            use_fresh_data: If True, attempts to fetch fresh data from metagraph first
+
+        Returns:
+            Dictionary with validator profile data
+        """
         profile: Dict[str, Any] = {
             "uid": validator_uid,
             "hotkey": fallback_hotkey or "",
@@ -353,6 +368,30 @@ class RoundsService:
             "image_url": None,
         }
 
+        # First, try to get fresh data from metagraph if requested
+        if use_fresh_data and validator_uid is not None:
+            try:
+                fresh_data = get_validator_data(uid=validator_uid)
+                if fresh_data:
+                    if fresh_data.get("stake") is not None:
+                        profile["stake"] = float(fresh_data["stake"])
+                    if fresh_data.get("vtrust") is not None:
+                        profile["vtrust"] = float(fresh_data["vtrust"])
+                    if fresh_data.get("version") is not None:
+                        profile["version"] = str(
+                            fresh_data["version"]
+                        )  # Keep as string
+                    logger.debug(
+                        f"[Validator {validator_uid}] Using fresh metagraph data in profile: "
+                        f"stake={profile['stake']:.2f}, vtrust={profile['vtrust']:.4f}, version={profile['version']}"
+                    )
+            except MetagraphError as exc:
+                logger.debug(
+                    f"[Validator {validator_uid}] Fresh metagraph data unavailable: {exc}"
+                )
+
+        # Then, overlay snapshot data (for name, hotkey, image which aren't in metagraph)
+        # and as fallback for stake/vtrust/version if fresh data wasn't available
         if round_row is not None:
             snapshot = self._snapshot_for_validator(round_row, validator_uid)
             if snapshot is not None:
@@ -360,11 +399,12 @@ class RoundsService:
                     profile["hotkey"] = snapshot.validator_hotkey
                 if snapshot.name:
                     profile["name"] = snapshot.name
-                if snapshot.stake is not None:
+                # Only use snapshot stake/vtrust/version if we don't have fresh data
+                if profile["stake"] == 0.0 and snapshot.stake is not None:
                     profile["stake"] = float(snapshot.stake)
-                if snapshot.vtrust is not None:
+                if profile["vtrust"] == 0.0 and snapshot.vtrust is not None:
                     profile["vtrust"] = float(snapshot.vtrust)
-                if snapshot.version:
+                if profile["version"] is None and snapshot.version:
                     profile["version"] = snapshot.version
                 if snapshot.image_url:
                     profile["image_url"] = snapshot.image_url
@@ -1953,8 +1993,8 @@ class RoundsService:
                     "weight": int(weight),
                     "trust": round(trust, 3),
                     "version": (
-                        int(str(version_text).split(".")[0]) if version_text else 1
-                    ),
+                        version_text if version_text else None
+                    ),  # Keep as string: "10.1.0"
                     "stake": int(weight),
                     "emission": int(weight * 0.05),
                     "lastSeen": last_seen,
@@ -2156,10 +2196,10 @@ class RoundsService:
             records, _ = await self._fetch_round_records_by_number(round_number)
             if not records:
                 raise ValueError(f"Round {round_identifier} not found")
-            
+
             statuses = [record.model.status or "finished" for record in records]
             aggregated_status = _aggregate_status(statuses)
-            
+
             bounds = compute_boundaries_for_round(round_number)
 
             # If round is officially finished, force 100% progress

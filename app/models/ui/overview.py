@@ -56,7 +56,7 @@ class ValidatorInfo(BaseModel):
     totalTasks: int
     weight: float
     trust: float
-    version: int
+    version: Optional[str] = None  # String to preserve full version like "10.1.0"
     lastSeen: str  # ISO timestamp
     uptime: float
     stake: int
