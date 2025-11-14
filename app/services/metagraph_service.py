@@ -143,9 +143,9 @@ def refresh_metagraph_data() -> Dict[str, Any]:
 
     vtrustvalues = _convert_to_list(vtrust_raw) if vtrust_raw is not None else []
 
-    # Try to get version information
-    versions_raw = getattr(metagraph, "versions", None)
-    versions = _convert_to_list(versions_raw) if versions_raw is not None else []
+    # Try to get version information (Bittensor uses 'version', not 'versions')
+    version_raw = getattr(metagraph, "version", None)
+    versions = _convert_to_list(version_raw) if version_raw is not None else []
 
     # Build indexed data structure
     validators_by_uid: Dict[int, Dict[str, Any]] = {}
@@ -166,12 +166,10 @@ def refresh_metagraph_data() -> Dict[str, Any]:
         if index < len(hotkeys):
             hotkey = str(hotkeys[index]) if hotkeys[index] else None
 
-        # Extract stake (convert from RAO to TAO)
+        # Extract stake (already in TAO, not RAO)
         stake_tao = None
         if index < len(stakes):
-            stake_rao = _extract_numeric_value(stakes[index])
-            if stake_rao is not None:
-                stake_tao = stake_rao / 1e9  # Convert RAO to TAO
+            stake_tao = _extract_numeric_value(stakes[index])
 
         # Extract vtrust
         vtrust = None
