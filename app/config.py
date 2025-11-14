@@ -174,11 +174,14 @@ class Settings(BaseSettings):
         "https://dev-infinitewebarena.autoppia.com",
         "https://infinitewebarena.autoppia.com",
         "https://devdeviwa.autoppia.com",  # Frontend development
+        "https://dev-api-leaderboard.autoppia.com",  # Dev API frontend
+        "https://api-leaderboard.autoppia.com",  # Prod API frontend
     ]
     # Optional regex to allow subdomains (e.g., all *.autoppia.com)
+    # Default regex allows all HTTPS subdomains of autoppia.com
     CORS_ALLOW_ORIGIN_REGEX: Optional[str] = os.getenv(
         "CORS_ALLOW_ORIGIN_REGEX",
-        None,
+        r"https://.*\.autoppia\.com",
     )
 
     # Idempotency Configuration (seconds to keep)

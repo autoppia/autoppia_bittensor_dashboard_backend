@@ -28,15 +28,19 @@ async def list_miners(
     search: Optional[str] = Query(None),
     round: Optional[int] = Query(None),
 ):
-    service = await _service(session)
-    response = await service.list_miners(
-        page=page,
-        limit=limit,
-        is_sota=isSota,
-        search=search,
-        round_number=round,
-    )
-    return response
+    try:
+        service = await _service(session)
+        response = await service.list_miners(
+            page=page,
+            limit=limit,
+            is_sota=isSota,
+            search=search,
+            round_number=round,
+        )
+        return response
+    except Exception as exc:
+        logger.error(f"Error in list_miners endpoint: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/{uid}")
