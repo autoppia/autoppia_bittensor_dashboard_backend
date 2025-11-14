@@ -1141,8 +1141,11 @@ class AgentsService:
                     if miner_details and miner_details.agent_name
                     else context.run.agent_run_id
                 )
-                # Provider attribute removed from MinerInfo model
-                bench_provider = None
+                bench_provider = (
+                    getattr(miner_details, "provider", None)
+                    if miner_details
+                    else None
+                )
                 entry = {
                     "name": bench_name,
                     "provider": bench_provider,
@@ -1556,8 +1559,10 @@ class AgentsService:
         # Provider attribute removed from MinerInfo model
         # Use agent_name as fallback
         provider = ""
-        if miner_details and miner_details.agent_name:
-            provider = miner_details.agent_name.strip().lower()
+        if miner_details:
+            provider_attr = getattr(miner_details, "provider", None)
+            if provider_attr:
+                provider = provider_attr.strip().lower()
         if provider:
             return re.sub(r"[^a-z0-9]+", "-", provider).strip("-")
         name = (
@@ -1801,10 +1806,13 @@ class AgentsService:
 
         # If both have images or both don't have images, prefer the one with more fields populated
         if old_has_image == new_has_image:
+            old_provider = getattr(old_info, "provider", None) or ""
+            new_provider = getattr(new_info, "provider", None) or ""
             old_field_count = sum(
                 [
                     bool(old_info.agent_name and old_info.agent_name.strip()),
                     bool(old_info.github and old_info.github.strip()),
+                    bool(old_provider and old_provider.strip()),
                     bool(old_info.description and old_info.description.strip()),
                 ]
             )
@@ -1812,6 +1820,7 @@ class AgentsService:
                 [
                     bool(new_info.agent_name and new_info.agent_name.strip()),
                     bool(new_info.github and new_info.github.strip()),
+                    bool(new_provider and new_provider.strip()),
                     bool(new_info.description and new_info.description.strip()),
                 ]
             )
