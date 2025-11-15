@@ -49,12 +49,26 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS
+# CORS - Configuración completa para permitir requests desde todos los subdominios
 cors_kwargs = {
     "allow_origins": settings.CORS_ORIGINS,
     "allow_credentials": True,
-    "allow_methods": ["*"],
-    "allow_headers": ["*"],
+    "allow_methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    "allow_headers": [
+        "*",
+        "Content-Type",
+        "Authorization",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "X-Validator-Hotkey",
+        "X-Validator-Signature",
+    ],
+    "expose_headers": [
+        "Content-Type",
+        "X-Total-Count",
+    ],
+    "max_age": 600,  # Cache preflight requests for 10 minutes
 }
 if settings.CORS_ALLOW_ORIGIN_REGEX:
     cors_kwargs["allow_origin_regex"] = settings.CORS_ALLOW_ORIGIN_REGEX

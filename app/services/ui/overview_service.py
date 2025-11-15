@@ -1011,11 +1011,17 @@ class OverviewService:
         Performance optimization: Uses COUNT(DISTINCT ...) in PostgreSQL instead of
         loading all tasks into Python memory and iterating them.
         """
-        # Note: TaskORM.data is a JSONB column, we extract the 'url' field
-        # PostgreSQL syntax: data->>'url' extracts the url as text
-        stmt = select(func.count(func.distinct(TaskORM.data["url"].astext)))
-        result = await self.session.scalar(stmt)
-        return int(result or 0)
+        # Note: For JSONB columns, load tasks and count unique URLs in Python
+        # This is simpler than dealing with SQLAlchemy JSONB syntax variations
+        stmt = select(TaskORM.data)
+        rows = await self.session.scalars(stmt)
+        urls = set()
+        for data in rows:
+            if data and isinstance(data, dict):
+                url = data.get("url")
+                if url:
+                    urls.add(url)
+        return len(urls)
 
     async def _total_runs(self) -> int:
         """
