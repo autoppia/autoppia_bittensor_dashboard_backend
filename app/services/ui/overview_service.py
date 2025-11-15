@@ -371,8 +371,8 @@ class OverviewService:
             lastUpdated=datetime.now(timezone.utc).isoformat(),
         )
 
-        # Cache metrics for 30 seconds
-        api_cache.set(cache_key, metrics, ttl=30)
+        # Cache metrics for 10 minutes (increased for performance)
+        api_cache.set(cache_key, metrics, ttl=600)
         return metrics
 
     async def validators_list(
@@ -955,12 +955,12 @@ class OverviewService:
     ) -> List[Tuple[RoundRecord, List[AgentRunContext]]]:
         """
         Fetch recent round records with optional agent run contexts.
-        
+
         Args:
             limit: Max number of rounds to fetch
             include_details: Include detailed data in contexts
             fetch_contexts: If False, skips loading agent run contexts (performance optimization)
-        
+
         Performance note: When fetch_contexts=False, eliminates N+1 queries
         for callers that only need round metadata.
         """
@@ -994,7 +994,7 @@ class OverviewService:
 
             record = RoundRecord(row=row, model=round_model)
             contexts: List[AgentRunContext] = []
-            
+
             # Performance optimization: Only load contexts if explicitly requested
             if fetch_contexts:
                 try:
@@ -1011,17 +1011,19 @@ class OverviewService:
                         exc,
                     )
                 if contexts:
-                    self.rounds_service._recalculate_round_from_contexts(record, contexts)
-            
+                    self.rounds_service._recalculate_round_from_contexts(
+                        record, contexts
+                    )
+
             records.append((record, contexts))
         return records
 
     async def _recent_rounds(self, limit: int = 20) -> List[ValidatorRound]:
         """Get recent rounds without loading agent run contexts (optimization)."""
         records = await self._recent_round_records(
-            limit=limit, 
+            limit=limit,
             include_details=False,
-            fetch_contexts=False  # Don't load contexts since we discard them anyway
+            fetch_contexts=False,  # Don't load contexts since we discard them anyway
         )
         return [record.model for record, _ in records]
 
@@ -1103,7 +1105,7 @@ class OverviewService:
     async def _average_score(self) -> float:
         """
         Calculate average score across all evaluation results.
-        
+
         Performance optimization: Uses AVG() in PostgreSQL instead of
         loading all evaluation results into Python memory.
         """
@@ -1233,16 +1235,16 @@ class OverviewService:
         return self._normalize_task_meta(prompt, url, relevant_data, use_case)
 
     async def _aggregate_validators(self) -> Dict[str, Dict[str, Any]]:
-        # Try to get from cache first (30 second TTL)
+        # Try to get from cache first (10 minute TTL - increased for performance)
         cache_key = "overview:validators:aggregate"
         cached = api_cache.get(cache_key)
         if cached is not None:
             return cached
 
-        # Optimized: Only fetch recent rounds needed to determine current validator state
-        # Reduced from 200 to 20 rounds - validators info is in the most recent rounds anyway
+        # Performance optimization: Don't load agent run contexts since we only need
+        # round metadata for validator aggregation (eliminates N+1 queries)
         records_with_contexts = await self._recent_round_records(
-            limit=20, include_details=False
+            limit=20, include_details=False, fetch_contexts=False
         )
         aggregates: Dict[str, Dict[str, Any]] = {}
 
@@ -1573,8 +1575,8 @@ class OverviewService:
                 "validatorUid": validator_uid,
             }
 
-        # Cache the aggregated validators for 30 seconds
-        api_cache.set(cache_key, aggregates, ttl=30)
+        # Cache the aggregated validators for 10 minutes (increased for performance)
+        api_cache.set(cache_key, aggregates, ttl=600)
         return aggregates
 
     def _round_to_info(self, round_obj: ValidatorRound, current: bool) -> RoundInfo:
