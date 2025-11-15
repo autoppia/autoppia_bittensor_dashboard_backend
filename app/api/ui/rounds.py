@@ -163,7 +163,7 @@ async def get_round_basic(
 
 
 @router.get("/{round_id}")
-@cache("round_detail", ttl=300)  # Cache 5 minutes
+@cache("round_detail", ttl=600)  # Cache 10 minutes - pre-warmed by cron
 async def get_round(
     round_id: str,
     session: AsyncSession = Depends(get_session),
