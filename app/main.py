@@ -35,6 +35,10 @@ from app.services.metagraph_updater_thread import (
     stop_metagraph_updater,
     get_updater_status,
 )
+from app.services.overview_cache_updater import (
+    start_overview_updater,
+    stop_overview_updater,
+)
 
 
 app = FastAPI(
@@ -190,7 +194,7 @@ async def on_startup():
         logger.info("API documentation available at /docs")
         # NOTE: Block refresher is now part of the metagraph_updater thread (consolidated)
 
-        # Start background updater thread (metagraph + price + block)
+        # Start background updater threads
         try:
             start_metagraph_updater()
             logger.info(
@@ -198,6 +202,12 @@ async def on_startup():
             )
         except Exception as exc:
             logger.warning("Could not start background updater: %s", exc)
+
+        try:
+            start_overview_updater()
+            logger.info("✅ Overview metrics cache updater thread started")
+        except Exception as exc:
+            logger.warning("Could not start overview updater: %s", exc)
 
     except Exception as e:
         logger.error(f"Failed to initialize application: {e}", exc_info=True)
@@ -208,9 +218,14 @@ async def on_startup():
 async def on_shutdown():
     logger.info("Shutting down Autoppia IWA Platform API...")
 
-    # Stop background updater
+    # Stop background updaters
     try:
         stop_metagraph_updater()
+    except Exception:
+        pass
+
+    try:
+        stop_overview_updater()
     except Exception:
         pass
 

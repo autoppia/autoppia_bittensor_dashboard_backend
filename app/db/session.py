@@ -67,10 +67,10 @@ engine = create_async_engine(
     database_url,
     echo=False,
     future=True,
-    pool_size=20,          # Increased from default 5 to handle 4+ validators
-    max_overflow=40,       # Increased from default 10 for burst capacity
-    pool_timeout=90,       # Increased from default 30s to match validator timeout
-    pool_pre_ping=True,    # Verify connections before use
+    pool_size=40,  # Doubled from 20 to 40 for better concurrent request handling
+    max_overflow=80,  # Doubled from 40 to 80 for burst capacity (total: 120 connections)
+    pool_timeout=90,  # Increased from default 30s to match validator timeout
+    pool_pre_ping=True,  # Verify connections before use
 )
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
