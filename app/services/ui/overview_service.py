@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -136,7 +136,7 @@ class OverviewService:
             return cached
 
         records_with_contexts = await self._recent_round_records(
-            limit=50, include_details=False
+            limit=10, include_details=False  # Reduced from 50 to 10 for performance
         )
         if not records_with_contexts:
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -573,14 +573,17 @@ class OverviewService:
             unlimited = False
             derived_limit = min(limit, derived_limit) if derived_limit else limit
 
-        fetch_limit = 0
-        if not unlimited:
+        # Performance optimization: Even with "unlimited" (timeRange=all),
+        # limit to 365 rounds (max ~1 year) to prevent loading thousands of rounds
+        if unlimited:
+            fetch_limit = 365  # Max 1 year of rounds (reasonable for "all" time range)
+        else:
             # Fetch a wider window than requested so we can collapse multiple validator rounds
             # for the same logical day into a single aggregated round.
             fetch_limit = max((derived_limit or 30) * 5, derived_limit or 1)
 
         records_with_contexts = await self._recent_round_records(
-            limit=fetch_limit or 0,
+            limit=fetch_limit,
             include_details=False,
         )
         if not records_with_contexts:
@@ -983,7 +986,7 @@ class OverviewService:
                 contexts = await self.rounds_service.list_agent_run_contexts(
                     validator_round_id=row.validator_round_id,
                     include_details=include_details,
-                    limit=100,  # Limit to 100 to avoid loading thousands of runs
+                    limit=20,  # Reduced from 100 to 20 for performance optimization
                     skip=0,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -1002,20 +1005,28 @@ class OverviewService:
         return [record.model for record, _ in records]
 
     async def _total_websites(self) -> int:
-        stmt = select(TaskORM)
-        rows = await self.session.scalars(stmt)
-        urls = set()
-        for row in rows:
-            data = row.data or {}
-            url = data.get("url")
-            if url:
-                urls.add(url)
-        return len(urls)
+        """
+        Count distinct websites (URLs) efficiently using database aggregation.
+        
+        Performance optimization: Uses COUNT(DISTINCT ...) in PostgreSQL instead of
+        loading all tasks into Python memory and iterating them.
+        """
+        # Note: TaskORM.data is a JSONB column, we extract the 'url' field
+        # PostgreSQL syntax: data->>'url' extracts the url as text
+        stmt = select(func.count(func.distinct(TaskORM.data['url'].astext)))
+        result = await self.session.scalar(stmt)
+        return int(result or 0)
 
     async def _total_runs(self) -> int:
-        stmt = select(AgentEvaluationRunORM.agent_run_id)
-        rows = await self.session.scalars(stmt)
-        return len(list(rows))
+        """
+        Count total agent evaluation runs efficiently using database aggregation.
+        
+        Performance optimization: Uses COUNT(*) in PostgreSQL instead of
+        loading all run IDs into Python memory.
+        """
+        stmt = select(func.count()).select_from(AgentEvaluationRunORM)
+        result = await self.session.scalar(stmt)
+        return int(result or 0)
 
     def _derive_validator_status(
         self,

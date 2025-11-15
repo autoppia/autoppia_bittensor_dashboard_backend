@@ -22,7 +22,8 @@ from app.models.ui.overview import (
     ValidatorsFilterResponse,
 )
 from app.services.ui.overview_service import OverviewService
-from app.services.redis_cache import cache
+from app.services.redis_cache import cache, redis_cache
+from app.services.overview_cache_updater import REDIS_KEY_OVERVIEW_METRICS
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +46,34 @@ async def get_overview(
 
 @router.get("/metrics", response_model=OverviewMetricsResponse)
 async def get_overview_metrics(
+    force: bool = Query(False, description="Force refresh from DB (bypass cache)"),
     session: AsyncSession = Depends(get_session),
 ) -> OverviewMetricsResponse:
+    """
+    Get overview metrics. Reads from background-updated Redis cache for maximum speed.
+
+    The background worker updates these metrics every 5 minutes automatically,
+    so users always see fast responses (~3ms) instead of slow DB queries (~8s).
+    """
+    # Try to read from background worker cache first (super fast)
+    if not force:
+        cached_metrics = redis_cache.get(REDIS_KEY_OVERVIEW_METRICS)
+        if cached_metrics is not None:
+            logger.debug("✅ Serving overview metrics from background cache")
+            return OverviewMetricsResponse(
+                success=True, data={"metrics": cached_metrics}
+            )
+
+    # Fallback: Calculate from DB if cache miss or force refresh
+    logger.warning(
+        "Cache miss for overview metrics, calculating from DB (this is slow)..."
+    )
     service = await _service(session)
     metrics = await service.overview_metrics()
+
+    # Save to cache for next time (in case background worker is not running)
+    redis_cache.set(REDIS_KEY_OVERVIEW_METRICS, metrics, ttl=600)
+
     return OverviewMetricsResponse(success=True, data={"metrics": metrics})
 
 
