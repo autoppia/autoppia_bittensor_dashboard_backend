@@ -217,14 +217,12 @@ async def on_startup():
         except Exception as exc:
             logger.warning("Could not start background updater: %s", exc)
 
-        # DISABLED: Overview updater causes asyncpg event loop conflicts
-        # TODO: Fix asyncpg connection pooling issue before re-enabling
-        # try:
-        #     start_overview_updater()
-        #     logger.info("✅ Overview metrics cache updater thread started")
-        # except Exception as exc:
-        #     logger.warning("Could not start overview updater: %s", exc)
-        logger.info("⚠️  Overview background updater DISABLED (asyncpg conflicts)")
+        # Start overview cache warmer (uses simple HTTP requests, no asyncio issues)
+        try:
+            start_overview_updater()
+            logger.info("✅ Overview cache warmer thread started")
+        except Exception as exc:
+            logger.warning("Could not start overview cache warmer: %s", exc)
 
     except Exception as e:
         logger.error(f"Failed to initialize application: {e}", exc_info=True)
@@ -240,12 +238,11 @@ async def on_shutdown():
         stop_metagraph_updater()
     except Exception:
         pass
-
-    # Overview updater disabled (asyncpg conflicts)
-    # try:
-    #     stop_overview_updater()
-    # except Exception:
-    #     pass
+    
+    try:
+        stop_overview_updater()
+    except Exception:
+        pass
 
     # NOTE: Block refresher is part of metagraph_updater (already stopped above)
 
