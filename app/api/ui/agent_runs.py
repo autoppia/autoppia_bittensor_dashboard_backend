@@ -21,6 +21,7 @@ from app.models.ui.agent_runs import (
     TimelineResponse,
 )
 from app.services.ui.agent_runs_service import AgentRunsService
+from app.services.redis_cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ async def _service(session: AsyncSession) -> AgentRunsService:
 
 
 @router.get("", response_model=AgentRunsListResponse)
+@cache("agent_runs_list", ttl=600)  # Cache 10 minutes - pre-warmed by background worker
 async def list_agent_runs(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),

@@ -61,7 +61,7 @@ async def list_round_ids(
 
 
 @router.get("/")
-@cache("rounds_list", ttl=180)  # Cache 3 minutes
+@cache("rounds_list", ttl=600)  # Cache 10 minutes - pre-warmed by background worker
 async def list_rounds(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),
@@ -130,7 +130,7 @@ router.add_api_route(
 
 
 @router.get("/current", response_model=RoundDetailResponse)
-@cache("current_round", ttl=60)  # Cache 1 minute
+@cache("rounds_current", ttl=300)  # Cache 5 minutes - different key to avoid collision with overview
 async def get_current_round(
     session: AsyncSession = Depends(get_session),
 ) -> RoundDetailResponse:

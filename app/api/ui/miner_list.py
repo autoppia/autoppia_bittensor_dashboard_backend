@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.services.ui.miner_list_service import MinerListService
+from app.services.redis_cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ async def _service(session: AsyncSession) -> MinerListService:
 
 @router.get("/")
 @router.get("", include_in_schema=False)
+@cache("miner_list", ttl=600)  # Cache 10 minutes - pre-warmed by background worker
 async def list_miners(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),

@@ -46,13 +46,15 @@ async def get_overview(
 
 
 @router.get("/metrics", response_model=OverviewMetricsResponse)
-@cache("overview_metrics", ttl=600)  # Cache 10 minutes - pre-warmed by background worker
+@cache(
+    "overview_metrics", ttl=600
+)  # Cache 10 minutes - pre-warmed by background worker
 async def get_overview_metrics(
     session: AsyncSession = Depends(get_session),
 ) -> OverviewMetricsResponse:
     """
     Get overview metrics. Cached for 10 minutes and pre-warmed by background worker.
-    
+
     The cache warmer thread calls this endpoint every 5 minutes, ensuring the cache
     is always populated before users request it (zero cold starts).
     """

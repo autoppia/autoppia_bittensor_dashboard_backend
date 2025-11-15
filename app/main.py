@@ -238,7 +238,7 @@ async def on_shutdown():
         stop_metagraph_updater()
     except Exception:
         pass
-    
+
     try:
         stop_overview_updater()
     except Exception:

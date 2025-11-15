@@ -29,7 +29,7 @@ from app.models.ui.overview import (
 from app.services.ui.rounds_service import AgentRunContext, RoundRecord, RoundsService
 from app.services.chain_state import get_current_block_estimate
 from app.services.round_calc import compute_boundaries_for_round, compute_round_number
-from app.services.cache import CACHE_TTL, api_cache
+from app.services.redis_cache import redis_cache
 from app.services.metagraph_service import get_all_validators_data, MetagraphError
 from app.config import settings
 from app.utils.images import resolve_validator_image
@@ -129,9 +129,9 @@ class OverviewService:
         self.rounds_service = RoundsService(session)
 
     async def overview_metrics(self) -> OverviewMetrics:
-        # Try to get from cache first (30 second TTL)
+        # Try to get from Redis cache first (10 minute TTL)
         cache_key = "overview:metrics:aggregate"
-        cached = api_cache.get(cache_key)
+        cached = redis_cache.get(cache_key)
         if cached is not None:
             return cached
 
@@ -371,8 +371,8 @@ class OverviewService:
             lastUpdated=datetime.now(timezone.utc).isoformat(),
         )
 
-        # Cache metrics for 10 minutes (increased for performance)
-        api_cache.set(cache_key, metrics, ttl=600)
+        # Cache metrics for 10 minutes in Redis (shared across all workers)
+        redis_cache.set(cache_key, metrics, ttl=600)
         return metrics
 
     async def validators_list(
@@ -1235,9 +1235,9 @@ class OverviewService:
         return self._normalize_task_meta(prompt, url, relevant_data, use_case)
 
     async def _aggregate_validators(self) -> Dict[str, Dict[str, Any]]:
-        # Try to get from cache first (10 minute TTL - increased for performance)
+        # Try to get from Redis cache first (10 minute TTL - shared across all workers)
         cache_key = "overview:validators:aggregate"
-        cached = api_cache.get(cache_key)
+        cached = redis_cache.get(cache_key)
         if cached is not None:
             return cached
 
@@ -1575,8 +1575,8 @@ class OverviewService:
                 "validatorUid": validator_uid,
             }
 
-        # Cache the aggregated validators for 10 minutes (increased for performance)
-        api_cache.set(cache_key, aggregates, ttl=600)
+        # Cache the aggregated validators for 10 minutes in Redis (shared across all workers)
+        redis_cache.set(cache_key, aggregates, ttl=600)
         return aggregates
 
     def _round_to_info(self, round_obj: ValidatorRound, current: bool) -> RoundInfo:
