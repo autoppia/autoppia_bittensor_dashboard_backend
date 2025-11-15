@@ -1007,20 +1007,20 @@ class OverviewService:
     async def _total_websites(self) -> int:
         """
         Count distinct websites (URLs) efficiently using database aggregation.
-        
+
         Performance optimization: Uses COUNT(DISTINCT ...) in PostgreSQL instead of
         loading all tasks into Python memory and iterating them.
         """
         # Note: TaskORM.data is a JSONB column, we extract the 'url' field
         # PostgreSQL syntax: data->>'url' extracts the url as text
-        stmt = select(func.count(func.distinct(TaskORM.data['url'].astext)))
+        stmt = select(func.count(func.distinct(TaskORM.data["url"].astext)))
         result = await self.session.scalar(stmt)
         return int(result or 0)
 
     async def _total_runs(self) -> int:
         """
         Count total agent evaluation runs efficiently using database aggregation.
-        
+
         Performance optimization: Uses COUNT(*) in PostgreSQL instead of
         loading all run IDs into Python memory.
         """

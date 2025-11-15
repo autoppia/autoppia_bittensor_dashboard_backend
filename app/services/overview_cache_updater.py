@@ -39,13 +39,13 @@ def _fetch_and_cache_overview_metrics() -> bool:
         from app.db.session import AsyncSessionLocal
         from app.services.ui.overview_service import OverviewService
         import asyncio
-        
+
         async def _fetch():
             async with AsyncSessionLocal() as session:
                 service = OverviewService(session=session)
                 metrics = await service.overview_metrics()
                 return metrics
-        
+
         # Ejecutar la función async usando asyncio.run()
         # que crea y limpia el event loop automáticamente
         try:
