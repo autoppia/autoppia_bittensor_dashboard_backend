@@ -240,7 +240,7 @@ async def on_shutdown():
         stop_metagraph_updater()
     except Exception:
         pass
-    
+
     # Overview updater disabled (asyncpg conflicts)
     # try:
     #     stop_overview_updater()
