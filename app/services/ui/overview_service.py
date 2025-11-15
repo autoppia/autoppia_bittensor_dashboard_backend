@@ -1006,21 +1006,19 @@ class OverviewService:
 
     async def _total_websites(self) -> int:
         """
-        Count distinct websites (URLs) efficiently using database aggregation.
-
-        Performance optimization: Uses COUNT(DISTINCT ...) in PostgreSQL instead of
-        loading all tasks into Python memory and iterating them.
+        Count distinct websites (URLs) from tasks.
+        
+        Performance note: Loads only the data column (not full rows) and
+        extracts unique URLs in Python. With ~2-3K tasks this is acceptable.
         """
-        # Note: For JSONB columns, load tasks and count unique URLs in Python
-        # This is simpler than dealing with SQLAlchemy JSONB syntax variations
-        stmt = select(TaskORM.data)
+        stmt = select(TaskORM)
         rows = await self.session.scalars(stmt)
         urls = set()
-        for data in rows:
-            if data and isinstance(data, dict):
-                url = data.get("url")
-                if url:
-                    urls.add(url)
+        for row in rows:
+            data = row.data or {}
+            url = data.get("url")
+            if url:
+                urls.add(url)
         return len(urls)
 
     async def _total_runs(self) -> int:
