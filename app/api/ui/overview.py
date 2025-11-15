@@ -35,7 +35,9 @@ async def _service(session: AsyncSession) -> OverviewService:
 
 
 @router.get("", response_model=OverviewMetricsResponse)
-@cache("overview", ttl=600)  # Cache 10 minutes - standardized for consistent performance
+@cache(
+    "overview", ttl=600
+)  # Cache 10 minutes - standardized for consistent performance
 async def get_overview(
     session: AsyncSession = Depends(get_session),
 ) -> OverviewMetricsResponse:
@@ -78,7 +80,9 @@ async def get_overview_metrics(
 
 
 @router.get("/validators", response_model=ValidatorsListResponse)
-@cache("validators_list", ttl=600)  # Cache 10 minutes - standardized for consistent performance
+@cache(
+    "validators_list", ttl=600
+)  # Cache 10 minutes - standardized for consistent performance
 async def get_validators(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),
@@ -128,7 +132,9 @@ async def get_validator_detail(
 
 
 @router.get("/rounds/current", response_model=CurrentRoundResponse)
-@cache("current_round", ttl=300)  # Cache 5 minutes - current round changes more frequently
+@cache(
+    "current_round", ttl=300
+)  # Cache 5 minutes - current round changes more frequently
 async def get_current_round(
     session: AsyncSession = Depends(get_session),
 ) -> CurrentRoundResponse:
@@ -174,7 +180,9 @@ async def get_round_detail(
 
 
 @router.get("/leaderboard", response_model=LeaderboardResponse)
-@cache("leaderboard", ttl=600)  # Cache 10 minutes - standardized for consistent performance
+@cache(
+    "leaderboard", ttl=600
+)  # Cache 10 minutes - standardized for consistent performance
 async def get_leaderboard(
     session: AsyncSession = Depends(get_session),
     time_range: Optional[str] = Query(None, alias="timeRange"),
@@ -193,7 +201,9 @@ async def get_leaderboard(
 
 
 @router.get("/statistics", response_model=StatisticsResponse)
-@cache("statistics", ttl=600)  # Cache 10 minutes - standardized for consistent performance
+@cache(
+    "statistics", ttl=600
+)  # Cache 10 minutes - standardized for consistent performance
 async def get_statistics(
     session: AsyncSession = Depends(get_session),
 ) -> StatisticsResponse:
