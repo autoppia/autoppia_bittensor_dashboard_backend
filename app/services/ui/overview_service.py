@@ -951,7 +951,19 @@ class OverviewService:
         self,
         limit: int = 20,
         include_details: bool = False,
+        fetch_contexts: bool = True,
     ) -> List[Tuple[RoundRecord, List[AgentRunContext]]]:
+        """
+        Fetch recent round records with optional agent run contexts.
+        
+        Args:
+            limit: Max number of rounds to fetch
+            include_details: Include detailed data in contexts
+            fetch_contexts: If False, skips loading agent run contexts (performance optimization)
+        
+        Performance note: When fetch_contexts=False, eliminates N+1 queries
+        for callers that only need round metadata.
+        """
         stmt = (
             select(RoundORM)
             .options(
@@ -982,32 +994,41 @@ class OverviewService:
 
             record = RoundRecord(row=row, model=round_model)
             contexts: List[AgentRunContext] = []
-            try:
-                contexts = await self.rounds_service.list_agent_run_contexts(
-                    validator_round_id=row.validator_round_id,
-                    include_details=include_details,
-                    limit=20,  # Reduced from 100 to 20 for performance optimization
-                    skip=0,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Failed to load agent run contexts for %s: %s",
-                    row.validator_round_id,
-                    exc,
-                )
-            if contexts:
-                self.rounds_service._recalculate_round_from_contexts(record, contexts)
+            
+            # Performance optimization: Only load contexts if explicitly requested
+            if fetch_contexts:
+                try:
+                    contexts = await self.rounds_service.list_agent_run_contexts(
+                        validator_round_id=row.validator_round_id,
+                        include_details=include_details,
+                        limit=20,  # Reduced from 100 to 20 for performance optimization
+                        skip=0,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to load agent run contexts for %s: %s",
+                        row.validator_round_id,
+                        exc,
+                    )
+                if contexts:
+                    self.rounds_service._recalculate_round_from_contexts(record, contexts)
+            
             records.append((record, contexts))
         return records
 
     async def _recent_rounds(self, limit: int = 20) -> List[ValidatorRound]:
-        records = await self._recent_round_records(limit=limit, include_details=False)
+        """Get recent rounds without loading agent run contexts (optimization)."""
+        records = await self._recent_round_records(
+            limit=limit, 
+            include_details=False,
+            fetch_contexts=False  # Don't load contexts since we discard them anyway
+        )
         return [record.model for record, _ in records]
 
     async def _total_websites(self) -> int:
         """
         Count distinct websites (URLs) from tasks.
-        
+
         Performance note: Loads only the data column (not full rows) and
         extracts unique URLs in Python. With ~2-3K tasks this is acceptable.
         """
@@ -1080,18 +1101,15 @@ class OverviewService:
         return ValidatorStatusInfo.from_state(state)
 
     async def _average_score(self) -> float:
-        stmt = select(EvaluationResultORM)
-        rows = await self.session.scalars(stmt)
-        scores = []
-        for row in rows:
-            data = row.data or {}
-            score = data.get("final_score")
-            if score is not None:
-                try:
-                    scores.append(float(score))
-                except (TypeError, ValueError):
-                    continue
-        return sum(scores) / len(scores) if scores else 0.0
+        """
+        Calculate average score across all evaluation results.
+        
+        Performance optimization: Uses AVG() in PostgreSQL instead of
+        loading all evaluation results into Python memory.
+        """
+        stmt = select(func.avg(EvaluationResultORM.final_score))
+        result = await self.session.scalar(stmt)
+        return float(result or 0.0)
 
     @staticmethod
     def _map_website_port_to_name(url: Optional[str]) -> Optional[str]:
