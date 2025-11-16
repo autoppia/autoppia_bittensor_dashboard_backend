@@ -13,6 +13,7 @@ from app.models.ui.miner_list import (
 from app.services.ui.agents_service import AgentAggregate, RoundAgentSnapshot
 from app.services.ui.miners_service import MinersService
 from app.utils.images import resolve_agent_image
+from app.services.service_utils import rollback_on_error
 
 
 class MinerListService:
@@ -22,6 +23,7 @@ class MinerListService:
         self.session = session
         self.miners_service = MinersService(session)
 
+    @rollback_on_error
     async def list_miners(
         self,
         page: int,
@@ -129,6 +131,7 @@ class MinerListService:
             round=None,
         )
 
+    @rollback_on_error
     async def get_miner_detail(self, uid: int) -> MinerDetailResponse:
         full_detail = await self.miners_service.get_miner(uid)
         miner = full_detail.miner

@@ -33,6 +33,7 @@ from app.services.redis_cache import redis_cache
 from app.services.metagraph_service import get_all_validators_data, MetagraphError
 from app.config import settings
 from app.utils.images import resolve_validator_image
+from app.services.service_utils import rollback_on_error
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,7 @@ class OverviewService:
         self.session = session
         self.rounds_service = RoundsService(session)
 
+    @rollback_on_error
     async def overview_metrics(self) -> OverviewMetrics:
         # Try to get from Redis cache first (10 minute TTL)
         cache_key = "overview:metrics:aggregate"
@@ -375,6 +377,7 @@ class OverviewService:
         redis_cache.set(cache_key, metrics, ttl=600)
         return metrics
 
+    @rollback_on_error
     async def validators_list(
         self,
         page: int,
@@ -401,6 +404,7 @@ class OverviewService:
         end = start + limit
         return entries[start:end], total
 
+    @rollback_on_error
     async def validator_detail(self, validator_id: str) -> Dict[str, Any]:
         validators = await self._aggregate_validators()
         validator = validators.get(validator_id)
@@ -408,6 +412,7 @@ class OverviewService:
             raise ValueError(f"Validator {validator_id} not found")
         return validator
 
+    @rollback_on_error
     async def validators_filter(self) -> List[Dict[str, Any]]:
         validators = await self._aggregate_validators()
         items: List[Dict[str, Any]] = []
@@ -424,6 +429,7 @@ class OverviewService:
         items.sort(key=lambda item: item["name"])
         return items
 
+    @rollback_on_error
     async def current_round(self) -> Optional[RoundInfo]:
         """Get the ACTUAL current round (the one that's active on the blockchain).
 
@@ -477,6 +483,7 @@ class OverviewService:
             return self._round_to_info(rounds[0], current=False)
         return None
 
+    @rollback_on_error
     async def rounds_list(
         self, page: int, limit: int, status: Optional[str]
     ) -> Tuple[List[RoundInfo], Optional[RoundInfo], int]:
@@ -513,6 +520,7 @@ class OverviewService:
         )
         return paginated, current_round, total
 
+    @rollback_on_error
     async def round_detail(self, identifier: str) -> RoundInfo:
         if identifier.isdigit():
             validator_round_id = f"round_{identifier.zfill(3)}"
@@ -533,6 +541,7 @@ class OverviewService:
         round_obj = self.rounds_service._deserialize_round(row)
         return self._round_to_info(round_obj, current=round_obj.ended_at is None)
 
+    @rollback_on_error
     async def leaderboard(
         self,
         time_range: Optional[str] = None,
@@ -763,6 +772,7 @@ class OverviewService:
         end = max(entry.timestamp for entry in aggregated_entries)
         return aggregated_entries, {"start": start, "end": end}
 
+    @rollback_on_error
     async def statistics(self) -> SubnetStatistics:
         validators = await self._aggregate_validators()
 
@@ -815,6 +825,7 @@ class OverviewService:
             lastUpdated=datetime.now(timezone.utc).isoformat(),
         )
 
+    @rollback_on_error
     async def network_status(self) -> NetworkStatus:
         validators = await self._aggregate_validators()
         rounds = await self._recent_rounds(limit=5)
@@ -903,6 +914,7 @@ class OverviewService:
             networkLatency=average_latency,
         )
 
+    @rollback_on_error
     async def recent_activity(self, limit: int) -> List[RecentActivity]:
         rounds = await self._recent_rounds(limit=limit)
         activities: List[RecentActivity] = []
@@ -926,6 +938,7 @@ class OverviewService:
             activities.append(activity)
         return activities[:limit]
 
+    @rollback_on_error
     async def performance_trends(self, days: int) -> List[PerformanceTrend]:
         rounds = await self._recent_rounds(limit=days)
         trends: List[PerformanceTrend] = []
@@ -947,6 +960,7 @@ class OverviewService:
         trends.sort(key=lambda t: t.date)
         return trends
 
+    @rollback_on_error
     async def _recent_round_records(
         self,
         limit: int = 20,
@@ -1018,6 +1032,7 @@ class OverviewService:
             records.append((record, contexts))
         return records
 
+    @rollback_on_error
     async def _recent_rounds(self, limit: int = 20) -> List[ValidatorRound]:
         """Get recent rounds without loading agent run contexts (optimization)."""
         records = await self._recent_round_records(
@@ -1027,6 +1042,7 @@ class OverviewService:
         )
         return [record.model for record, _ in records]
 
+    @rollback_on_error
     async def _total_websites(self) -> int:
         """
         Count distinct websites (URLs) from tasks.
@@ -1044,6 +1060,7 @@ class OverviewService:
                 urls.add(url)
         return len(urls)
 
+    @rollback_on_error
     async def _total_runs(self) -> int:
         """
         Count total agent evaluation runs efficiently using database aggregation.
@@ -1102,6 +1119,7 @@ class OverviewService:
 
         return ValidatorStatusInfo.from_state(state)
 
+    @rollback_on_error
     async def _average_score(self) -> float:
         """
         Calculate average score across all evaluation results.
@@ -1178,6 +1196,7 @@ class OverviewService:
             "useCase": use_case_name or None,
         }
 
+    @rollback_on_error
     async def _latest_evaluated_task_meta(
         self, validator_round_id: str
     ) -> Optional[Dict[str, Optional[str]]]:
@@ -1204,6 +1223,7 @@ class OverviewService:
         prompt, url, relevant_data, use_case = row
         return self._normalize_task_meta(prompt, url, relevant_data, use_case)
 
+    @rollback_on_error
     async def _latest_task_meta(
         self, validator_round_id: str
     ) -> Optional[Dict[str, Optional[str]]]:
@@ -1234,6 +1254,7 @@ class OverviewService:
         prompt, url, relevant_data, use_case = row
         return self._normalize_task_meta(prompt, url, relevant_data, use_case)
 
+    @rollback_on_error
     async def _aggregate_validators(self) -> Dict[str, Dict[str, Any]]:
         # Try to get from Redis cache first (10 minute TTL - shared across all workers)
         cache_key = "overview:validators:aggregate"

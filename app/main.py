@@ -10,7 +10,7 @@ logger, log_level = init_logging(settings)
 
 import os
 import time
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,7 +28,7 @@ from app.api.ui.subnets import legacy_router as subnets_legacy_router
 from app.api.ui.subnets import router as subnets_router
 from app.api.ui.tasks import router as tasks_router
 from app.api.validator.validator_round import router as validator_rounds_router
-from app.db.session import init_db
+from app.db.session import init_db, get_session
 from app.services.idempotency import get_cache_stats
 from app.services.metagraph_updater_thread import (
     start_metagraph_updater,
@@ -39,6 +39,11 @@ from app.services.overview_cache_updater import (
     start_overview_updater,
     stop_overview_updater,
 )
+from app.services.ui.agents_service import (
+    AgentsService,
+    AgentAggregateCacheWarmupRequired,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 app = FastAPI(
@@ -138,33 +143,54 @@ async def idempotency_stats():
 # Cache debug helpers
 @app.get("/debug/cache-stats")
 async def cache_stats():
-    from app.services.cache import api_cache
+    from app.services.redis_cache import redis_cache
 
-    return api_cache.get_stats()
+    return redis_cache.get_stats()
 
 
 @app.post("/debug/cache-disable")
 async def disable_cache():
-    from app.services.cache import api_cache
-
-    api_cache.disable()
-    return {"message": "Cache disabled", "disabled": True}
+    return {
+        "message": "Redis cache cannot be disabled via API. Manage Redis directly instead.",
+        "disabled": False,
+    }
 
 
 @app.post("/debug/cache-enable")
 async def enable_cache():
-    from app.services.cache import api_cache
-
-    api_cache.enable()
-    return {"message": "Cache enabled", "disabled": False}
+    return {
+        "message": "Redis cache is always enabled when Redis is available.",
+        "disabled": False,
+    }
 
 
 @app.post("/debug/cache-clear")
 async def clear_cache():
-    from app.services.cache import api_cache
+    from app.services.redis_cache import redis_cache
 
-    cleared = api_cache.clear()
-    return {"message": f"Cleared {cleared} cache entries", "cleared": cleared}
+    cleared = redis_cache.clear_pattern("*")
+    return {"message": f"Cleared {cleared} Redis cache entries", "cleared": cleared}
+
+
+@app.post("/admin/warm/agents")
+async def admin_warm_agents(
+    session: AsyncSession = Depends(get_session),
+):
+    """Force a rebuild of the agent aggregate cache."""
+    service = AgentsService(session)
+    try:
+        aggregates = await service.warm_aggregate_cache()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to warm agent aggregates: %s", exc)
+        raise HTTPException(
+            status_code=500, detail="Failed to warm agent aggregates"
+        ) from exc
+
+    return {
+        "ok": True,
+        "message": "Agent aggregates warmed successfully",
+        "agents": len(aggregates),
+    }
 
 
 @app.get("/debug/background-updater-status")
