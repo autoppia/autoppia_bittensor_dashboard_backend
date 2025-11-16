@@ -9,6 +9,7 @@ ssh contabo-iwap-production "/root/cache_warmers/check_status.sh"
 ```
 
 Debería mostrar:
+
 - ✅ 4 scripts instalados
 - ✅ 4 cron jobs activos
 - ✅ Backend API respondiendo
@@ -82,7 +83,7 @@ pm2 restart api-leaderboard.autoppia.com
 
 ```bash
 ssh contabo-iwap-production "
-  echo 'Testing...'; 
+  echo 'Testing...';
   curl -s -w 'metrics: %{time_total}s | ' -o /dev/null http://localhost:8080/api/v1/overview/metrics;
   curl -s -w 'round 16: %{time_total}s\n' -o /dev/null http://localhost:8080/api/v1/rounds/16;
 "
@@ -101,9 +102,10 @@ ssh contabo-iwap-production "tail -10 /root/cache_warmers/*.log"
 ```
 
 **Deberías ver:**
+
 ```
 21:16:03: Current round 16    ← Menos de 2 min de antigüedad
-21:15:01: Overview warmed     ← Menos de 5 min de antigüedad  
+21:15:01: Overview warmed     ← Menos de 5 min de antigüedad
 21:15:01: Recent rounds 13-15 ← Menos de 5 min de antigüedad
 21:10:40: Lists warmed        ← Menos de 10 min de antigüedad
 ```
@@ -117,6 +119,7 @@ ssh contabo-iwap-production "/root/monitor_api.sh"
 ```
 
 **Valores normales:**
+
 ```
 ✅ Load Average: <1.0
 ✅ Memoria: <5GB usado
@@ -200,18 +203,21 @@ ssh contabo-iwap-production "
 ## 🎯 Resumen Ejecutivo
 
 ### **✅ Sistema Activo AHORA:**
+
 - 4 cache warmers corriendo automáticamente
 - 22 endpoints pre-calentados
 - Cron ejecuta cada 2-10 minutos
 - Backend respondiendo en <100ms
 
 ### **🔄 Después de Reinicio:**
+
 - PM2 levanta backend automáticamente
 - Cron levanta automáticamente
 - En 2 minutos: Cache lleno de nuevo
 - **NO hay que hacer nada manual** ✅
 
 ### **📊 Verificación:**
+
 ```bash
 # Comando simple:
 curl -s http://localhost:8080/api/v1/overview/metrics
@@ -222,4 +228,5 @@ curl -s http://localhost:8080/api/v1/overview/metrics
 ---
 
 **TODO ESTÁ LISTO Y FUNCIONANDO** 🎉
+
 
