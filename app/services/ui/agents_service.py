@@ -51,6 +51,7 @@ from app.utils.images import resolve_agent_image
 from app.services.subnet_utils import get_price_cached as get_subnet_price
 from app.utils.urls import build_taostats_miner_url
 from app.services.redis_cache import redis_cache
+from app.services.service_utils import rollback_on_error
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +224,7 @@ class AgentsService:
         self.agent_runs_service = AgentRunsService(session)
         self._round_benchmark_cache: Dict[int, Dict[str, Dict[str, Any]]] = {}
 
+    @rollback_on_error
     async def list_agents(
         self,
         page: int,
@@ -343,6 +345,7 @@ class AgentsService:
             updatedAt=datetime.fromtimestamp(updated_at_ts or 0, tz=timezone.utc),
         )
 
+    @rollback_on_error
     async def get_agent(
         self,
         agent_id: str,
@@ -413,6 +416,7 @@ class AgentsService:
             roundMetrics=round_metrics,
         )
 
+    @rollback_on_error
     async def get_performance(
         self,
         agent_id: str,
@@ -436,6 +440,7 @@ class AgentsService:
         )
         return AgentPerformanceResponse(metrics=metrics)
 
+    @rollback_on_error
     async def list_agent_runs(
         self,
         agent_id: str,
@@ -471,6 +476,7 @@ class AgentsService:
             selectedRound=round_numbers[0] if round_numbers else None,
         )
 
+    @rollback_on_error
     async def get_agent_activity(
         self,
         agent_id: str,
@@ -490,6 +496,7 @@ class AgentsService:
         paginated = filtered[offset : offset + limit]
         return AgentActivityResponse(activities=paginated, total=total)
 
+    @rollback_on_error
     async def get_all_activity(
         self,
         limit: int,
@@ -515,6 +522,7 @@ class AgentsService:
         paginated = filtered[offset : offset + limit]
         return AgentActivityResponse(activities=paginated, total=total)
 
+    @rollback_on_error
     async def statistics(self) -> AgentStatisticsResponse:
         aggregates = await self._aggregate_agents()
         if not aggregates:
@@ -601,6 +609,7 @@ class AgentsService:
             )
         )
 
+    @rollback_on_error
     async def compare_agents(self, agent_ids: List[str]) -> AgentComparisonResponse:
         aggregates = await self._aggregate_agents()
         resolved = [
@@ -864,6 +873,7 @@ class AgentsService:
             performanceTrend=trend,
         )
 
+    @rollback_on_error
     async def _aggregate_agents(self) -> Dict[str, AgentAggregate]:
         global _AGGREGATE_CACHE, _AGGREGATE_CACHE_TIMESTAMP, _AGGREGATE_CACHE_BENCHMARKS, _AGGREGATE_CACHE_SIGNATURE
         now = time.monotonic()
@@ -900,6 +910,7 @@ class AgentsService:
                 globals_dict = globals()
                 globals_dict["_REBUILDING"] = False
 
+    @rollback_on_error
     async def warm_aggregate_cache(self) -> Dict[str, AgentAggregate]:
         """
         Force a rebuild of the aggregate snapshot and write snapshot to Redis.
@@ -1106,6 +1117,7 @@ class AgentsService:
         self._round_benchmark_cache = _clone_round_benchmark_cache(_AGGREGATE_CACHE_BENCHMARKS)
         return cached
 
+    @rollback_on_error
     async def _build_agent_aggregates(
         self,
     ) -> Tuple[
@@ -1375,6 +1387,7 @@ class AgentsService:
 
         return aggregates, round_cache, signature
 
+    @rollback_on_error
     async def _fetch_current_signature(self) -> Tuple[int, Optional[datetime]]:
         stmt = select(
             func.count(AgentEvaluationRunORM.id),
@@ -1390,6 +1403,7 @@ class AgentsService:
             last_updated = last_updated.replace(tzinfo=timezone.utc)
         return total, last_updated
 
+    @rollback_on_error
     async def _fetch_agent_contexts(self, agent_id: str) -> List[AgentRunContext]:
         uid = self._extract_uid(agent_id)
 

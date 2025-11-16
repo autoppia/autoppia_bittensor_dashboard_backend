@@ -41,6 +41,7 @@ from app.models.ui.agent_runs import (
     Website,
 )
 from app.services.redis_cache import REDIS_CACHE_TTL, redis_cache
+from app.services.service_utils import rollback_on_error
 from app.services.ui.rounds_service import AgentRunContext, RoundsService
 from app.data import get_validator_metadata
 from app.utils.images import resolve_agent_image, resolve_validator_image
@@ -126,6 +127,7 @@ class AgentRunsService:
         self.session = session
         self.rounds_service = RoundsService(session)
 
+    @rollback_on_error
     async def list_agent_runs(
         self,
         page: int = 1,
@@ -288,6 +290,7 @@ class AgentRunsService:
         result = await self.session.scalars(stmt)
         return [int(value) for value in result if value is not None]
 
+    @rollback_on_error
     async def get_agent_run(self, agent_run_id: str) -> Optional[AgentRun]:
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
@@ -295,6 +298,7 @@ class AgentRunsService:
             return None
         return self._build_agent_run(context)
 
+    @rollback_on_error
     async def get_personas(self, agent_run_id: str) -> Optional[Personas]:
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
@@ -302,6 +306,7 @@ class AgentRunsService:
             return None
         return self._build_personas(context)
 
+    @rollback_on_error
     async def get_statistics(self, agent_run_id: str) -> Optional[Statistics]:
         cache_key = f"{AGENT_RUN_STATS_CACHE_PREFIX}:{agent_run_id}"
 
@@ -332,6 +337,7 @@ class AgentRunsService:
 
         return statistics
 
+    @rollback_on_error
     async def get_summary(self, agent_run_id: str) -> Optional[Summary]:
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
@@ -339,6 +345,7 @@ class AgentRunsService:
             return None
         return self._build_summary(context)
 
+    @rollback_on_error
     async def get_tasks(self, agent_run_id: str) -> Optional[List[UITask]]:
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
@@ -347,6 +354,7 @@ class AgentRunsService:
         _, _, task_map = self._index_results(context)
         return list(task_map.values())
 
+    @rollback_on_error
     async def get_timeline(self, agent_run_id: str) -> Optional[List[Event]]:
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
@@ -389,6 +397,7 @@ class AgentRunsService:
 
         return events
 
+    @rollback_on_error
     async def get_logs(self, agent_run_id: str) -> Optional[List[Log]]:
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
@@ -409,6 +418,7 @@ class AgentRunsService:
                     )
         return logs
 
+    @rollback_on_error
     async def get_metrics(self, agent_run_id: str) -> Optional[Metrics]:
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
