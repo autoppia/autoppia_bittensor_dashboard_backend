@@ -53,6 +53,12 @@ from app.utils.urls import build_taostats_miner_url
 
 logger = logging.getLogger(__name__)
 
+
+class AgentAggregateCacheWarmupRequired(Exception):
+    """Raised when agent aggregate cache is not warmed yet."""
+    pass
+
+
 ALPHA_EMISSION_PER_EPOCH = 148.0
 _EPSILON = 1e-6
 
