@@ -191,8 +191,27 @@ class TasksService:
         include_facets: bool = False,
         include_details: bool = True,
     ) -> Dict[str, object]:
-        # Build the base query with filters at the database level.
-        stmt = (
+        skip = max(0, (page - 1) * limit)
+
+        query_lower = query.lower() if query else None
+        start_ts = _to_timestamp(start_date)
+        end_ts = _to_timestamp(end_date)
+
+        needs_python_filtering = any(
+            [
+                agent_run_id,
+                agent_id,
+                validator_id,
+                use_case,
+                status,
+                min_score is not None,
+                max_score is not None,
+                start_ts is not None,
+                end_ts is not None,
+            ]
+        )
+
+        base_stmt = (
             select(TaskORM)
             .where(TaskORM.evaluation_results.any())
             .options(
@@ -201,77 +220,37 @@ class TasksService:
             )
         )
 
-        # Apply database-level filters where possible
         if website:
-            # Filter by website URL
-            stmt = stmt.where(TaskORM.url == website)
+            base_stmt = base_stmt.where(TaskORM.web_project_id == website)
 
         if query:
-            # Use database text search for query
-            # Search in task_id, prompt, or URL
-            stmt = stmt.where(
-                TaskORM.task_id.ilike(f"%{query}%")
-                | TaskORM.prompt.ilike(f"%{query}%")
-                | TaskORM.url.ilike(f"%{query}%")
+            like = f"%{query}%"
+            base_stmt = base_stmt.where(
+                TaskORM.task_id.ilike(like)
+                | TaskORM.prompt.ilike(like)
+                | TaskORM.url.ilike(like)
             )
 
-        # Order by ID descending for now (we'll sort in memory if needed)
-        stmt = stmt.order_by(TaskORM.id.desc())
-
-        # Determine if we need to load extra for Python-level filtering
-        needs_python_filtering = (
-            agent_run_id
-            or agent_id
-            or validator_id
-            or use_case
-            or status
-            or min_score is not None
-            or max_score is not None
-            or start_date is not None
-            or end_date is not None
-        )
+        base_stmt = base_stmt.order_by(TaskORM.id.desc())
 
         if needs_python_filtering:
-            # Need to load more for filtering in Python
-            max_fetch_limit = max(limit * 10, 1000)
-            stmt = stmt.limit(max_fetch_limit)
-            # Execute query
+            max_fetch_limit = max(limit * 5, 200)
+            stmt = base_stmt.limit(max_fetch_limit)
             task_rows_result = await self.session.scalars(stmt)
             task_rows = list(task_rows_result)
-            # Total will be calculated after filtering
             total_count = None
         else:
-            # No Python filtering needed - get accurate count first
-            count_stmt = (
-                select(func.count(TaskORM.id))
-                .select_from(TaskORM)
-                .where(TaskORM.evaluation_results.any())
+            window_stmt = base_stmt.add_columns(
+                func.count().over().label("full_count")
             )
+            window_stmt = window_stmt.offset(skip).limit(limit)
 
-            # Apply same filters as main query for accurate count
-            if website:
-                count_stmt = count_stmt.where(TaskORM.url == website)
-            if query:
-                count_stmt = count_stmt.where(
-                    TaskORM.task_id.ilike(f"%{query}%")
-                    | TaskORM.prompt.ilike(f"%{query}%")
-                    | TaskORM.url.ilike(f"%{query}%")
-                )
+            result = await self.session.execute(window_stmt)
+            rows = result.all()
 
-            # Get total count
-            total_count = await self.session.scalar(count_stmt)
+            task_rows = [row[0] for row in rows]
+            total_count = int(rows[0][1]) if rows else 0
 
-            # Now fetch the paginated data
-            # Add a bit extra to account for tasks with missing agent runs
-            stmt = stmt.limit(limit * 2).offset((page - 1) * limit)
-            task_rows_result = await self.session.scalars(stmt)
-            task_rows = list(task_rows_result)
-
-        query_lower = query.lower() if query else None
-        start_ts = _to_timestamp(start_date)
-        end_ts = _to_timestamp(end_date)
-
-        # Only initialize facet tracking if needed
         if include_facets and needs_python_filtering:
             website_counts: Dict[str, int] = defaultdict(int)
             use_case_counts: Dict[str, int] = defaultdict(int)
@@ -288,7 +267,7 @@ class TasksService:
             use_case_counts = {}
             status_counts = {}
             score_buckets = {}
-            score_ranges = []
+            score_ranges: List[Tuple[str, float, float]] = []
 
         context_cache: Dict[str, AgentRunContext] = {}
         items: List[UITask] = []
@@ -312,16 +291,17 @@ class TasksService:
                 if context.agent_run.validator_uid != validator_uid:
                     continue
 
-            # Website filter already applied at DB level
-            # if website and context.task.url != website:
-            #     continue
-
             if use_case:
-                use_case_name = self._extract_use_case(context.task)
-                if use_case_name != use_case:
+                requested_use_case = (
+                    use_case.replace(" ", "_").strip().upper()
+                )
+                raw_use_case_name = self._extract_use_case(context.task) or ""
+                current_use_case = (
+                    raw_use_case_name.replace(" ", "_").strip().upper()
+                )
+                if current_use_case != requested_use_case:
                     continue
 
-            # Use summary version (without actions/screenshots/logs) for fast searches
             if include_details:
                 ui_task = self._build_ui_task(context)
             else:
@@ -347,17 +327,12 @@ class TasksService:
             if end_ts is not None and run_start_ts > end_ts:
                 continue
 
-            # Query filter partially applied at DB level, but need to check all fields
             if query_lower:
-                # DB already filtered by task_id, prompt, and url
-                # But also check agent_run_id which isn't in task data
                 if query_lower not in ui_task.agentRunId.lower():
-                    # Already matched in DB, so don't filter out
                     pass
 
             items.append(ui_task)
 
-            # Only count facets if we're filtering and need accurate counts
             if include_facets and needs_python_filtering:
                 website_counts[ui_task.website] += 1
                 use_case_counts[ui_task.useCase] += 1
@@ -370,26 +345,21 @@ class TasksService:
         items = self._sort_tasks(items, sort_by, sort_order)
 
         if needs_python_filtering:
-            # We loaded extra, now paginate in Python
             total = len(items)
-            start_index = (page - 1) * limit
+            start_index = skip
             end_index = start_index + limit
             paginated = items[start_index:end_index]
         else:
-            # Already offset at DB level, just take what we need
-            paginated = items[:limit]
-            # Use the accurate count we fetched earlier
+            paginated = items
             total = total_count or 0
 
-        result: Dict[str, Any] = {
+        result: Dict[str, object] = {
             "tasks": [task.model_dump() for task in paginated],
             "total": total,
             "page": page,
             "limit": limit,
         }
 
-        # Only include facets if we loaded the full filtered dataset
-        # Otherwise facets would be misleading (only representing current page)
         if include_facets and needs_python_filtering:
             result["facets"] = {
                 "websites": [
@@ -416,7 +386,6 @@ class TasksService:
                 ],
             }
         elif include_facets:
-            # Return empty facets for DB-paginated results
             result["facets"] = {
                 "websites": [],
                 "useCases": [],
