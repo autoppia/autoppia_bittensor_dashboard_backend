@@ -878,6 +878,13 @@ class AgentsService:
                     "rank": best_rank,
                     "totalRuns": len(scores),
                 }
+            miner_info = agg.miner
+            image_url = resolve_agent_image(miner_info)
+            name = (
+                miner_info.agent_name
+                if miner_info and miner_info.agent_name
+                else agent_id
+            )
             snapshot[agent_id] = {
                 "id": agent_id,
                 "uid": agg.uid,
@@ -888,6 +895,8 @@ class AgentsService:
                 "bestScore": round(agg.best_score or 0.0, 4),
                 "avgResponseTime": round(avg_duration, 4),
                 "currentRank": min(agg.ranks) if agg.ranks else None,
+                "name": name,
+                "imageUrl": image_url or "",
                 "lastUpdated": now,
                 "rounds": per_round,
             }

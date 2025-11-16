@@ -14,6 +14,7 @@ from app.services.ui.agents_service import AgentAggregate, RoundAgentSnapshot
 from app.services.ui.miners_service import MinersService
 from app.utils.images import resolve_agent_image
 from app.services.service_utils import rollback_on_error
+from app.services.redis_cache import redis_cache
 
 
 class MinerListService:
@@ -32,6 +33,64 @@ class MinerListService:
         search: str | None = None,
         round_number: Optional[int] = None,
     ) -> MinimalMinerListResponse:
+        # Fast path: try Redis snapshot first
+        snapshot = redis_cache.get("AGGREGATES:agents:v1")
+        if isinstance(snapshot, dict) and snapshot:
+            lowered = search.lower() if search else None
+            items: List[MinerListItem] = []
+
+            def pick_score(entry: Dict[str, any]) -> Tuple[float, Optional[int]]:
+                # Prefer round-specific metrics when requested
+                if round_number is not None and round_number > 0:
+                    rnd = str(round_number)
+                    per = entry.get("rounds", {}).get(rnd)
+                    if per:
+                        return float(per.get("avgScore", 0.0)), per.get("rank")
+                # Fallback to global
+                return float(entry.get("avgScore", 0.0)), entry.get("currentRank")
+
+            filtered: List[Tuple[MinerListItem, float, Optional[int]]] = []
+            for entry in snapshot.values():
+                if not isinstance(entry, dict):
+                    continue
+                if is_sota is not None and bool(entry.get("isSota")) != is_sota:
+                    continue
+                uid = int(entry.get("uid") or -1)
+                name = str(entry.get("name") or f"agent-{uid if uid >= 0 else 'unknown'}")
+                if lowered and lowered not in name.lower() and lowered not in str(uid):
+                    continue
+                score, rank = pick_score(entry)
+                image_url = str(entry.get("imageUrl") or "")
+                item = MinerListItem(
+                    uid=uid if uid is not None else -1,
+                    name=name,
+                    ranking=rank or 0,
+                    score=round(float(score), 4),
+                    isSota=bool(entry.get("isSota")),
+                    imageUrl=image_url,
+                )
+                filtered.append((item, score, rank))
+
+            # Sort: if rank available, asc by rank; else desc by score
+            def sort_key(t: Tuple[MinerListItem, float, Optional[int]]):
+                _, sc, rk = t
+                return (0, rk) if rk is not None and rk > 0 else (1, -sc)
+
+            filtered.sort(key=sort_key)
+            items_only = [t[0] for t in filtered]
+            total = len(items_only)
+            start = (page - 1) * limit
+            end = start + limit
+            paginated = items_only[start:end]
+            return MinimalMinerListResponse(
+                miners=paginated,
+                total=total,
+                page=page,
+                limit=limit,
+                round=round_number if round_number and round_number > 0 else None,
+            )
+
+        # Fallback to SQL aggregate path
         aggregates = await self.miners_service.agents_service._aggregate_agents()  # type: ignore[attr-defined]
         round_candidates = self._collect_round_candidates(aggregates)
         snapshot_cache: Dict[int, List[RoundAgentSnapshot]] = {}
