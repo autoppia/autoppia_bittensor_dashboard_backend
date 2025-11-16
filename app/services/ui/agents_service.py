@@ -169,7 +169,7 @@ class RoundAgentSnapshot:
 
 
 _CACHE_TTL_ENV = "AGENTS_CACHE_TTL_SECONDS"
-_DEFAULT_CACHE_TTL = 30
+_DEFAULT_CACHE_TTL = 600  # Increased from 30s to 10 minutes to prevent memory leak
 try:
     _CACHE_TTL_SECONDS = max(int(os.getenv(_CACHE_TTL_ENV, str(_DEFAULT_CACHE_TTL))), 0)
 except ValueError:
