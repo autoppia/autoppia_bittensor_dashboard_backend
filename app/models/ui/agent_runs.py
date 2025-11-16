@@ -406,3 +406,15 @@ class MetricsResponse(BaseModel):
     data: Optional[Dict[str, Metrics]] = None
     error: Optional[str] = None
     code: Optional[str] = None
+
+
+AgentRunsListResponse.model_rebuild()
+AgentRunDetailResponse.model_rebuild()
+PersonasResponse.model_rebuild()
+StatisticsResponse.model_rebuild()
+SummaryResponse.model_rebuild()
+TasksResponse.model_rebuild()
+ComparisonResponse.model_rebuild()
+TimelineResponse.model_rebuild()
+LogsResponse.model_rebuild()
+MetricsResponse.model_rebuild()
