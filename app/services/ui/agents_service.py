@@ -804,6 +804,27 @@ class AgentsService:
 
             return aggregates
 
+    async def warm_aggregate_cache(self) -> Dict[str, AgentAggregate]:
+        """
+        Force a rebuild of the in-process aggregate cache and return the aggregates.
+        This is used by the admin warm endpoint and external warmers to avoid
+        on-demand heavy computations under user traffic.
+        """
+        global _AGGREGATE_CACHE, _AGGREGATE_CACHE_TIMESTAMP, _AGGREGATE_CACHE_BENCHMARKS, _AGGREGATE_CACHE_SIGNATURE
+
+        async with _AGGREGATE_CACHE_LOCK:
+            aggregates, round_benchmark_scores, signature = await self._build_agent_aggregates()
+            round_cache = _clone_round_benchmark_cache(round_benchmark_scores)
+            self._round_benchmark_cache = round_cache
+
+            now = time.monotonic()
+            _AGGREGATE_CACHE = aggregates
+            _AGGREGATE_CACHE_TIMESTAMP = now
+            _AGGREGATE_CACHE_BENCHMARKS = round_cache
+            _AGGREGATE_CACHE_SIGNATURE = signature
+
+            return aggregates
+
     async def build_round_snapshots(
         self,
         round_number: int,
