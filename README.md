@@ -279,6 +279,7 @@ DZ_STARTING_BLOCK_LOCAL=6870000
 API_CACHE_DISABLED_LOCAL=false
 ENABLE_FINAL_ROUND_CACHE=true
 ENABLE_CURRENT_ROUND_CACHE=true
+AGENT_AGGREGATES_REQUIRE_WARM_CACHE_LOCAL=false
 ```
 
 For complete configuration options, refer to `app/config.py` or see `DEV_SETUP.md` for development environment setup.

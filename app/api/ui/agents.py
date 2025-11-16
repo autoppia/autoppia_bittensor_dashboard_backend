@@ -13,9 +13,14 @@ from app.models.ui.agents import (
     AgentStatus,
     AgentType,
 )
-from app.services.ui.agents_service import AgentsService
+from app.services.ui.agents_service import (
+    AgentsService,
+    AgentAggregateCacheWarmupRequired,
+)
 
 logger = logging.getLogger(__name__)
+
+CACHE_WARMING_MESSAGE = "Agent aggregate cache is warming; try again shortly."
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
@@ -36,22 +41,28 @@ async def list_agents(
     search: str | None = Query(None),
 ):
     service = await _service(session)
-    data = await service.list_agents(
-        page=page,
-        limit=limit,
-        agent_type=type,
-        status=status,
-        sort_by=sortBy,
-        sort_order=sortOrder,
-        search=search,
-    )
+    try:
+        data = await service.list_agents(
+            page=page,
+            limit=limit,
+            agent_type=type,
+            status=status,
+            sort_by=sortBy,
+            sort_order=sortOrder,
+            search=search,
+        )
+    except AgentAggregateCacheWarmupRequired as exc:
+        raise HTTPException(status_code=503, detail=CACHE_WARMING_MESSAGE) from exc
     return {"success": True, "data": data.model_dump()}
 
 
 @router.get("/statistics")
 async def get_agent_statistics(session: AsyncSession = Depends(get_session)):
     service = await _service(session)
-    response = await service.statistics()
+    try:
+        response = await service.statistics()
+    except AgentAggregateCacheWarmupRequired as exc:
+        raise HTTPException(status_code=503, detail=CACHE_WARMING_MESSAGE) from exc
     return {"success": True, "data": {"statistics": response.statistics.model_dump()}}
 
 
@@ -65,13 +76,16 @@ async def list_agent_activity(
     agentId: Optional[str] = Query(None),
 ):
     service = await _service(session)
-    response = await service.get_all_activity(
-        limit=limit,
-        offset=offset,
-        activity_type=type,
-        since=since,
-        agent_id=agentId,
-    )
+    try:
+        response = await service.get_all_activity(
+            limit=limit,
+            offset=offset,
+            activity_type=type,
+            since=since,
+            agent_id=agentId,
+        )
+    except AgentAggregateCacheWarmupRequired as exc:
+        raise HTTPException(status_code=503, detail=CACHE_WARMING_MESSAGE) from exc
     return {"success": True, "data": response.model_dump()}
 
 
@@ -83,6 +97,8 @@ async def compare_agents(payload: dict, session: AsyncSession = Depends(get_sess
     service = await _service(session)
     try:
         response = await service.compare_agents(agent_ids)
+    except AgentAggregateCacheWarmupRequired as exc:
+        raise HTTPException(status_code=503, detail=CACHE_WARMING_MESSAGE) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"success": True, "data": response.model_dump()}
@@ -97,6 +113,8 @@ async def get_agent(
     service = await _service(session)
     try:
         data = await service.get_agent(agent_id, round_number=round)
+    except AgentAggregateCacheWarmupRequired as exc:
+        raise HTTPException(status_code=503, detail=CACHE_WARMING_MESSAGE) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"success": True, "data": data.model_dump()}
@@ -120,6 +138,8 @@ async def get_agent_performance(
             end_date=endDate,
             granularity=granularity,
         )
+    except AgentAggregateCacheWarmupRequired as exc:
+        raise HTTPException(status_code=503, detail=CACHE_WARMING_MESSAGE) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"success": True, "data": {"metrics": response.metrics.model_dump()}}
@@ -133,7 +153,10 @@ async def list_agent_runs(
     limit: int = Query(20, ge=1, le=100),
 ):
     service = await _service(session)
-    data = await service.list_agent_runs(agent_id, page=page, limit=limit)
+    try:
+        data = await service.list_agent_runs(agent_id, page=page, limit=limit)
+    except AgentAggregateCacheWarmupRequired as exc:
+        raise HTTPException(status_code=503, detail=CACHE_WARMING_MESSAGE) from exc
     return {"success": True, "data": data.model_dump()}
 
 
@@ -155,6 +178,8 @@ async def get_agent_activity(
             activity_type=type,
             since=since,
         )
+    except AgentAggregateCacheWarmupRequired as exc:
+        raise HTTPException(status_code=503, detail=CACHE_WARMING_MESSAGE) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"success": True, "data": response.model_dump()}

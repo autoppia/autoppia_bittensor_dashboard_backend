@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.services.ui.miner_list_service import MinerListService
+from app.services.ui.agents_service import AgentAggregateCacheWarmupRequired
 from app.services.redis_cache import cache
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,11 @@ async def list_miners(
             round_number=round,
         )
         return response
+    except AgentAggregateCacheWarmupRequired as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Agent aggregate cache is warming; try again shortly.",
+        ) from exc
     except Exception as exc:
         logger.error(f"Error in list_miners endpoint: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc)) from exc

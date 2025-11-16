@@ -50,6 +50,7 @@ from app.services.ui.agent_runs_service import AgentRunsService
 from app.utils.images import resolve_agent_image, sanitize_miner_image
 from app.services.subnet_utils import get_price_cached as get_subnet_price
 from app.utils.urls import build_taostats_miner_url
+from app.services.service_utils import rollback_on_error
 
 logger = logging.getLogger(__name__)
 
@@ -168,8 +169,12 @@ class RoundAgentSnapshot:
         ]
 
 
+class AgentAggregateCacheWarmupRequired(RuntimeError):
+    """Raised when the aggregated agent cache needs to be rebuilt by a warmer."""
+
+
 _CACHE_TTL_ENV = "AGENTS_CACHE_TTL_SECONDS"
-_DEFAULT_CACHE_TTL = 600  # Increased from 30s to 10 minutes to prevent memory leak
+_DEFAULT_CACHE_TTL = 3600  # Default to 1 hour to avoid frequent rebuilds
 try:
     _CACHE_TTL_SECONDS = max(int(os.getenv(_CACHE_TTL_ENV, str(_DEFAULT_CACHE_TTL))), 0)
 except ValueError:
@@ -210,6 +215,7 @@ class AgentsService:
         self.agent_runs_service = AgentRunsService(session)
         self._round_benchmark_cache: Dict[int, Dict[str, Dict[str, Any]]] = {}
 
+    @rollback_on_error
     async def list_agents(
         self,
         page: int,
@@ -251,6 +257,7 @@ class AgentsService:
             limit=limit,
         )
 
+    @rollback_on_error
     async def get_agent(
         self,
         agent_id: str,
@@ -331,6 +338,7 @@ class AgentsService:
             roundMetrics=round_metrics,
         )
 
+    @rollback_on_error
     async def get_performance(
         self,
         agent_id: str,
@@ -356,6 +364,7 @@ class AgentsService:
         )
         return AgentPerformanceResponse(metrics=metrics)
 
+    @rollback_on_error
     async def list_agent_runs(
         self,
         agent_id: str,
@@ -397,6 +406,7 @@ class AgentsService:
             selectedRound=round_numbers[0] if round_numbers else None,
         )
 
+    @rollback_on_error
     async def get_agent_activity(
         self,
         agent_id: str,
@@ -416,6 +426,7 @@ class AgentsService:
         paginated = filtered[offset : offset + limit]
         return AgentActivityResponse(activities=paginated, total=total)
 
+    @rollback_on_error
     async def get_all_activity(
         self,
         limit: int,
@@ -441,6 +452,7 @@ class AgentsService:
         paginated = filtered[offset : offset + limit]
         return AgentActivityResponse(activities=paginated, total=total)
 
+    @rollback_on_error
     async def statistics(self) -> AgentStatisticsResponse:
         aggregates = await self._aggregate_agents()
         if not aggregates:
@@ -543,6 +555,7 @@ class AgentsService:
             )
         )
 
+    @rollback_on_error
     async def compare_agents(self, agent_ids: List[str]) -> AgentComparisonResponse:
         aggregates = await self._aggregate_agents()
         resolved = [
@@ -825,19 +838,40 @@ class AgentsService:
             performanceTrend=trend,
         )
 
+    @rollback_on_error
     async def _aggregate_agents(self) -> Dict[str, AgentAggregate]:
-        global _AGGREGATE_CACHE, _AGGREGATE_CACHE_TIMESTAMP, _AGGREGATE_CACHE_BENCHMARKS, _AGGREGATE_CACHE_SIGNATURE
-
         now = time.monotonic()
         cached = await self._try_get_cached_aggregates(now)
         if cached is not None:
             return cached
 
+        if settings.AGENT_AGGREGATES_REQUIRE_WARM_CACHE:
+            raise AgentAggregateCacheWarmupRequired(
+                "Agent aggregate cache expired. Trigger /admin/warm/agents to rebuild it."
+            )
+
+        return await self._refresh_agent_cache(force=False)
+
+    @rollback_on_error
+    async def warm_aggregate_cache(self) -> Dict[str, AgentAggregate]:
+        """
+        Force a rebuild of the agent aggregate cache. Used by the /admin/warm/agents endpoint
+        and offline warmers so that public endpoints never trigger heavy recomputation.
+        """
+
+        return await self._refresh_agent_cache(force=True)
+
+    @rollback_on_error
+    async def _refresh_agent_cache(self, force: bool) -> Dict[str, AgentAggregate]:
+        global _AGGREGATE_CACHE, _AGGREGATE_CACHE_TIMESTAMP
+        global _AGGREGATE_CACHE_BENCHMARKS, _AGGREGATE_CACHE_SIGNATURE
+
         async with _AGGREGATE_CACHE_LOCK:
             now = time.monotonic()
-            cached = await self._try_get_cached_aggregates(now)
-            if cached is not None:
-                return cached
+            if not force:
+                cached = await self._try_get_cached_aggregates(now)
+                if cached is not None:
+                    return cached
 
             aggregates, round_benchmark_scores, signature = (
                 await self._build_agent_aggregates()
@@ -853,6 +887,7 @@ class AgentsService:
 
             return aggregates
 
+    @rollback_on_error
     async def build_round_snapshots(
         self,
         round_number: int,
@@ -945,6 +980,7 @@ class AgentsService:
 
         return snapshots
 
+    @rollback_on_error
     async def _try_get_cached_aggregates(
         self, now: float
     ) -> Optional[Dict[str, AgentAggregate]]:
@@ -965,6 +1001,7 @@ class AgentsService:
         )
         return cached
 
+    @rollback_on_error
     async def _build_agent_aggregates(
         self,
     ) -> Tuple[
@@ -1264,6 +1301,7 @@ class AgentsService:
 
         return aggregates, round_cache, signature
 
+    @rollback_on_error
     async def _fetch_current_signature(self) -> Tuple[int, Optional[datetime]]:
         stmt = select(
             func.count(AgentEvaluationRunORM.id),
@@ -1279,6 +1317,7 @@ class AgentsService:
             last_updated = last_updated.replace(tzinfo=timezone.utc)
         return total, last_updated
 
+    @rollback_on_error
     async def _fetch_agent_contexts(self, agent_id: str) -> List[AgentRunContext]:
         uid = self._extract_uid(agent_id)
 

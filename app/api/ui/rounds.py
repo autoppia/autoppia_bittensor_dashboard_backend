@@ -130,7 +130,9 @@ router.add_api_route(
 
 
 @router.get("/current", response_model=RoundDetailResponse)
-@cache("rounds_current", ttl=300)  # Cache 5 minutes - different key to avoid collision with overview
+@cache(
+    "rounds_current", ttl=300
+)  # Cache 5 minutes - different key to avoid collision with overview
 async def get_current_round(
     session: AsyncSession = Depends(get_session),
 ) -> RoundDetailResponse:
@@ -194,7 +196,9 @@ async def get_round_statistics(
 
 
 @router.get("/{round_id}/miners", response_model=RoundMinersResponse)
-@cache("round_miners", ttl=300)  # Cache 5 minutes (smart_cache will extend for completed rounds)
+@cache(
+    "round_miners", ttl=300
+)  # Cache 5 minutes (smart_cache will extend for completed rounds)
 async def get_round_miners(
     round_id: str,
     session: AsyncSession = Depends(get_session),

@@ -1,7 +1,4 @@
-"""
-Redis-based caching service with fallback to in-memory cache.
-Provides persistent caching for immutable data like completed rounds and tasks.
-"""
+"""Redis-based caching service for API responses."""
 
 import json
 import logging
@@ -22,20 +19,14 @@ except ImportError:
     RedisConnectionError = Exception
 
 from app.config import settings
-from app.services.cache import api_cache  # Fallback to in-memory cache
-
 logger = logging.getLogger(__name__)
 
 
 class RedisCache:
     """
-    Redis-based cache with automatic fallback to in-memory cache.
-
-    Features:
-    - Persistent storage across server restarts
-    - Shared cache between multiple backend instances
-    - Automatic fallback to in-memory cache if Redis is unavailable
-    - Support for 7-day TTL for immutable data (completed rounds)
+    Redis-based cache that stores payloads centrally so that multiple processes share a
+    single cache. If Redis becomes unavailable we simply return cache misses instead of
+    keeping large payloads in-process.
     """
 
     def __init__(
@@ -64,8 +55,6 @@ class RedisCache:
             "redis_misses": 0,
             "redis_sets": 0,
             "redis_errors": 0,
-            "fallback_hits": 0,
-            "fallback_misses": 0,
         }
 
         if not REDIS_AVAILABLE:
@@ -138,7 +127,7 @@ class RedisCache:
 
     def get(self, key: str) -> Optional[Any]:
         """
-        Get value from Redis cache, fallback to in-memory cache.
+        Get value from Redis cache.
 
         Args:
             key: Cache key
@@ -146,7 +135,6 @@ class RedisCache:
         Returns:
             Cached value or None if not found
         """
-        # Try Redis first
         if self._redis_available and self._redis_client:
             try:
                 data = self._redis_client.get(key)
@@ -154,26 +142,15 @@ class RedisCache:
                     self._stats["redis_hits"] += 1
                     logger.debug(f"✅ Redis cache hit: {key}")
                     return self._deserialize(data)
-                else:
-                    self._stats["redis_misses"] += 1
-                    logger.debug(f"❌ Redis cache miss: {key}")
-                    return None
+                self._stats["redis_misses"] += 1
+                logger.debug(f"❌ Redis cache miss: {key}")
             except (RedisError, RedisConnectionError, OSError) as e:
                 self._stats["redis_errors"] += 1
                 logger.warning(f"Redis error on get({key}): {e}")
-                # Fall through to in-memory cache
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.error(f"Unexpected error on Redis get({key}): {e}")
 
-        # Fallback to in-memory cache
-        result = api_cache.get(key)
-        if result is not None:
-            self._stats["fallback_hits"] += 1
-            logger.debug(f"✅ Fallback cache hit: {key}")
-        else:
-            self._stats["fallback_misses"] += 1
-            logger.debug(f"❌ Fallback cache miss: {key}")
-        return result
+        return None
 
     def set(self, key: str, value: Any, ttl: int = 604800) -> bool:  # 7 days default
         """
@@ -205,10 +182,6 @@ class RedisCache:
             except Exception as e:
                 logger.error(f"Unexpected error on Redis set({key}): {e}")
 
-        # Always update in-memory cache as fallback (max 24h to avoid memory issues)
-        in_memory_ttl = min(ttl, 86400)
-        api_cache.set(key, value, ttl=in_memory_ttl)
-
         return success
 
     def delete(self, key: str) -> bool:
@@ -230,9 +203,6 @@ class RedisCache:
                 logger.debug(f"Deleted Redis key: {key}")
             except (RedisError, RedisConnectionError, OSError) as e:
                 logger.warning(f"Redis error on delete({key}): {e}")
-
-        # Also clear from in-memory cache
-        api_cache.clear(pattern=key)
 
         return deleted
 
@@ -263,9 +233,6 @@ class RedisCache:
             except (RedisError, RedisConnectionError, OSError) as e:
                 logger.warning(f"Redis error on clear_pattern({pattern}): {e}")
 
-        # Also clear from in-memory cache
-        api_cache.clear(pattern=pattern)
-
         return cleared
 
     def get_stats(self) -> Dict[str, Any]:
@@ -287,9 +254,6 @@ class RedisCache:
                 stats["redis_keyspace_misses"] = info.get("keyspace_misses", 0)
             except (RedisError, RedisConnectionError, OSError):
                 pass
-
-        # Add in-memory cache stats
-        stats["in_memory_cache"] = api_cache.get_stats()
 
         return stats
 
@@ -354,7 +318,7 @@ def cached_redis(
     is_final: bool = False,  # Mark as final/immutable data
 ):
     """
-    Decorator to cache function results in Redis with fallback to in-memory.
+    Decorator to cache function results in Redis.
 
     Args:
         prefix: Cache key prefix

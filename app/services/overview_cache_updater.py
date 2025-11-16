@@ -25,6 +25,11 @@ OVERVIEW_UPDATE_INTERVAL = 5 * 60  # 300 segundos
 # Base URL (localhost)
 API_BASE_URL = "http://localhost:8080"
 
+# Endpoints that trigger administrative warmers (POST)
+ADMIN_ENDPOINTS = [
+    "/admin/warm/agents",
+]
+
 # Endpoints a pre-calentar
 # Organizados por prioridad: críticos primero
 ENDPOINTS_TO_WARM = [
@@ -38,10 +43,6 @@ ENDPOINTS_TO_WARM = [
     "/api/v1/overview/rounds/current",
     # Rounds list (común)
     "/api/v1/rounds?page=1&limit=20",
-    # Miner list (común)
-    "/api/v1/miner-list?limit=100",
-    # Agent runs (común)
-    "/api/v1/agent-runs?page=1&limit=20",
 ]
 
 # Global state
@@ -59,6 +60,36 @@ def _warm_cache_endpoints() -> dict:
     solo requests síncronos que funcionan perfectamente en un thread.
     """
     results = {}
+
+    # Trigger admin warmers first (POST requests)
+    for endpoint in ADMIN_ENDPOINTS:
+        try:
+            url = f"{API_BASE_URL}{endpoint}"
+            start = time.time()
+            response = requests.post(url, timeout=60)
+            elapsed = time.time() - start
+            if response.status_code == 200:
+                results[endpoint] = {
+                    "success": True,
+                    "elapsed": round(elapsed, 3),
+                    "status": response.status_code,
+                }
+                logger.debug(f"✅ Admin warm triggered: {endpoint} ({elapsed:.3f}s)")
+            else:
+                results[endpoint] = {
+                    "success": False,
+                    "elapsed": round(elapsed, 3),
+                    "status": response.status_code,
+                    "error": f"HTTP {response.status_code}",
+                }
+                logger.warning(
+                    "⚠️  Admin warm endpoint %s failed: HTTP %s",
+                    endpoint,
+                    response.status_code,
+                )
+        except Exception as exc:  # noqa: BLE001
+            results[endpoint] = {"success": False, "error": str(exc)}
+            logger.error(f"❌ Error warming admin endpoint {endpoint}: {exc}")
 
     for endpoint in ENDPOINTS_TO_WARM:
         try:

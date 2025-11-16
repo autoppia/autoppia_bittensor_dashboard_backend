@@ -217,6 +217,15 @@ class Settings(BaseSettings):
     ENABLE_CURRENT_ROUND_CACHE: bool = _str_to_bool(
         os.getenv("ENABLE_CURRENT_ROUND_CACHE", "true")
     )
+    _AGENT_AGGREGATE_REQUIRE_DEFAULT = (
+        "true" if ENVIRONMENT == "production" else "false"
+    )
+    AGENT_AGGREGATES_REQUIRE_WARM_CACHE: bool = _str_to_bool(
+        os.getenv(
+            "AGENT_AGGREGATES_REQUIRE_WARM_CACHE",
+            _AGENT_AGGREGATE_REQUIRE_DEFAULT,
+        )
+    )
 
     # Subnet price fallback (alpha → τ). Used when on-chain query fails.
     SUBNET_PRICE_FALLBACK: float = float(_env_var("SUBNET_PRICE_FALLBACK", "0.004178"))

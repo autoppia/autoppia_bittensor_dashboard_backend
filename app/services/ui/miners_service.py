@@ -21,6 +21,7 @@ from app.models.ui.miners import Pagination
 from app.services.ui.agents_service import AgentsService, AgentAggregate
 from app.utils.images import resolve_agent_image
 from app.utils.urls import build_taostats_miner_url
+from app.services.service_utils import rollback_on_error
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class MinersService:
         self.session = session
         self.agents_service = AgentsService(session)
 
+    @rollback_on_error
     async def list_miners(
         self,
         page: int,
@@ -81,6 +83,7 @@ class MinersService:
         pagination = Pagination(page=page, limit=limit, total=total, totalPages=total_pages)
         return MinerListResponse(miners=paginated, pagination=pagination)
 
+    @rollback_on_error
     async def get_miner(self, uid: int) -> MinerDetailResponse:
         aggregates = await self.agents_service._aggregate_agents()  # type: ignore[attr-defined]
         for aggregate in aggregates.values():
@@ -88,6 +91,7 @@ class MinersService:
                 return MinerDetailResponse(miner=self._aggregate_to_miner(aggregate))
         raise ValueError(f"Miner {uid} not found")
 
+    @rollback_on_error
     async def get_miner_performance(
         self,
         uid: int,
