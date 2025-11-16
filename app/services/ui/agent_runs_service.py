@@ -149,10 +149,34 @@ class AgentRunsService:
         end_ts = _to_timestamp(end_date)
         query_term = query.lower() if query else None
 
-        base_stmt = select(AgentEvaluationRunORM.agent_run_id)
-        count_stmt = select(func.count()).select_from(AgentEvaluationRunORM)
+        sort_columns: Dict[str, Any] = {
+            "startTime": AgentEvaluationRunORM.started_at,
+            "endTime": AgentEvaluationRunORM.ended_at,
+            "averageScore": AgentEvaluationRunORM.average_score,
+            "score": AgentEvaluationRunORM.average_score,
+            "overallScore": AgentEvaluationRunORM.average_score,
+            "totalTasks": AgentEvaluationRunORM.total_tasks,
+            "completedTasks": AgentEvaluationRunORM.completed_tasks,
+        }
 
-        filters = []
+        if sort_by in {"successRate"}:
+            sort_columns["successRate"] = func.coalesce(
+                AgentEvaluationRunORM.completed_tasks
+                * 100.0
+                / func.nullif(AgentEvaluationRunORM.total_tasks, 0),
+                0.0,
+            )
+
+        order_expr = sort_columns.get(sort_by, AgentEvaluationRunORM.started_at)
+        if isinstance(order_expr, (int, float)):
+            order_expr = AgentEvaluationRunORM.started_at
+
+        if sort_order.lower() == "desc":
+            order_clause = order_expr.desc()
+        else:
+            order_clause = order_expr.asc()
+
+        filters: List[Any] = []
         if validator_uid is not None:
             filters.append(AgentEvaluationRunORM.validator_uid == validator_uid)
         if miner_uid is not None:
@@ -180,13 +204,13 @@ class AgentRunsService:
         elif status_filter == RunStatus.PENDING.value:
             filters.append(AgentEvaluationRunORM.started_at.is_(None))
         elif status_filter in {RunStatus.FAILED.value, RunStatus.CANCELLED.value}:
-            # FAILED/CANCELLED are not stored explicitly; return empty result set.
+            available_rounds = await self._list_available_round_numbers()
             return {
                 "runs": [],
                 "total": 0,
                 "page": page,
                 "limit": limit,
-                "availableRounds": await self._list_available_round_numbers(),
+                "availableRounds": available_rounds,
                 "selectedRound": round_number,
             }
 
@@ -206,50 +230,41 @@ class AgentRunsService:
                 )
             )
 
-        for flt in filters:
-            base_stmt = base_stmt.where(flt)
-            count_stmt = count_stmt.where(flt)
-
-        sort_columns = {
-            "startTime": AgentEvaluationRunORM.started_at,
-            "endTime": AgentEvaluationRunORM.ended_at,
-            "averageScore": AgentEvaluationRunORM.average_score,
-            "score": AgentEvaluationRunORM.average_score,
-            "overallScore": AgentEvaluationRunORM.average_score,
-            "totalTasks": AgentEvaluationRunORM.total_tasks,
-            "completedTasks": AgentEvaluationRunORM.completed_tasks,
-            "successRate": func.coalesce(
-                AgentEvaluationRunORM.completed_tasks
-                * 100.0
-                / func.nullif(AgentEvaluationRunORM.total_tasks, 0),
-                0.0,
-            ),
-        }
-
-        order_expr = sort_columns.get(sort_by, AgentEvaluationRunORM.started_at)
-        if isinstance(order_expr, (int, float)):
-            # Guard for unexpected literals.
-            order_expr = AgentEvaluationRunORM.started_at
-        if sort_order.lower() == "desc":
-            order_clause = order_expr.desc()
-        else:
-            order_clause = order_expr.asc()
-
-        base_stmt = base_stmt.order_by(
-            order_clause, AgentEvaluationRunORM.agent_run_id.desc()
-        )
-        base_stmt = base_stmt.offset(skip).limit(limit)
-
-        result_ids = await self.session.scalars(base_stmt)
-        agent_run_ids = list(result_ids)
-        total = int(await self.session.scalar(count_stmt) or 0)
-
-        contexts: List[AgentRunContext] = []
-        if agent_run_ids:
-            contexts = await self.rounds_service.list_agent_run_contexts(
-                include_details=True,
-                agent_run_ids=agent_run_ids,
+        base_stmt = (
+            select(
+                AgentEvaluationRunORM.agent_run_id,
+                func.count().over().label("full_count"),
             )
+            .where(*filters)
+            .order_by(
+                order_clause,
+                AgentEvaluationRunORM.agent_run_id.desc(),
+            )
+            .offset(skip)
+            .limit(limit)
+        )
+
+        result = await self.session.execute(base_stmt)
+        rows = result.all()
+
+        agent_run_ids: List[str] = [row.agent_run_id for row in rows]
+        total: int = int(rows[0].full_count) if rows else 0
+
+        if not agent_run_ids:
+            available_rounds = await self._list_available_round_numbers()
+            return {
+                "runs": [],
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "availableRounds": available_rounds,
+                "selectedRound": round_number,
+            }
+
+        contexts: List[AgentRunContext] = await self.rounds_service.list_agent_run_contexts(
+            include_details=True,
+            agent_run_ids=agent_run_ids,
+        )
 
         runs = [self._build_run_summary(context) for context in contexts]
 
