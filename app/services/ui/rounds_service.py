@@ -32,7 +32,7 @@ from app.models.core import (
     Task,
     TaskSolution,
 )
-from app.services.cache import CACHE_TTL
+from app.services.cache_ttl import CACHE_TTL
 from app.services.redis_cache import redis_cache
 from app.utils.images import resolve_agent_image, resolve_validator_image
 from app.config import settings
