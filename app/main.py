@@ -192,6 +192,15 @@ async def admin_warm_agents(
         "agents": len(aggregates),
     }
 
+@app.get("/debug/aggregates-meta")
+async def debug_aggregates_meta():
+    """Inspect aggregates snapshot metadata in Redis."""
+    from app.services.redis_cache import redis_cache
+    meta = redis_cache.get("AGGREGATES:meta:v1")
+    if not meta:
+        return {"ok": False, "meta": None}
+    return {"ok": True, "meta": meta}
+
 
 @app.get("/debug/background-updater-status")
 async def background_updater_status():

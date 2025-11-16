@@ -50,6 +50,7 @@ from app.services.ui.agent_runs_service import AgentRunsService
 from app.utils.images import resolve_agent_image
 from app.services.subnet_utils import get_price_cached as get_subnet_price
 from app.utils.urls import build_taostats_miner_url
+from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +176,7 @@ class RoundAgentSnapshot:
 
 
 _CACHE_TTL_ENV = "AGENTS_CACHE_TTL_SECONDS"
-_DEFAULT_CACHE_TTL = 30
+_DEFAULT_CACHE_TTL = 3600  # default 1 hour to avoid frequent rebuilds
 try:
     _CACHE_TTL_SECONDS = max(int(os.getenv(_CACHE_TTL_ENV, str(_DEFAULT_CACHE_TTL))), 0)
 except ValueError:
@@ -188,6 +189,12 @@ _AGGREGATE_CACHE_TIMESTAMP: float = 0.0
 _AGGREGATE_CACHE_BENCHMARKS: Dict[int, Dict[str, Dict[str, Any]]] = {}
 _AGGREGATE_CACHE_SIGNATURE: Optional[Tuple[int, Optional[datetime]]] = None
 _AGGREGATE_CACHE_LOCK = asyncio.Lock()
+_REBUILDING: bool = False
+
+# Redis snapshot keys
+_SNAPSHOT_KEY_ACTIVE = "AGGREGATES:agents:v1"
+_SNAPSHOT_KEY_STAGING = "AGGREGATES:agents:v1:staging"
+_SNAPSHOT_META_KEY = "AGGREGATES:meta:v1"
 
 
 def _clone_round_benchmark_cache(
@@ -780,11 +787,14 @@ class AgentsService:
 
     async def _aggregate_agents(self) -> Dict[str, AgentAggregate]:
         global _AGGREGATE_CACHE, _AGGREGATE_CACHE_TIMESTAMP, _AGGREGATE_CACHE_BENCHMARKS, _AGGREGATE_CACHE_SIGNATURE
-
         now = time.monotonic()
         cached = await self._try_get_cached_aggregates(now)
         if cached is not None:
             return cached
+
+        # If rebuild already running, serve stale if available
+        if _REBUILDING and _AGGREGATE_CACHE is not None:
+            return _AGGREGATE_CACHE
 
         async with _AGGREGATE_CACHE_LOCK:
             now = time.monotonic()
@@ -792,38 +802,102 @@ class AgentsService:
             if cached is not None:
                 return cached
 
-            aggregates, round_benchmark_scores, signature = await self._build_agent_aggregates()
-            round_cache = _clone_round_benchmark_cache(round_benchmark_scores)
-            self._round_benchmark_cache = round_cache
+            # Rebuild
+            try:
+                globals_dict = globals()
+                globals_dict["_REBUILDING"] = True
+                aggregates, round_benchmark_scores, signature = await self._build_agent_aggregates()
+                round_cache = _clone_round_benchmark_cache(round_benchmark_scores)
+                self._round_benchmark_cache = round_cache
 
-            if _CACHE_TTL_SECONDS > 0:
+                if _CACHE_TTL_SECONDS > 0:
+                    _AGGREGATE_CACHE = aggregates
+                    _AGGREGATE_CACHE_TIMESTAMP = now
+                    _AGGREGATE_CACHE_BENCHMARKS = round_cache
+                    _AGGREGATE_CACHE_SIGNATURE = signature
+
+                return aggregates
+            finally:
+                globals_dict = globals()
+                globals_dict["_REBUILDING"] = False
+
+    async def warm_aggregate_cache(self) -> Dict[str, AgentAggregate]:
+        """
+        Force a rebuild of the aggregate snapshot and write snapshot to Redis.
+        Returns the in-process aggregates as well.
+        """
+        global _AGGREGATE_CACHE, _AGGREGATE_CACHE_TIMESTAMP, _AGGREGATE_CACHE_BENCHMARKS, _AGGREGATE_CACHE_SIGNATURE, _REBUILDING
+        async with _AGGREGATE_CACHE_LOCK:
+            _REBUILDING = True
+            try:
+                aggregates, round_benchmark_scores, signature = await self._build_agent_aggregates()
+                round_cache = _clone_round_benchmark_cache(round_benchmark_scores)
+                self._round_benchmark_cache = round_cache
+                now = time.monotonic()
                 _AGGREGATE_CACHE = aggregates
                 _AGGREGATE_CACHE_TIMESTAMP = now
                 _AGGREGATE_CACHE_BENCHMARKS = round_cache
                 _AGGREGATE_CACHE_SIGNATURE = signature
 
-            return aggregates
+                # Write compact snapshot to Redis (staging then activate)
+                snapshot, meta = self._build_compact_snapshot(aggregates)
+                try:
+                    # Stage write
+                    redis_cache.set(_SNAPSHOT_KEY_STAGING, snapshot, ttl=12 * 3600)
+                    # Activate by overwriting active (no rename available here)
+                    redis_cache.set(_SNAPSHOT_KEY_ACTIVE, snapshot, ttl=12 * 3600)
+                    redis_cache.set(_SNAPSHOT_META_KEY, meta, ttl=12 * 3600)
+                    logger.info("✅ Agent aggregates snapshot written to Redis (agents=%d)", len(snapshot))
+                except Exception as write_exc:  # noqa: BLE001
+                    logger.warning("Could not write aggregates snapshot to Redis: %s", write_exc)
 
-    async def warm_aggregate_cache(self) -> Dict[str, AgentAggregate]:
+                return aggregates
+            finally:
+                _REBUILDING = False
+
+    def _build_compact_snapshot(self, aggregates: Dict[str, AgentAggregate]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
         """
-        Force a rebuild of the in-process aggregate cache and return the aggregates.
-        This is used by the admin warm endpoint and external warmers to avoid
-        on-demand heavy computations under user traffic.
+        Build a compact, JSON-serializable snapshot suitable for Redis consumption.
         """
-        global _AGGREGATE_CACHE, _AGGREGATE_CACHE_TIMESTAMP, _AGGREGATE_CACHE_BENCHMARKS, _AGGREGATE_CACHE_SIGNATURE
-
-        async with _AGGREGATE_CACHE_LOCK:
-            aggregates, round_benchmark_scores, signature = await self._build_agent_aggregates()
-            round_cache = _clone_round_benchmark_cache(round_benchmark_scores)
-            self._round_benchmark_cache = round_cache
-
-            now = time.monotonic()
-            _AGGREGATE_CACHE = aggregates
-            _AGGREGATE_CACHE_TIMESTAMP = now
-            _AGGREGATE_CACHE_BENCHMARKS = round_cache
-            _AGGREGATE_CACHE_SIGNATURE = signature
-
-            return aggregates
+        now = int(datetime.now(timezone.utc).timestamp())
+        snapshot: Dict[str, Dict[str, Any]] = {}
+        rounds_covered: Set[int] = set()
+        for agent_id, agg in aggregates.items():
+            avg_score = (agg.total_score / agg.total_runs) if agg.total_runs else 0.0
+            avg_duration = sum(agg.durations) / len(agg.durations) if agg.durations else 0.0
+            # keep per-round quick view for recent rounds present in agg.rounds
+            per_round: Dict[str, Any] = {}
+            for rnd in sorted(list(agg.rounds), reverse=True)[:20]:
+                rounds_covered.add(rnd)
+                scores = agg.round_scores.get(rnd, [])
+                avg = sum(scores) / len(scores) if scores else 0.0
+                rank_list = agg.round_ranks.get(rnd, [])
+                best_rank = min(rank_list) if rank_list else None
+                per_round[str(rnd)] = {
+                    "avgScore": round(avg, 4),
+                    "rank": best_rank,
+                    "totalRuns": len(scores),
+                }
+            snapshot[agent_id] = {
+                "id": agent_id,
+                "uid": agg.uid,
+                "isSota": agg.is_sota,
+                "totalRuns": agg.total_runs,
+                "successfulRuns": agg.successful_runs,
+                "avgScore": round(avg_score, 4),
+                "bestScore": round(agg.best_score or 0.0, 4),
+                "avgResponseTime": round(avg_duration, 4),
+                "currentRank": min(agg.ranks) if agg.ranks else None,
+                "lastUpdated": now,
+                "rounds": per_round,
+            }
+        meta = {
+            "lastUpdated": now,
+            "roundsCovered": sorted(list(rounds_covered))[-20:],
+            "version": "v1",
+            "agents": len(snapshot),
+        }
+        return snapshot, meta
 
     async def build_round_snapshots(
         self,
