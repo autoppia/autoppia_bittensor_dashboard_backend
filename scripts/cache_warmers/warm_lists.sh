@@ -16,3 +16,5 @@ curl -s "$BASE/agents?limit=20" > /dev/null &
 wait
 echo "$(date +%T): Lists warmed (4 endpoints)" >> "$LOG_DIR/lists_warmer.log"
 
+
+
