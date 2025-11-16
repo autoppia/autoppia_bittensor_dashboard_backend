@@ -1,6 +1,9 @@
-"""Cache TTL configuration shared across services."""
+"""Cache TTL configuration shared across services (Redis-only)."""
 
 from __future__ import annotations
+
+# This module intentionally contains only TTL constants.
+# All caching must go through Redis utilities in `app.services.redis_cache`.
 
 CACHE_TTL = {
     "overview_metrics": 300,  # 5 minutes - overview data changes slowly
@@ -35,3 +38,5 @@ CACHE_TTL = {
 }
 
 __all__ = ["CACHE_TTL"]
+
+
