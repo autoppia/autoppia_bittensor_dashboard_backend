@@ -17,10 +17,11 @@ logger = logging.getLogger(__name__)
 class APICache:
     """In-memory cache for API responses with TTL support."""
 
-    def __init__(self):
+    def __init__(self, max_size: int = 100):
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._default_ttl = 300  # 5 minutes default
         self._disabled = False  # Cache can be disabled for testing
+        self._max_size = max_size  # Maximum number of entries (prevents memory leak)
         self._stats = {"hits": 0, "misses": 0, "sets": 0, "evictions": 0}
 
     def _generate_key(self, prefix: str, *args, **kwargs) -> str:
@@ -96,6 +97,20 @@ class APICache:
             return
 
         now = time.time()
+        
+        # Check if cache is full and evict oldest entries (LRU)
+        if len(self._cache) >= self._max_size:
+            # Sort by created_at and remove oldest 20%
+            entries_by_age = sorted(
+                self._cache.items(),
+                key=lambda x: x[1].get("created_at", 0)
+            )
+            num_to_remove = max(int(self._max_size * 0.2), 1)
+            for old_key, _ in entries_by_age[:num_to_remove]:
+                del self._cache[old_key]
+                self._stats["evictions"] += 1
+            logger.info(f"Cache size limit reached, evicted {num_to_remove} oldest entries")
+        
         self._cache[key] = {
             "data": value,
             "expires_at": now + ttl_value,
@@ -158,8 +173,9 @@ class APICache:
         self._default_ttl = max(ttl_value, 0)
 
 
-# Global cache instance
-api_cache = APICache()
+# Global cache instance with size limit to prevent memory leaks
+# Max 100 entries = ~500MB max (assuming 5MB per large response)
+api_cache = APICache(max_size=100)
 
 
 def cached(prefix: str, ttl: Optional[int] = None, skip_cache: bool = False):
