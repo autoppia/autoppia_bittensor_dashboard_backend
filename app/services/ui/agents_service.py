@@ -233,24 +233,45 @@ class AgentsService:
         sort_order: str = "asc",
         search: Optional[str] = None,
     ) -> AgentListResponse:
-        aggregates = await self._aggregate_agents()
-        agents = [self._aggregate_to_agent(agg) for agg in aggregates.values()]
+        # Fast path: Redis snapshot
+        snapshot = redis_cache.get(_SNAPSHOT_KEY_ACTIVE)
+        if isinstance(snapshot, dict) and snapshot:
+            items: List[Agent] = []
+            lowered = search.lower() if search else None
+            for entry in snapshot.values():
+                if not isinstance(entry, dict):
+                    continue
+                # type/status filters (best-effort)
+                entry_status = str(entry.get("status") or "active").lower()
+                if status is not None and entry_status != status.value:
+                    continue
+                # Build Agent model from snapshot
+                agent = self._agent_from_snapshot(entry)
+                if agent_type and agent.type != agent_type:
+                    continue
+                if lowered and lowered not in agent.name.lower() and lowered not in (agent.id or ""):
+                    continue
+                items.append(agent)
+
+        else:
+            aggregates = await self._aggregate_agents()
+            items = [self._aggregate_to_agent(agg) for agg in aggregates.values()]
 
         if agent_type:
-            agents = [agent for agent in agents if agent.type == agent_type]
+            items = [agent for agent in items if agent.type == agent_type]
 
         if status:
-            agents = [agent for agent in agents if agent.status == status]
+            items = [agent for agent in items if agent.status == status]
 
         if search:
             lowered = search.lower()
-            agents = [
+            items = [
                 agent
-                for agent in agents
+                for agent in items
                 if lowered in agent.name.lower() or lowered in agent.id.lower()
             ]
 
-        agents = self._sort_agents(agents, sort_by, sort_order)
+        agents = self._sort_agents(items, sort_by, sort_order)
 
         total = len(agents)
         start = (page - 1) * limit
@@ -262,6 +283,64 @@ class AgentsService:
             total=total,
             page=page,
             limit=limit,
+        )
+    
+    def _agent_from_snapshot(self, entry: Dict[str, Any]) -> Agent:
+        """Map Redis snapshot entry to Agent model (best-effort)."""
+        # Defaults and safe conversions
+        agent_id = str(entry.get("id") or "")
+        uid = entry.get("uid")
+        name = str(entry.get("name") or agent_id)
+        image_url = str(entry.get("imageUrl") or "")
+        avg_score = float(entry.get("avgScore") or 0.0)
+        best_score = float(entry.get("bestScore") or 0.0)
+        current_rank = int(entry.get("currentRank") or 0) if entry.get("currentRank") else 0
+        last_seen_ts = int(entry.get("lastSeen") or entry.get("lastUpdated") or 0)
+        created_at_ts = int(entry.get("createdAt") or last_seen_ts or 0)
+        updated_at_ts = int(entry.get("updatedAt") or last_seen_ts or 0)
+        is_sota = bool(entry.get("isSota") or False)
+        hotkey = entry.get("hotkey")
+        # Derive status
+        try:
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+            active_cutoff = now_ts - 24 * 3600
+            status_val = AgentStatus.ACTIVE if last_seen_ts >= active_cutoff else AgentStatus.INACTIVE
+        except Exception:
+            status_val = AgentStatus.ACTIVE
+
+        # Build Agent model (fill required fields)
+        return Agent(
+            id=agent_id,
+            uid=int(uid) if uid is not None else None,
+            name=name,
+            hotkey=str(hotkey) if hotkey else None,
+            type=AgentType.AUTOPPIA,  # default type for our validators
+            imageUrl=image_url,
+            githubUrl=None,
+            taostatsUrl=None,
+            isSota=is_sota,
+            description=None,
+            version=None,
+            status=status_val,
+            totalRuns=int(entry.get("totalRuns") or 0),
+            successfulRuns=int(entry.get("successfulRuns") or 0),
+            currentScore=round(avg_score, 4),
+            currentTopScore=round(best_score, 4),
+            currentRank=current_rank,
+            bestRankEver=current_rank or 0,
+            bestRankRoundId=0,
+            roundsParticipated=len(entry.get("rounds") or {}),
+            roundsWon=0,
+            alphaWonInPrizes=0.0,
+            taoWonInPrizes=0.0,
+            bestRoundScore=round(best_score, 4),
+            bestRoundId=0,
+            averageResponseTime=float(entry.get("avgResponseTime") or 0.0),
+            totalTasks=int(entry.get("totalTasks") or 0),
+            completedTasks=int(entry.get("completedTasks") or 0),
+            lastSeen=datetime.fromtimestamp(last_seen_ts or 0, tz=timezone.utc),
+            createdAt=datetime.fromtimestamp(created_at_ts or 0, tz=timezone.utc),
+            updatedAt=datetime.fromtimestamp(updated_at_ts or 0, tz=timezone.utc),
         )
 
     async def get_agent(
@@ -885,10 +964,17 @@ class AgentsService:
                 if miner_info and miner_info.agent_name
                 else agent_id
             )
+            hotkey = miner_info.hotkey if miner_info and miner_info.hotkey else None
+            # derive lastSeen from latest run timestamps we tracked
+            last_seen_ts = agg.last_seen if agg.last_seen and agg.last_seen > 0 else now
+            # naive status based on last_seen recency (24h)
+            active_cutoff = now - 24 * 3600
+            status = "active" if last_seen_ts >= active_cutoff else "inactive"
             snapshot[agent_id] = {
                 "id": agent_id,
                 "uid": agg.uid,
                 "isSota": agg.is_sota,
+                "hotkey": hotkey,
                 "totalRuns": agg.total_runs,
                 "successfulRuns": agg.successful_runs,
                 "avgScore": round(avg_score, 4),
@@ -898,6 +984,10 @@ class AgentsService:
                 "name": name,
                 "imageUrl": image_url or "",
                 "lastUpdated": now,
+                "lastSeen": int(last_seen_ts),
+                "createdAt": int(agg.first_seen if agg.first_seen and agg.first_seen < now else now),
+                "updatedAt": int(last_seen_ts),
+                "status": status,
                 "rounds": per_round,
             }
         meta = {
