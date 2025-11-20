@@ -78,10 +78,11 @@ class MinerListService:
 
             filtered.sort(key=sort_key)
             items_only = [t[0] for t in filtered]
+            ranked_items = self._apply_rankings(items_only, start_rank=1)
             total = len(items_only)
             start = (page - 1) * limit
             end = start + limit
-            paginated = items_only[start:end]
+            paginated = ranked_items[start:end]
             return MinimalMinerListResponse(
                 miners=paginated,
                 total=total,
@@ -143,11 +144,12 @@ class MinerListService:
                 is_sota=is_sota,
                 search=search,
             )
+            ranked_items = self._apply_rankings(items, start_rank=1)
 
-            total = len(items)
+            total = len(ranked_items)
             start = (page - 1) * limit
             end = start + limit
-            paginated = items[start:end]
+            paginated = ranked_items[start:end]
 
             return MinimalMinerListResponse(
                 miners=paginated,
@@ -277,3 +279,16 @@ class MinerListService:
             )
 
         return items
+
+    @staticmethod
+    def _apply_rankings(
+        items: Sequence[MinerListItem],
+        start_rank: int = 1,
+    ) -> List[MinerListItem]:
+        """Return a new list with sequential rankings applied."""
+        ranked: List[MinerListItem] = []
+        current_rank = start_rank
+        for item in items:
+            ranked.append(item.model_copy(update={"ranking": current_rank}))
+            current_rank += 1
+        return ranked

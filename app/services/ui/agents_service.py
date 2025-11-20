@@ -370,6 +370,10 @@ class AgentsService:
         round_metrics = None
         if snapshot_round is not None:
             snapshots = await self.build_round_snapshots(snapshot_round, aggregates)
+            sequential_ranks = {
+                snap.aggregate.agent_id: position
+                for position, snap in enumerate(snapshots, start=1)
+            }
             snapshot = next(
                 (item for item in snapshots if item.aggregate.agent_id == aggregate.agent_id),
                 None,
@@ -377,11 +381,14 @@ class AgentsService:
             top_score = snapshots[0].average_score if snapshots else 0.0
 
             if snapshot:
+                rank_value = sequential_ranks.get(aggregate.agent_id)
+                if rank_value is None and snapshot.rank > 0:
+                    rank_value = snapshot.rank
                 round_metrics = AgentRoundMetrics(
                     roundId=snapshot_round,
                     score=snapshot.average_score,
                     topScore=top_score,
-                    rank=snapshot.rank if snapshot.rank > 0 else None,
+                    rank=rank_value,
                     totalRuns=snapshot.total_runs,
                     totalValidators=len(snapshot.validator_details),
                     validatorUids=snapshot.validator_uids,
@@ -1370,6 +1377,9 @@ class AgentsService:
 
         for aggregate in aggregates.values():
             if aggregate.latest_round_number is not None:
+                aggregate.latest_round_global_rank = aggregate.global_round_ranks.get(
+                    aggregate.latest_round_number
+                )
                 aggregate.latest_round_top_score = round_best_scores.get(
                     aggregate.latest_round_number,
                     aggregate.latest_round_score if aggregate.latest_round_score is not None else aggregate.best_score,
@@ -1758,14 +1768,15 @@ class AgentsService:
             average_score = sum(scores) / len(scores)
             top_score = top_scores_by_round.get(round_id, average_score)
 
-            rank: Optional[int] = None
-            ranks = aggregate.round_ranks.get(round_id)
-            if ranks:
-                rank = min(ranks)
-            else:
-                rank_candidates = [ctx.run.rank for ctx in contexts if ctx.run.rank is not None]
-                if rank_candidates:
-                    rank = min(rank_candidates)
+            rank: Optional[int] = aggregate.global_round_ranks.get(round_id)
+            if rank is None:
+                ranks = aggregate.round_ranks.get(round_id)
+                if ranks:
+                    rank = min(ranks)
+                else:
+                    rank_candidates = [ctx.run.rank for ctx in contexts if ctx.run.rank is not None]
+                    if rank_candidates:
+                        rank = min(rank_candidates)
 
             timestamp_candidates: List[float] = []
             for ctx in contexts:
