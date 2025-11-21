@@ -1187,6 +1187,300 @@ async def add_evaluation(
     return {"message": "Evaluation stored", "evaluation_id": evaluation.evaluation_id}
 
 
+# ---------------------------------------------------------------------------
+# Snapshot materialization helpers
+# ---------------------------------------------------------------------------
+
+
+async def _materialize_round_snapshot(
+    session: AsyncSession,
+    round_row: RoundORM,
+    payload: FinishRoundRequest,
+) -> None:
+    """
+    Materializa un snapshot completo de la round cuando termina.
+    Esto permite cargar la round instantáneamente en el futuro sin queries pesadas.
+    
+    Args:
+        session: DB session
+        round_row: La ValidatorRoundORM que acaba de finalizar
+        payload: El payload de finish_round con winners, scores, etc.
+    """
+    from app.db.models import RoundSnapshotORM
+    from app.services.ui.rounds_service import RoundsService
+    import json
+    
+    round_number = round_row.round_number
+    if not round_number:
+        logger.warning("Cannot materialize snapshot: round_number is None")
+        return
+    
+    logger.info(f"🔄 Materializing snapshot for round {round_number}...")
+    
+    try:
+        rounds_service = RoundsService(session)
+        
+        # 1. Obtener datos de miners
+        try:
+            miners_data = await rounds_service.get_round_miners(
+                round_identifier=str(round_number),
+                page=1,
+                limit=1000,  # Todos los miners
+                sort_by="score",
+                sort_order="desc",
+            )
+        except Exception as e:
+            logger.error(f"Failed to get round miners: {e}")
+            miners_data = {"miners": [], "total": 0}
+        
+        # 2. Obtener datos de validators
+        try:
+            validators_data = await rounds_service.get_round_validators(str(round_number))
+        except Exception as e:
+            logger.error(f"Failed to get round validators: {e}")
+            validators_data = {"validators": [], "total": 0}
+        
+        # 3. Obtener statistics (opcional, puede fallar si no hay datos)
+        try:
+            stats_data = await rounds_service.get_round_statistics(str(round_number))
+        except Exception as e:
+            logger.warning(f"Failed to get round statistics: {e}")
+            stats_data = {}
+        
+        # 4. Construir el snapshot JSON
+        snapshot = {
+            "roundNumber": round_number,
+            "status": payload.status or "completed",
+            "startedAt": float(round_row.started_at),
+            "endedAt": float(payload.ended_at),
+            "totalMiners": len(miners_data.get("miners", [])),
+            "totalValidators": len(validators_data.get("validators", [])),
+            "tasksCompleted": payload.summary.get("tasks_completed", 0) if payload.summary else 0,
+            "miners": miners_data,
+            "validators": validators_data,
+            "statistics": stats_data,
+            "winners": [
+                {
+                    "miner_uid": w.get("miner_uid") if isinstance(w, dict) else getattr(w, "miner_uid", None),
+                    "miner_hotkey": w.get("miner_hotkey") if isinstance(w, dict) else getattr(w, "miner_hotkey", None),
+                    "rank": w.get("rank") if isinstance(w, dict) else getattr(w, "rank", None),
+                    "score": float(w.get("score", 0.0)) if isinstance(w, dict) else float(getattr(w, "score", 0.0)),
+                }
+                for w in payload.winners
+            ],
+            "weights": payload.weights,
+        }
+        
+        # Calcular tamaño para monitoreo
+        snapshot_json_str = json.dumps(snapshot)
+        data_size = len(snapshot_json_str.encode('utf-8'))
+        
+        # 5. Guardar o actualizar en DB
+        from app.db.models import utcnow
+        existing = await session.get(RoundSnapshotORM, round_number)
+        if existing:
+            # Actualizar existente (por si se llama finish_round múltiples veces)
+            existing.snapshot_json = snapshot
+            existing.data_size_bytes = data_size
+            existing.updated_at = utcnow()
+            logger.info(f"✅ Updated existing snapshot for round {round_number}")
+        else:
+            # Crear nuevo
+            snapshot_row = RoundSnapshotORM(
+                round_number=round_number,
+                snapshot_json=snapshot,
+                snapshot_version=1,
+                data_size_bytes=data_size,
+            )
+            session.add(snapshot_row)
+            logger.info(f"✅ Created new snapshot for round {round_number}")
+        
+        # Note: No commit aquí - se hará automáticamente en el contexto transaction
+        logger.info(
+            f"✅ Snapshot prepared for round {round_number} "
+            f"(miners={snapshot['totalMiners']}, size={data_size/1024:.1f}KB)"
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to materialize snapshot for round {round_number}: {e}", exc_info=True)
+        # No lanzar excepción para no bloquear finish_round
+
+
+async def _update_agent_stats(
+    session: AsyncSession,
+    round_row: RoundORM,
+    payload: FinishRoundRequest,
+) -> None:
+    """
+    Actualiza incrementalmente los stats agregados de agents que participaron en esta round.
+    
+    Args:
+        session: DB session
+        round_row: La ValidatorRoundORM que acaba de finalizar
+        payload: El payload de finish_round con winners, agent_runs, etc.
+    """
+    from app.db.models import AgentStatsORM, AgentEvaluationRunORM, utcnow
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    
+    round_number = round_row.round_number
+    if not round_number:
+        logger.warning("Cannot update agent stats: round_number is None")
+        return
+    
+    logger.info(f"🔄 Updating agent stats for round {round_number}...")
+    
+    try:
+        # 1. Obtener todas las evaluation runs de esta round
+        stmt = (
+            select(AgentEvaluationRunORM)
+            .where(AgentEvaluationRunORM.validator_round_id == round_row.validator_round_id)
+            .options(selectinload(AgentEvaluationRunORM.evaluation_results))
+        )
+        runs = list(await session.scalars(stmt))
+        
+        if not runs:
+            logger.warning(f"No agent runs found for round {round_number}")
+            return
+        
+        # 2. Agrupar runs por miner_uid
+        miners_in_round: dict = {}
+        for run in runs:
+            uid = run.miner_uid
+            if uid is None:
+                continue
+            if uid not in miners_in_round:
+                miners_in_round[uid] = []
+            miners_in_round[uid].append(run)
+        
+        # 3. Actualizar stats de cada miner
+        updated_count = 0
+        for uid, miner_runs in miners_in_round.items():
+            # Calcular score promedio de esta round (puede haber múltiples validators)
+            round_scores = []
+            round_tasks_total = 0
+            round_tasks_completed = 0
+            
+            for run in miner_runs:
+                # Calcular score del run
+                if run.evaluation_results:
+                    scores = [
+                        er.final_score
+                        for er in run.evaluation_results
+                        if er.final_score is not None
+                    ]
+                    if scores:
+                        run_score = sum(scores) / len(scores)
+                        round_scores.append(run_score)
+                
+                # Tasks
+                if run.total_tasks:
+                    round_tasks_total += run.total_tasks
+                if run.completed_tasks:
+                    round_tasks_completed += run.completed_tasks
+            
+            if not round_scores:
+                # No hay scores válidos para este miner en esta round
+                continue
+            
+            round_avg_score = sum(round_scores) / len(round_scores)
+            round_best_score = max(round_scores)
+            
+            # Obtener o crear stats
+            stmt_stats = select(AgentStatsORM).where(AgentStatsORM.uid == uid)
+            stats = await session.scalar(stmt_stats)
+            
+            if not stats:
+                stats = AgentStatsORM(
+                    uid=uid,
+                    first_seen=utcnow(),
+                    avg_score=0.0,
+                    best_score=0.0,
+                    worst_score=1.0,
+                    recent_rounds=[],
+                )
+                session.add(stats)
+            
+            # Actualizar metadata si es necesario
+            first_run = miner_runs[0]
+            if first_run.meta:
+                agent_name = first_run.meta.get("agent_name")
+                agent_image = first_run.meta.get("agent_image_url")
+                if agent_name and not stats.name:
+                    stats.name = agent_name
+                if agent_image and not stats.image_url:
+                    stats.image_url = agent_image
+            if first_run.miner_hotkey and not stats.hotkey:
+                stats.hotkey = first_run.miner_hotkey
+            if first_run.is_sota:
+                stats.is_sota = True
+            
+            # Actualizar totales (incrementalmente)
+            prev_total_rounds = stats.total_rounds
+            stats.total_rounds += 1
+            stats.total_runs += len(miner_runs)
+            
+            # Recalcular avg_score incrementalmente
+            if prev_total_rounds == 0:
+                stats.avg_score = round_avg_score
+            else:
+                stats.avg_score = (
+                    stats.avg_score * prev_total_rounds + round_avg_score
+                ) / stats.total_rounds
+            
+            stats.best_score = max(stats.best_score, round_best_score)
+            stats.worst_score = min(stats.worst_score, round_avg_score)
+            
+            if round_avg_score >= 0.5:
+                stats.successful_runs += 1
+            
+            stats.total_tasks += round_tasks_total
+            stats.completed_tasks += round_tasks_completed
+            
+            # Actualizar temporal
+            stats.last_seen = utcnow()
+            stats.last_round_number = round_number
+            stats.updated_at = utcnow()
+            
+            # Actualizar recent_rounds (mantener solo últimas 20)
+            recent = stats.recent_rounds if isinstance(stats.recent_rounds, list) else []
+            
+            # Buscar rank y weight de este agent en el payload
+            rank = None
+            for winner in payload.winners:
+                winner_uid = winner.get("miner_uid") if isinstance(winner, dict) else getattr(winner, "miner_uid", None)
+                if winner_uid == uid:
+                    rank = winner.get("rank") if isinstance(winner, dict) else getattr(winner, "rank", None)
+                    break
+            
+            weight = None
+            if payload.agent_runs:
+                for agent_run_summary in payload.agent_runs:
+                    # Buscar si este uid está en alguno de los runs
+                    if any(run.agent_run_id == agent_run_summary.agent_run_id for run in miner_runs):
+                        weight = agent_run_summary.weight
+                        break
+            
+            recent.append({
+                "round": round_number,
+                "score": round(round_avg_score, 4),
+                "rank": rank,
+                "weight": float(weight) if weight is not None else None,
+            })
+            
+            # Mantener solo últimas 20
+            stats.recent_rounds = recent[-20:]
+            
+            updated_count += 1
+        
+        # Note: No commit aquí - se hará automáticamente en el contexto transaction
+        logger.info(f"✅ Prepared {updated_count} agent stats updates for round {round_number}")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to update agent stats for round {round_number}: {e}", exc_info=True)
+        # No lanzar excepción para no bloquear finish_round
+
+
 @router.post(
     "/{validator_round_id}/finish",
     dependencies=[Depends(require_validator_auth)],
@@ -1313,6 +1607,22 @@ async def finish_round(
             ]
             or None,
         )
+        
+        # ========================================================================
+        # NUEVO: Materializar snapshot y actualizar agent stats
+        # ========================================================================
+        try:
+            await _materialize_round_snapshot(session, round_row, payload)
+        except Exception as e:
+            logger.error(f"Failed to materialize snapshot: {e}")
+            # No fallar el finish_round si esto falla
+        
+        try:
+            await _update_agent_stats(session, round_row, payload)
+        except Exception as e:
+            logger.error(f"Failed to update agent stats: {e}")
+            # No fallar el finish_round si esto falla
+        # ========================================================================
 
     logger.info("Finished validator round %s", validator_round_id)
     return {

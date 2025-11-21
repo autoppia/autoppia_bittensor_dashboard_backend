@@ -36,24 +36,104 @@ async def list_agents(
     limit: int = Query(20, ge=1, le=100),
     type: AgentType | None = Query(None),
     status: AgentStatus | None = Query(None),
-    sortBy: str = Query("name"),
-    sortOrder: str = Query("asc"),
+    sortBy: str = Query("averageScore"),
+    sortOrder: str = Query("desc"),
     search: str | None = Query(None),
 ):
-    service = await _service(session)
-    try:
-        data = await service.list_agents(
-            page=page,
-            limit=limit,
-            agent_type=type,
-            status=status,
-            sort_by=sortBy,
-            sort_order=sortOrder,
-            search=search,
+    """
+    List agents with pagination and filtering.
+    Uses materialized agent_stats table for ultra-fast queries.
+    """
+    from app.db.models import AgentStatsORM
+    from sqlalchemy import select, func, String, cast
+    from datetime import timedelta, timezone
+    
+    # NUEVO: Query rápida desde agent_stats
+    stmt = select(AgentStatsORM)
+    
+    # Filtros
+    if search:
+        search_lower = search.lower()
+        stmt = stmt.where(
+            func.lower(AgentStatsORM.name).contains(search_lower)
+            | cast(AgentStatsORM.uid, String).contains(search)
         )
-    except AgentAggregateCacheWarmupRequired as exc:
-        raise HTTPException(status_code=503, detail=CACHE_WARMING_MESSAGE) from exc
-    return {"success": True, "data": data.model_dump()}
+    
+    if type and type == AgentType.SOTA:
+        stmt = stmt.where(AgentStatsORM.is_sota == True)
+    
+    # Status filter (active = seen in last 7 days)
+    if status:
+        if status == AgentStatus.ACTIVE:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+            stmt = stmt.where(AgentStatsORM.last_seen >= cutoff)
+        elif status == AgentStatus.INACTIVE:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+            stmt = stmt.where(
+                (AgentStatsORM.last_seen < cutoff) | (AgentStatsORM.last_seen == None)
+            )
+    
+    # Sorting
+    sort_field_map = {
+        "name": AgentStatsORM.name,
+        "averageScore": AgentStatsORM.avg_score,
+        "totalRounds": AgentStatsORM.total_rounds,
+        "lastSeen": AgentStatsORM.last_seen,
+    }
+    sort_field = sort_field_map.get(sortBy, AgentStatsORM.avg_score)
+    
+    if sortOrder == "desc":
+        stmt = stmt.order_by(sort_field.desc())
+    else:
+        stmt = stmt.order_by(sort_field.asc())
+    
+    # Pagination
+    stmt = stmt.limit(limit).offset((page - 1) * limit)
+    
+    # Execute
+    stats = list(await session.scalars(stmt))
+    
+    # Count total
+    count_stmt = select(func.count()).select_from(AgentStatsORM)
+    if search:
+        search_lower = search.lower()
+        count_stmt = count_stmt.where(
+            func.lower(AgentStatsORM.name).contains(search_lower)
+            | cast(AgentStatsORM.uid, String).contains(search)
+        )
+    total = await session.scalar(count_stmt) or 0
+    
+    # Convert to response format
+    agents = []
+    for s in stats:
+        agents.append({
+            "id": f"M{s.uid}",
+            "uid": s.uid,
+            "name": s.name or f"Miner {s.uid}",
+            "imageUrl": s.image_url,
+            "type": "sota" if s.is_sota else "miner",
+            "status": "active" if s.last_seen and (datetime.now(timezone.utc) - s.last_seen).days < 7 else "inactive",
+            "averageScore": round(s.avg_score, 4),
+            "bestScore": round(s.best_score, 4),
+            "totalRounds": s.total_rounds,
+            "totalRuns": s.total_runs,
+            "successRate": round(s.successful_runs / s.total_runs, 4) if s.total_runs else 0.0,
+            "totalTasks": s.total_tasks,
+            "completedTasks": s.completed_tasks,
+            "lastSeen": s.last_seen.isoformat() if s.last_seen else None,
+            "createdAt": s.created_at.isoformat() if s.created_at else None,
+            "recentPerformance": s.recent_rounds,
+        })
+    
+    return {
+        "success": True,
+        "data": {
+            "agents": agents,
+            "total": total,
+            "page": page,
+            "limit": limit,
+        },
+    }
 
 
 @router.get("/statistics")
