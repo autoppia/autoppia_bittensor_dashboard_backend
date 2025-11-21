@@ -389,32 +389,20 @@ class TaskORM(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    sequence: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="local")
     is_web_real: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     web_project_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    html: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    clean_html: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    interactive_elements: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    screenshot: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    screenshot_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     specifications: Mapped[dict[str, Any]] = mapped_column(
         JSON, nullable=False, default=dict
     )
     tests: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, nullable=False, default=list
     )
-    milestones: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(
-        JSON, nullable=True
-    )
     relevant_data: Mapped[dict[str, Any]] = mapped_column(
         JSON, nullable=False, default=dict
     )
-    success_criteria: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     use_case: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    should_record: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="tasks")
     task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(
@@ -433,24 +421,14 @@ class TaskORM(TimestampMixin, Base):
         return {
             "task_id": self.task_id,
             "validator_round_id": self.validator_round_id,
-            "sequence": self.sequence,
-            "scope": self.scope,
             "is_web_real": self.is_web_real,
             "web_project_id": self.web_project_id,
             "url": self.url,
             "prompt": self.prompt,
-            "html": self.html,
-            "clean_html": self.clean_html,
-            "interactive_elements": self.interactive_elements,
-            "screenshot": self.screenshot,
-            "screenshot_description": self.screenshot_description,
             "specifications": dict(self.specifications or {}),
             "tests": list(self.tests or []),
-            "milestones": list(self.milestones or []) if self.milestones else None,
             "relevant_data": dict(self.relevant_data or {}),
-            "success_criteria": self.success_criteria,
             "use_case": dict(self.use_case or {}),
-            "should_record": self.should_record,
         }
 
 
