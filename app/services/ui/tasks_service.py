@@ -636,7 +636,6 @@ class TasksService:
                 else _format_agent_id(context.agent_run.miner_uid)
             ),
             github=getattr(miner_model, "github", None) if miner_model else None,
-            provider=getattr(miner_model, "provider", None) if miner_model else None,
             image=resolve_agent_image(miner_model),
             isSota=context.agent_run.is_sota,
         )

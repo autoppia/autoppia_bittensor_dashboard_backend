@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/evaluations", tags=["evaluations"])
 
+
 async def _service(session: AsyncSession) -> EvaluationsService:
     return EvaluationsService(session)
 
@@ -120,7 +121,10 @@ async def upload_evaluation_gif(
         received_bytes,
     )
     if not file_data:
-        logger.warning("Rejected GIF upload for evaluation %s because payload is empty", evaluation_id)
+        logger.warning(
+            "Rejected GIF upload for evaluation %s because payload is empty",
+            evaluation_id,
+        )
         raise HTTPException(status_code=400, detail="Uploaded GIF is empty")
 
     if not file_data.startswith((b"GIF87a", b"GIF89a")):
@@ -135,7 +139,9 @@ async def upload_evaluation_gif(
         object_key = await store_gif(evaluation_id, file_data)
     except (GifStorageConfigError, BotoCoreError, ClientError) as exc:
         logger.error("Failed to upload GIF for %s: %s", evaluation_id, exc)
-        raise HTTPException(status_code=500, detail="Failed to store GIF image") from exc
+        raise HTTPException(
+            status_code=500, detail="Failed to store GIF image"
+        ) from exc
 
     gif_url = build_public_url(object_key)
 
@@ -144,7 +150,9 @@ async def upload_evaluation_gif(
         await service.update_gif_recording(evaluation_id, gif_url)
     except ValueError as exc:
         logger.error("Unable to update GIF record for %s: %s", evaluation_id, exc)
-        raise HTTPException(status_code=500, detail="Failed to update evaluation record") from exc
+        raise HTTPException(
+            status_code=500, detail="Failed to update evaluation record"
+        ) from exc
 
     logger.info(
         "Uploaded GIF for evaluation %s to key %s (size_bytes=%s, url=%s)",

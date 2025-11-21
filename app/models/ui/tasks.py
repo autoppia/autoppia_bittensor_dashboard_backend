@@ -192,7 +192,6 @@ class TaskMinerSummary(BaseModel):
     hotkey: Optional[str] = Field(None, description="Miner hotkey")
     name: str = Field(..., description="Display name for the agent/miner")
     github: Optional[str] = Field(None, description="Repository or profile URL")
-    provider: Optional[str] = Field(None, description="Agent provider")
     image: Optional[str] = Field(None, description="Avatar or logo for the miner")
     isSota: bool = Field(
         False, description="Whether the run corresponds to a SOTA benchmark"
