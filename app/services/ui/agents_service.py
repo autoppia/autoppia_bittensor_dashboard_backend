@@ -1377,14 +1377,8 @@ class AgentsService:
                     if miner_details and miner_details.agent_name
                     else context.run.agent_run_id
                 )
-                bench_provider = (
-                    miner_details.provider
-                    if miner_details and miner_details.provider
-                    else None
-                )
                 entry = {
                     "name": bench_name,
-                    "provider": bench_provider,
                     "score": run_score,
                 }
                 existing_entry = round_benchmark_scores[round_identifier].get(bench_key)
@@ -1797,11 +1791,6 @@ class AgentsService:
 
     def _benchmark_key(self, context: AgentRunContext) -> str:
         miner_details = getattr(context.run, "miner_info", None)
-        provider = ""
-        if miner_details and miner_details.provider:
-            provider = miner_details.provider.strip().lower()
-        if provider:
-            return re.sub(r"[^a-z0-9]+", "-", provider).strip("-")
         name = (
             miner_details.agent_name
             if miner_details and miner_details.agent_name
