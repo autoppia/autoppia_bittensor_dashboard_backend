@@ -1,14 +1,17 @@
 """
 Overview Cache Updater - Background Thread
 
-Pre-calienta el caché de Redis cada 5 minutos con los endpoints
-más importantes de overview, garantizando que los usuarios SIEMPRE
-vean respuestas instantáneas (nunca cache miss).
+Pre-calienta el caché de Redis cada 3 minutos con los endpoints
+críticos de overview (metrics + current round + validators limit 6),
+garantizando que los usuarios vean respuestas instantáneas.
 
-Similar al metagraph_updater, usa HTTP requests simples sin asyncio.
+OPTIMIZADO: Ya no precalienta /admin/warm/agents (deprecado).
+Solo precalienta endpoints ligeros. Similar al metagraph_updater, 
+usa HTTP requests simples sin asyncio.
 """
 
 import logging
+import os
 import threading
 import time
 from typing import Optional
@@ -19,30 +22,38 @@ from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
 
-# Update interval: 5 minutos
-OVERVIEW_UPDATE_INTERVAL = 5 * 60  # 300 segundos
+# Update interval: 3 minutos para mantener el caché caliente
+OVERVIEW_UPDATE_INTERVAL = 3 * 60  # 180 segundos
 
-# Base URL (localhost)
-API_BASE_URL = "http://localhost:8080"
 
-# Endpoints that trigger administrative warmers (POST)
-ADMIN_ENDPOINTS = [
-    "/admin/warm/agents",
-]
+def _get_api_base_url() -> str:
+    """
+    Determina la URL base que debe usar el cache warmer.
 
-# Endpoints a pre-calentar
-# Organizados por prioridad: críticos primero
+    Permite override via CACHE_WARMER_BASE_URL y, si no existe,
+    usa el mismo puerto configurado para FastAPI (settings.PORT).
+    """
+    override = os.getenv("CACHE_WARMER_BASE_URL")
+    if override:
+        return override.rstrip("/")
+
+    from app.config import settings
+
+    return f"http://localhost:{settings.PORT}"
+
+# ADMIN_ENDPOINTS eliminados - /admin/warm/agents está deprecado
+# Ya no se precalienta porque las queries pesadas fueron optimizadas
+ADMIN_ENDPOINTS = []
+
+# Endpoints a pre-calentar - SOLO los que realmente necesitan precalentamiento
+# Los demás endpoints ya son suficientemente rápidos (< 200ms) con Redis automático
 ENDPOINTS_TO_WARM = [
-    # Overview (críticos para homepage)
+    # Overview metrics (el más pesado sin caché: ~800ms)
     "/api/v1/overview/metrics",
-    "/api/v1/overview/validators?limit=6",
-    "/api/v1/overview/leaderboard?timeRange=15R",
-    "/api/v1/overview/network-status",
-    "/api/v1/overview/statistics",
-    # Current round (crítico)
+    # Current round (crítico para homepage)
     "/api/v1/overview/rounds/current",
-    # Rounds list (común)
-    "/api/v1/rounds?page=1&limit=20",
+    # Lista de validadores (limit=6) usada en el overview
+    "/api/v1/overview/validators?limit=6&sortBy=weight&sortOrder=desc",
 ]
 
 # Global state
@@ -61,10 +72,12 @@ def _warm_cache_endpoints() -> dict:
     """
     results = {}
 
+    base_url = _get_api_base_url()
+
     # Trigger admin warmers first (POST requests)
     for endpoint in ADMIN_ENDPOINTS:
         try:
-            url = f"{API_BASE_URL}{endpoint}"
+            url = f"{base_url}{endpoint}"
             start = time.time()
             response = requests.post(url, timeout=60)
             elapsed = time.time() - start
@@ -93,7 +106,7 @@ def _warm_cache_endpoints() -> dict:
 
     for endpoint in ENDPOINTS_TO_WARM:
         try:
-            url = f"{API_BASE_URL}{endpoint}"
+            url = f"{base_url}{endpoint}"
             start = time.time()
 
             # Request simple con timeout
@@ -126,13 +139,14 @@ def _warm_cache_endpoints() -> dict:
 
 
 def _updater_worker():
-    """Background worker que pre-calienta el caché cada 5 minutos."""
+    """Background worker que pre-calienta el caché cada 3 minutos."""
     global _is_running
 
     logger.info("=" * 80)
-    logger.info("🚀 Overview Cache Warmer Starting")
+    logger.info("🚀 Overview Cache Warmer Starting (OPTIMIZED)")
     logger.info(f"   - Update interval: {OVERVIEW_UPDATE_INTERVAL / 60:.0f} minutes")
-    logger.info(f"   - Endpoints to warm: {len(ENDPOINTS_TO_WARM)}")
+    logger.info(f"   - Endpoints to warm: {len(ENDPOINTS_TO_WARM)} (only critical ones)")
+    logger.info(f"   - Admin warmers (deprecated): {len(ADMIN_ENDPOINTS)}")
     logger.info("=" * 80)
 
     _is_running = True
@@ -200,6 +214,12 @@ def _updater_worker():
 def start_overview_updater() -> None:
     """Inicia el background thread que pre-calienta el caché."""
     global _updater_thread, _should_stop
+    
+    # Verificar si está habilitado en configuración
+    from app.config import settings
+    if not settings.ENABLE_OVERVIEW_CACHE_WARMER:
+        logger.info("⏹️  Overview cache warmer disabled (ENABLE_OVERVIEW_CACHE_WARMER=false)")
+        return
 
     if _updater_thread and _updater_thread.is_alive():
         logger.warning("Overview cache warmer already running")

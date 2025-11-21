@@ -176,21 +176,120 @@ async def clear_cache():
 async def admin_warm_agents(
     session: AsyncSession = Depends(get_session),
 ):
-    """Force a rebuild of the agent aggregate cache."""
-    service = AgentsService(session)
-    try:
-        aggregates = await service.warm_aggregate_cache()
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Failed to warm agent aggregates: %s", exc)
-        raise HTTPException(
-            status_code=500, detail="Failed to warm agent aggregates"
-        ) from exc
-
+    """
+    DEPRECATED: Agent aggregates are now materialized incrementally when rounds finish.
+    This endpoint is no longer needed and does nothing.
+    
+    The new system:
+    - Snapshots are saved automatically when rounds complete
+    - Agent stats are updated incrementally after each round
+    - No manual warming is needed
+    """
+    logger.warning("⚠️  /admin/warm/agents called but is deprecated - doing nothing")
     return {
-        "ok": True,
-        "message": "Agent aggregates warmed successfully",
-        "agents": len(aggregates),
+        "ok": False,
+        "deprecated": True,
+        "message": "This endpoint is deprecated. Agent stats are now updated incrementally when rounds finish.",
+        "info": "No action taken. The new system materializes data automatically.",
     }
+
+
+@app.post("/admin/materialize-round/{round_number}")
+async def materialize_round_snapshot(
+    round_number: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Materialize a snapshot for a specific round.
+    
+    This endpoint:
+    1. Checks if snapshot already exists (returns it if so)
+    2. Fetches the round data from DB
+    3. Materializes snapshot + agent stats
+    4. Returns the snapshot
+    
+    Useful for backfilling or re-materializing specific rounds.
+    """
+    from app.db.models import RoundSnapshotORM, ValidatorRoundORM
+    from app.api.validator.validator_round import (
+        _materialize_round_snapshot,
+        _update_agent_stats,
+        FinishRoundRequest
+    )
+    from sqlalchemy import select
+    
+    # Check if snapshot already exists
+    existing_snapshot = await session.get(RoundSnapshotORM, round_number)
+    if existing_snapshot:
+        return {
+            "ok": True,
+            "message": f"Snapshot for round {round_number} already exists",
+            "round_number": round_number,
+            "data_size_kb": existing_snapshot.data_size_bytes / 1024 if existing_snapshot.data_size_bytes else None,
+            "created_at": existing_snapshot.created_at.isoformat(),
+            "already_existed": True,
+        }
+    
+    # Find the round
+    stmt = (
+        select(ValidatorRoundORM)
+        .where(ValidatorRoundORM.round_number == round_number)
+        .where(ValidatorRoundORM.ended_at != None)
+    )
+    round_row = await session.scalar(stmt)
+    
+    if not round_row:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Round {round_number} not found or not completed"
+        )
+    
+    # Create mock payload from round data
+    winners = []
+    weights = {}
+    
+    if round_row.meta:
+        if "winners" in round_row.meta:
+            winners = round_row.meta["winners"]
+        if "weights" in round_row.meta:
+            weights = round_row.meta["weights"]
+    
+    payload = FinishRoundRequest(
+        status=round_row.status or "completed",
+        winners=winners,
+        winner_scores=[],
+        weights=weights,
+        ended_at=round_row.ended_at or 0.0,
+        summary=round_row.summary or {},
+        agent_runs=[],
+    )
+    
+    # Materialize
+    try:
+        await _materialize_round_snapshot(session, round_row, payload)
+        await _update_agent_stats(session, round_row, payload)
+        await session.commit()
+        
+        # Get the created snapshot
+        snapshot = await session.get(RoundSnapshotORM, round_number)
+        
+        return {
+            "ok": True,
+            "message": f"Snapshot for round {round_number} materialized successfully",
+            "round_number": round_number,
+            "data_size_kb": snapshot.data_size_bytes / 1024 if snapshot and snapshot.data_size_bytes else None,
+            "created_at": snapshot.created_at.isoformat() if snapshot else None,
+            "already_existed": False,
+        }
+        
+    except Exception as e:
+        await session.rollback()
+        logger.error(f"Failed to materialize round {round_number}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to materialize round {round_number}: {str(e)}"
+        )
+
 
 @app.get("/debug/aggregates-meta")
 async def debug_aggregates_meta():

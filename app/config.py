@@ -226,6 +226,11 @@ class Settings(BaseSettings):
             _AGENT_AGGREGATE_REQUIRE_DEFAULT,
         )
     )
+    
+    # Overview cache warmer (precalienta endpoints críticos cada 10 min)
+    ENABLE_OVERVIEW_CACHE_WARMER: bool = _str_to_bool(
+        os.getenv("ENABLE_OVERVIEW_CACHE_WARMER", "true")
+    )
 
     # Subnet price fallback (alpha → τ). Used when on-chain query fails.
     SUBNET_PRICE_FALLBACK: float = float(_env_var("SUBNET_PRICE_FALLBACK", "0.004178"))

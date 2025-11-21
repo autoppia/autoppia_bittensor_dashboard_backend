@@ -170,6 +170,34 @@ async def get_round(
     round_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """
+    Get complete round details.
+    For completed rounds, returns from materialized snapshot (ultra fast).
+    For active rounds, computes from live data.
+    """
+    from app.db.models import RoundSnapshotORM
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Try to parse as round_number and load from snapshot
+    try:
+        round_number = int(round_id)
+        
+        # NUEVO: Intentar cargar desde snapshot materializado
+        snapshot = await session.get(RoundSnapshotORM, round_number)
+        if snapshot and snapshot.snapshot_json:
+            logger.info(f"✅ Serving round {round_number} from snapshot (fast path)")
+            return {
+                "success": True,
+                "data": {"round": snapshot.snapshot_json},
+            }
+    except ValueError:
+        # No es un número, continuar con el método normal
+        pass
+    
+    # Fallback al método tradicional (más lento)
+    logger.info(f"Serving round {round_id} from live data (slow path)")
     service = await _service(session)
     try:
         detail_data = await service.get_round(round_id)

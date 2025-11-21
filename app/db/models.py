@@ -670,3 +670,87 @@ __all__ = [
 
 # Backwards compatibility alias
 RoundORM = ValidatorRoundORM
+
+
+# ---------------------------------------------------------------------------
+# Materialized views / Aggregates
+# ---------------------------------------------------------------------------
+
+
+class RoundSnapshotORM(TimestampMixin, Base):
+    """Immutable snapshot of a completed round for fast retrieval."""
+
+    __tablename__ = "round_snapshots"
+
+    round_number: Mapped[int] = mapped_column(Integer, primary_key=True)
+    
+    # Complete round data as JSON
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    
+    # Metadata
+    snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    data_size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("round_number > 0", name="ck_round_snapshots_positive_number"),
+    )
+
+
+class AgentStatsORM(TimestampMixin, Base):
+    """Aggregated statistics for each agent/miner, updated incrementally."""
+
+    __tablename__ = "agent_stats"
+
+    uid: Mapped[int] = mapped_column(Integer, primary_key=True)
+    
+    # Identity
+    hotkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Flags
+    is_sota: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    
+    # Accumulated stats
+    total_rounds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    avg_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    best_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    worst_score: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    successful_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    
+    # Rankings
+    current_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    best_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    
+    # Recent performance (JSON array of last 20 rounds)
+    recent_rounds: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    
+    # Temporal
+    first_seen: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_seen: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    last_round_number: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+
+    __table_args__ = (
+        CheckConstraint("total_rounds >= 0", name="ck_agent_stats_positive_rounds"),
+        CheckConstraint("total_runs >= 0", name="ck_agent_stats_positive_runs"),
+        CheckConstraint(
+            "avg_score >= 0.0 AND avg_score <= 1.0",
+            name="ck_agent_stats_score_range",
+        ),
+        CheckConstraint(
+            "best_score >= 0.0 AND best_score <= 1.0",
+            name="ck_agent_stats_best_score_range",
+        ),
+        Index("idx_agent_stats_avg_score", "avg_score", postgresql_using="btree"),
+    )
