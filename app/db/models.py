@@ -282,12 +282,10 @@ class ValidatorRoundMinerORM(TimestampMixin, Base):
     agent_name: Mapped[str] = mapped_column(String(256), nullable=False)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     github_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
-    provider: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_sota: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     first_seen_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     last_seen_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="miner_snapshots"

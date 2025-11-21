@@ -1090,6 +1090,9 @@ async def add_evaluation(
 
             # Early idempotency: if the entire bundle already exists for this round/run,
             # return success before enforcing window checks to allow safe replays.
+            # Note: These queries are done inside the transaction, so if they fail,
+            # the transaction will be aborted. We catch the error and treat as if
+            # the bundle doesn't exist, allowing the transaction to continue.
             try:
                 existing_solution = await service.get_task_solution_row(
                     task_solution.solution_id
@@ -1100,7 +1103,25 @@ async def add_evaluation(
                 existing_result = await service.get_evaluation_result_row(
                     evaluation_result.result_id
                 )
-            except Exception:
+            except Exception as e:
+                # If any query fails, the transaction may be aborted.
+                # Check if it's a schema error (column doesn't exist) - these should propagate
+                error_str = str(e).lower()
+                if "undefinedcolumn" in error_str or "does not exist" in error_str:
+                    logger.error(
+                        "Database schema mismatch detected for round %s: %s",
+                        validator_round_id,
+                        str(e),
+                    )
+                    # Re-raise schema errors - they indicate a real problem
+                    raise
+                # For other errors, log and continue (treat as if bundle doesn't exist)
+                logger.warning(
+                    "Failed to check existing evaluation bundle for round %s: %s. "
+                    "Treating as if bundle doesn't exist.",
+                    validator_round_id,
+                    str(e),
+                )
                 existing_solution = existing_eval = existing_result = None
             if (
                 existing_solution
