@@ -245,8 +245,6 @@ class ValidatorRoundValidatorORM(TimestampMixin, Base):
     vtrust: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    role: Mapped[str] = mapped_column(String(32), nullable=False, default="primary")
-    meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="validator_snapshots"
@@ -685,7 +683,6 @@ class EvaluationResultORM(TimestampMixin, Base):
     )
 
 
-
 # ---------------------------------------------------------------------------
 # Optimization tables (Materialized Views)
 # ---------------------------------------------------------------------------
@@ -705,7 +702,9 @@ class RoundSnapshotORM(TimestampMixin, Base):
 class AgentStatsORM(TimestampMixin, Base):
     __tablename__ = "agent_stats"
     uid: Mapped[int] = mapped_column(Integer, primary_key=True)
-    hotkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    hotkey: Mapped[Optional[str]] = mapped_column(
+        String(128), nullable=True, index=True
+    )
     name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_sota: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -719,15 +718,28 @@ class AgentStatsORM(TimestampMixin, Base):
     completed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     current_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     best_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    recent_rounds: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=list)
-    first_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
-    last_round_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    recent_rounds: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    first_seen: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_seen: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    last_round_number: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, index=True
+    )
     __table_args__ = (
         CheckConstraint("total_rounds >= 0", name="ck_agent_stats_positive_rounds"),
         CheckConstraint("total_runs >= 0", name="ck_agent_stats_positive_runs"),
-        CheckConstraint("avg_score >= 0.0 AND avg_score <= 1.0", name="ck_agent_stats_score_range"),
-        CheckConstraint("best_score >= 0.0 AND best_score <= 1.0", name="ck_agent_stats_best_score_range"),
+        CheckConstraint(
+            "avg_score >= 0.0 AND avg_score <= 1.0", name="ck_agent_stats_score_range"
+        ),
+        CheckConstraint(
+            "best_score >= 0.0 AND best_score <= 1.0",
+            name="ck_agent_stats_best_score_range",
+        ),
         Index("idx_agent_stats_avg_score", "avg_score", postgresql_using="btree"),
     )
 
