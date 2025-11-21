@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
+import asyncpg
+
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi
+from sqlalchemy.exc import DBAPIError, InterfaceError as SQLInterfaceError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -185,18 +190,51 @@ class EvaluationsService:
         return self._build_context(evaluation_row)
 
     async def update_gif_recording(self, evaluation_id: str, gif_url: str) -> None:
-        stmt = select(EvaluationResultORM).where(
-            EvaluationResultORM.evaluation_id == evaluation_id
-        )
-        result_rows = await self.session.scalars(stmt)
-        rows = list(result_rows)
-        if not rows:
-            raise ValueError(f"No evaluation results found for {evaluation_id}")
+        """Update GIF recording URL for an evaluation, with retry on connection errors."""
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                stmt = select(EvaluationResultORM).where(
+                    EvaluationResultORM.evaluation_id == evaluation_id
+                )
+                result_rows = await self.session.scalars(stmt)
+                rows = list(result_rows)
+                if not rows:
+                    raise ValueError(f"No evaluation results found for {evaluation_id}")
 
-        for row in rows:
-            row.gif_recording = gif_url
+                for row in rows:
+                    row.gif_recording = gif_url
 
-        await self.session.commit()
+                await self.session.commit()
+                return
+            except (
+                AsyncAdapt_asyncpg_dbapi.InterfaceError,
+                asyncpg.exceptions.InternalClientError,
+                asyncpg.exceptions.ConnectionDoesNotExistError,
+                AsyncAdapt_asyncpg_dbapi.Error,  # Catches other asyncpg errors
+                SQLInterfaceError,  # SQLAlchemy wraps asyncpg errors
+                DBAPIError,  # Base class for all DBAPI errors
+            ) as e:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        "Connection error updating GIF for %s (attempt %d/%d): %s. Retrying...",
+                        evaluation_id,
+                        attempt + 1,
+                        max_retries,
+                        str(e),
+                    )
+                    await self.session.rollback()
+                    # Give the connection pool a moment to recover
+                    await asyncio.sleep(0.1 * (attempt + 1))
+                else:
+                    logger.error(
+                        "Failed to update GIF for %s after %d attempts: %s",
+                        evaluation_id,
+                        max_retries,
+                        str(e),
+                    )
+                    await self.session.rollback()
+                    raise
 
     def _build_context(self, evaluation_row: EvaluationResultORM) -> EvaluationContext:
         agent_run_row = evaluation_row.agent_run
@@ -272,6 +310,7 @@ class EvaluationsService:
             id=context.task.task_id,
             url=context.task.url,
             prompt=context.task.prompt,
+            scope=context.task.scope,
             useCase=self._extract_use_case(context.task),
             useCaseMetadata=(
                 dict(context.task.use_case)
