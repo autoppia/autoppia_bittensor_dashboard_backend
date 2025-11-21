@@ -4,6 +4,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -22,6 +23,7 @@ from app.models.ui.rounds import (
     RoundsListResponse,
 )
 from app.services.ui.rounds_service import RoundsService
+from app.services.snapshot_service import SnapshotService
 from app.services.chain_state import get_current_block_estimate
 from app.services.redis_cache import cache
 
@@ -177,32 +179,57 @@ async def get_round(
     """
     from app.db.models import RoundSnapshotORM
     import logging
-    
+
     logger = logging.getLogger(__name__)
-    
-    # Try to parse as round_number and load from snapshot
+
+    round_number: Optional[int] = None
     try:
         round_number = int(round_id)
-        
-        # NUEVO: Intentar cargar desde snapshot materializado
-        snapshot = await session.get(RoundSnapshotORM, round_number)
-        if snapshot and snapshot.snapshot_json:
-            logger.info(f"✅ Serving round {round_number} from snapshot (fast path)")
-            return {
-                "success": True,
-                "data": {"round": snapshot.snapshot_json},
-            }
     except ValueError:
-        # No es un número, continuar con el método normal
-        pass
-    
+        round_number = None
+
+    snapshot = None
+    if round_number is not None:
+        snapshot = await session.get(RoundSnapshotORM, round_number)
+    else:
+        # Resolver validator_round_id -> round_number para poder leer snapshot
+        from app.db.models import RoundORM
+
+        round_number = await session.scalar(
+            select(RoundORM.round_number).where(RoundORM.validator_round_id == round_id)
+        )
+        if round_number:
+            snapshot = await session.get(RoundSnapshotORM, round_number)
+
+    if snapshot and snapshot.snapshot_json:
+        logger.info("✅ Serving round %s from snapshot (fast path)", round_number)
+        return {
+            "success": True,
+            "data": {"round": snapshot.snapshot_json},
+        }
+    elif round_number:
+        logger.info(
+            "ℹ️ Snapshot for round %s missing, falling back to live aggregation",
+            round_number,
+        )
+    else:
+        logger.info(
+            "ℹ️ Non numeric round id %s; falling back to live aggregation", round_id
+        )
+
     # Fallback al método tradicional (más lento)
-    logger.info(f"Serving round {round_id} from live data (slow path)")
     service = await _service(session)
     try:
         detail_data = await service.get_round(round_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    # Persist snapshot para futuros requests si el round ya terminó.
+    try:
+        await _persist_snapshot_from_detail(session, round_id, detail_data)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to persist snapshot for round %s", round_id)
+
     return {
         "success": True,
         "data": {"round": detail_data},

@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from sqlalchemy import select
 from app.db.session import AsyncSessionLocal
 from app.db.models import ValidatorRoundORM, RoundSnapshotORM
+from app.services.snapshot_service import SnapshotService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,10 +34,9 @@ async def backfill_snapshots(max_rounds: int = None):
     Args:
         max_rounds: Maximum number of rounds to process (None = all)
     """
-    # Import here to avoid circular imports
-    from app.api.validator.validator_round import _materialize_round_snapshot, FinishRoundRequest
-    
     async with AsyncSessionLocal() as session:
+        snapshot_service = SnapshotService(session)
+        
         # Get all completed rounds
         stmt = (
             select(ValidatorRoundORM)
@@ -66,31 +66,8 @@ async def backfill_snapshots(max_rounds: int = None):
                 skipped += 1
                 continue
             
-            # Create mock payload from round data
-            winners = []
-            weights = {}
-            
-            # Extract winners from meta if available
-            if round_row.meta:
-                if "winners" in round_row.meta:
-                    winners = round_row.meta["winners"]  # Just use the dict as-is
-                
-                if "weights" in round_row.meta:
-                    weights = round_row.meta["weights"]
-            
-            payload = FinishRoundRequest(
-                status=round_row.status or "completed",
-                winners=winners,
-                winner_scores=[],
-                weights=weights,
-                ended_at=round_row.ended_at or 0.0,
-                summary=round_row.summary or {},
-                agent_runs=[],
-            )
-            
             try:
-                await _materialize_round_snapshot(session, round_row, payload)
-                # Commit after each round
+                await snapshot_service.materialize_round_snapshot(round_number)
                 await session.commit()
                 
                 logger.info(f"✅ Materialized snapshot for round {round_number}")
@@ -118,10 +95,9 @@ async def backfill_agent_stats(max_rounds: int = None):
     Args:
         max_rounds: Maximum number of rounds to process (None = all)
     """
-    # Import here to avoid circular imports
-    from app.api.validator.validator_round import _update_agent_stats, FinishRoundRequest
-    
     async with AsyncSessionLocal() as session:
+        snapshot_service = SnapshotService(session)
+        
         # Get all completed rounds
         stmt = (
             select(ValidatorRoundORM)
@@ -143,31 +119,8 @@ async def backfill_agent_stats(max_rounds: int = None):
         for round_row in rounds:
             round_number = round_row.round_number
             
-            # Create mock payload from round data
-            winners = []
-            weights = {}
-            
-            # Extract winners from meta if available
-            if round_row.meta:
-                if "winners" in round_row.meta:
-                    winners = round_row.meta["winners"]  # Just use the dict as-is
-                
-                if "weights" in round_row.meta:
-                    weights = round_row.meta["weights"]
-            
-            payload = FinishRoundRequest(
-                status=round_row.status or "completed",
-                winners=winners,
-                winner_scores=[],
-                weights=weights,
-                ended_at=round_row.ended_at or 0.0,
-                summary=round_row.summary or {},
-                agent_runs=[],
-            )
-            
             try:
-                await _update_agent_stats(session, round_row, payload)
-                # Commit after each round
+                await snapshot_service.update_agent_stats(round_number)
                 await session.commit()
                 
                 logger.info(f"✅ Updated agent stats for round {round_number}")
@@ -226,4 +179,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
