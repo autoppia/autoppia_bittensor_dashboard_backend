@@ -495,8 +495,6 @@ class TaskSolutionORM(TimestampMixin, Base):
         JSON, nullable=False, default=list
     )
     web_agent_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    recording: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     task: Mapped["TaskORM"] = relationship(back_populates="task_solutions")
     agent_run: Mapped["AgentEvaluationRunORM"] = relationship(
@@ -524,8 +522,6 @@ class TaskSolutionORM(TimestampMixin, Base):
             "miner_hotkey": self.miner_hotkey,
             "actions": list(self.actions or []),
             "web_agent_id": self.web_agent_id,
-            "recording": dict(self.recording or {}),
-            "meta": dict(self.meta or {}),
         }
 
 
