@@ -210,6 +210,7 @@ class ValidatorRoundORM(TimestampMixin, Base):
         return {
             "status": legacy_status,
             "summary": dict(self.summary or {}),
+            "meta": dict(self.meta or {}),
         }
 
 
@@ -244,6 +245,8 @@ class ValidatorRoundValidatorORM(TimestampMixin, Base):
     vtrust: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="primary")
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="validator_snapshots"
@@ -281,10 +284,12 @@ class ValidatorRoundMinerORM(TimestampMixin, Base):
     agent_name: Mapped[str] = mapped_column(String(256), nullable=False)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     github_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    provider: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_sota: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     first_seen_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     last_seen_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="miner_snapshots"
@@ -388,20 +393,32 @@ class TaskORM(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
+    sequence: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="local")
     is_web_real: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     web_project_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    html: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    clean_html: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    interactive_elements: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    screenshot: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    screenshot_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     specifications: Mapped[dict[str, Any]] = mapped_column(
         JSON, nullable=False, default=dict
     )
     tests: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, nullable=False, default=list
     )
+    milestones: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(
+        JSON, nullable=True
+    )
     relevant_data: Mapped[dict[str, Any]] = mapped_column(
         JSON, nullable=False, default=dict
     )
+    success_criteria: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     use_case: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    should_record: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="tasks")
     task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(
@@ -420,14 +437,24 @@ class TaskORM(TimestampMixin, Base):
         return {
             "task_id": self.task_id,
             "validator_round_id": self.validator_round_id,
+            "sequence": self.sequence,
+            "scope": self.scope,
             "is_web_real": self.is_web_real,
             "web_project_id": self.web_project_id,
             "url": self.url,
             "prompt": self.prompt,
+            "html": self.html,
+            "clean_html": self.clean_html,
+            "interactive_elements": self.interactive_elements,
+            "screenshot": self.screenshot,
+            "screenshot_description": self.screenshot_description,
             "specifications": dict(self.specifications or {}),
             "tests": list(self.tests or []),
+            "milestones": list(self.milestones or []) if self.milestones else None,
             "relevant_data": dict(self.relevant_data or {}),
+            "success_criteria": self.success_criteria,
             "use_case": dict(self.use_case or {}),
+            "should_record": self.should_record,
         }
 
 
@@ -472,6 +499,8 @@ class TaskSolutionORM(TimestampMixin, Base):
         JSON, nullable=False, default=list
     )
     web_agent_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    recording: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     task: Mapped["TaskORM"] = relationship(back_populates="task_solutions")
     agent_run: Mapped["AgentEvaluationRunORM"] = relationship(
@@ -499,6 +528,8 @@ class TaskSolutionORM(TimestampMixin, Base):
             "miner_hotkey": self.miner_hotkey,
             "actions": list(self.actions or []),
             "web_agent_id": self.web_agent_id,
+            "recording": dict(self.recording or {}),
+            "meta": dict(self.meta or {}),
         }
 
 
@@ -654,7 +685,56 @@ class EvaluationResultORM(TimestampMixin, Base):
     )
 
 
+
+# ---------------------------------------------------------------------------
+# Optimization tables (Materialized Views)
+# ---------------------------------------------------------------------------
+
+
+class RoundSnapshotORM(TimestampMixin, Base):
+    __tablename__ = "round_snapshots"
+    round_number: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    data_size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    __table_args__ = (
+        CheckConstraint("round_number > 0", name="ck_round_snapshots_positive_number"),
+    )
+
+
+class AgentStatsORM(TimestampMixin, Base):
+    __tablename__ = "agent_stats"
+    uid: Mapped[int] = mapped_column(Integer, primary_key=True)
+    hotkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_sota: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    total_rounds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    avg_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    best_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    worst_score: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    successful_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    current_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    best_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    recent_rounds: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=list)
+    first_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_round_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    __table_args__ = (
+        CheckConstraint("total_rounds >= 0", name="ck_agent_stats_positive_rounds"),
+        CheckConstraint("total_runs >= 0", name="ck_agent_stats_positive_runs"),
+        CheckConstraint("avg_score >= 0.0 AND avg_score <= 1.0", name="ck_agent_stats_score_range"),
+        CheckConstraint("best_score >= 0.0 AND best_score <= 1.0", name="ck_agent_stats_best_score_range"),
+        Index("idx_agent_stats_avg_score", "avg_score", postgresql_using="btree"),
+    )
+
+
 __all__ = [
+    "RoundSnapshotORM",
+    "AgentStatsORM",
     "ValidatorORM",
     "MinerORM",
     "ValidatorRoundORM",
@@ -670,87 +750,3 @@ __all__ = [
 
 # Backwards compatibility alias
 RoundORM = ValidatorRoundORM
-
-
-# ---------------------------------------------------------------------------
-# Materialized views / Aggregates
-# ---------------------------------------------------------------------------
-
-
-class RoundSnapshotORM(TimestampMixin, Base):
-    """Immutable snapshot of a completed round for fast retrieval."""
-
-    __tablename__ = "round_snapshots"
-
-    round_number: Mapped[int] = mapped_column(Integer, primary_key=True)
-    
-    # Complete round data as JSON
-    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    
-    # Metadata
-    snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    data_size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-
-    __table_args__ = (
-        CheckConstraint("round_number > 0", name="ck_round_snapshots_positive_number"),
-    )
-
-
-class AgentStatsORM(TimestampMixin, Base):
-    """Aggregated statistics for each agent/miner, updated incrementally."""
-
-    __tablename__ = "agent_stats"
-
-    uid: Mapped[int] = mapped_column(Integer, primary_key=True)
-    
-    # Identity
-    hotkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
-    name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    
-    # Flags
-    is_sota: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    
-    # Accumulated stats
-    total_rounds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    total_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    avg_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    best_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    worst_score: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
-    successful_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    total_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    completed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    
-    # Rankings
-    current_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    best_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    
-    # Recent performance (JSON array of last 20 rounds)
-    recent_rounds: Mapped[dict[str, Any]] = mapped_column(
-        JSON, nullable=False, default=list
-    )
-    
-    # Temporal
-    first_seen: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    last_seen: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
-    )
-    last_round_number: Mapped[Optional[int]] = mapped_column(
-        Integer, nullable=True, index=True
-    )
-
-    __table_args__ = (
-        CheckConstraint("total_rounds >= 0", name="ck_agent_stats_positive_rounds"),
-        CheckConstraint("total_runs >= 0", name="ck_agent_stats_positive_runs"),
-        CheckConstraint(
-            "avg_score >= 0.0 AND avg_score <= 1.0",
-            name="ck_agent_stats_score_range",
-        ),
-        CheckConstraint(
-            "best_score >= 0.0 AND best_score <= 1.0",
-            name="ck_agent_stats_best_score_range",
-        ),
-        Index("idx_agent_stats_avg_score", "avg_score", postgresql_using="btree"),
-    )
