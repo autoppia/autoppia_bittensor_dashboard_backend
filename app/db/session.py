@@ -74,6 +74,14 @@ engine = create_async_engine(
     pool_timeout=30,  # fail fast when pool is exhausted
     pool_recycle=300,  # recycle connections to avoid stale sockets
     pool_pre_ping=True,  # verify connections before use
+    connect_args={
+        # Timeout for establishing a connection (seconds)
+        "timeout": 10,
+        # Apply server-side statement timeout to avoid long-lived queries
+        "server_settings": {
+            "statement_timeout": "30000",  # 30s
+        },
+    },
 )
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
