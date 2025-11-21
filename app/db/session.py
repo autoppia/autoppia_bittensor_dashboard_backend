@@ -3,7 +3,10 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 import logging
 
+import asyncpg
+from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError, InterfaceError as SQLInterfaceError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import settings
@@ -77,8 +80,34 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency that yields an async database session."""
-    async with AsyncSessionLocal() as session:
+    session = AsyncSessionLocal()
+    try:
         yield session
+    finally:
+        # Handle connection errors during session close gracefully
+        # These errors occur when concurrent operations leave the connection
+        # in an inconsistent state. We catch and log them but don't propagate,
+        # as the connection pool will handle broken connections automatically.
+        try:
+            await session.close()
+        except (
+            AsyncAdapt_asyncpg_dbapi.InterfaceError,
+            asyncpg.exceptions.InternalClientError,
+            asyncpg.exceptions.ConnectionDoesNotExistError,
+            AsyncAdapt_asyncpg_dbapi.Error,  # Catch other asyncpg errors
+            SQLInterfaceError,  # SQLAlchemy wraps asyncpg errors
+            DBAPIError,  # Base class for all DBAPI errors
+        ) as e:
+            # Connection is in an inconsistent state due to concurrent operations
+            # The pool will detect and remove broken connections on next use
+            # (pool_pre_ping=True ensures connections are verified)
+            logger.debug(
+                "Connection error during session close (concurrent operation): %s",
+                str(e),
+            )
+        except Exception as e:
+            logger.error("Unexpected error during session close: %s", str(e))
+            raise
 
 
 async def init_db() -> None:

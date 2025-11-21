@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, parse_qs
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -60,7 +60,6 @@ from app.models.ui.tasks import (
     WebsitePerformance,
 )
 from app.services.ui.rounds_service import AgentRunContext, RoundsService
-from app.services.metagraph_service import get_validator_data, MetagraphError
 from app.utils.images import resolve_agent_image, resolve_validator_image
 from app.config import settings
 from app.services.round_calc import compute_boundaries_for_round
@@ -189,85 +188,33 @@ class TasksService:
         sort_by: str = "startTime",
         sort_order: str = "desc",
         include_facets: bool = False,
-        include_details: bool = True,
     ) -> Dict[str, object]:
-        skip = max(0, (page - 1) * limit)
+        stmt = (
+            select(TaskORM)
+            .options(
+                selectinload(TaskORM.task_solutions),
+                selectinload(TaskORM.evaluation_results),
+            )
+            .order_by(TaskORM.id.desc())
+        )
+
+        task_rows = await self.session.scalars(stmt)
 
         query_lower = query.lower() if query else None
         start_ts = _to_timestamp(start_date)
         end_ts = _to_timestamp(end_date)
 
-        needs_python_filtering = any(
-            [
-                agent_run_id,
-                agent_id,
-                validator_id,
-                use_case,
-                status,
-                min_score is not None,
-                max_score is not None,
-                start_ts is not None,
-                end_ts is not None,
-            ]
-        )
+        website_counts: Dict[str, int] = defaultdict(int)
+        use_case_counts: Dict[str, int] = defaultdict(int)
+        status_counts: Dict[str, int] = defaultdict(int)
+        score_buckets: Dict[str, int] = defaultdict(int)
 
-        base_stmt = (
-            select(TaskORM)
-            .where(TaskORM.evaluation_results.any())
-            .options(
-                selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluation_results),
-            )
-        )
-
-        if website:
-            base_stmt = base_stmt.where(TaskORM.web_project_id == website)
-
-        if query:
-            like = f"%{query}%"
-            base_stmt = base_stmt.where(
-                TaskORM.task_id.ilike(like)
-                | TaskORM.prompt.ilike(like)
-                | TaskORM.url.ilike(like)
-            )
-
-        base_stmt = base_stmt.order_by(TaskORM.id.desc())
-
-        if needs_python_filtering:
-            max_fetch_limit = max(limit * 5, 200)
-            stmt = base_stmt.limit(max_fetch_limit)
-            task_rows_result = await self.session.scalars(stmt)
-            task_rows = list(task_rows_result)
-            total_count = None
-        else:
-            window_stmt = base_stmt.add_columns(
-                func.count().over().label("full_count")
-            )
-            window_stmt = window_stmt.offset(skip).limit(limit)
-
-            result = await self.session.execute(window_stmt)
-            rows = result.all()
-
-            task_rows = [row[0] for row in rows]
-            total_count = int(rows[0][1]) if rows else 0
-
-        if include_facets and needs_python_filtering:
-            website_counts: Dict[str, int] = defaultdict(int)
-            use_case_counts: Dict[str, int] = defaultdict(int)
-            status_counts: Dict[str, int] = defaultdict(int)
-            score_buckets: Dict[str, int] = defaultdict(int)
-            score_ranges = [
-                ("0.0-0.25", 0.0, 0.25),
-                ("0.25-0.5", 0.25, 0.5),
-                ("0.5-0.75", 0.5, 0.75),
-                ("0.75-1.0", 0.75, 1.01),
-            ]
-        else:
-            website_counts = {}
-            use_case_counts = {}
-            status_counts = {}
-            score_buckets = {}
-            score_ranges: List[Tuple[str, float, float]] = []
+        score_ranges = [
+            ("0.0-0.25", 0.0, 0.25),
+            ("0.25-0.5", 0.25, 0.5),
+            ("0.5-0.75", 0.5, 0.75),
+            ("0.75-1.0", 0.75, 1.01),
+        ]
 
         context_cache: Dict[str, AgentRunContext] = {}
         items: List[UITask] = []
@@ -291,22 +238,15 @@ class TasksService:
                 if context.agent_run.validator_uid != validator_uid:
                     continue
 
+            if website and context.task.url != website:
+                continue
+
             if use_case:
-                requested_use_case = (
-                    use_case.replace(" ", "_").strip().upper()
-                )
-                raw_use_case_name = self._extract_use_case(context.task) or ""
-                current_use_case = (
-                    raw_use_case_name.replace(" ", "_").strip().upper()
-                )
-                if current_use_case != requested_use_case:
+                use_case_name = self._extract_use_case(context.task)
+                if use_case_name != use_case:
                     continue
 
-            if include_details:
-                ui_task = self._build_ui_task(context)
-            else:
-                ui_task = self._build_ui_task_summary(context)
-
+            ui_task = self._build_ui_task(context)
             evaluation_score = (
                 context.evaluation.final_score if context.evaluation else 0.0
             )
@@ -328,12 +268,19 @@ class TasksService:
                 continue
 
             if query_lower:
-                if query_lower not in ui_task.agentRunId.lower():
-                    pass
+                prompt = context.task.prompt or ""
+                url = context.task.url or ""
+                if (
+                    query_lower not in prompt.lower()
+                    and query_lower not in url.lower()
+                    and query_lower not in ui_task.taskId.lower()
+                    and query_lower not in ui_task.agentRunId.lower()
+                ):
+                    continue
 
             items.append(ui_task)
 
-            if include_facets and needs_python_filtering:
+            if include_facets:
                 website_counts[ui_task.website] += 1
                 use_case_counts[ui_task.useCase] += 1
                 status_counts[ui_task.status.value] += 1
@@ -344,23 +291,19 @@ class TasksService:
 
         items = self._sort_tasks(items, sort_by, sort_order)
 
-        if needs_python_filtering:
-            total = len(items)
-            start_index = skip
-            end_index = start_index + limit
-            paginated = items[start_index:end_index]
-        else:
-            paginated = items
-            total = total_count or 0
+        total = len(items)
+        start_index = (page - 1) * limit
+        end_index = start_index + limit
+        paginated = items[start_index:end_index]
 
-        result: Dict[str, object] = {
+        result: Dict[str, Any] = {
             "tasks": [task.model_dump() for task in paginated],
             "total": total,
             "page": page,
             "limit": limit,
         }
 
-        if include_facets and needs_python_filtering:
+        if include_facets:
             result["facets"] = {
                 "websites": [
                     {"name": name, "count": count}
@@ -385,13 +328,6 @@ class TasksService:
                     for name, _, _ in score_ranges
                 ],
             }
-        elif include_facets:
-            result["facets"] = {
-                "websites": [],
-                "useCases": [],
-                "statuses": [],
-                "scoreRanges": [],
-            }
 
         return result
 
@@ -399,14 +335,12 @@ class TasksService:
         self,
         page: int,
         limit: int,
-        include_details: bool = False,
         **filters: Any,
     ) -> Dict[str, object]:
         return await self.list_tasks(
             page=page,
             limit=limit,
             include_facets=True,
-            include_details=include_details,
             **filters,
         )
 
@@ -568,47 +502,6 @@ class TasksService:
             performanceOverTime=performance_over_time,
         )
 
-    async def get_tasks_with_solutions(
-        self,
-        page: int = 1,
-        limit: int = 50,
-        task_id: Optional[str] = None,
-        website: Optional[str] = None,
-        use_case: Optional[str] = None,
-        miner_uid: Optional[int] = None,
-        agent_id: Optional[str] = None,
-        validator_id: Optional[str] = None,
-        round_id: Optional[int] = None,
-        min_score: Optional[float] = None,
-        max_score: Optional[float] = None,
-        status: Optional[str] = None,
-        sort_by: str = "created_at",
-        sort_order: str = "desc",
-    ) -> Dict[str, Any]:
-        """
-        Get tasks with their solutions, applying multiple filters.
-        Delegates to extension module for implementation.
-        """
-        from app.services.ui.tasks_service_extension import get_tasks_with_solutions
-
-        return await get_tasks_with_solutions(
-            session=self.session,
-            page=page,
-            limit=limit,
-            task_id=task_id,
-            website=website,
-            use_case=use_case,
-            miner_uid=miner_uid,
-            agent_id=agent_id,
-            validator_id=validator_id,
-            round_id=round_id,
-            min_score=min_score,
-            max_score=max_score,
-            status=status,
-            sort_by=sort_by,
-            sort_order=sort_order,
-        )
-
     async def compare_tasks(self, task_ids: List[str]) -> CompareTasksResponse:
         contexts: List[TaskContext] = []
         for task_id in task_ids:
@@ -714,32 +607,15 @@ class TasksService:
                 version=None,
             )
 
-        # Try to get fresh metagraph data for more accurate stake/vtrust
-        # NOTE: version is NOT in metagraph, only in DB
-        stake_value = float(getattr(validator_model, "stake", 0.0) or 0.0)
-        vtrust_value = float(getattr(validator_model, "vtrust", 0.0) or 0.0)
-        version_value = getattr(validator_model, "version", None)
-
-        try:
-            fresh_data = get_validator_data(uid=context.agent_run.validator_uid)
-            if fresh_data:
-                if fresh_data.get("stake") is not None:
-                    stake_value = float(fresh_data["stake"])
-                if fresh_data.get("vtrust") is not None:
-                    vtrust_value = float(fresh_data["vtrust"])
-                # version stays from DB (validator_model.version)
-        except MetagraphError:
-            pass  # Fallback to DB snapshot data
-
         # Ensure UID is non-negative and resolve validator image with fallback
         validator_summary = TaskValidatorSummary(
             uid=abs(int(validator_model.uid)) if validator_model.uid is not None else 0,
             hotkey=validator_model.hotkey,
             coldkey=validator_model.coldkey,
             name=validator_model.name,
-            stake=stake_value,
-            vtrust=vtrust_value,
-            version=version_value,
+            stake=float(getattr(validator_model, "stake", 0.0) or 0.0),
+            vtrust=float(getattr(validator_model, "vtrust", 0.0) or 0.0),
+            version=getattr(validator_model, "version", None),
             image=resolve_validator_image(
                 name=validator_model.name,
                 existing=getattr(validator_model, "image_url", None),
@@ -760,6 +636,7 @@ class TasksService:
                 else _format_agent_id(context.agent_run.miner_uid)
             ),
             github=getattr(miner_model, "github", None) if miner_model else None,
+            provider=getattr(miner_model, "provider", None) if miner_model else None,
             image=resolve_agent_image(miner_model),
             isSota=context.agent_run.is_sota,
         )
@@ -831,6 +708,7 @@ class TasksService:
                 validatorUid=context.solution.validator_uid,
                 actionsCount=len(context.solution.actions or []),
                 webAgentId=context.solution.web_agent_id,
+                hasRecording=bool(context.solution.recording),
             )
 
         relationships = TaskRelationships(
@@ -1237,7 +1115,7 @@ class TasksService:
                     url=screenshot_url,
                     timestamp=timestamp,
                     actionId=None,
-                    description=getattr(context.task, "screenshot_description", None),
+                    description=context.task.screenshot_description,
                 )
             )
 
@@ -1458,8 +1336,6 @@ class TasksService:
         return UITask(
             taskId=context.task.task_id,
             agentRunId=context.agent_run.agent_run_id,
-            roundNumber=context.round.round_number
-            or _round_id_to_int(context.round.validator_round_id),
             website=context.task.url,
             seed=seed_val,
             useCase=self._extract_use_case(context.task) or "unknown",
@@ -1473,85 +1349,6 @@ class TasksService:
             createdAt=_parse_iso(start_time),
             updatedAt=_parse_iso(end_time),
             actions=actions,
-            screenshots=[],
-            logs=[],
-            metadata=None,
-            validatorName=validator_name,
-            validatorImage=validator_image,
-            minerName=miner_name,
-            minerImage=miner_image,
-        )
-
-    def _build_ui_task_summary(self, context: TaskContext) -> UITask:
-        """
-        Lightweight version of _build_ui_task for search/list views.
-        Omits actions, screenshots, logs to improve performance ~50-100x.
-        """
-        evaluation = context.evaluation
-        score = evaluation.final_score if evaluation else 0.0
-        status = TaskStatus.COMPLETED if score >= 0.5 else TaskStatus.FAILED
-        success_rate = int(score * 100)
-
-        start_time = context.agent_run.started_at or context.round.started_at
-        end_time = context.agent_run.ended_at or start_time
-
-        # Extract seed from URL if present
-        seed_val: Optional[str] = None
-        try:
-            parsed = urlparse(context.task.url or "")
-            if parsed and parsed.query:
-                q = parse_qs(parsed.query)
-                if isinstance(q.get("seed"), list):
-                    seed_val = q.get("seed")[0]
-                elif q.get("seed"):
-                    seed_val = str(q.get("seed"))
-        except Exception:
-            seed_val = None
-
-        # Get validator info
-        validator_name = None
-        validator_image = None
-        if context.round.validators:
-            validator_model = next(
-                (
-                    v
-                    for v in context.round.validators
-                    if v.uid == context.agent_run.validator_uid
-                ),
-                context.round.validators[0] if context.round.validators else None,
-            )
-            if validator_model:
-                validator_name = validator_model.name
-                validator_image = resolve_validator_image(
-                    name=validator_model.name,
-                    existing=getattr(validator_model, "image_url", None),
-                )
-
-        # Get miner info
-        miner_name = None
-        miner_image = None
-        if context.agent_run.miner_info:
-            miner_name = context.agent_run.miner_info.agent_name
-            miner_image = resolve_agent_image(context.agent_run.miner_info)
-
-        return UITask(
-            taskId=context.task.task_id,
-            agentRunId=context.agent_run.agent_run_id,
-            roundNumber=context.round.round_number
-            or _round_id_to_int(context.round.validator_round_id),
-            website=context.task.url,
-            seed=seed_val,
-            useCase=self._extract_use_case(context.task) or "unknown",
-            prompt=context.task.prompt,
-            status=status,
-            score=score,
-            successRate=success_rate,
-            duration=_safe_int(getattr(evaluation, "evaluation_time", 0.0)),
-            startTime=_parse_iso(start_time),
-            endTime=_parse_iso(end_time),
-            createdAt=_parse_iso(start_time),
-            updatedAt=_parse_iso(end_time),
-            actions=[],  # Omit for performance
             screenshots=[],
             logs=[],
             metadata=None,

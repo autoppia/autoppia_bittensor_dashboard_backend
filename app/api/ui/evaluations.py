@@ -28,6 +28,17 @@ async def _service(session: AsyncSession) -> EvaluationsService:
     return EvaluationsService(session)
 
 
+async def _reset_session_transaction(session: AsyncSession) -> None:
+    """
+    Roll back the current transaction so the connection is released before
+    performing long-running non-DB work (e.g., uploading to S3).
+    """
+    transaction = session.get_transaction()
+    if transaction is None or not transaction.is_active:
+        return
+    await session.rollback()
+
+
 @router.get("", response_model=EvaluationListResponse)
 async def list_evaluations(
     session: AsyncSession = Depends(get_session),
@@ -99,6 +110,7 @@ async def upload_evaluation_gif(
     except ValueError as exc:
         logger.warning("GIF upload requested for unknown evaluation %s", evaluation_id)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await _reset_session_transaction(session)
 
     file_data = await gif.read()
     received_bytes = len(file_data) if file_data else 0
