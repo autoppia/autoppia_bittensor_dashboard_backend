@@ -1237,7 +1237,7 @@ class TasksService:
                     url=screenshot_url,
                     timestamp=timestamp,
                     actionId=None,
-                    description=context.task.screenshot_description,
+                    description=getattr(context.task, "screenshot_description", None),
                 )
             )
 
