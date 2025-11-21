@@ -286,6 +286,7 @@ class AgentRunsService:
             select(func.distinct(RoundORM.round_number))
             .where(RoundORM.round_number.is_not(None))
             .order_by(RoundORM.round_number.desc())
+            .limit(2)  # fuerza a devolver solo 2 registros
         )
         result = await self.session.scalars(stmt)
         return [int(value) for value in result if value is not None]
