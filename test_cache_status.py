@@ -126,4 +126,3 @@ def test_critical_endpoints():
 
 if __name__ == "__main__":
     test_critical_endpoints()
-
