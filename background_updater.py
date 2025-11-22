@@ -83,7 +83,7 @@ def perform_metagraph_update() -> bool:
     """Refresh metagraph data and cache in Redis."""
     try:
         logger.info("🔄 Refreshing metagraph data...")
-        refresh_metagraph_data(force=False)
+        refresh_metagraph_data()
         logger.info("✅ Metagraph data refreshed successfully")
         return True
     except MetagraphError as exc:
