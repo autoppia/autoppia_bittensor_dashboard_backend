@@ -2,9 +2,10 @@ module.exports = {
   apps: [
     {
       name: 'api-leaderboard.autoppia.com',
-      script: 'venv/bin/uvicorn',
-      args: 'app.main:app --host 0.0.0.0 --port 8080 --workers 2 --limit-concurrency 100',
+      script: 'venv/bin/python3',
+      args: 'venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 2 --limit-concurrency 100',
       cwd: '/root/autoppia_bittensor_dashboard_backend',
+      interpreter: 'none',
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
@@ -19,8 +20,8 @@ module.exports = {
     },
     {
       name: 'background-updater.autoppia.com',
-      script: 'venv/bin/python3',
-      args: 'background_updater.py',
+      script: 'background_updater.py',
+      interpreter: 'venv/bin/python3',
       cwd: '/root/autoppia_bittensor_dashboard_backend',
       instances: 1,
       exec_mode: 'fork',
