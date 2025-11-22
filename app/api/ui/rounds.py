@@ -78,7 +78,7 @@ async def _persist_snapshot_from_detail(
         data_size_bytes=data_size,
     )
     session.add(new_snapshot)
-    await session.flush()
+    await session.commit()
     
     logger.info(f"✅ Created snapshot for round {round_number} ({data_size / 1024:.1f} KB)")
 
