@@ -309,13 +309,28 @@ class AgentRunsService:
 
     @rollback_on_error
     async def get_statistics(self, agent_run_id: str) -> Optional[Statistics]:
-        cache_key = f"{AGENT_RUN_STATS_CACHE_PREFIX}:{agent_run_id}"
-
-        cached_stats = redis_cache.get(cache_key)
-        if cached_stats is not None:
-            logger.debug("agent_run_statistics cache hit for %s", agent_run_id)
-            return cached_stats
-
+        """
+        Get statistics for an agent run.
+        
+        Fast path: Read from agent_evaluation_runs.stats_json (0.01s)
+        Slow path: Calculate from DB and save to stats_json (1.6s)
+        """
+        from app.db.models import AgentEvaluationRunORM
+        from sqlalchemy import select, update
+        
+        # Try to read from stats_json column first (fast path)
+        stmt = select(AgentEvaluationRunORM).where(
+            AgentEvaluationRunORM.agent_run_id == agent_run_id
+        )
+        run_row = await self.session.scalar(stmt)
+        
+        if run_row and run_row.stats_json:
+            logger.debug("✅ Stats for %s from stats_json (fast path)", agent_run_id)
+            return Statistics(**run_row.stats_json)
+        
+        # Slow path: calculate from DB
+        logger.debug("🔄 Calculating stats for %s (slow path)", agent_run_id)
+        
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
         except ValueError:
@@ -326,15 +341,12 @@ class AgentRunsService:
         if statistics is None:
             return None
 
-        run_finished = bool(getattr(context.run, "ended_at", None))
-        ttl = AGENT_RUN_STATS_CACHE_TTL if run_finished else AGENT_RUN_STATS_ACTIVE_TTL
-        redis_cache.set(cache_key, statistics, ttl=ttl)
-        logger.debug(
-            "agent_run_statistics cached for %s (ttl=%ss, finished=%s)",
-            agent_run_id,
-            ttl,
-            run_finished,
-        )
+        # Save to stats_json for future requests
+        if run_row:
+            stats_dict = statistics.model_dump(mode='json')
+            run_row.stats_json = stats_dict
+            await self.session.commit()
+            logger.debug("💾 Saved stats_json for %s", agent_run_id)
 
         return statistics
 
