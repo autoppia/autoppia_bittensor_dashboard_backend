@@ -291,7 +291,7 @@ class AgentsService:
             page=page,
             limit=limit,
         )
-
+    
     def _agent_from_snapshot(self, entry: Dict[str, Any]) -> Agent:
         """Map Redis snapshot entry to Agent model (best-effort)."""
         # Defaults and safe conversions
@@ -588,9 +588,9 @@ class AgentsService:
 
         per_agent_success = [
             (
-                (aggregate.successful_runs / aggregate.total_runs * 100.0)
-                if aggregate.total_runs
-                else 0.0
+            (aggregate.successful_runs / aggregate.total_runs * 100.0)
+            if aggregate.total_runs
+            else 0.0
             )
             for aggregate in aggregates.values()
         ]
@@ -762,8 +762,8 @@ class AgentsService:
                 if start_dt
                 else (
                     None
-                    if aggregate.first_seen == float("inf")
-                    else aggregate.first_seen
+                if aggregate.first_seen == float("inf")
+                else aggregate.first_seen
                 )
             )
             requested_end = (
@@ -884,8 +884,8 @@ class AgentsService:
                     round=round_number,
                     responseTime=round(
                         (
-                            sum(bucket_durations) / len(bucket_durations)
-                            if bucket_durations
+                        sum(bucket_durations) / len(bucket_durations)
+                        if bucket_durations
                             else 0.0
                         ),
                         2,
@@ -1216,14 +1216,14 @@ class AgentsService:
         Tuple[int, Optional[datetime]],
     ]:
         stmt = select(AgentEvaluationRunORM).options(
-            selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                RoundORM.miner_snapshots
-            ),
-            selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                RoundORM.validator_snapshots
-            ),
-            selectinload(AgentEvaluationRunORM.task_solutions),
-            selectinload(AgentEvaluationRunORM.evaluation_results),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.miner_snapshots
+                ),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.validator_snapshots
+                ),
+                selectinload(AgentEvaluationRunORM.task_solutions),
+                selectinload(AgentEvaluationRunORM.evaluation_results),
         )
         result = await self.session.scalars(stmt)
         run_rows = list(result)
@@ -1518,14 +1518,14 @@ class AgentsService:
         uid = self._extract_uid(agent_id)
 
         stmt = select(AgentEvaluationRunORM).options(
-            selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                RoundORM.miner_snapshots
-            ),
-            selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                RoundORM.validator_snapshots
-            ),
-            selectinload(AgentEvaluationRunORM.task_solutions),
-            selectinload(AgentEvaluationRunORM.evaluation_results),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.miner_snapshots
+                ),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.validator_snapshots
+                ),
+                selectinload(AgentEvaluationRunORM.task_solutions),
+                selectinload(AgentEvaluationRunORM.evaluation_results),
         )
         if uid is not None:
             stmt = stmt.where(AgentEvaluationRunORM.miner_uid == uid)

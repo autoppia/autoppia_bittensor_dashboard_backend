@@ -30,15 +30,16 @@ from app.api.ui.tasks import router as tasks_router
 from app.api.validator.validator_round import router as validator_rounds_router
 from app.db.session import init_db, get_session
 from app.services.idempotency import get_cache_stats
-from app.services.metagraph_updater_thread import (
-    start_metagraph_updater,
-    stop_metagraph_updater,
-    get_updater_status,
-)
-from app.services.overview_cache_updater import (
-    start_overview_updater,
-    stop_overview_updater,
-)
+# Background updaters are now run as separate PM2 processes
+# from app.services.metagraph_updater_thread import (
+#     start_metagraph_updater,
+#     stop_metagraph_updater,
+#     get_updater_status,
+# )
+# from app.services.overview_cache_updater import (
+#     start_overview_updater,
+#     stop_overview_updater,
+# )
 from app.services.ui.agents_service import (
     AgentsService,
     AgentAggregateCacheWarmupRequired,
@@ -303,14 +304,26 @@ async def debug_aggregates_meta():
 
 @app.get("/debug/background-updater-status")
 async def background_updater_status():
-    """Get the status of the background updater thread (metagraph + price)."""
-    return get_updater_status()
+    """Get the status of the background updater (now runs as separate PM2 process)."""
+    from app.services.metagraph_service import get_last_update_time
+    from app.services.redis_cache import redis_cache
+    
+    last_update = get_last_update_time()
+    age_minutes = (time.time() - last_update) / 60 if last_update else None
+    
+    return {
+        "running": "Check PM2: pm2 list | grep background-updater",
+        "last_update": last_update,
+        "age_minutes": age_minutes,
+        "redis_available": redis_cache.is_available(),
+        "note": "Background updater runs as separate PM2 process (see ecosystem.config.js)",
+    }
 
 
 @app.get("/debug/metagraph-status")
 async def metagraph_status():
     """Get the status of metagraph data (deprecated, use /debug/background-updater-status)."""
-    return get_updater_status()
+    return await background_updater_status()
 
 
 @app.post("/debug/metagraph-force-refresh")
@@ -340,23 +353,13 @@ async def on_startup():
         logger.info("SQL schema ready")
         logger.info(f"API server ready on {settings.HOST}:{settings.PORT}")
         logger.info("API documentation available at /docs")
-        # NOTE: Block refresher is now part of the metagraph_updater thread (consolidated)
-
-        # Start background updater threads
-        try:
-            start_metagraph_updater()
-            logger.info(
-                "✅ Background data updater thread started (metagraph + price + block)"
-            )
-        except Exception as exc:
-            logger.warning("Could not start background updater: %s", exc)
-
-        # Start overview cache warmer (uses simple HTTP requests, no asyncio issues)
-        try:
-            start_overview_updater()
-            logger.info("✅ Overview cache warmer thread started")
-        except Exception as exc:
-            logger.warning("Could not start overview cache warmer: %s", exc)
+        # NOTE: Background updaters (metagraph, price, block) are now run as a separate PM2 process
+        # See background_updater.py and ecosystem.config.js
+        # This prevents multiprocessing workers from saturating the API process
+        logger.info("ℹ️  Background updaters disabled (run as separate PM2 process)")
+        
+        # Overview cache warmer is also disabled - use external cron/PM2 if needed
+        logger.info("ℹ️  Overview cache warmer disabled (use external process if needed)")
 
     except Exception as e:
         logger.error(f"Failed to initialize application: {e}", exc_info=True)
@@ -367,18 +370,9 @@ async def on_startup():
 async def on_shutdown():
     logger.info("Shutting down Autoppia IWA Platform API...")
 
-    # Stop background updaters
-    try:
-        stop_metagraph_updater()
-    except Exception:
-        pass
-
-    try:
-        stop_overview_updater()
-    except Exception:
-        pass
-
-    # NOTE: Block refresher is part of metagraph_updater (already stopped above)
+    # Background updaters are now run as separate PM2 processes
+    # No need to stop them here
+    logger.info("ℹ️  Background updaters run as separate processes (no cleanup needed)")
 
 
 # Global exception handler
