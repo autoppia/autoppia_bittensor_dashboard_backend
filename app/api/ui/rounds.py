@@ -78,7 +78,7 @@ async def _persist_snapshot_from_detail(
         data_size_bytes=data_size,
     )
     session.add(new_snapshot)
-    await session.commit()
+    await session.flush()
     
     logger.info(f"✅ Created snapshot for round {round_number} ({data_size / 1024:.1f} KB)")
 
@@ -273,8 +273,12 @@ async def get_round(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     # Persist snapshot para futuros requests si el round ya terminó.
+    # Use a separate session to avoid interfering with the main request transaction
     try:
-        await _persist_snapshot_from_detail(session, round_id, detail_data)
+        from app.db.session import AsyncSessionLocal
+        async with AsyncSessionLocal() as snapshot_session:
+            await _persist_snapshot_from_detail(snapshot_session, round_id, detail_data)
+            await snapshot_session.commit()
     except Exception:  # noqa: BLE001
         logger.exception("Failed to persist snapshot for round %s", round_id)
 
