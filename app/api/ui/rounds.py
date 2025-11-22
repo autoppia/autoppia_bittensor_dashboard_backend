@@ -215,72 +215,98 @@ async def get_round_basic(
 
 
 @router.get("/{round_id}")
-@cache("round_detail", ttl=600)  # Cache 10 minutes - pre-warmed by cron
 async def get_round(
     round_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """
-    Get complete round details.
-    For completed rounds, returns from materialized snapshot (ultra fast).
-    For active rounds, computes from live data.
+    Get complete round details with intelligent caching:
+    
+    1. For FINISHED rounds: Read from round_snapshots table (PostgreSQL) - instant, permanent
+    2. For ACTIVE rounds: Cache in Redis (1 day TTL) - fast, temporary
+    3. If no snapshot exists: Calculate, save to round_snapshots, return
+    
+    This ensures:
+    - Historical rounds load instantly from DB (no Redis needed)
+    - Current round cached in Redis (updates frequently)
+    - Auto-caching on first request
     """
     from app.db.models import RoundSnapshotORM
+    from app.services.redis_cache import redis_cache
     import logging
 
     logger = logging.getLogger(__name__)
 
+    # Parse round_number
     round_number: Optional[int] = None
     try:
         round_number = int(round_id)
     except ValueError:
-        round_number = None
-
-    snapshot = None
-    if round_number is not None:
-        snapshot = await session.get(RoundSnapshotORM, round_number)
-    else:
-        # Resolver validator_round_id -> round_number para poder leer snapshot
+        # Resolver validator_round_id -> round_number
         from app.db.models import RoundORM
-
         round_number = await session.scalar(
             select(RoundORM.round_number).where(RoundORM.validator_round_id == round_id)
         )
-        if round_number:
-            snapshot = await session.get(RoundSnapshotORM, round_number)
+
+    # Try to get from PostgreSQL snapshot first (for finished rounds)
+    snapshot = None
+    if round_number is not None:
+        snapshot = await session.get(RoundSnapshotORM, round_number)
 
     if snapshot and snapshot.snapshot_json:
-        logger.info("✅ Serving round %s from snapshot (fast path)", round_number)
+        logger.info("✅ Serving round %s from PostgreSQL snapshot (instant)", round_number)
         return {
             "success": True,
             "data": {"round": snapshot.snapshot_json},
         }
-    elif round_number:
-        logger.info(
-            "ℹ️ Snapshot for round %s missing, falling back to live aggregation",
-            round_number,
-        )
-    else:
-        logger.info(
-            "ℹ️ Non numeric round id %s; falling back to live aggregation", round_id
-        )
 
-    # Fallback al método tradicional (más lento)
+    # Check if it's the current/active round - use Redis cache (1 day TTL)
     service = await _service(session)
+    current_round_overview = await service.get_current_round_overview()
+    current_round_number = current_round_overview.get("round") if current_round_overview else None
+    is_current_round = (round_number == current_round_number)
+
+    if is_current_round:
+        # Try Redis cache for current round (1 day TTL)
+        cache_key = f"round:current:{round_number}"
+        cached_data = redis_cache.get(cache_key)
+        if cached_data:
+            logger.info("✅ Serving current round %s from Redis cache", round_number)
+            return {
+                "success": True,
+                "data": {"round": cached_data},
+            }
+
+    # Calculate from DB (slow path)
+    logger.info("🔄 Calculating round %s from DB...", round_id)
     try:
         detail_data = await service.get_round(round_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    # Persist snapshot para futuros requests si el round ya terminó.
-    # Use a separate session to avoid interfering with the main request transaction
-    try:
-        from app.db.session import AsyncSessionLocal
-        async with AsyncSessionLocal() as snapshot_session:
-            await _persist_snapshot_from_detail(snapshot_session, round_id, detail_data)
-            await snapshot_session.commit()
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to persist snapshot for round %s", round_id)
+    # Save based on round status
+    round_status = detail_data.get("status", "")
+    is_finished = round_status in ("finished", "completed", "complete", "evaluating_finished")
+
+    if is_finished and round_number:
+        # Save to PostgreSQL snapshot (permanent)
+        logger.info("💾 Saving finished round %s to PostgreSQL snapshot...", round_number)
+        try:
+            from app.db.session import AsyncSessionLocal
+            async with AsyncSessionLocal() as snapshot_session:
+                await _persist_snapshot_from_detail(snapshot_session, round_id, detail_data)
+                await snapshot_session.commit()
+                logger.info("✅ Round %s snapshot saved to PostgreSQL", round_number)
+        except Exception:
+            logger.exception("Failed to persist snapshot for round %s", round_id)
+    elif is_current_round and round_number:
+        # Cache current round in Redis (1 day TTL)
+        logger.info("💾 Caching current round %s in Redis (1 day)...", round_number)
+        try:
+            redis_cache.set(f"round:current:{round_number}", detail_data, ttl=86400)  # 1 day
+            logger.info("✅ Current round %s cached in Redis", round_number)
+        except Exception:
+            logger.exception("Failed to cache current round %s", round_number)
 
     return {
         "success": True,
