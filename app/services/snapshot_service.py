@@ -37,68 +37,12 @@ class SnapshotService:
         If payload is not provided, it will be reconstructed from the DB.
         """
         try:
-            logger.info(f"🔄 Materializing snapshot for round {round_number}...")
+            logger.info(f"🔄 Materializing COMPLETE snapshot for round {round_number}...")
             
-            # 1. Get basic round info (needed for status, dates)
-            stmt = select(ValidatorRoundORM).where(ValidatorRoundORM.round_number == round_number)
-            round_row = await self.session.scalar(stmt)
-            
-            if not round_row:
-                logger.warning(f"Round {round_number} not found in DB, cannot materialize.")
-                return None
-
-            # 2. Fetch aggregated data
-            miners_data = await self._get_miners_data(str(round_number))
-            validators_data = await self._get_validators_data(str(round_number))
-            stats_data = await self._get_statistics_data(str(round_number))
-
-            # 3. Construct snapshot JSON
-            # Prefer payload data if available (it's fresh from the validator request)
-            # Fallback to DB metadata
-            
-            status = "completed"
-            ended_at = 0.0
-            summary = {}
-            winners = []
-            weights = {}
-
-            if payload:
-                status = payload.status or "completed"
-                ended_at = payload.ended_at or 0.0
-                summary = payload.summary or {}
-                winners = [
-                    {
-                        "miner_uid": w.get("miner_uid") if isinstance(w, dict) else getattr(w, "miner_uid", None),
-                        "miner_hotkey": w.get("miner_hotkey") if isinstance(w, dict) else getattr(w, "miner_hotkey", None),
-                        "rank": w.get("rank") if isinstance(w, dict) else getattr(w, "rank", None),
-                        "score": float(w.get("score", 0.0)) if isinstance(w, dict) else float(getattr(w, "score", 0.0)),
-                    }
-                    for w in payload.winners
-                ]
-                weights = payload.weights
-            else:
-                # Fallback to DB
-                status = round_row.status or "completed"
-                ended_at = float(round_row.ended_at or 0.0)
-                summary = round_row.summary or {}
-                if round_row.meta:
-                    winners = round_row.meta.get("winners", [])
-                    weights = round_row.meta.get("weights", {})
-
-            snapshot_json = {
-                "roundNumber": round_number,
-                "status": status,
-                "startedAt": float(round_row.started_at),
-                "endedAt": float(ended_at),
-                "totalMiners": len(miners_data.get("miners", [])),
-                "totalValidators": len(validators_data.get("validators", [])),
-                "tasksCompleted": summary.get("tasks_completed", 0),
-                "miners": miners_data,
-                "validators": validators_data,
-                "statistics": stats_data,
-                "winners": winners,
-                "weights": weights,
-            }
+            # Use RoundsService.get_round() to get the COMPLETE data
+            # This includes all validatorRounds with tasks, evaluations, miners, etc.
+            # Same data structure that the API endpoint returns
+            snapshot_json = await self.rounds_service.get_round(round_number)
 
             # Calculate size
             json_str = json.dumps(snapshot_json)
