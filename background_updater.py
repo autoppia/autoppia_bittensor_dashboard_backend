@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 METAGRAPH_UPDATE_INTERVAL = 30 * 60  # 30 minutes
 PRICE_UPDATE_INTERVAL = 5 * 60  # 5 minutes
 BLOCK_UPDATE_INTERVAL = 30  # 30 seconds
+ROUND_CACHE_INTERVAL = 4 * 60 * 60  # 4 hours
 
 # Redis keys for price
 REDIS_KEY_SUBNET_PRICE = "subnet:price"
@@ -94,6 +95,56 @@ def perform_metagraph_update() -> bool:
         return False
 
 
+def cache_recent_rounds() -> bool:
+    """
+    Cache recent completed rounds by calling the API endpoint.
+    This pre-warms the round_snapshots table for faster frontend loading.
+    """
+    try:
+        import requests
+        from app.services.chain_state import get_current_block_estimate
+        from app.services.round_calc import compute_round_number
+        
+        # Get current round number
+        current_block = get_current_block_estimate()
+        if not current_block:
+            logger.warning("⚠️  Could not get current block for round caching")
+            return False
+        
+        current_round = compute_round_number(current_block)
+        
+        # Cache last 3 completed rounds
+        rounds_to_cache = [current_round - 1, current_round - 2, current_round - 3]
+        
+        cached_count = 0
+        for round_num in rounds_to_cache:
+            if round_num <= 0:
+                continue
+            
+            try:
+                # Call the API endpoint which will create the snapshot if missing
+                response = requests.get(
+                    f"http://localhost:8080/api/v1/rounds/{round_num}",
+                    timeout=60
+                )
+                if response.status_code == 200:
+                    logger.info(f"✅ Cached round {round_num}")
+                    cached_count += 1
+                else:
+                    logger.warning(f"⚠️  Failed to cache round {round_num}: HTTP {response.status_code}")
+            except Exception as e:
+                logger.error(f"❌ Error caching round {round_num}: {e}")
+        
+        if cached_count > 0:
+            logger.info(f"✅ Cached {cached_count} rounds successfully")
+            return True
+        return False
+        
+    except Exception as exc:
+        logger.error(f"❌ Failed to cache rounds: {exc}")
+        return False
+
+
 def main():
     """Main loop for background updates."""
     logger.info("=" * 80)
@@ -101,6 +152,7 @@ def main():
     logger.info(f"   - Metagraph update interval: {METAGRAPH_UPDATE_INTERVAL / 60:.0f} minutes")
     logger.info(f"   - Price update interval: {PRICE_UPDATE_INTERVAL / 60:.0f} minutes")
     logger.info(f"   - Block update interval: {BLOCK_UPDATE_INTERVAL} seconds")
+    logger.info(f"   - Round cache interval: {ROUND_CACHE_INTERVAL / 3600:.0f} hours")
     logger.info(f"   - Metagraph cache TTL: {METAGRAPH_CACHE_TTL / 60:.0f} minutes")
     logger.info("=" * 80)
 
@@ -143,9 +195,11 @@ def main():
     metagraph_update_count = 0
     price_update_count = 0
     block_update_count = 0
+    round_cache_count = 0
     last_metagraph_update = last_update or time.time()
     last_price_update = time.time()
     last_block_update = time.time()
+    last_round_cache = time.time()
 
     # Main update loop
     try:
@@ -164,6 +218,10 @@ def main():
             time_since_block = now - last_block_update
             block_due = time_since_block >= BLOCK_UPDATE_INTERVAL
 
+            # Check if round cache needs update
+            time_since_round_cache = now - last_round_cache
+            round_cache_due = time_since_round_cache >= ROUND_CACHE_INTERVAL
+
             # Perform updates if due
             if metagraph_due:
                 metagraph_update_count += 1
@@ -180,23 +238,30 @@ def main():
                 fetch_and_cache_block()
                 last_block_update = now
 
+            if round_cache_due:
+                round_cache_count += 1
+                cache_recent_rounds()
+                last_round_cache = now
+
             # Calculate next wakeup time (whichever comes first)
             time_until_metagraph = METAGRAPH_UPDATE_INTERVAL - time_since_metagraph
             time_until_price = PRICE_UPDATE_INTERVAL - time_since_price
             time_until_block = BLOCK_UPDATE_INTERVAL - time_since_block
+            time_until_round_cache = ROUND_CACHE_INTERVAL - time_since_round_cache
             time_until_next = min(
-                time_until_metagraph, time_until_price, time_until_block, 10
+                time_until_metagraph, time_until_price, time_until_block, time_until_round_cache, 10
             )  # Max 10s sleep
 
             if time_until_next > 0:
                 time.sleep(time_until_next)
 
             # Log periodic status
-            total_updates = metagraph_update_count + price_update_count + block_update_count
+            total_updates = metagraph_update_count + price_update_count + block_update_count + round_cache_count
             if total_updates > 0 and total_updates % 50 == 0:
                 logger.info(
                     f"📊 Updater status: {metagraph_update_count} metagraph, "
-                    f"{price_update_count} price, {block_update_count} block updates"
+                    f"{price_update_count} price, {block_update_count} block, "
+                    f"{round_cache_count} round cache updates"
                 )
 
     except KeyboardInterrupt:
@@ -210,6 +275,7 @@ def main():
         logger.info(f"   - Metagraph updates performed: {metagraph_update_count}")
         logger.info(f"   - Price updates performed: {price_update_count}")
         logger.info(f"   - Block updates performed: {block_update_count}")
+        logger.info(f"   - Round cache updates performed: {round_cache_count}")
         logger.info("=" * 80)
 
 
