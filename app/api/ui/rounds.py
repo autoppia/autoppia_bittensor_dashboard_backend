@@ -36,6 +36,54 @@ async def _service(session: AsyncSession) -> RoundsService:
     return RoundsService(session)
 
 
+async def _persist_snapshot_from_detail(
+    session: AsyncSession,
+    round_id: str,
+    detail_data: dict,
+) -> None:
+    """
+    Persist a round snapshot if the round is completed.
+    This is called automatically when a round is requested and no snapshot exists.
+    """
+    from app.db.models import RoundSnapshotORM, ValidatorRoundORM
+    
+    # Only persist if round is completed
+    round_status = detail_data.get("status", "")
+    if round_status not in ("finished", "completed", "complete"):
+        logger.debug(f"Round {round_id} not finished ({round_status}), skipping snapshot")
+        return
+    
+    # Extract round_number
+    round_number = detail_data.get("roundNumber") or detail_data.get("round")
+    if not round_number or not isinstance(round_number, int):
+        logger.warning(f"Cannot persist snapshot for {round_id}: no valid round_number")
+        return
+    
+    # Check if snapshot already exists
+    existing = await session.get(RoundSnapshotORM, round_number)
+    if existing:
+        logger.debug(f"Snapshot for round {round_number} already exists, skipping")
+        return
+    
+    # Create snapshot
+    import json
+    snapshot_json = detail_data
+    json_str = json.dumps(snapshot_json, default=str)
+    data_size = len(json_str.encode('utf-8'))
+    
+    new_snapshot = RoundSnapshotORM(
+        round_number=round_number,
+        snapshot_json=snapshot_json,
+        snapshot_version=1,
+        data_size_bytes=data_size,
+    )
+    session.add(new_snapshot)
+    await session.flush()
+    
+    logger.info(f"✅ Created snapshot for round {round_number} ({data_size / 1024:.1f} KB)")
+
+
+
 @router.get("/ids")
 async def list_round_ids(
     session: AsyncSession = Depends(get_session),
