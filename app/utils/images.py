@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from hashlib import sha256
 from typing import Optional
 from urllib.parse import urlparse
 
 from app.config import settings
 from app.models.core import MinerInfo
+
+# Silence DEBUG logs from image resolution
+logging.getLogger(__name__).setLevel(logging.WARNING)
 
 DEFAULT_VALIDATOR_IMAGE = "/validators/Other.png"
 VALIDATOR_IMAGE_OVERRIDES = {
