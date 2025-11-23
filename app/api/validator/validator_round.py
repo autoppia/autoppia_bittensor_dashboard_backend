@@ -1153,16 +1153,16 @@ async def add_evaluation(
                     },
                 )
 
-        # Persist inside a short transaction
-        # Session has transaction
-            await service.upsert_evaluation_bundle(
-                validator_round_id=validator_round_id,
-                agent_run_id=agent_run_id,
-                task=task,
-                task_solution=task_solution,
-                evaluation=evaluation,
-                evaluation_result=evaluation_result,
-            )
+        # Persist and commit
+        await service.upsert_evaluation_bundle(
+            validator_round_id=validator_round_id,
+            agent_run_id=agent_run_id,
+            task=task,
+            task_solution=task_solution,
+            evaluation=evaluation,
+            evaluation_result=evaluation_result,
+        )
+        await session.commit()
     except DuplicateIdentifierError as exc:
         # Conflicting duplicate (belongs to another round/run), surface as 409
         raise HTTPException(
