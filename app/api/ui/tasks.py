@@ -92,6 +92,7 @@ async def search_tasks(
     data = await service.search_tasks(
         page=page,
         limit=limit,
+        include_details=includeDetails,
         agent_run_id=agentRunId,
         agent_id=agentId,
         validator_id=validatorId,
@@ -105,7 +106,6 @@ async def search_tasks(
         end_date=endDate,
         sort_by=sortBy,
         sort_order=sortOrder,
-        include_details=includeDetails,
     )
     return {"success": True, "data": data}
 
