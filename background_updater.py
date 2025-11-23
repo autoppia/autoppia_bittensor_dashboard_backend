@@ -170,8 +170,9 @@ def main():
         time.sleep(5)
 
     if not redis_cache.is_available():
-        logger.error("❌ Redis not available after timeout, exiting")
-        sys.exit(1)
+        logger.error("❌ Redis not available after timeout, will retry in 30s")
+        time.sleep(30)
+        return
 
     # Check if there's existing data
     last_update = get_last_update_time()
@@ -268,7 +269,6 @@ def main():
         logger.info("🛑 Received shutdown signal")
     except Exception as exc:
         logger.error(f"❌ Fatal error in updater loop: {exc}", exc_info=True)
-        sys.exit(1)
     finally:
         logger.info("=" * 80)
         logger.info("🛑 Background Data Updater Stopped")
@@ -279,6 +279,13 @@ def main():
         logger.info("=" * 80)
 
 
-if __name__ == "__main__":
-    main()
+def run_forever():
+    """Keep the updater alive even if the main loop exits unexpectedly."""
+    while True:
+        main()
+        logger.warning("⚠️  Updater loop exited; restarting in 30s")
+        time.sleep(30)
 
+
+if __name__ == "__main__":
+    run_forever()
