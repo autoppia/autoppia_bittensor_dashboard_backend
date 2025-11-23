@@ -36,6 +36,7 @@ from app.utils.images import resolve_validator_image
 from app.services.service_utils import rollback_on_error
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)  # Reduce verbosity
 
 
 class ValidatorState(Enum):
