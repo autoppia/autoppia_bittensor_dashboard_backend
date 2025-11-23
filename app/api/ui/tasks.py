@@ -4,12 +4,11 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.services.ui.tasks_service import TasksService
-from app.services.redis_cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -78,21 +77,11 @@ async def search_tasks(
     endDate: Optional[datetime] = Query(None),
     sortBy: str = Query("startTime"),
     sortOrder: str = Query("desc"),
-    includeDetails: bool = Query(
-        False, description="Include actions, screenshots, logs (SLOW)"
-    ),
 ):
-    """
-    Search tasks with optional detailed data.
-
-    Set includeDetails=false for fast searches (dropdowns, lists).
-    Set includeDetails=true for full task details (task detail pages).
-    """
     service = await _service(session)
     data = await service.search_tasks(
         page=page,
         limit=limit,
-        include_details=includeDetails,
         agent_run_id=agentRunId,
         agent_id=agentId,
         validator_id=validatorId,
@@ -110,106 +99,7 @@ async def search_tasks(
     return {"success": True, "data": data}
 
 
-@router.get("/with-solutions")
-async def get_tasks_with_solutions(
-    session: AsyncSession = Depends(get_session),
-    key: str = Query(..., description="API key required"),
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(50, ge=1, le=500, description="Items per page"),
-    taskId: Optional[str] = Query(None, description="Filter by task ID"),
-    website: Optional[str] = Query(
-        None, description="Filter by website (e.g., 'autocinema', 'autobooks')"
-    ),
-    useCase: Optional[str] = Query(
-        None, description="Filter by use case (e.g., 'FILM DETAIL')"
-    ),
-    minerUid: Optional[int] = Query(None, description="Filter by miner UID"),
-    validatorId: Optional[str] = Query(None, description="Filter by validator ID"),
-    roundId: Optional[int] = Query(None, description="Filter by round number"),
-    success: Optional[bool] = Query(
-        None, description="Filter by result: true (score=1), false (score=0)"
-    ),
-    sort: str = Query(
-        "created_at_desc",
-        description="Sort: created_at_desc, created_at_asc, score_desc, score_asc",
-    ),
-):
-    """
-    Get tasks with solutions for RL training.
-
-    Response structure:
-        task:
-            - taskId, website, useCase, intent
-            - startUrl, requiredUrl (with seed parameter)
-            - createdAt
-        solution:
-            - taskSolutionId
-            - actions (array of actions taken)
-            - trajectory (array of state transitions)
-        evaluation:
-            - evaluationResultId
-            - score (0-100)
-            - passed (true/false)
-        agentRun:
-            - agentRunId, minerUid, minerHotkey
-            - validatorUid, validatorHotkey
-
-    Filters:
-        taskId: Specific task ID
-        website: Project (autocinema, autobooks)
-        useCase: Use case (FILM DETAIL, SEARCH BOOK)
-        minerUid: Miner UID
-        validatorId: Validator hotkey
-        roundId: Round number
-        success: true (passed), false (failed), null (all)
-        sort: created_at_desc, created_at_asc, score_desc, score_asc
-
-    Examples:
-        ?key=AIagent2025&website=autocinema&success=true&limit=500
-        ?key=AIagent2025&minerUid=42
-        ?key=AIagent2025&useCase=FILM%20DETAIL&success=false
-    """
-    # Validate API key
-    if key != "AIagent2025":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key"
-        )
-
-    # Parse sort
-    sort_mapping = {
-        "created_at_desc": ("created_at", "desc"),
-        "created_at_asc": ("created_at", "asc"),
-        "score_desc": ("score", "desc"),
-        "score_asc": ("score", "asc"),
-    }
-    sort_by, sort_order = sort_mapping.get(sort, ("created_at", "desc"))
-
-    # Convert success to status
-    status_filter = None
-    if success is True:
-        status_filter = "completed"  # score = 1
-    elif success is False:
-        status_filter = "failed"  # score = 0
-
-    service = await _service(session)
-    data = await service.get_tasks_with_solutions(
-        page=page,
-        limit=limit,
-        task_id=taskId,
-        website=website,
-        use_case=useCase,
-        miner_uid=minerUid,
-        validator_id=validatorId,
-        round_id=roundId,
-        status=status_filter,
-        sort_by=sort_by,
-        sort_order=sort_order,
-    )
-    return {"success": True, "data": data}
-
-
 @router.get("/{task_id}")
-@cache("task", ttl=300)  # Cache 5 minutes
 async def get_task(task_id: str, session: AsyncSession = Depends(get_session)):
     service = await _service(session)
     try:
@@ -221,7 +111,6 @@ async def get_task(task_id: str, session: AsyncSession = Depends(get_session)):
 
 
 @router.get("/{task_id}/details")
-@cache("task_details", ttl=300)  # Cache 5 minutes
 async def get_task_details(task_id: str, session: AsyncSession = Depends(get_session)):
     service = await _service(session)
     try:
@@ -244,10 +133,7 @@ async def get_task_personas(task_id: str, session: AsyncSession = Depends(get_se
 
 
 @router.get("/{task_id}/statistics")
-@cache("task_statistics", ttl=180)  # Cache 3 minutes
-async def get_task_statistics(
-    task_id: str, session: AsyncSession = Depends(get_session)
-):
+async def get_task_statistics(task_id: str, session: AsyncSession = Depends(get_session)):
     service = await _service(session)
     try:
         context = await service.get_task(task_id)
@@ -271,15 +157,11 @@ async def get_task_actions(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     actions = service.build_actions(context)
     total = len(actions)
-
+    
     # Count total successful and failed actions (not just paginated)
-    success_count = sum(1 for action in actions if getattr(action, "success", False))
-    fail_count = sum(
-        1
-        for action in actions
-        if getattr(action, "error", False) or not getattr(action, "success", False)
-    )
-
+    success_count = sum(1 for action in actions if getattr(action, 'success', False))
+    fail_count = sum(1 for action in actions if getattr(action, 'error', False) or not getattr(action, 'success', False))
+    
     start = (page - 1) * limit
     end = start + limit
     paginated = actions[start:end]
@@ -297,9 +179,7 @@ async def get_task_actions(
 
 
 @router.get("/{task_id}/screenshots")
-async def get_task_screenshots(
-    task_id: str, session: AsyncSession = Depends(get_session)
-):
+async def get_task_screenshots(task_id: str, session: AsyncSession = Depends(get_session)):
     service = await _service(session)
     try:
         context = await service.get_task(task_id)
@@ -342,10 +222,7 @@ async def get_task_timeline(task_id: str, session: AsyncSession = Depends(get_se
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     timeline = service.build_timeline(context)
-    return {
-        "success": True,
-        "data": {"timeline": [item.model_dump() for item in timeline]},
-    }
+    return {"success": True, "data": {"timeline": [item.model_dump() for item in timeline]}}
 
 
 @router.get("/{task_id}/metrics")

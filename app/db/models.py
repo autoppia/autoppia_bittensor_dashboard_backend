@@ -349,7 +349,6 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    stats_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="agent_runs"
