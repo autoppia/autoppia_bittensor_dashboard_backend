@@ -1197,16 +1197,28 @@ class TasksService:
         return datetime.fromtimestamp(base_ts + offset, tz=timezone.utc)
 
     def _resolve_agent_run_id(self, task_row: TaskORM) -> Optional[str]:
-        for evaluation_row in task_row.evaluation_results or []:
-            if evaluation_row.agent_run_id:
-                return evaluation_row.agent_run_id
-        for solution_row in task_row.task_solutions or []:
-            if solution_row.agent_run_id:
-                return solution_row.agent_run_id
+        # Try to get from data first (fast, no lazy loading)
         data = task_row.data or {}
         agent_run_id = data.get("agent_run_id")
-        if agent_run_id is None:
-            return None
+        if agent_run_id:
+            return agent_run_id
+        
+        # Try from relationships only if they're already loaded
+        try:
+            for evaluation_row in task_row.evaluation_results or []:
+                if evaluation_row.agent_run_id:
+                    return evaluation_row.agent_run_id
+        except:
+            pass
+        
+        try:
+            for solution_row in task_row.task_solutions or []:
+                if solution_row.agent_run_id:
+                    return solution_row.agent_run_id
+        except:
+            pass
+        
+        return None
         return str(agent_run_id)
 
     async def _build_context(
