@@ -41,6 +41,7 @@ from app.services.round_calc import compute_boundaries_for_round
 from app.services.metagraph_service import get_validator_data, MetagraphError
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)  # Reduce verbosity
 
 
 @dataclass
