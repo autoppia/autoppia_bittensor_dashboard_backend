@@ -20,6 +20,8 @@ except ImportError:
 
 from app.config import settings
 logger = logging.getLogger(__name__)
+# Reduce cache hit verbosity - only show warnings/errors
+logger.setLevel(logging.WARNING)
 
 
 class RedisCache:
