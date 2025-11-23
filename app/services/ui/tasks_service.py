@@ -190,16 +190,20 @@ class TasksService:
         sort_order: str = "desc",
         include_facets: bool = False,
     ) -> Dict[str, object]:
-        # Always load relationships (needed to find agent_run_id)
-        # But we'll skip building actions/screenshots if include_details=False
-        stmt = (
-            select(TaskORM)
-            .options(
-                selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluation_results),
+        # Only load relationships if we need details
+        # For basic list, we skip solutions/evaluations (much faster)
+        if include_details:
+            stmt = (
+                select(TaskORM)
+                .options(
+                    selectinload(TaskORM.task_solutions),
+                    selectinload(TaskORM.evaluation_results),
+                )
+                .order_by(TaskORM.id.desc())
             )
-            .order_by(TaskORM.id.desc())
-        )
+        else:
+            # Fast path: no relationships loaded
+            stmt = select(TaskORM).order_by(TaskORM.id.desc())
 
         # Materialize rows (and selectinloaded relationships) eagerly to avoid
         # AsyncSession lazy-loads triggering MissingGreenlet later.
