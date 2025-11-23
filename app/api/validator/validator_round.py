@@ -285,6 +285,14 @@ async def _legacy_to_add_evaluation_request(
 
     task_data = dict(payload.task)
     task_data.setdefault("validator_round_id", validator_round_id)
+    
+    # Remove obsolete fields that validators might still send
+    obsolete_fields = ['html', 'clean_html', 'sequence', 'interactive_elements', 
+                       'screenshot', 'screenshot_description', 'milestones', 
+                       'success_criteria', 'should_record', 'scope']
+    for field in obsolete_fields:
+        task_data.pop(field, None)
+    
     task = Task(**task_data)
 
     task_solution_data = dict(payload.task_solution)
@@ -294,6 +302,10 @@ async def _legacy_to_add_evaluation_request(
     if miner_uid is not None:
         task_solution_data.setdefault("miner_uid", miner_uid)
         task_solution_data.setdefault("miner_hotkey", miner_hotkey)
+    
+    # Remove obsolete fields from task_solution
+    task_solution_data.pop('recording', None)
+    task_solution_data.pop('meta', None)
 
     # Normalize IWAP raw actions into core {type, attributes} shape
     try:
