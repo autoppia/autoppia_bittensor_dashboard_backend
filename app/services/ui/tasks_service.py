@@ -174,7 +174,6 @@ class TasksService:
         self,
         page: int,
         limit: int,
-        include_details: bool = False,
         agent_run_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         validator_id: Optional[str] = None,
@@ -190,25 +189,16 @@ class TasksService:
         sort_order: str = "desc",
         include_facets: bool = False,
     ) -> Dict[str, object]:
-        # Only load relationships if we need details
-        # For basic list, we skip solutions/evaluations (much faster)
-        if include_details:
-            stmt = (
-                select(TaskORM)
-                .options(
-                    selectinload(TaskORM.task_solutions),
-                    selectinload(TaskORM.evaluation_results),
-                )
-                .order_by(TaskORM.id.desc())
+        stmt = (
+            select(TaskORM)
+            .options(
+                selectinload(TaskORM.task_solutions),
+                selectinload(TaskORM.evaluation_results),
             )
-        else:
-            # Fast path: no relationships loaded
-            stmt = select(TaskORM).order_by(TaskORM.id.desc())
+            .order_by(TaskORM.id.desc())
+        )
 
-        # Materialize rows (and selectinloaded relationships) eagerly to avoid
-        # AsyncSession lazy-loads triggering MissingGreenlet later.
-        task_rows_result = await self.session.scalars(stmt)
-        task_rows = task_rows_result.unique().all()
+        task_rows = await self.session.scalars(stmt)
 
         query_lower = query.lower() if query else None
         start_ts = _to_timestamp(start_date)
@@ -256,7 +246,7 @@ class TasksService:
                 if use_case_name != use_case:
                     continue
 
-            ui_task = self._build_ui_task(context, include_details=include_details)
+            ui_task = self._build_ui_task(context)
             evaluation_score = (
                 context.evaluation.final_score if context.evaluation else 0.0
             )
@@ -521,7 +511,7 @@ class TasksService:
                 continue
             contexts.append(context)
 
-        compared_tasks = [self._build_ui_task(ctx, include_details=False) for ctx in contexts]
+        compared_tasks = [self._build_ui_task(ctx) for ctx in contexts]
         best = max(compared_tasks, key=lambda t: t.score, default=None)
         fastest = min(compared_tasks, key=lambda t: t.duration, default=None)
         most_actions = max(
@@ -543,7 +533,7 @@ class TasksService:
         return CompareTasksResponse(tasks=compared_tasks, comparison=comparison)
 
     def build_task_detail(self, context: TaskContext) -> TaskDetails:
-        task = self._build_ui_task(context, include_details=True)
+        task = self._build_ui_task(context)
         performance = TaskPerformance(
             totalActions=len(task.actions or []),
             successfulActions=len([a for a in task.actions or [] if a.success]),
@@ -1202,28 +1192,16 @@ class TasksService:
         return datetime.fromtimestamp(base_ts + offset, tz=timezone.utc)
 
     def _resolve_agent_run_id(self, task_row: TaskORM) -> Optional[str]:
-        # Try to get from data first (fast, no lazy loading)
+        for evaluation_row in task_row.evaluation_results or []:
+            if evaluation_row.agent_run_id:
+                return evaluation_row.agent_run_id
+        for solution_row in task_row.task_solutions or []:
+            if solution_row.agent_run_id:
+                return solution_row.agent_run_id
         data = task_row.data or {}
         agent_run_id = data.get("agent_run_id")
-        if agent_run_id:
-            return agent_run_id
-        
-        # Try from relationships only if they're already loaded
-        try:
-            for evaluation_row in task_row.evaluation_results or []:
-                if evaluation_row.agent_run_id:
-                    return evaluation_row.agent_run_id
-        except:
-            pass
-        
-        try:
-            for solution_row in task_row.task_solutions or []:
-                if solution_row.agent_run_id:
-                    return solution_row.agent_run_id
-        except:
-            pass
-        
-        return None
+        if agent_run_id is None:
+            return None
         return str(agent_run_id)
 
     async def _build_context(
@@ -1304,13 +1282,13 @@ class TasksService:
             evaluation=evaluation_model,
         )
 
-    def _build_ui_task(self, context: TaskContext, include_details: bool = False) -> UITask:
+    def _build_ui_task(self, context: TaskContext) -> UITask:
         evaluation = context.evaluation
         score = evaluation.final_score if evaluation else 0.0
         status = TaskStatus.COMPLETED if score >= 0.5 else TaskStatus.FAILED
         success_rate = int(score * 100)
 
-        actions = self.build_actions(context) if include_details else []
+        actions = self.build_actions(context)
 
         start_time = context.agent_run.started_at or context.round.started_at
         end_time = context.agent_run.ended_at or start_time

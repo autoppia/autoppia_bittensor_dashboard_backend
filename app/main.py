@@ -212,11 +212,7 @@ async def materialize_round_snapshot(
     Useful for backfilling or re-materializing specific rounds.
     """
     from app.db.models import RoundSnapshotORM, ValidatorRoundORM
-    from app.api.validator.validator_round import (
-        _materialize_round_snapshot,
-        _update_agent_stats,
-        FinishRoundRequest
-    )
+    from app.services.snapshot_service import SnapshotService
     from sqlalchemy import select
     
     # Check if snapshot already exists
@@ -265,10 +261,11 @@ async def materialize_round_snapshot(
         agent_runs=[],
     )
     
-    # Materialize
+    # Materialize using SnapshotService
     try:
-        await _materialize_round_snapshot(session, round_row, payload)
-        await _update_agent_stats(session, round_row, payload)
+        snapshot_service = SnapshotService(session)
+        await snapshot_service.materialize_round_snapshot(round_number)
+        await snapshot_service.update_agent_stats(round_number)
         await session.commit()
         
         # Get the created snapshot
