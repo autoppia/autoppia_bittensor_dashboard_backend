@@ -421,7 +421,9 @@ class TasksService:
 
         if sort_column is not None:
             order_expr = (
-                sort_column.desc() if sort_order.lower() == "desc" else sort_column.asc()
+                sort_column.desc()
+                if sort_order.lower() == "desc"
+                else sort_column.asc()
             )
             base_stmt = base_stmt.order_by(order_expr)
 
@@ -482,10 +484,7 @@ class TasksService:
             select(EvaluationResultORM).join(
                 latest_eval_sq,
                 (EvaluationResultORM.task_id == latest_eval_sq.c.task_id)
-                & (
-                    EvaluationResultORM.id
-                    == latest_eval_sq.c.latest_id
-                ),
+                & (EvaluationResultORM.id == latest_eval_sq.c.latest_id),
             )
         )
         evals_by_task: Dict[str, EvaluationResultORM] = {
@@ -640,9 +639,11 @@ class TasksService:
         total_filtered = len(items)
         result: Dict[str, Any] = {
             "tasks": [task.model_dump() for task in items],
-            "total": total
-            if status is None and min_score is None and max_score is None
-            else total_filtered,
+            "total": (
+                total
+                if status is None and min_score is None and max_score is None
+                else total_filtered
+            ),
             "page": page,
             "limit": limit,
         }

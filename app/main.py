@@ -30,6 +30,7 @@ from app.api.ui.tasks import router as tasks_router
 from app.api.validator.validator_round import router as validator_rounds_router
 from app.db.session import init_db, get_session
 from app.services.idempotency import get_cache_stats
+
 # Background updaters are now run as separate PM2 processes
 # from app.services.metagraph_updater_thread import (
 #     start_metagraph_updater,
@@ -180,7 +181,7 @@ async def admin_warm_agents(
     """
     DEPRECATED: Agent aggregates are now materialized incrementally when rounds finish.
     This endpoint is no longer needed and does nothing.
-    
+
     The new system:
     - Snapshots are saved automatically when rounds complete
     - Agent stats are updated incrementally after each round
@@ -202,19 +203,19 @@ async def materialize_round_snapshot(
 ):
     """
     Materialize a snapshot for a specific round.
-    
+
     This endpoint:
     1. Checks if snapshot already exists (returns it if so)
     2. Fetches the round data from DB
     3. Materializes snapshot + agent stats
     4. Returns the snapshot
-    
+
     Useful for backfilling or re-materializing specific rounds.
     """
     from app.db.models import RoundSnapshotORM, ValidatorRoundORM
     from app.services.snapshot_service import SnapshotService
     from sqlalchemy import select
-    
+
     # Check if snapshot already exists
     existing_snapshot = await session.get(RoundSnapshotORM, round_number)
     if existing_snapshot:
@@ -222,36 +223,77 @@ async def materialize_round_snapshot(
             "ok": True,
             "message": f"Snapshot for round {round_number} already exists",
             "round_number": round_number,
-            "data_size_kb": existing_snapshot.data_size_bytes / 1024 if existing_snapshot.data_size_bytes else None,
+            "data_size_kb": (
+                existing_snapshot.data_size_bytes / 1024
+                if existing_snapshot.data_size_bytes
+                else None
+            ),
             "created_at": existing_snapshot.created_at.isoformat(),
             "already_existed": True,
         }
-    
-    # Materialize using SnapshotService (no payload needed)
+
+    # Find the round
+    stmt = (
+        select(ValidatorRoundORM)
+        .where(ValidatorRoundORM.round_number == round_number)
+        .where(ValidatorRoundORM.ended_at != None)
+    )
+    round_row = await session.scalar(stmt)
+
+    if not round_row:
+        raise HTTPException(
+            status_code=404, detail=f"Round {round_number} not found or not completed"
+        )
+
+    # Create mock payload from round data
+    winners = []
+    weights = {}
+
+    if round_row.meta:
+        if "winners" in round_row.meta:
+            winners = round_row.meta["winners"]
+        if "weights" in round_row.meta:
+            weights = round_row.meta["weights"]
+
+    payload = FinishRoundRequest(
+        status=round_row.status or "completed",
+        winners=winners,
+        winner_scores=[],
+        weights=weights,
+        ended_at=round_row.ended_at or 0.0,
+        summary=round_row.summary or {},
+        agent_runs=[],
+    )
+
+    # Materialize using SnapshotService
     try:
         snapshot_service = SnapshotService(session)
         await snapshot_service.materialize_round_snapshot(round_number)
         await snapshot_service.update_agent_stats(round_number)
         await session.commit()
-        
+
         # Get the created snapshot
         snapshot = await session.get(RoundSnapshotORM, round_number)
-        
+
         return {
             "ok": True,
             "message": f"Snapshot for round {round_number} materialized successfully",
             "round_number": round_number,
-            "data_size_kb": snapshot.data_size_bytes / 1024 if snapshot and snapshot.data_size_bytes else None,
+            "data_size_kb": (
+                snapshot.data_size_bytes / 1024
+                if snapshot and snapshot.data_size_bytes
+                else None
+            ),
             "created_at": snapshot.created_at.isoformat() if snapshot else None,
             "already_existed": False,
         }
-        
+
     except Exception as e:
         await session.rollback()
         logger.error(f"Failed to materialize round {round_number}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to materialize round {round_number}: {str(e)}"
+            detail=f"Failed to materialize round {round_number}: {str(e)}",
         )
 
 
@@ -259,6 +301,7 @@ async def materialize_round_snapshot(
 async def debug_aggregates_meta():
     """Inspect aggregates snapshot metadata in Redis."""
     from app.services.redis_cache import redis_cache
+
     meta = redis_cache.get("AGGREGATES:meta:v1")
     if not meta:
         return {"ok": False, "meta": None}
@@ -270,10 +313,10 @@ async def background_updater_status():
     """Get the status of the background updater (now runs as separate PM2 process)."""
     from app.services.metagraph_service import get_last_update_time
     from app.services.redis_cache import redis_cache
-    
+
     last_update = get_last_update_time()
     age_minutes = (time.time() - last_update) / 60 if last_update else None
-    
+
     return {
         "running": "Check PM2: pm2 list | grep background-updater",
         "last_update": last_update,
@@ -320,9 +363,11 @@ async def on_startup():
         # See background_updater.py and ecosystem.config.js
         # This prevents multiprocessing workers from saturating the API process
         logger.info("ℹ️  Background updaters disabled (run as separate PM2 process)")
-        
+
         # Overview cache warmer is also disabled - use external cron/PM2 if needed
-        logger.info("ℹ️  Overview cache warmer disabled (use external process if needed)")
+        logger.info(
+            "ℹ️  Overview cache warmer disabled (use external process if needed)"
+        )
 
     except Exception as e:
         logger.error(f"Failed to initialize application: {e}", exc_info=True)
