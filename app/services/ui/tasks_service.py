@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, parse_qs
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,6 +18,7 @@ from app.db.models import (
     RoundORM,
     TaskORM,
     TaskSolutionORM,
+    ValidatorRoundORM,
 )
 from app.models.core import (
     AgentEvaluationRun,
@@ -174,6 +175,7 @@ class TasksService:
         self,
         page: int,
         limit: int,
+        include_details: bool = False,
         agent_run_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         validator_id: Optional[str] = None,
@@ -189,6 +191,26 @@ class TasksService:
         sort_order: str = "desc",
         include_facets: bool = False,
     ) -> Dict[str, object]:
+        if not include_details:
+            return await self._list_tasks_light(
+                page=page,
+                limit=limit,
+                agent_run_id=agent_run_id,
+                agent_id=agent_id,
+                validator_id=validator_id,
+                website=website,
+                use_case=use_case,
+                status=status,
+                query=query,
+                min_score=min_score,
+                max_score=max_score,
+                start_date=start_date,
+                end_date=end_date,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                include_facets=include_facets,
+            )
+
         stmt = (
             select(TaskORM)
             .options(
@@ -341,8 +363,336 @@ class TasksService:
             page=page,
             limit=limit,
             include_facets=True,
+            include_details=filters.pop("include_details", False),
             **filters,
         )
+
+    # ------------------------------------------------------------------
+    # Lightweight listing path (no heavy context building)
+    # ------------------------------------------------------------------
+
+    async def _list_tasks_light(
+        self,
+        page: int,
+        limit: int,
+        agent_run_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        validator_id: Optional[str] = None,
+        website: Optional[str] = None,
+        use_case: Optional[str] = None,
+        status: Optional[str] = None,
+        query: Optional[str] = None,
+        min_score: Optional[float] = None,
+        max_score: Optional[float] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        sort_by: str = "startTime",
+        sort_order: str = "desc",
+        include_facets: bool = False,
+    ) -> Dict[str, object]:
+        base_stmt = select(TaskORM)
+        filters = []
+
+        if website:
+            filters.append(TaskORM.url == website)
+        if query:
+            like = f"%{query}%"
+            filters.append(
+                TaskORM.prompt.ilike(like)
+                | TaskORM.url.ilike(like)
+                | TaskORM.task_id.ilike(like)
+            )
+        if start_date:
+            filters.append(TaskORM.created_at >= start_date)
+        if end_date:
+            filters.append(TaskORM.created_at <= end_date)
+
+        if filters:
+            base_stmt = base_stmt.where(*filters)
+
+        # Sorting: default to created_at since startTime maps to run start (best-effort)
+        sort_column = TaskORM.created_at
+        if sort_by.lower() in {"starttime", "start_time"}:
+            sort_column = TaskORM.created_at
+        elif sort_by.lower() in {"endtime", "end_time"}:
+            sort_column = TaskORM.updated_at
+        elif sort_by.lower() == "score":
+            sort_column = None
+
+        if sort_column is not None:
+            order_expr = (
+                sort_column.desc() if sort_order.lower() == "desc" else sort_column.asc()
+            )
+            base_stmt = base_stmt.order_by(order_expr)
+
+        total_stmt = select(func.count()).select_from(base_stmt.subquery())
+        total = (await self.session.execute(total_stmt)).scalar_one()
+
+        offset = (page - 1) * limit
+        page_stmt = base_stmt.offset(offset).limit(limit)
+        task_rows = list(await self.session.scalars(page_stmt))
+
+        task_ids = [row.task_id for row in task_rows]
+        if not task_ids:
+            result: Dict[str, Any] = {
+                "tasks": [],
+                "total": 0,
+                "page": page,
+                "limit": limit,
+            }
+            if include_facets:
+                result["facets"] = {
+                    "websites": [],
+                    "useCases": [],
+                    "statuses": [],
+                    "scoreRanges": [],
+                }
+            return result
+
+        latest_solution_sq = (
+            select(
+                TaskSolutionORM.task_id,
+                func.max(TaskSolutionORM.id).label("latest_id"),
+            )
+            .where(TaskSolutionORM.task_id.in_(task_ids))
+            .group_by(TaskSolutionORM.task_id)
+            .subquery()
+        )
+        solution_rows = await self.session.scalars(
+            select(TaskSolutionORM).join(
+                latest_solution_sq,
+                (TaskSolutionORM.task_id == latest_solution_sq.c.task_id)
+                & (TaskSolutionORM.id == latest_solution_sq.c.latest_id),
+            )
+        )
+        solutions_by_task: Dict[str, TaskSolutionORM] = {
+            sol.task_id: sol for sol in solution_rows
+        }
+
+        latest_eval_sq = (
+            select(
+                EvaluationResultORM.task_id,
+                func.max(EvaluationResultORM.id).label("latest_id"),
+            )
+            .where(EvaluationResultORM.task_id.in_(task_ids))
+            .group_by(EvaluationResultORM.task_id)
+            .subquery()
+        )
+        evaluation_rows = await self.session.scalars(
+            select(EvaluationResultORM).join(
+                latest_eval_sq,
+                (EvaluationResultORM.task_id == latest_eval_sq.c.task_id)
+                & (
+                    EvaluationResultORM.id
+                    == latest_eval_sq.c.latest_id
+                ),
+            )
+        )
+        evals_by_task: Dict[str, EvaluationResultORM] = {
+            ev.task_id: ev for ev in evaluation_rows
+        }
+
+        agent_run_ids = {
+            sol.agent_run_id for sol in solutions_by_task.values() if sol.agent_run_id
+        } | {ev.agent_run_id for ev in evals_by_task.values() if ev.agent_run_id}
+        agent_runs_by_id: Dict[str, AgentEvaluationRunORM] = {}
+        if agent_run_ids:
+            run_rows = await self.session.scalars(
+                select(AgentEvaluationRunORM).where(
+                    AgentEvaluationRunORM.agent_run_id.in_(agent_run_ids)
+                )
+            )
+            agent_runs_by_id = {run.agent_run_id: run for run in run_rows}
+
+        round_ids = {row.validator_round_id for row in task_rows}
+        round_map: Dict[str, ValidatorRoundORM] = {}
+        if round_ids:
+            round_rows = await self.session.scalars(
+                select(ValidatorRoundORM).where(
+                    ValidatorRoundORM.validator_round_id.in_(round_ids)
+                )
+            )
+            round_map = {r.validator_round_id: r for r in round_rows}
+
+        def _use_case_name(raw: Any) -> str:
+            if isinstance(raw, dict):
+                return str(
+                    raw.get("name")
+                    or raw.get("use_case")
+                    or raw.get("useCase")
+                    or "Unknown"
+                )
+            if raw is None:
+                return "Unknown"
+            return str(raw)
+
+        def _ts(ts: Optional[float | datetime]) -> Optional[datetime]:
+            if ts is None:
+                return None
+            if isinstance(ts, datetime):
+                return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+            try:
+                return datetime.fromtimestamp(ts, tz=timezone.utc)
+            except Exception:  # noqa: BLE001
+                return None
+
+        items: List[UITask] = []
+        for task_row in task_rows:
+            sol = solutions_by_task.get(task_row.task_id)
+            ev = evals_by_task.get(task_row.task_id)
+            agent_run_id: Optional[str] = None
+            if ev and ev.agent_run_id:
+                agent_run_id = ev.agent_run_id
+            elif sol and sol.agent_run_id:
+                agent_run_id = sol.agent_run_id
+            elif isinstance(task_row.data, dict):
+                raw_agent_run = task_row.data.get("agent_run_id")
+                if raw_agent_run:
+                    agent_run_id = str(raw_agent_run)
+
+            run = agent_runs_by_id.get(agent_run_id) if agent_run_id else None
+            round_row = round_map.get(task_row.validator_round_id)
+
+            score = ev.final_score if ev else 0.0
+            duration = (
+                ev.evaluation_time
+                if ev and ev.evaluation_time is not None
+                else (run.elapsed_sec if run else 0.0)
+            )
+            status_val = (
+                TaskStatus.COMPLETED
+                if ev and score >= 0.5
+                else (TaskStatus.FAILED if ev else TaskStatus.PENDING)
+            )
+
+            if agent_run_id and run is None and agent_run_id not in agent_runs_by_id:
+                # Agent run reference exists but record missing -> still return task with agentRunId for visibility
+                run = None
+            if agent_id:
+                try:
+                    parsed_agent = _parse_identifier(agent_id)
+                except Exception:  # noqa: BLE001
+                    parsed_agent = None
+                if parsed_agent is not None:
+                    miner_uid = run.miner_uid if run else (ev.miner_uid if ev else None)
+                    if miner_uid != parsed_agent:
+                        continue
+            if validator_id:
+                try:
+                    parsed_validator = _parse_identifier(validator_id)
+                except Exception:  # noqa: BLE001
+                    parsed_validator = None
+                if parsed_validator is not None:
+                    validator_uid = (
+                        run.validator_uid if run else (ev.validator_uid if ev else None)
+                    )
+                    if validator_uid != parsed_validator:
+                        continue
+            if use_case:
+                if _use_case_name(task_row.use_case) != use_case:
+                    continue
+            if min_score is not None and score < min_score:
+                continue
+            if max_score is not None and score > max_score:
+                continue
+            if status and status_val.value.lower() != status.lower():
+                continue
+
+            start_time = (
+                _ts(run.started_at if run else None)
+                or _ts(round_row.started_at if round_row else None)
+                or _ts(round_row.start_epoch if round_row else None)
+                or _ts(task_row.created_at)
+            )
+
+            items.append(
+                UITask(
+                    taskId=task_row.task_id,
+                    agentRunId=agent_run_id or "",
+                    roundNumber=getattr(round_row, "round_number", None),
+                    website=task_row.url,
+                    seed=None,
+                    useCase=_use_case_name(task_row.use_case),
+                    prompt=task_row.prompt,
+                    status=status_val,
+                    score=score,
+                    successRate=int(score * 100),
+                    duration=int(duration or 0),
+                    startTime=start_time,
+                    endTime=_ts(run.ended_at if run else None),
+                    createdAt=task_row.created_at,
+                    updatedAt=task_row.updated_at,
+                    actions=None,
+                    screenshots=None,
+                    logs=None,
+                    metadata=None,
+                    validatorName=None,
+                    validatorImage=None,
+                    minerName=None,
+                    minerImage=None,
+                )
+            )
+
+        if sort_by.lower() == "score":
+            reverse = sort_order.lower() == "desc"
+            items.sort(key=lambda t: t.score, reverse=reverse)
+
+        total_filtered = len(items)
+        result: Dict[str, Any] = {
+            "tasks": [task.model_dump() for task in items],
+            "total": total
+            if status is None and min_score is None and max_score is None
+            else total_filtered,
+            "page": page,
+            "limit": limit,
+        }
+
+        if include_facets:
+            status_counts: Dict[str, int] = defaultdict(int)
+            website_counts: Dict[str, int] = defaultdict(int)
+            use_case_counts: Dict[str, int] = defaultdict(int)
+            score_buckets: Dict[str, int] = defaultdict(int)
+            score_ranges = [
+                ("0.0-0.25", 0.0, 0.25),
+                ("0.25-0.5", 0.25, 0.5),
+                ("0.5-0.75", 0.5, 0.75),
+                ("0.75-1.0", 0.75, 1.01),
+            ]
+            for task in items:
+                status_counts[task.status.value] += 1
+                website_counts[task.website] += 1
+                use_case_counts[task.useCase] += 1
+                for name, low, high in score_ranges:
+                    if low <= task.score < high:
+                        score_buckets[name] += 1
+                        break
+
+            result["facets"] = {
+                "websites": [
+                    {"name": k, "count": v}
+                    for k, v in sorted(
+                        website_counts.items(), key=lambda i: i[1], reverse=True
+                    )
+                ],
+                "useCases": [
+                    {"name": k, "count": v}
+                    for k, v in sorted(
+                        use_case_counts.items(), key=lambda i: i[1], reverse=True
+                    )
+                ],
+                "statuses": [
+                    {"name": k, "count": v}
+                    for k, v in sorted(
+                        status_counts.items(), key=lambda i: i[1], reverse=True
+                    )
+                ],
+                "scoreRanges": [
+                    {"name": name, "count": score_buckets.get(name, 0)}
+                    for name, _, _ in score_ranges
+                ],
+            }
+
+        return result
 
     async def get_task(self, task_id: str) -> TaskContext:
         stmt = (
@@ -707,7 +1057,6 @@ class TasksService:
                 validatorUid=context.solution.validator_uid,
                 actionsCount=len(context.solution.actions or []),
                 webAgentId=context.solution.web_agent_id,
-                hasRecording=bool(context.solution.recording),
             )
 
         relationships = TaskRelationships(
