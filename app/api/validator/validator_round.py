@@ -661,10 +661,11 @@ async def set_tasks(
                 )
 
         # Idempotent: allow existing tasks to be skipped silently
-        async with session.begin():
-            count = await service.add_tasks(
-                validator_round_id, payload.tasks, allow_existing=True
-            )
+        # Session already has a transaction from get_session dependency
+        count = await service.add_tasks(
+            validator_round_id, payload.tasks, allow_existing=True
+        )
+        await session.commit()
     except DuplicateIdentifierError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
