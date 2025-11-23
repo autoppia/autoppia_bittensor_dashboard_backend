@@ -190,18 +190,16 @@ class TasksService:
         sort_order: str = "desc",
         include_facets: bool = False,
     ) -> Dict[str, object]:
-        # Only load relationships if we need details
-        if include_details:
-            stmt = (
-                select(TaskORM)
-                .options(
-                    selectinload(TaskORM.task_solutions),
-                    selectinload(TaskORM.evaluation_results),
-                )
-                .order_by(TaskORM.id.desc())
+        # Always load relationships (needed to find agent_run_id)
+        # But we'll skip building actions/screenshots if include_details=False
+        stmt = (
+            select(TaskORM)
+            .options(
+                selectinload(TaskORM.task_solutions),
+                selectinload(TaskORM.evaluation_results),
             )
-        else:
-            stmt = select(TaskORM).order_by(TaskORM.id.desc())
+            .order_by(TaskORM.id.desc())
+        )
 
         task_rows = await self.session.scalars(stmt)
 
