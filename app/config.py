@@ -100,9 +100,9 @@ class Settings(BaseSettings):
     # ROUND_SIZE_EPOCHS_LOCAL, ROUND_SIZE_EPOCHS_DEVELOPMENT, etc.
     ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "3.0"))
     BLOCKS_PER_EPOCH: int = int(_env_var("BLOCKS_PER_EPOCH", "360"))
-DZ_STARTING_BLOCK: int = int(
-       _env_var("DZ_STARTING_BLOCK", "6948689")
-   )  # Reset: Nov 23 2025, starting Round 0 Synced with validator config
+    DZ_STARTING_BLOCK: int = int(
+        _env_var("DZ_STARTING_BLOCK", "6948689")
+    )  # Synced with validator config
 
     # Chain state
     CHAIN_BLOCK_CACHE_TTL_SECONDS: int = 15 * 60
@@ -226,7 +226,7 @@ DZ_STARTING_BLOCK: int = int(
             _AGENT_AGGREGATE_REQUIRE_DEFAULT,
         )
     )
-    
+
     # Overview cache warmer (precalienta endpoints críticos cada 10 min)
     ENABLE_OVERVIEW_CACHE_WARMER: bool = _str_to_bool(
         os.getenv("ENABLE_OVERVIEW_CACHE_WARMER", "true")

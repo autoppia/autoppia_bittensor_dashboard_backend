@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, parse_qs
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -175,7 +175,6 @@ class TasksService:
         self,
         page: int,
         limit: int,
-        include_details: bool = False,
         agent_run_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         validator_id: Optional[str] = None,
@@ -190,7 +189,13 @@ class TasksService:
         sort_by: str = "startTime",
         sort_order: str = "desc",
         include_facets: bool = False,
+        include_details: bool = True,
     ) -> Dict[str, object]:
+        """
+        When include_details is False, return a lightweight listing that avoids loading
+        actions/screenshots/logs for every task. This path uses SQL pagination to keep
+        latency predictable even with large tables.
+        """
         if not include_details:
             return await self._list_tasks_light(
                 page=page,
@@ -363,7 +368,6 @@ class TasksService:
             page=page,
             limit=limit,
             include_facets=True,
-            include_details=filters.pop("include_details", False),
             **filters,
         )
 
@@ -390,6 +394,8 @@ class TasksService:
         sort_order: str = "desc",
         include_facets: bool = False,
     ) -> Dict[str, object]:
+        from sqlalchemy import func
+
         base_stmt = select(TaskORM)
         filters = []
 
@@ -417,8 +423,10 @@ class TasksService:
         elif sort_by.lower() in {"endtime", "end_time"}:
             sort_column = TaskORM.updated_at
         elif sort_by.lower() == "score":
+            # We sort later after attaching evaluations
             sort_column = None
 
+        order_expr = None
         if sort_column is not None:
             order_expr = (
                 sort_column.desc()
@@ -427,6 +435,7 @@ class TasksService:
             )
             base_stmt = base_stmt.order_by(order_expr)
 
+        # Total before pagination (SQL count)
         total_stmt = select(func.count()).select_from(base_stmt.subquery())
         total = (await self.session.execute(total_stmt)).scalar_one()
 
@@ -436,25 +445,23 @@ class TasksService:
 
         task_ids = [row.task_id for row in task_rows]
         if not task_ids:
-            result: Dict[str, Any] = {
+            return {
                 "tasks": [],
                 "total": 0,
                 "page": page,
                 "limit": limit,
+                "facets": (
+                    {"websites": [], "useCases": [], "statuses": [], "scoreRanges": []}
+                    if include_facets
+                    else None
+                ),
             }
-            if include_facets:
-                result["facets"] = {
-                    "websites": [],
-                    "useCases": [],
-                    "statuses": [],
-                    "scoreRanges": [],
-                }
-            return result
 
+        # Fetch latest solution per task (best-effort, scoped to same round)
         latest_solution_sq = (
             select(
                 TaskSolutionORM.task_id,
-                func.max(TaskSolutionORM.id).label("latest_id"),
+                func.max(TaskSolutionORM.created_at).label("latest_created_at"),
             )
             .where(TaskSolutionORM.task_id.in_(task_ids))
             .group_by(TaskSolutionORM.task_id)
@@ -464,17 +471,20 @@ class TasksService:
             select(TaskSolutionORM).join(
                 latest_solution_sq,
                 (TaskSolutionORM.task_id == latest_solution_sq.c.task_id)
-                & (TaskSolutionORM.id == latest_solution_sq.c.latest_id),
+                & (
+                    TaskSolutionORM.created_at == latest_solution_sq.c.latest_created_at
+                ),
             )
         )
         solutions_by_task: Dict[str, TaskSolutionORM] = {
             sol.task_id: sol for sol in solution_rows
         }
 
+        # Fetch latest evaluation per task (best-effort, scoped to same round)
         latest_eval_sq = (
             select(
                 EvaluationResultORM.task_id,
-                func.max(EvaluationResultORM.id).label("latest_id"),
+                func.max(EvaluationResultORM.created_at).label("latest_created_at"),
             )
             .where(EvaluationResultORM.task_id.in_(task_ids))
             .group_by(EvaluationResultORM.task_id)
@@ -484,13 +494,16 @@ class TasksService:
             select(EvaluationResultORM).join(
                 latest_eval_sq,
                 (EvaluationResultORM.task_id == latest_eval_sq.c.task_id)
-                & (EvaluationResultORM.id == latest_eval_sq.c.latest_id),
+                & (
+                    EvaluationResultORM.created_at == latest_eval_sq.c.latest_created_at
+                ),
             )
         )
         evals_by_task: Dict[str, EvaluationResultORM] = {
             ev.task_id: ev for ev in evaluation_rows
         }
 
+        # Fetch agent runs for referenced solutions/evaluations
         agent_run_ids = {
             sol.agent_run_id for sol in solutions_by_task.values() if sol.agent_run_id
         } | {ev.agent_run_id for ev in evals_by_task.values() if ev.agent_run_id}
@@ -503,6 +516,7 @@ class TasksService:
             )
             agent_runs_by_id = {run.agent_run_id: run for run in run_rows}
 
+        # Fetch round info for tasks to populate roundNumber
         round_ids = {row.validator_round_id for row in task_rows}
         round_map: Dict[str, ValidatorRoundORM] = {}
         if round_ids:
@@ -525,31 +539,19 @@ class TasksService:
                 return "Unknown"
             return str(raw)
 
-        def _ts(ts: Optional[float | datetime]) -> Optional[datetime]:
+        def _ts(ts: Optional[float]) -> Optional[datetime]:
             if ts is None:
                 return None
-            if isinstance(ts, datetime):
-                return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
             try:
                 return datetime.fromtimestamp(ts, tz=timezone.utc)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 return None
 
         items: List[UITask] = []
         for task_row in task_rows:
             sol = solutions_by_task.get(task_row.task_id)
             ev = evals_by_task.get(task_row.task_id)
-            agent_run_id: Optional[str] = None
-            if ev and ev.agent_run_id:
-                agent_run_id = ev.agent_run_id
-            elif sol and sol.agent_run_id:
-                agent_run_id = sol.agent_run_id
-            elif isinstance(task_row.data, dict):
-                raw_agent_run = task_row.data.get("agent_run_id")
-                if raw_agent_run:
-                    agent_run_id = str(raw_agent_run)
-
-            run = agent_runs_by_id.get(agent_run_id) if agent_run_id else None
+            run = agent_runs_by_id.get(sol.agent_run_id) if sol else None
             round_row = round_map.get(task_row.validator_round_id)
 
             score = ev.final_score if ev else 0.0
@@ -564,13 +566,13 @@ class TasksService:
                 else (TaskStatus.FAILED if ev else TaskStatus.PENDING)
             )
 
-            if agent_run_id and run is None and agent_run_id not in agent_runs_by_id:
-                # Agent run reference exists but record missing -> still return task with agentRunId for visibility
-                run = None
+            # Filters that depend on run/eval info (applied after enrichment)
+            if agent_run_id and (run is None or run.agent_run_id != agent_run_id):
+                continue
             if agent_id:
                 try:
                     parsed_agent = _parse_identifier(agent_id)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     parsed_agent = None
                 if parsed_agent is not None:
                     miner_uid = run.miner_uid if run else (ev.miner_uid if ev else None)
@@ -579,7 +581,7 @@ class TasksService:
             if validator_id:
                 try:
                     parsed_validator = _parse_identifier(validator_id)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     parsed_validator = None
                 if parsed_validator is not None:
                     validator_uid = (
@@ -587,9 +589,6 @@ class TasksService:
                     )
                     if validator_uid != parsed_validator:
                         continue
-            if use_case:
-                if _use_case_name(task_row.use_case) != use_case:
-                    continue
             if min_score is not None and score < min_score:
                 continue
             if max_score is not None and score > max_score:
@@ -597,17 +596,16 @@ class TasksService:
             if status and status_val.value.lower() != status.lower():
                 continue
 
-            start_time = (
-                _ts(run.started_at if run else None)
-                or _ts(round_row.started_at if round_row else None)
-                or _ts(round_row.start_epoch if round_row else None)
-                or _ts(task_row.created_at)
-            )
-
             items.append(
                 UITask(
                     taskId=task_row.task_id,
-                    agentRunId=agent_run_id or "",
+                    agentRunId=(
+                        run.agent_run_id
+                        if run
+                        else (
+                            ev.agent_run_id if ev else sol.agent_run_id if sol else ""
+                        )
+                    ),
                     roundNumber=getattr(round_row, "round_number", None),
                     website=task_row.url,
                     seed=None,
@@ -617,7 +615,9 @@ class TasksService:
                     score=score,
                     successRate=int(score * 100),
                     duration=int(duration or 0),
-                    startTime=start_time,
+                    startTime=_ts(run.started_at if run else None)
+                    or _ts(round_row.start_epoch if round_row else None)
+                    or _ts(task_row.created_at.timestamp()),
                     endTime=_ts(run.ended_at if run else None),
                     createdAt=task_row.created_at,
                     updatedAt=task_row.updated_at,
@@ -632,7 +632,8 @@ class TasksService:
                 )
             )
 
-        if sort_by.lower() == "score":
+        # Sort in-memory if needed by score (only case not handled in SQL)
+        if sort_column is None and sort_by.lower() == "score":
             reverse = sort_order.lower() == "desc"
             items.sort(key=lambda t: t.score, reverse=reverse)
 
@@ -1058,6 +1059,7 @@ class TasksService:
                 validatorUid=context.solution.validator_uid,
                 actionsCount=len(context.solution.actions or []),
                 webAgentId=context.solution.web_agent_id,
+                hasRecording=bool(context.solution.recording),
             )
 
         relationships = TaskRelationships(

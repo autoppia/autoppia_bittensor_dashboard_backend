@@ -864,14 +864,14 @@ async def start_agent_run(
                     detail="miner_snapshot.miner_hotkey must match agent_run.miner_hotkey",
                 )
 
-        # Persist and commit
-        await service.start_agent_run(
-            validator_round_id=validator_round_id,
-            agent_run=agent_run,
-            miner_identity=request_payload.miner_identity,
-            miner_snapshot=miner_snapshot,
-        )
-        await session.commit()
+        # Persist only inside the transaction block
+        # Session has transaction
+            await service.start_agent_run(
+                validator_round_id=validator_round_id,
+                agent_run=agent_run,
+                miner_identity=request_payload.miner_identity,
+                miner_snapshot=miner_snapshot,
+            )
     except DuplicateIdentifierError as exc:
         existing_run = await service._get_agent_run_row(agent_run.agent_run_id)  # type: ignore[attr-defined]
         if existing_run is not None:
