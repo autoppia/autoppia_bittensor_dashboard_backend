@@ -24,6 +24,10 @@ async def list_tasks(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
+    includeDetails: bool = Query(
+        True,
+        description="Include full task details (actions/screenshots/logs). Set false for lightweight listing.",
+    ),
     agentRunId: Optional[str] = Query(None),
     agentId: Optional[str] = Query(None),
     validatorId: Optional[str] = Query(None),
@@ -55,6 +59,7 @@ async def list_tasks(
         end_date=endDate,
         sort_by=sortBy,
         sort_order=sortOrder,
+        include_details=includeDetails,
     )
     return {"success": True, "data": data}
 
@@ -64,6 +69,10 @@ async def search_tasks(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
+    includeDetails: bool = Query(
+        True,
+        description="Include full task details (actions/screenshots/logs). Set false for lightweight listing.",
+    ),
     agentRunId: Optional[str] = Query(None),
     agentId: Optional[str] = Query(None),
     validatorId: Optional[str] = Query(None),
@@ -95,6 +104,7 @@ async def search_tasks(
         end_date=endDate,
         sort_by=sortBy,
         sort_order=sortOrder,
+        include_details=includeDetails,
     )
     return {"success": True, "data": data}
 

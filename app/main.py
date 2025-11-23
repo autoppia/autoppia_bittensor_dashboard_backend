@@ -227,41 +227,7 @@ async def materialize_round_snapshot(
             "already_existed": True,
         }
     
-    # Find the round
-    stmt = (
-        select(ValidatorRoundORM)
-        .where(ValidatorRoundORM.round_number == round_number)
-        .where(ValidatorRoundORM.ended_at != None)
-    )
-    round_row = await session.scalar(stmt)
-    
-    if not round_row:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Round {round_number} not found or not completed"
-        )
-    
-    # Create mock payload from round data
-    winners = []
-    weights = {}
-    
-    if round_row.meta:
-        if "winners" in round_row.meta:
-            winners = round_row.meta["winners"]
-        if "weights" in round_row.meta:
-            weights = round_row.meta["weights"]
-    
-    payload = FinishRoundRequest(
-        status=round_row.status or "completed",
-        winners=winners,
-        winner_scores=[],
-        weights=weights,
-        ended_at=round_row.ended_at or 0.0,
-        summary=round_row.summary or {},
-        agent_runs=[],
-    )
-    
-    # Materialize using SnapshotService
+    # Materialize using SnapshotService (no payload needed)
     try:
         snapshot_service = SnapshotService(session)
         await snapshot_service.materialize_round_snapshot(round_number)
