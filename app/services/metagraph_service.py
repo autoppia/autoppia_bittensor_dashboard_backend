@@ -22,6 +22,7 @@ from app.config import settings
 from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)  # Reduce verbosity
 
 # Redis keys
 REDIS_KEY_ALL_VALIDATORS = "metagraph:validators:all"
