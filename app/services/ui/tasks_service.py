@@ -247,7 +247,7 @@ class TasksService:
                 if use_case_name != use_case:
                     continue
 
-            ui_task = self._build_ui_task(context)
+            ui_task = self._build_ui_task(context, include_details=include_details)
             evaluation_score = (
                 context.evaluation.final_score if context.evaluation else 0.0
             )
@@ -512,7 +512,7 @@ class TasksService:
                 continue
             contexts.append(context)
 
-        compared_tasks = [self._build_ui_task(ctx) for ctx in contexts]
+        compared_tasks = [self._build_ui_task(ctx, include_details=False) for ctx in contexts]
         best = max(compared_tasks, key=lambda t: t.score, default=None)
         fastest = min(compared_tasks, key=lambda t: t.duration, default=None)
         most_actions = max(
@@ -534,7 +534,7 @@ class TasksService:
         return CompareTasksResponse(tasks=compared_tasks, comparison=comparison)
 
     def build_task_detail(self, context: TaskContext) -> TaskDetails:
-        task = self._build_ui_task(context)
+        task = self._build_ui_task(context, include_details=True)
         performance = TaskPerformance(
             totalActions=len(task.actions or []),
             successfulActions=len([a for a in task.actions or [] if a.success]),
@@ -1283,13 +1283,13 @@ class TasksService:
             evaluation=evaluation_model,
         )
 
-    def _build_ui_task(self, context: TaskContext) -> UITask:
+    def _build_ui_task(self, context: TaskContext, include_details: bool = False) -> UITask:
         evaluation = context.evaluation
         score = evaluation.final_score if evaluation else 0.0
         status = TaskStatus.COMPLETED if score >= 0.5 else TaskStatus.FAILED
         success_rate = int(score * 100)
 
-        actions = self.build_actions(context)
+        actions = self.build_actions(context) if include_details else []
 
         start_time = context.agent_run.started_at or context.round.started_at
         end_time = context.agent_run.ended_at or start_time
