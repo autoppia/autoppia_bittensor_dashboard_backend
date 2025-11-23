@@ -174,6 +174,7 @@ class TasksService:
         self,
         page: int,
         limit: int,
+        include_details: bool = False,
         agent_run_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         validator_id: Optional[str] = None,
