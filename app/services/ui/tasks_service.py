@@ -201,7 +201,10 @@ class TasksService:
             .order_by(TaskORM.id.desc())
         )
 
-        task_rows = await self.session.scalars(stmt)
+        # Materialize rows (and selectinloaded relationships) eagerly to avoid
+        # AsyncSession lazy-loads triggering MissingGreenlet later.
+        task_rows_result = await self.session.scalars(stmt)
+        task_rows = task_rows_result.unique().all()
 
         query_lower = query.lower() if query else None
         start_ts = _to_timestamp(start_date)
