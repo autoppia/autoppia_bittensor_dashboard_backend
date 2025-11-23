@@ -13,6 +13,8 @@ from app.services.round_calc import compute_round_number, compute_boundaries_for
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+# Reduce cache hit verbosity
+logger.setLevel(logging.WARNING)
 
 
 async def get_current_round_number() -> int:
