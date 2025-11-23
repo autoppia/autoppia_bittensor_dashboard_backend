@@ -525,12 +525,13 @@ async def start_round(
     service = ValidatorRoundPersistenceService(session)
 
     try:
-        async with session.begin():
-            await service.start_round(
-                validator_identity=validator_identity,
-                validator_round=validator_round,
-                validator_snapshot=validator_snapshot,
-            )
+        # Session already has transaction from get_session
+        await service.start_round(
+            validator_identity=validator_identity,
+            validator_round=validator_round,
+            validator_snapshot=validator_snapshot,
+        )
+        await session.commit()
     except DuplicateIdentifierError as exc:
         # Treat duplicate start as idempotent if it belongs to the same validator
         try:
@@ -864,7 +865,7 @@ async def start_agent_run(
                 )
 
         # Persist only inside the transaction block
-        async with session.begin():
+        # Session has transaction
             await service.start_agent_run(
                 validator_round_id=validator_round_id,
                 agent_run=agent_run,
@@ -1153,7 +1154,7 @@ async def add_evaluation(
                 )
 
         # Persist inside a short transaction
-        async with session.begin():
+        # Session has transaction
             await service.upsert_evaluation_bundle(
                 validator_round_id=validator_round_id,
                 agent_run_id=agent_run_id,
