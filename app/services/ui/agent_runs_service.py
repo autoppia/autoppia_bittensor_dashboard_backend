@@ -47,6 +47,7 @@ from app.data import get_validator_metadata
 from app.utils.images import resolve_agent_image, resolve_validator_image
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)  # Reduce verbosity
 
 
 AGENT_RUN_STATS_CACHE_PREFIX = "agent_run_statistics"
