@@ -36,7 +36,7 @@ from app.utils.images import resolve_validator_image
 from app.services.service_utils import rollback_on_error
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.WARNING)  # Reduce verbosity
+logger.setLevel(logging.INFO)  # Temporarily enable INFO for debugging
 
 
 class ValidatorState(Enum):
@@ -139,7 +139,9 @@ class OverviewService:
             return cached
 
         records_with_contexts = await self._recent_round_records(
-            limit=10, include_details=False  # Reduced from 50 to 10 for performance
+            limit=10,
+            include_details=True,  # Load eval results so scores/winners are accurate
+            context_limit=None,  # Include all agent runs per round
         )
         if not records_with_contexts:
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -288,7 +290,13 @@ class OverviewService:
                 version_candidates.append(str(validator_info.version))
 
             seen_tasks: set[str] = set()
+            # Track agent_runs with NULL average_score to query from DB
+            agent_runs_to_query: List[str] = []
+            
             for ctx in contexts:
+                # Ignore SOTA/baseline runs when computing miner leaderboard metrics
+                if getattr(ctx.run, "is_sota", False):
+                    continue
                 miner_identifier = None
                 if ctx.run.miner_uid is not None:
                     miner_identifier = f"uid:{ctx.run.miner_uid}"
@@ -298,9 +306,53 @@ class OverviewService:
                     miners.add(miner_identifier)
 
                 score = self.rounds_service._context_score(ctx)
+                
+                # If score is 0 and average_score is NULL, we need to query from DB
+                if score == 0.0 and ctx.run.average_score is None and ctx.run.agent_run_id:
+                    agent_runs_to_query.append(ctx.run.agent_run_id)
+                
                 if miner_identifier:
                     tracker = miner_score_tracker.setdefault(miner_identifier, [])
                     tracker.append(score)
+            
+            # Query DB for agent_runs with NULL average_score
+            if agent_runs_to_query:
+                try:
+                    from app.db.models import EvaluationORM
+                    logger.info(f"Querying DB for {len(agent_runs_to_query)} agent_runs with NULL average_score")
+                    
+                    stmt = (
+                        select(
+                            AgentEvaluationRunORM.agent_run_id,
+                            AgentEvaluationRunORM.miner_uid,
+                            func.avg(EvaluationORM.final_score).label("avg_score")
+                        )
+                        .join(
+                            EvaluationORM,
+                            EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id
+                        )
+                        .where(AgentEvaluationRunORM.agent_run_id.in_(agent_runs_to_query))
+                        .group_by(AgentEvaluationRunORM.agent_run_id, AgentEvaluationRunORM.miner_uid)
+                    )
+                    result = await session.execute(stmt)
+                    rows = result.all()
+                    
+                    if rows:
+                        logger.info(f"✅ Found {len(rows)} agent_runs with evaluations in DB")
+                        for row in rows:
+                            agent_run_id, miner_uid, avg_score = row
+                            if avg_score is not None and miner_uid is not None:
+                                miner_identifier = f"uid:{miner_uid}"
+                                # Replace the 0.0 score with the real score from DB
+                                if miner_identifier in miner_score_tracker:
+                                    # Remove the 0.0 we added earlier
+                                    tracker = miner_score_tracker[miner_identifier]
+                                    if 0.0 in tracker:
+                                        tracker.remove(0.0)
+                                    tracker.append(float(avg_score))
+                                    logger.debug(f"  Updated {miner_identifier}: {avg_score}")
+                except Exception as e:
+                    logger.error(f"Failed to query evaluations from DB: {e}")
 
                 for task in ctx.tasks or []:
                     if task.task_id in seen_tasks:
@@ -310,11 +362,56 @@ class OverviewService:
                     if host:
                         unique_websites.add(host.lower())
 
-            if not contexts and round_obj.winners:
-                round_top = max(
-                    winner.get("score", 0.0) for winner in round_obj.winners
-                )
-                top_score = max(top_score, round(round_top, 6))
+            if not contexts:
+                # If no contexts loaded, try winners first
+                logger.info(f"No contexts for round {round_obj.validator_round_id}, checking winners or DB...")
+                if round_obj.winners:
+                    round_top = max(
+                        winner.get("score", 0.0) for winner in round_obj.winners
+                    )
+                    top_score = max(top_score, round(round_top, 6))
+                    logger.info(f"Using winners: top_score={round_top}")
+                else:
+                    # Fallback: query evaluations directly from DB for this round
+                    logger.info(f"No winners, querying DB for round {round_obj.validator_round_id}")
+                    try:
+                        from app.db.models import EvaluationORM
+                        
+                        # Get all evaluations for this validator_round and calculate avg per miner
+                        stmt = (
+                            select(
+                                AgentEvaluationRunORM.miner_uid,
+                                func.avg(EvaluationORM.final_score).label("avg_score")
+                            )
+                            .join(
+                                EvaluationORM,
+                                EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id
+                            )
+                            .where(AgentEvaluationRunORM.validator_round_id == round_obj.validator_round_id)
+                            .group_by(AgentEvaluationRunORM.miner_uid)
+                        )
+                        result = await session.execute(stmt)
+                        rows = result.all()
+                        
+                        logger.info(f"DB query returned {len(rows)} rows for round {round_obj.validator_round_id}")
+                        if rows:
+                            for row in rows:
+                                miner_uid, avg_score = row
+                                logger.debug(f"  Miner {miner_uid}: {avg_score}")
+                                if avg_score is not None:
+                                    miner_identifier = f"uid:{miner_uid}"
+                                    miners.add(miner_identifier)
+                                    tracker = miner_score_tracker.setdefault(miner_identifier, [])
+                                    tracker.append(float(avg_score))
+                            logger.info(
+                                f"✅ Loaded {len(rows)} miner scores from DB for round {round_obj.validator_round_id}"
+                            )
+                        else:
+                            logger.warning(f"No evaluation data found in DB for round {round_obj.validator_round_id}")
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to load evaluations for round {round_obj.validator_round_id}: {e}"
+                        )
 
         top_miner_uid = None
         top_miner_name = None
@@ -347,6 +444,18 @@ class OverviewService:
                                         break
                             if top_miner_name:
                                 break
+                        
+                        # If not found in contexts, try to get from DB
+                        if not top_miner_name and top_miner_uid:
+                            try:
+                                from app.db.models import MinerORM
+                                stmt = select(MinerORM.name).where(MinerORM.uid == top_miner_uid)
+                                result = await session.execute(stmt)
+                                miner_name_row = result.scalar_one_or_none()
+                                if miner_name_row:
+                                    top_miner_name = miner_name_row
+                            except Exception as e:
+                                logger.debug(f"Could not fetch miner name for UID {top_miner_uid}: {e}")
                         break
         else:
             # If we have no context data, fall back to best single score captured earlier.
@@ -594,7 +703,8 @@ class OverviewService:
 
         records_with_contexts = await self._recent_round_records(
             limit=fetch_limit,
-            include_details=False,
+            include_details=True,  # Need eval results to compute scores correctly
+            context_limit=None,  # Don't truncate agent runs; winners may be beyond first 20
         )
         if not records_with_contexts:
             now_iso = datetime.now(timezone.utc).isoformat()
@@ -660,7 +770,12 @@ class OverviewService:
                 if round_obj.status not in ("finished", "evaluating_finished"):
                     continue
 
-            run_scores = [self.rounds_service._context_score(ctx) for ctx in contexts]
+            non_sota_contexts = [
+                ctx for ctx in contexts if not getattr(ctx.run, "is_sota", False)
+            ]
+            run_scores = [
+                self.rounds_service._context_score(ctx) for ctx in non_sota_contexts
+            ]
 
             average_score = (
                 round_obj.average_score
@@ -671,9 +786,9 @@ class OverviewService:
             # Find the winner (highest score)
             winner_uid: Optional[int] = None
             winner_name: Optional[str] = None
-            if contexts:
+            if non_sota_contexts:
                 winner_ctx = max(
-                    contexts,
+                    non_sota_contexts,
                     key=lambda ctx: self.rounds_service._context_score(ctx),
                 )
                 winner_uid = winner_ctx.run.miner_uid
@@ -967,6 +1082,7 @@ class OverviewService:
         limit: int = 20,
         include_details: bool = False,
         fetch_contexts: bool = True,
+        context_limit: Optional[int] = 20,
     ) -> List[Tuple[RoundRecord, List[AgentRunContext]]]:
         """
         Fetch recent round records with optional agent run contexts.
@@ -1016,7 +1132,7 @@ class OverviewService:
                     contexts = await self.rounds_service.list_agent_run_contexts(
                         validator_round_id=row.validator_round_id,
                         include_details=include_details,
-                        limit=20,  # Reduced from 100 to 20 for performance optimization
+                        limit=context_limit,  # Allow callers to override (None loads all)
                         skip=0,
                     )
                 except Exception as exc:  # noqa: BLE001
