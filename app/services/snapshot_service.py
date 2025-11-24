@@ -173,6 +173,11 @@ class SnapshotService:
                         avg_score=0.0,
                         best_score=0.0,
                         worst_score=1.0,
+                        total_rounds=0,
+                        total_runs=0,
+                        successful_runs=0,
+                        total_tasks=0,
+                        completed_tasks=0,
                         recent_rounds=[],
                     )
                     self.session.add(stats)
@@ -192,27 +197,27 @@ class SnapshotService:
                 if first_run.is_sota:
                     stats.is_sota = True
 
-                # Incremental updates
-                prev_total = stats.total_rounds
-                stats.total_rounds += 1
-                stats.total_runs += len(miner_runs)
+                # Incremental updates (ensure fields are never None)
+                prev_total = stats.total_rounds or 0
+                stats.total_rounds = (stats.total_rounds or 0) + 1
+                stats.total_runs = (stats.total_runs or 0) + len(miner_runs)
 
                 if prev_total == 0:
                     stats.avg_score = round_avg_score
                 else:
                     # Weighted average update
                     stats.avg_score = (
-                        (stats.avg_score * prev_total) + round_avg_score
+                        ((stats.avg_score or 0.0) * prev_total) + round_avg_score
                     ) / stats.total_rounds
 
-                stats.best_score = max(stats.best_score, round_best_score)
-                stats.worst_score = min(stats.worst_score, round_avg_score)
+                stats.best_score = max(stats.best_score or 0.0, round_best_score)
+                stats.worst_score = min(stats.worst_score or 1.0, round_avg_score)
 
                 if round_avg_score >= 0.5:
-                    stats.successful_runs += 1
+                    stats.successful_runs = (stats.successful_runs or 0) + 1
 
-                stats.total_tasks += round_tasks_total
-                stats.completed_tasks += round_tasks_completed
+                stats.total_tasks = (stats.total_tasks or 0) + round_tasks_total
+                stats.completed_tasks = (stats.completed_tasks or 0) + round_tasks_completed
 
                 stats.last_seen = utcnow()
                 stats.last_round_number = round_number

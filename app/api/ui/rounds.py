@@ -331,13 +331,20 @@ async def get_round(
         )
         try:
             from app.db.session import AsyncSessionLocal
+            from app.services.snapshot_service import SnapshotService
 
             async with AsyncSessionLocal() as snapshot_session:
                 await _persist_snapshot_from_detail(
                     snapshot_session, round_id, detail_data
                 )
+                
+                # Also update agent_stats incrementally
+                logger.info("📊 Updating agent stats for round %s...", round_number)
+                snapshot_service = SnapshotService(snapshot_session)
+                await snapshot_service.update_agent_stats(round_number)
+                
                 await snapshot_session.commit()
-                logger.info("✅ Round %s snapshot saved to PostgreSQL", round_number)
+                logger.info("✅ Round %s snapshot and agent stats saved", round_number)
         except Exception:
             logger.exception("Failed to persist snapshot for round %s", round_id)
     elif is_current_round and round_number:
