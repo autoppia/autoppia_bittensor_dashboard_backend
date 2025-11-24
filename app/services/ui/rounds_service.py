@@ -541,7 +541,9 @@ class RoundsService:
 
         current = await self.get_current_round_overview()
         latest_round_number = current["round"] if current else aggregated.round_number
-        logger.info(f"Building round {aggregated.round_number} overview (latest_round={latest_round_number}, current={current is not None})")
+        logger.info(
+            f"Building round {aggregated.round_number} overview (latest_round={latest_round_number}, current={current is not None})"
+        )
         records = [entry.record for entry in aggregated.validator_rounds]
         overview = self._build_round_day_overview_from_records(
             aggregated.round_number,
@@ -1176,7 +1178,7 @@ class RoundsService:
         except Exception as e:
             logger.info(f"Could not get current block: {e}")
             current_block_est = None
-        
+
         if current_block_est is not None:
             bounds = compute_boundaries_for_round(round_number)
             if current_block_est > bounds.end_block:
@@ -1189,10 +1191,14 @@ class RoundsService:
         else:
             # Fallback when Redis is down: use round_number comparison
             # If we have data for rounds > this round_number, this round must be finished
-            logger.info(f"Redis unavailable, using fallback for round {round_number} (latest={latest_round_number})")
+            logger.info(
+                f"Redis unavailable, using fallback for round {round_number} (latest={latest_round_number})"
+            )
             if latest_round_number > round_number:
                 status = "finished"
-                logger.info(f"✅ Marked round {round_number} as finished (latest_round={latest_round_number})")
+                logger.info(
+                    f"✅ Marked round {round_number} as finished (latest_round={latest_round_number})"
+                )
         total_tasks = sum(record.model.n_tasks or 0 for record in records)
         completed_tasks = sum(
             self._estimate_completed_tasks(record.model) for record in records
@@ -2601,8 +2607,10 @@ class RoundsService:
                 context.evaluation_results
             )
         # If still None and we have evaluations list, calculate from there
-        if score is None and hasattr(context, 'evaluations') and context.evaluations:
-            scores = [e.final_score for e in context.evaluations if e.final_score is not None]
+        if score is None and hasattr(context, "evaluations") and context.evaluations:
+            scores = [
+                e.final_score for e in context.evaluations if e.final_score is not None
+            ]
             if scores:
                 score = sum(scores) / len(scores)
         try:
@@ -2926,6 +2934,16 @@ class RoundsService:
         winner_scores = meta.get("winner_scores") or summary.get("winner_scores") or []
         weights = meta.get("weights")
 
+        # Normalize status to match ValidatorRound literal type
+        raw_status = (round_row.status or "finished").lower()
+        if raw_status in {"completed", "complete"}:
+            normalized_status = "finished"
+        elif raw_status in {"active", "finished", "pending", "evaluating_finished"}:
+            normalized_status = raw_status
+        else:
+            # Fallback to finished for unknown statuses
+            normalized_status = "finished"
+
         return ValidatorRound(
             validator_round_id=round_row.validator_round_id,
             round_number=round_row.round_number,
@@ -2952,7 +2970,7 @@ class RoundsService:
             weights=weights,
             average_score=round_row.average_score,
             top_score=round_row.top_score,
-            status=round_row.status or "finished",
+            status=normalized_status,
             summary=summary,
             metadata=meta,
             model_extra={

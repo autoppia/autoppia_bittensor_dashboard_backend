@@ -256,7 +256,7 @@ async def materialize_round_snapshot(
             weights = round_row.meta["weights"]
 
     payload = FinishRoundRequest(
-        status=round_row.status or "completed",
+        status=round_row.status or "finished",
         winners=winners,
         winner_scores=[],
         weights=weights,

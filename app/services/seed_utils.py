@@ -1035,7 +1035,7 @@ async def seed_validator_round(
 
         winners, winner_scores, weights = _compute_round_outcome(payload)
         finish_body = {
-            "status": "completed",
+            "status": "finished",
             "winners": winners,
             "winner_scores": winner_scores,
             "weights": weights,
