@@ -216,8 +216,14 @@ class TasksService:
                 include_facets=include_facets,
             )
 
+        # Only show tasks that have evaluations (i.e., completed tasks with agent_runs)
         stmt = (
             select(TaskORM)
+            .where(
+                TaskORM.task_id.in_(
+                    select(EvaluationResultORM.task_id).distinct()
+                )
+            )
             .options(
                 selectinload(TaskORM.task_solutions),
                 selectinload(TaskORM.evaluation_results),
@@ -398,6 +404,13 @@ class TasksService:
 
         base_stmt = select(TaskORM)
         filters = []
+        
+        # Only show tasks that have evaluations (i.e., completed tasks with agent_runs)
+        filters.append(
+            TaskORM.task_id.in_(
+                select(EvaluationResultORM.task_id).distinct()
+            )
+        )
 
         if website:
             filters.append(TaskORM.url == website)
