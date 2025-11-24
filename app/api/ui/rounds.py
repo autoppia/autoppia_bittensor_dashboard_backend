@@ -46,31 +46,34 @@ async def _persist_snapshot_from_detail(
     This is called automatically when a round is requested and no snapshot exists.
     """
     from app.db.models import RoundSnapshotORM, ValidatorRoundORM
-    
+
     # Only persist if round is completed
     round_status = detail_data.get("status", "")
     if round_status not in ("finished", "completed", "complete"):
-        logger.debug(f"Round {round_id} not finished ({round_status}), skipping snapshot")
+        logger.debug(
+            f"Round {round_id} not finished ({round_status}), skipping snapshot"
+        )
         return
-    
+
     # Extract round_number
     round_number = detail_data.get("roundNumber") or detail_data.get("round")
     if not round_number or not isinstance(round_number, int):
         logger.warning(f"Cannot persist snapshot for {round_id}: no valid round_number")
         return
-    
+
     # Check if snapshot already exists
     existing = await session.get(RoundSnapshotORM, round_number)
     if existing:
         logger.debug(f"Snapshot for round {round_number} already exists, skipping")
         return
-    
+
     # Create snapshot
     import json
+
     snapshot_json = detail_data
     json_str = json.dumps(snapshot_json, default=str)
-    data_size = len(json_str.encode('utf-8'))
-    
+    data_size = len(json_str.encode("utf-8"))
+
     new_snapshot = RoundSnapshotORM(
         round_number=round_number,
         snapshot_json=snapshot_json,
@@ -79,9 +82,10 @@ async def _persist_snapshot_from_detail(
     )
     session.add(new_snapshot)
     await session.flush()
-    
-    logger.info(f"✅ Created snapshot for round {round_number} ({data_size / 1024:.1f} KB)")
 
+    logger.info(
+        f"✅ Created snapshot for round {round_number} ({data_size / 1024:.1f} KB)"
+    )
 
 
 @router.get("/ids")
@@ -221,11 +225,11 @@ async def get_round(
 ) -> dict:
     """
     Get complete round details with intelligent caching:
-    
+
     1. For FINISHED rounds: Read from round_snapshots table (PostgreSQL) - instant, permanent
     2. For ACTIVE rounds: Cache in Redis (1 day TTL) - fast, temporary
     3. If no snapshot exists: Calculate, save to round_snapshots, return
-    
+
     This ensures:
     - Historical rounds load instantly from DB (no Redis needed)
     - Current round cached in Redis (updates frequently)
@@ -244,6 +248,7 @@ async def get_round(
     except ValueError:
         # Resolver validator_round_id -> round_number
         from app.db.models import RoundORM
+
         round_number = await session.scalar(
             select(RoundORM.round_number).where(RoundORM.validator_round_id == round_id)
         )
@@ -254,7 +259,9 @@ async def get_round(
         snapshot = await session.get(RoundSnapshotORM, round_number)
 
     if snapshot and snapshot.snapshot_json:
-        logger.info("✅ Serving round %s from PostgreSQL snapshot (instant)", round_number)
+        logger.info(
+            "✅ Serving round %s from PostgreSQL snapshot (instant)", round_number
+        )
         return {
             "success": True,
             "data": {"round": snapshot.snapshot_json},
@@ -263,8 +270,10 @@ async def get_round(
     # Check if it's the current/active round - use Redis cache (1 day TTL)
     service = await _service(session)
     current_round_overview = await service.get_current_round_overview()
-    current_round_number = current_round_overview.get("round") if current_round_overview else None
-    is_current_round = (round_number == current_round_number)
+    current_round_number = (
+        current_round_overview.get("round") if current_round_overview else None
+    )
+    is_current_round = round_number == current_round_number
 
     if is_current_round:
         # Try Redis cache for current round (1 day TTL)
@@ -286,15 +295,47 @@ async def get_round(
 
     # Save based on round status
     round_status = detail_data.get("status", "")
-    is_finished = round_status in ("finished", "completed", "complete", "evaluating_finished")
+    is_finished = round_status in (
+        "finished",
+        "completed",
+        "complete",
+        "evaluating_finished",
+    )
 
     if is_finished and round_number:
+        # Update status in DB for all validator_rounds of this round_number
+        logger.info("🔄 Marking round %s as finished in DB...", round_number)
+        try:
+            from app.db.models import ValidatorRoundORM
+
+            stmt = select(ValidatorRoundORM).where(
+                ValidatorRoundORM.round_number == round_number
+            )
+            round_rows = list(await session.scalars(stmt))
+            for round_row in round_rows:
+                if round_row.status != "finished":
+                    round_row.status = "finished"
+                    logger.info(
+                        f"  Updated {round_row.validator_round_id} status to finished"
+                    )
+            await session.commit()
+            logger.info(
+                f"✅ Marked {len(round_rows)} validator_rounds as finished for round {round_number}"
+            )
+        except Exception:
+            logger.exception("Failed to update round status in DB")
+
         # Save to PostgreSQL snapshot (permanent)
-        logger.info("💾 Saving finished round %s to PostgreSQL snapshot...", round_number)
+        logger.info(
+            "💾 Saving finished round %s to PostgreSQL snapshot...", round_number
+        )
         try:
             from app.db.session import AsyncSessionLocal
+
             async with AsyncSessionLocal() as snapshot_session:
-                await _persist_snapshot_from_detail(snapshot_session, round_id, detail_data)
+                await _persist_snapshot_from_detail(
+                    snapshot_session, round_id, detail_data
+                )
                 await snapshot_session.commit()
                 logger.info("✅ Round %s snapshot saved to PostgreSQL", round_number)
         except Exception:
@@ -303,7 +344,9 @@ async def get_round(
         # Cache current round in Redis (1 day TTL)
         logger.info("💾 Caching current round %s in Redis (1 day)...", round_number)
         try:
-            redis_cache.set(f"round:current:{round_number}", detail_data, ttl=86400)  # 1 day
+            redis_cache.set(
+                f"round:current:{round_number}", detail_data, ttl=86400
+            )  # 1 day
             logger.info("✅ Current round %s cached in Redis", round_number)
         except Exception:
             logger.exception("Failed to cache current round %s", round_number)

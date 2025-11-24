@@ -541,6 +541,7 @@ class RoundsService:
 
         current = await self.get_current_round_overview()
         latest_round_number = current["round"] if current else aggregated.round_number
+        logger.info(f"Building round {aggregated.round_number} overview (latest_round={latest_round_number}, current={current is not None})")
         records = [entry.record for entry in aggregated.validator_rounds]
         overview = self._build_round_day_overview_from_records(
             aggregated.round_number,
@@ -1171,8 +1172,11 @@ class RoundsService:
         # validator row statuses (e.g., a validator that never called /finish).
         try:
             current_block_est = get_current_block_estimate()
-        except Exception:
+            logger.debug(f"Got current_block_est: {current_block_est}")
+        except Exception as e:
+            logger.info(f"Could not get current block: {e}")
             current_block_est = None
+        
         if current_block_est is not None:
             bounds = compute_boundaries_for_round(round_number)
             if current_block_est > bounds.end_block:
@@ -1182,6 +1186,13 @@ class RoundsService:
                 # unless DB already says completed (keep completed if so).
                 if status != "finished":
                     status = "pending"
+        else:
+            # Fallback when Redis is down: use round_number comparison
+            # If we have data for rounds > this round_number, this round must be finished
+            logger.info(f"Redis unavailable, using fallback for round {round_number} (latest={latest_round_number})")
+            if latest_round_number > round_number:
+                status = "finished"
+                logger.info(f"✅ Marked round {round_number} as finished (latest_round={latest_round_number})")
         total_tasks = sum(record.model.n_tasks or 0 for record in records)
         completed_tasks = sum(
             self._estimate_completed_tasks(record.model) for record in records
