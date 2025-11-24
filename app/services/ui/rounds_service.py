@@ -2589,6 +2589,11 @@ class RoundsService:
             score = sum(er.final_score for er in context.evaluation_results) / len(
                 context.evaluation_results
             )
+        # If still None and we have evaluations list, calculate from there
+        if score is None and hasattr(context, 'evaluations') and context.evaluations:
+            scores = [e.final_score for e in context.evaluations if e.final_score is not None]
+            if scores:
+                score = sum(scores) / len(scores)
         try:
             return float(score or 0.0)
         except (TypeError, ValueError):
