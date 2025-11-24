@@ -826,8 +826,10 @@ class OverviewService:
                     current_round_number,
                 )
                 continue
-            
-            logger.info(f"Leaderboard: Including round {round_number}, contexts={len(contexts)}")
+
+            logger.info(
+                f"Leaderboard: Including round {round_number}, contexts={len(contexts)}"
+            )
 
             non_sota_contexts = [
                 ctx for ctx in contexts if not getattr(ctx.run, "is_sota", False)
