@@ -1072,7 +1072,6 @@ class TasksService:
                 validatorUid=context.solution.validator_uid,
                 actionsCount=len(context.solution.actions or []),
                 webAgentId=context.solution.web_agent_id,
-                hasRecording=bool(context.solution.recording),
             )
 
         relationships = TaskRelationships(
