@@ -495,7 +495,15 @@ class ValidatorRoundPersistenceService:
         except Exception:
             # If boundary computation fails, proceed without blocking finish
             pass
-        round_row.status = status
+        
+        # Normalize status to match ValidatorRound literal type
+        normalized_status = status.lower()
+        if normalized_status in {"completed", "complete"}:
+            normalized_status = "finished"
+        elif normalized_status not in {"active", "finished", "pending", "evaluating_finished"}:
+            normalized_status = "finished"
+        
+        round_row.status = normalized_status
         round_row.meta = {
             **round_row.meta,
             "winners": winners,
