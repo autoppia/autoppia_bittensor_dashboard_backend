@@ -1180,3 +1180,71 @@ async def add_evaluation(
         agent_run_id,
     )
     return {"message": "Evaluation stored", "evaluation_id": evaluation.evaluation_id}
+
+
+@router.post(
+    "/{validator_round_id}/finish",
+    dependencies=[Depends(require_validator_auth)],
+)
+async def finish_round(
+    validator_round_id: str,
+    payload: FinishRoundRequest,
+    request: Request,
+    force: bool = Query(
+        False, description="TESTING-only override to skip validation"
+    ),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Mark a validator round as finished and update all agent_runs with final metrics.
+    
+    This endpoint:
+    - Updates validator_round status to 'finished'
+    - Sets ended_at for the round and all agent_runs
+    - Updates average_score, rank, weight for each agent_run
+    - Saves winners and weights in the round metadata
+    """
+    service = ValidatorRoundPersistenceService(session)
+    
+    try:
+        # Validate ownership
+        round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+        _ensure_request_matches_round_owner(request, round_row)
+        
+        # Call the service method
+        await service.finish_round(
+            validator_round_id=validator_round_id,
+            status=payload.status,
+            winners=payload.winners,
+            winner_scores=payload.winner_scores,
+            weights=payload.weights,
+            ended_at=payload.ended_at or time.time(),
+            summary=payload.summary,
+            agent_runs=[
+                {
+                    "agent_run_id": ar.agent_run_id,
+                    "rank": ar.rank,
+                    "weight": ar.weight,
+                }
+                for ar in payload.agent_runs
+            ] if payload.agent_runs else None,
+        )
+        await session.commit()
+        
+        logger.info(
+            "Finished round %s with %d winners, %d agent_runs updated",
+            validator_round_id,
+            len(payload.winners),
+            len(payload.agent_runs) if payload.agent_runs else 0,
+        )
+        
+        return {
+            "message": "Round finished successfully",
+            "validator_round_id": validator_round_id,
+            "status": payload.status,
+        }
+        
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
