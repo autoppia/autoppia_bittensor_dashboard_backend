@@ -292,7 +292,7 @@ class OverviewService:
             seen_tasks: set[str] = set()
             # Track agent_runs with NULL average_score to query from DB
             agent_runs_to_query: List[str] = []
-            
+
             for ctx in contexts:
                 # Ignore SOTA/baseline runs when computing miner leaderboard metrics
                 if getattr(ctx.run, "is_sota", False):
@@ -306,39 +306,54 @@ class OverviewService:
                     miners.add(miner_identifier)
 
                 score = self.rounds_service._context_score(ctx)
-                
+
                 # If score is 0 and average_score is NULL, we need to query from DB
-                if score == 0.0 and ctx.run.average_score is None and ctx.run.agent_run_id:
+                if (
+                    score == 0.0
+                    and ctx.run.average_score is None
+                    and ctx.run.agent_run_id
+                ):
                     agent_runs_to_query.append(ctx.run.agent_run_id)
-                
+
                 if miner_identifier:
                     tracker = miner_score_tracker.setdefault(miner_identifier, [])
                     tracker.append(score)
-            
+
             # Query DB for agent_runs with NULL average_score
             if agent_runs_to_query:
                 try:
                     from app.db.models import EvaluationORM
-                    logger.info(f"Querying DB for {len(agent_runs_to_query)} agent_runs with NULL average_score")
-                    
+
+                    logger.info(
+                        f"Querying DB for {len(agent_runs_to_query)} agent_runs with NULL average_score"
+                    )
+
                     stmt = (
                         select(
                             AgentEvaluationRunORM.agent_run_id,
                             AgentEvaluationRunORM.miner_uid,
-                            func.avg(EvaluationORM.final_score).label("avg_score")
+                            func.avg(EvaluationORM.final_score).label("avg_score"),
                         )
                         .join(
                             EvaluationORM,
-                            EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id
+                            EvaluationORM.agent_run_id
+                            == AgentEvaluationRunORM.agent_run_id,
                         )
-                        .where(AgentEvaluationRunORM.agent_run_id.in_(agent_runs_to_query))
-                        .group_by(AgentEvaluationRunORM.agent_run_id, AgentEvaluationRunORM.miner_uid)
+                        .where(
+                            AgentEvaluationRunORM.agent_run_id.in_(agent_runs_to_query)
+                        )
+                        .group_by(
+                            AgentEvaluationRunORM.agent_run_id,
+                            AgentEvaluationRunORM.miner_uid,
+                        )
                     )
                     result = await session.execute(stmt)
                     rows = result.all()
-                    
+
                     if rows:
-                        logger.info(f"✅ Found {len(rows)} agent_runs with evaluations in DB")
+                        logger.info(
+                            f"✅ Found {len(rows)} agent_runs with evaluations in DB"
+                        )
                         for row in rows:
                             agent_run_id, miner_uid, avg_score = row
                             if avg_score is not None and miner_uid is not None:
@@ -350,7 +365,9 @@ class OverviewService:
                                     if 0.0 in tracker:
                                         tracker.remove(0.0)
                                     tracker.append(float(avg_score))
-                                    logger.debug(f"  Updated {miner_identifier}: {avg_score}")
+                                    logger.debug(
+                                        f"  Updated {miner_identifier}: {avg_score}"
+                                    )
                 except Exception as e:
                     logger.error(f"Failed to query evaluations from DB: {e}")
 
@@ -364,7 +381,9 @@ class OverviewService:
 
             if not contexts:
                 # If no contexts loaded, try winners first
-                logger.info(f"No contexts for round {round_obj.validator_round_id}, checking winners or DB...")
+                logger.info(
+                    f"No contexts for round {round_obj.validator_round_id}, checking winners or DB..."
+                )
                 if round_obj.winners:
                     round_top = max(
                         winner.get("score", 0.0) for winner in round_obj.winners
@@ -373,27 +392,35 @@ class OverviewService:
                     logger.info(f"Using winners: top_score={round_top}")
                 else:
                     # Fallback: query evaluations directly from DB for this round
-                    logger.info(f"No winners, querying DB for round {round_obj.validator_round_id}")
+                    logger.info(
+                        f"No winners, querying DB for round {round_obj.validator_round_id}"
+                    )
                     try:
                         from app.db.models import EvaluationORM
-                        
+
                         # Get all evaluations for this validator_round and calculate avg per miner
                         stmt = (
                             select(
                                 AgentEvaluationRunORM.miner_uid,
-                                func.avg(EvaluationORM.final_score).label("avg_score")
+                                func.avg(EvaluationORM.final_score).label("avg_score"),
                             )
                             .join(
                                 EvaluationORM,
-                                EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id
+                                EvaluationORM.agent_run_id
+                                == AgentEvaluationRunORM.agent_run_id,
                             )
-                            .where(AgentEvaluationRunORM.validator_round_id == round_obj.validator_round_id)
+                            .where(
+                                AgentEvaluationRunORM.validator_round_id
+                                == round_obj.validator_round_id
+                            )
                             .group_by(AgentEvaluationRunORM.miner_uid)
                         )
                         result = await session.execute(stmt)
                         rows = result.all()
-                        
-                        logger.info(f"DB query returned {len(rows)} rows for round {round_obj.validator_round_id}")
+
+                        logger.info(
+                            f"DB query returned {len(rows)} rows for round {round_obj.validator_round_id}"
+                        )
                         if rows:
                             for row in rows:
                                 miner_uid, avg_score = row
@@ -401,13 +428,17 @@ class OverviewService:
                                 if avg_score is not None:
                                     miner_identifier = f"uid:{miner_uid}"
                                     miners.add(miner_identifier)
-                                    tracker = miner_score_tracker.setdefault(miner_identifier, [])
+                                    tracker = miner_score_tracker.setdefault(
+                                        miner_identifier, []
+                                    )
                                     tracker.append(float(avg_score))
                             logger.info(
                                 f"✅ Loaded {len(rows)} miner scores from DB for round {round_obj.validator_round_id}"
                             )
                         else:
-                            logger.warning(f"No evaluation data found in DB for round {round_obj.validator_round_id}")
+                            logger.warning(
+                                f"No evaluation data found in DB for round {round_obj.validator_round_id}"
+                            )
                     except Exception as e:
                         logger.error(
                             f"Failed to load evaluations for round {round_obj.validator_round_id}: {e}"
@@ -444,18 +475,23 @@ class OverviewService:
                                         break
                             if top_miner_name:
                                 break
-                        
+
                         # If not found in contexts, try to get from DB
                         if not top_miner_name and top_miner_uid:
                             try:
                                 from app.db.models import MinerORM
-                                stmt = select(MinerORM.name).where(MinerORM.uid == top_miner_uid)
+
+                                stmt = select(MinerORM.name).where(
+                                    MinerORM.uid == top_miner_uid
+                                )
                                 result = await session.execute(stmt)
                                 miner_name_row = result.scalar_one_or_none()
                                 if miner_name_row:
                                     top_miner_name = miner_name_row
                             except Exception as e:
-                                logger.debug(f"Could not fetch miner name for UID {top_miner_uid}: {e}")
+                                logger.debug(
+                                    f"Could not fetch miner name for UID {top_miner_uid}: {e}"
+                                )
                         break
         else:
             # If we have no context data, fall back to best single score captured earlier.
@@ -706,8 +742,10 @@ class OverviewService:
             include_details=True,  # Need eval results to compute scores correctly
             context_limit=None,  # Don't truncate agent runs; winners may be beyond first 20
         )
+        logger.info(f"Leaderboard: Loaded {len(records_with_contexts)} round records")
         if not records_with_contexts:
             now_iso = datetime.now(timezone.utc).isoformat()
+            logger.warning("Leaderboard: No round records found, returning empty")
             return [], {"start": now_iso, "end": now_iso}
 
         def _scores_for_provider(
@@ -743,13 +781,18 @@ class OverviewService:
         except Exception:
             current_block = None
 
-        # Calculate CURRENT round number (the one in progress)
+        # Calculate CURRENT round number (the one in progress). If the chain
+        # height cannot be resolved or returns an obviously low value, fall
+        # back to permissive behaviour (include recent rounds even if status
+        # isn't "finished").
         current_round_number = 0
         if current_block is not None:
             try:
                 current_round_number = compute_round_number(current_block)
             except Exception:
-                pass
+                current_round_number = 0
+        if current_round_number is not None and current_round_number <= 1:
+            current_round_number = 0
 
         total_rounds = len(records_with_contexts)
         entries: List[LeaderboardEntry] = []
@@ -757,18 +800,34 @@ class OverviewService:
             round_obj = record.model
             round_number = round_obj.round_number or 0
 
-            # SIMPLE RULE: Only include rounds < current_round_number
-            # If blockchain is in Round N, all rounds < N are finished by definition
+            # Decide whether this round should be included. Prefer chain signal,
+            # but fall back to presence of data even if status is still "active".
+            include_round = True
             if current_round_number > 0:
                 if round_number >= current_round_number:
-                    logger.debug(
-                        f"Leaderboard: Skipping round {round_number} (>= current {current_round_number})"
-                    )
-                    continue
+                    if not (
+                        round_obj.ended_at
+                        or round_obj.status in ("finished", "evaluating_finished")
+                    ):
+                        include_round = False
             else:
-                # Fallback: if we can't calculate current_round_number, use status
-                if round_obj.status not in ("finished", "evaluating_finished"):
-                    continue
+                if (
+                    round_obj.status not in ("finished", "evaluating_finished")
+                    and not contexts
+                ):
+                    include_round = False
+
+            if not include_round:
+                logger.info(
+                    "Leaderboard: Skipping round %s (round_number=%s, status=%s, current_round=%s)",
+                    round_obj.validator_round_id,
+                    round_number,
+                    round_obj.status,
+                    current_round_number,
+                )
+                continue
+            
+            logger.info(f"Leaderboard: Including round {round_number}, contexts={len(contexts)}")
 
             non_sota_contexts = [
                 ctx for ctx in contexts if not getattr(ctx.run, "is_sota", False)
