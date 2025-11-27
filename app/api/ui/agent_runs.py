@@ -47,6 +47,7 @@ async def list_agent_runs(
     endDate: Optional[datetime] = Query(None),
     sortBy: str = Query("startTime"),
     sortOrder: str = Query("desc"),
+    includeStats: bool = Query(False, description="Include statistics for each run"),
 ) -> AgentRunsListResponse:
     service = await _service(session)
     data = await service.list_agent_runs(
@@ -61,6 +62,7 @@ async def list_agent_runs(
         end_date=endDate,
         sort_by=sortBy,
         sort_order=sortOrder,
+        include_stats=includeStats,
     )
     return AgentRunsListResponse(success=True, data=data)
 

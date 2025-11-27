@@ -716,6 +716,63 @@ class AgentStatsORM(TimestampMixin, Base):
     )
 
 
+class MinerAggregatesMV(Base):
+    """
+    Read-only ORM mapping for materialized view `miner_aggregates_mv`.
+
+    This view is maintained in PostgreSQL and provides pre-aggregated miner
+    statistics for fast leaderboard-style queries.
+    """
+
+    __tablename__ = "miner_aggregates_mv"
+
+    # Core identity / display fields
+    uid: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    hotkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    is_sota: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    image_url: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    github_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Aggregated performance metrics
+    total_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    successful_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    avg_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    best_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    avg_response_time: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    success_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    # Global ranking / latest round snapshot
+    current_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    latest_round_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    latest_round_score: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True
+    )
+
+    # Activity / status metadata
+    last_seen: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="inactive")
+
+    # JSONB with per-round aggregates:
+    # {
+    #   "<round_number>": { "avgScore": float, "rank": int, "totalRuns": int },
+    #   ...
+    # }
+    rounds: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
 __all__ = [
     "RoundSnapshotORM",
     "AgentStatsORM",
@@ -730,6 +787,7 @@ __all__ = [
     "EvaluationORM",
     "EvaluationResultORM",
     "RoundORM",
+    "MinerAggregatesMV",
 ]
 
 # Backwards compatibility alias

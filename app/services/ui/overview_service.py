@@ -13,7 +13,13 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AgentEvaluationRunORM, EvaluationResultORM, RoundORM, TaskORM
+from app.db.models import (
+    AgentEvaluationRunORM,
+    EvaluationResultORM,
+    RoundORM,
+    TaskORM,
+    MinerAggregatesMV,
+)
 from app.models.core import ValidatorRound
 from app.models.ui.overview import (
     ActivityMetadata,
@@ -728,6 +734,21 @@ class OverviewService:
             unlimited = False
             derived_limit = min(limit, derived_limit) if derived_limit else limit
 
+        # Performance optimization: Try materialized view first (fast path)
+        try:
+            mv_entries = await self._leaderboard_from_materialized_view(
+                derived_limit=derived_limit,
+                unlimited=unlimited,
+            )
+            if mv_entries:
+                logger.info(f"Leaderboard: Using materialized view (fast path)")
+                return mv_entries
+        except Exception as mv_exc:
+            logger.warning(
+                f"Leaderboard: Materialized view failed, falling back to full aggregation: {mv_exc}"
+            )
+
+        # Fallback: Original implementation (slow but complete)
         # Performance optimization: Even with "unlimited" (timeRange=all),
         # limit to 365 rounds (max ~1 year) to prevent loading thousands of rounds
         if unlimited:
@@ -948,6 +969,130 @@ class OverviewService:
         start = min(entry.timestamp for entry in aggregated_entries)
         end = max(entry.timestamp for entry in aggregated_entries)
         return aggregated_entries, {"start": start, "end": end}
+
+    async def _leaderboard_from_materialized_view(
+        self,
+        derived_limit: Optional[int],
+        unlimited: bool,
+    ) -> Optional[Tuple[List[LeaderboardEntry], Dict[str, str]]]:
+        """
+        Fast path: Build leaderboard from materialized view.
+        Groups by round_number using JSONB rounds data.
+        """
+        from sqlalchemy import cast, Float, Integer
+
+        # Get all miners from materialized view
+        stmt = select(MinerAggregatesMV).where(
+            MinerAggregatesMV.is_sota == False  # Only non-SOTA miners
+        )
+        result = await self.session.execute(stmt)
+        miners = list(result.scalars().all())
+
+        if not miners:
+            return None
+
+        # Extract round data from JSONB and group by round_number
+        round_data: Dict[int, Dict[str, Any]] = defaultdict(
+            lambda: {
+                "scores": [],
+                "top_score": 0.0,
+                "winner_uid": None,
+                "winner_name": None,
+            }
+        )
+
+        for miner in miners:
+            rounds_json = miner.rounds or {}
+            for round_key, round_info in rounds_json.items():
+                try:
+                    round_number = int(round_key)
+                    if round_number <= 0:
+                        continue
+
+                    avg_score = float(round_info.get("avgScore", 0.0))
+                    if avg_score <= 0:
+                        continue
+
+                    round_data[round_number]["scores"].append(avg_score)
+
+                    # Track winner (highest score)
+                    if avg_score > round_data[round_number]["top_score"]:
+                        round_data[round_number]["top_score"] = avg_score
+                        round_data[round_number]["winner_uid"] = miner.uid
+                        round_data[round_number]["winner_name"] = miner.name or f"agent-{miner.uid}"
+                except (ValueError, TypeError, KeyError):
+                    continue
+
+        if not round_data:
+            return None
+
+        # Get round timestamps from validator_rounds (lightweight query)
+        round_numbers = sorted(round_data.keys(), reverse=True)
+        max_rounds = 365 if unlimited else (derived_limit or 30)
+        round_numbers = round_numbers[:max_rounds]
+
+        # Query timestamps for these rounds
+        stmt = select(
+            RoundORM.round_number,
+            func.min(RoundORM.started_at).label("min_started_at"),
+        ).where(
+            RoundORM.round_number.in_(round_numbers),
+            RoundORM.round_number.isnot(None),
+        ).group_by(RoundORM.round_number)
+
+        result = await self.session.execute(stmt)
+        round_timestamps: Dict[int, float] = {
+            row.round_number: row.min_started_at
+            for row in result
+            if row.round_number and row.min_started_at
+        }
+
+        # Build leaderboard entries
+        entries: List[LeaderboardEntry] = []
+        for round_number in sorted(round_data.keys(), reverse=True)[:max_rounds]:
+            data = round_data[round_number]
+            scores = data["scores"]
+            if not scores:
+                continue
+
+            # Calculate average score (subnet36)
+            average_score = sum(scores) / len(scores)
+
+            # Get timestamp
+            timestamp_ts = round_timestamps.get(round_number)
+            if timestamp_ts is None:
+                # Fallback: use current time if round not found
+                timestamp_ts = datetime.now(timezone.utc).timestamp()
+
+            timestamp = datetime.fromtimestamp(timestamp_ts, tz=timezone.utc).isoformat()
+
+            entries.append(
+                LeaderboardEntry(
+                    round=round_number,
+                    subnet36=round(average_score, 3),
+                    winnerUid=data["winner_uid"],
+                    winnerName=data["winner_name"],
+                    openai_cua=None,  # Not available in MV, would need additional logic
+                    anthropic_cua=None,  # Not available in MV
+                    browser_use=None,  # Not available in MV
+                    timestamp=timestamp,
+                )
+            )
+
+        if not entries:
+            return None
+
+        # Sort by timestamp descending
+        entries.sort(key=lambda e: e.timestamp, reverse=True)
+
+        # Apply limit
+        if not unlimited and derived_limit:
+            entries = entries[:derived_limit]
+
+        start = min(entry.timestamp for entry in entries)
+        end = max(entry.timestamp for entry in entries)
+
+        return entries, {"start": start, "end": end}
 
     @rollback_on_error
     async def statistics(self) -> SubnetStatistics:
@@ -1727,13 +1872,18 @@ class OverviewService:
             cache_key = validator_round.validator_round_id if validator_round else None
             current_website: Optional[str] = None
             current_use_case: Optional[str] = None
-            if cache_key and status_info.requires_prompt:
+            # Always fetch task metadata if we have a validator_round_id, even for finished rounds
+            # This allows showing the last task processed before the round ended
+            if cache_key:
                 if cache_key not in meta_cache:
                     meta_cache[cache_key] = await self._latest_task_meta(cache_key)
                 meta = meta_cache.get(cache_key)
                 if meta:
-                    if meta.get("prompt"):
+                    # For finished/not_started states, still populate website/use case from last task
+                    # but keep the default task message
+                    if status_info.requires_prompt and meta.get("prompt"):
                         current_task = meta.get("prompt") or current_task
+                    # Always populate website and use case if available (even for finished rounds)
                     current_website = meta.get("website") or None
                     current_use_case = meta.get("useCase") or None
 

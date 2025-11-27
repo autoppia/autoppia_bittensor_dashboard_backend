@@ -42,98 +42,230 @@ async def list_agents(
 ):
     """
     List agents with pagination and filtering.
-    Uses materialized agent_stats table for ultra-fast queries.
+    Optimized: Uses miner_aggregates_mv materialized view for ultra-fast queries.
+    Falls back to AgentStatsORM if MV query fails.
     """
-    from app.db.models import AgentStatsORM
-    from sqlalchemy import select, func, String, cast
+    from app.db.models import MinerAggregatesMV, AgentStatsORM
+    from sqlalchemy import select, func, String, cast, or_
     from datetime import timedelta, timezone
     
-    # NUEVO: Query rápida desde agent_stats
-    stmt = select(AgentStatsORM)
-    
-    # Filtros
-    if search:
-        search_lower = search.lower()
-        stmt = stmt.where(
-            func.lower(AgentStatsORM.name).contains(search_lower)
-            | cast(AgentStatsORM.uid, String).contains(search)
-        )
-    
-    if type and type == AgentType.SOTA:
-        stmt = stmt.where(AgentStatsORM.is_sota == True)
-    
-    # Status filter (active = seen in last 7 days)
-    if status:
-        if status == AgentStatus.ACTIVE:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-            stmt = stmt.where(AgentStatsORM.last_seen >= cutoff)
-        elif status == AgentStatus.INACTIVE:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-            stmt = stmt.where(
-                (AgentStatsORM.last_seen < cutoff) | (AgentStatsORM.last_seen == None)
+    try:
+        # OPTIMIZED: Try miner_aggregates_mv first (most up-to-date)
+        stmt = select(MinerAggregatesMV)
+        
+        # Build filters
+        filters = []
+        
+        if search:
+            search_lower = search.lower()
+            filters.append(
+                or_(
+                    func.lower(MinerAggregatesMV.name).contains(search_lower),
+                    cast(MinerAggregatesMV.uid, String).contains(search),
+                    func.lower(MinerAggregatesMV.hotkey).contains(search_lower),
+                )
             )
+        
+        if type and type == AgentType.SOTA:
+            filters.append(MinerAggregatesMV.is_sota == True)
+        elif type and type == AgentType.MINER:
+            filters.append(MinerAggregatesMV.is_sota == False)
+        
+        # Status filter (active = seen in last 7 days)
+        if status:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+            if status == AgentStatus.ACTIVE:
+                filters.append(MinerAggregatesMV.last_seen >= cutoff)
+            elif status == AgentStatus.INACTIVE:
+                filters.append(
+                    (MinerAggregatesMV.last_seen < cutoff) | (MinerAggregatesMV.last_seen == None)
+                )
+        
+        if filters:
+            stmt = stmt.where(*filters)
+        
+        # Sorting
+        sort_field_map = {
+            "name": MinerAggregatesMV.name,
+            "averageScore": MinerAggregatesMV.avg_score,
+            "bestScore": MinerAggregatesMV.best_score,
+            "totalRuns": MinerAggregatesMV.total_runs,
+            "lastSeen": MinerAggregatesMV.last_seen,
+            "currentRank": MinerAggregatesMV.current_rank,
+        }
+        sort_field = sort_field_map.get(sortBy, MinerAggregatesMV.avg_score)
+        
+        if sortOrder == "desc":
+            stmt = stmt.order_by(sort_field.desc().nulls_last())
+        else:
+            stmt = stmt.order_by(sort_field.asc().nulls_last())
+        
+        # Count total (optimized: reuse same filters)
+        count_stmt = select(func.count(MinerAggregatesMV.uid))
+        if filters:
+            count_stmt = count_stmt.where(*filters)
+        total = await session.scalar(count_stmt) or 0
+        
+        # Pagination
+        stmt = stmt.limit(limit).offset((page - 1) * limit)
+        
+        # Execute
+        miners = list(await session.scalars(stmt))
+        
+        # Convert to response format
+        agents = []
+        now = datetime.now(timezone.utc)
+        for m in miners:
+            # Build recentPerformance from rounds JSONB (last 5 rounds)
+            recent_performance = []
+            if m.rounds:
+                round_keys = sorted(
+                    [int(k) for k in m.rounds.keys() if k.isdigit()],
+                    reverse=True
+                )[:5]
+                for rk in round_keys:
+                    round_data = m.rounds.get(str(rk), {})
+                    if round_data:
+                        recent_performance.append({
+                            "round": rk,
+                            "avgScore": round(float(round_data.get("avgScore", 0.0)), 4),
+                            "rank": round_data.get("rank"),
+                            "totalRuns": round_data.get("totalRuns", 0),
+                        })
+            
+            # Calculate total rounds from rounds JSONB
+            total_rounds = len(m.rounds) if m.rounds else 0
+            
+            agents.append({
+                "id": f"M{m.uid}",
+                "uid": m.uid,
+                "name": m.name or f"Miner {m.uid}",
+                "imageUrl": m.image_url or "",
+                "type": "sota" if m.is_sota else "miner",
+                "status": "active" if m.last_seen and (now - m.last_seen).days < 7 else "inactive",
+                "averageScore": round(m.avg_score, 4),
+                "bestScore": round(m.best_score, 4),
+                "totalRounds": total_rounds,
+                "totalRuns": m.total_runs,
+                "successRate": round(m.success_rate, 4) if m.success_rate else 0.0,
+                "totalTasks": m.total_tasks,
+                "completedTasks": m.completed_tasks,
+                "lastSeen": m.last_seen.isoformat() if m.last_seen else None,
+                "createdAt": m.created_at.isoformat() if m.created_at else None,
+                "recentPerformance": recent_performance,
+            })
+        
+        return {
+            "success": True,
+            "data": {
+                "agents": agents,
+                "total": total,
+                "page": page,
+                "limit": limit,
+            },
+        }
     
-    # Sorting
-    sort_field_map = {
-        "name": AgentStatsORM.name,
-        "averageScore": AgentStatsORM.avg_score,
-        "totalRounds": AgentStatsORM.total_rounds,
-        "lastSeen": AgentStatsORM.last_seen,
-    }
-    sort_field = sort_field_map.get(sortBy, AgentStatsORM.avg_score)
-    
-    if sortOrder == "desc":
-        stmt = stmt.order_by(sort_field.desc())
-    else:
-        stmt = stmt.order_by(sort_field.asc())
-    
-    # Pagination
-    stmt = stmt.limit(limit).offset((page - 1) * limit)
-    
-    # Execute
-    stats = list(await session.scalars(stmt))
-    
-    # Count total
-    count_stmt = select(func.count()).select_from(AgentStatsORM)
-    if search:
-        search_lower = search.lower()
-        count_stmt = count_stmt.where(
-            func.lower(AgentStatsORM.name).contains(search_lower)
-            | cast(AgentStatsORM.uid, String).contains(search)
-        )
-    total = await session.scalar(count_stmt) or 0
-    
-    # Convert to response format
-    agents = []
-    for s in stats:
-        agents.append({
-            "id": f"M{s.uid}",
-            "uid": s.uid,
-            "name": s.name or f"Miner {s.uid}",
-            "imageUrl": s.image_url,
-            "type": "sota" if s.is_sota else "miner",
-            "status": "active" if s.last_seen and (datetime.now(timezone.utc) - s.last_seen).days < 7 else "inactive",
-            "averageScore": round(s.avg_score, 4),
-            "bestScore": round(s.best_score, 4),
-            "totalRounds": s.total_rounds,
-            "totalRuns": s.total_runs,
-            "successRate": round(s.successful_runs / s.total_runs, 4) if s.total_runs else 0.0,
-            "totalTasks": s.total_tasks,
-            "completedTasks": s.completed_tasks,
-            "lastSeen": s.last_seen.isoformat() if s.last_seen else None,
-            "createdAt": s.created_at.isoformat() if s.created_at else None,
-            "recentPerformance": s.recent_rounds,
-        })
-    
-    return {
-        "success": True,
-        "data": {
-            "agents": agents,
-            "total": total,
-            "page": page,
-            "limit": limit,
-        },
-    }
+    except Exception as e:
+        logger.warning(f"Failed to query miner_aggregates_mv, falling back to AgentStatsORM: {e}")
+        # Fallback to AgentStatsORM
+        from app.db.models import AgentStatsORM
+        
+        stmt = select(AgentStatsORM)
+        
+        # Filtros
+        if search:
+            search_lower = search.lower()
+            stmt = stmt.where(
+                func.lower(AgentStatsORM.name).contains(search_lower)
+                | cast(AgentStatsORM.uid, String).contains(search)
+            )
+        
+        if type and type == AgentType.SOTA:
+            stmt = stmt.where(AgentStatsORM.is_sota == True)
+        
+        # Status filter (active = seen in last 7 days)
+        if status:
+            if status == AgentStatus.ACTIVE:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+                stmt = stmt.where(AgentStatsORM.last_seen >= cutoff)
+            elif status == AgentStatus.INACTIVE:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+                stmt = stmt.where(
+                    (AgentStatsORM.last_seen < cutoff) | (AgentStatsORM.last_seen == None)
+                )
+        
+        # Sorting
+        sort_field_map = {
+            "name": AgentStatsORM.name,
+            "averageScore": AgentStatsORM.avg_score,
+            "totalRounds": AgentStatsORM.total_rounds,
+            "lastSeen": AgentStatsORM.last_seen,
+        }
+        sort_field = sort_field_map.get(sortBy, AgentStatsORM.avg_score)
+        
+        if sortOrder == "desc":
+            stmt = stmt.order_by(sort_field.desc())
+        else:
+            stmt = stmt.order_by(sort_field.asc())
+        
+        # Pagination
+        stmt = stmt.limit(limit).offset((page - 1) * limit)
+        
+        # Execute
+        stats = list(await session.scalars(stmt))
+        
+        # Count total (optimized: build same filters)
+        count_stmt = select(func.count(AgentStatsORM.uid))
+        if search:
+            search_lower = search.lower()
+            count_stmt = count_stmt.where(
+                func.lower(AgentStatsORM.name).contains(search_lower)
+                | cast(AgentStatsORM.uid, String).contains(search)
+            )
+        if type and type == AgentType.SOTA:
+            count_stmt = count_stmt.where(AgentStatsORM.is_sota == True)
+        if status:
+            if status == AgentStatus.ACTIVE:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+                count_stmt = count_stmt.where(AgentStatsORM.last_seen >= cutoff)
+            elif status == AgentStatus.INACTIVE:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+                count_stmt = count_stmt.where(
+                    (AgentStatsORM.last_seen < cutoff) | (AgentStatsORM.last_seen == None)
+                )
+        total = await session.scalar(count_stmt) or 0
+        
+        # Convert to response format
+        agents = []
+        for s in stats:
+            agents.append({
+                "id": f"M{s.uid}",
+                "uid": s.uid,
+                "name": s.name or f"Miner {s.uid}",
+                "imageUrl": s.image_url,
+                "type": "sota" if s.is_sota else "miner",
+                "status": "active" if s.last_seen and (datetime.now(timezone.utc) - s.last_seen).days < 7 else "inactive",
+                "averageScore": round(s.avg_score, 4),
+                "bestScore": round(s.best_score, 4),
+                "totalRounds": s.total_rounds,
+                "totalRuns": s.total_runs,
+                "successRate": round(s.successful_runs / s.total_runs, 4) if s.total_runs else 0.0,
+                "totalTasks": s.total_tasks,
+                "completedTasks": s.completed_tasks,
+                "lastSeen": s.last_seen.isoformat() if s.last_seen else None,
+                "createdAt": s.created_at.isoformat() if s.created_at else None,
+                "recentPerformance": s.recent_rounds,
+            })
+        
+        return {
+            "success": True,
+            "data": {
+                "agents": agents,
+                "total": total,
+                "page": page,
+                "limit": limit,
+            },
+        }
 
 
 @router.get("/statistics")

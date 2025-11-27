@@ -18,6 +18,7 @@ from app.db.models import (
     RoundORM,
     TaskORM,
     TaskSolutionORM,
+    MinerAggregatesMV,
 )
 from app.models.core import (
     Action,
@@ -329,10 +330,35 @@ class RoundsService:
         self.session = session
 
     @staticmethod
+    def _get_loaded_snapshots(round_row: RoundORM, attr_name: str) -> list:
+        """
+        Safely get loaded snapshots from round_row without triggering lazy loading.
+        Returns empty list if not loaded to avoid MissingGreenlet error.
+        """
+        from sqlalchemy import inspect
+        from sqlalchemy.orm.state import InstanceState
+        
+        try:
+            insp = inspect(round_row)
+            attr_state = insp.attrs.get(attr_name)
+            if attr_state:
+                # Check if the relationship is actually loaded (not just a LoaderCallableStatus)
+                # loaded_value can be None, a list, or a LoaderCallableStatus
+                loaded_value = attr_state.loaded_value
+                # Only return if it's actually a list/sequence (not LoaderCallableStatus)
+                if loaded_value is not None and isinstance(loaded_value, (list, tuple)):
+                    return list(loaded_value)  # Convert to list for consistency
+        except (AttributeError, KeyError, Exception):  # noqa: BLE001
+            # Attribute doesn't exist, not loaded, or any error - return empty list
+            pass
+        return []
+
+    @staticmethod
     def _snapshot_for_validator(round_row: RoundORM, validator_uid: Optional[int]):
         if validator_uid is None:
             return None
-        snapshots = getattr(round_row, "validator_snapshots", None) or []
+        # OPTIMIZED: Use safe getter to avoid lazy loading
+        snapshots = RoundsService._get_loaded_snapshots(round_row, "validator_snapshots")
         for snapshot in snapshots:
             if snapshot.validator_uid == validator_uid:
                 return snapshot
@@ -530,6 +556,19 @@ class RoundsService:
         return overview
 
     async def get_round(self, round_identifier: Union[str, int]) -> Dict[str, Any]:
+        # Try materialized view first (fast path)
+        try:
+            round_number = await self._resolve_round_number(round_identifier)
+            mv_overview = await self._get_round_from_materialized_view(round_number)
+            if mv_overview is not None:
+                logger.info(f"✅ Serving round {round_number} from materialized view (fast)")
+                return mv_overview
+        except Exception as mv_exc:
+            logger.debug(
+                f"Materialized view path failed for round {round_identifier}, falling back: {mv_exc}"
+            )
+
+        # Fallback: Original implementation (slow but complete)
         aggregated = await self._fetch_aggregated_round(round_identifier)
 
         cache_key: Optional[str] = None
@@ -578,6 +617,137 @@ class RoundsService:
                 overview,
                 CACHE_TTL["round_detail_final"],
             )
+        return overview
+
+    async def _get_round_from_materialized_view(
+        self, round_number: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Fast path: Build round detail from materialized view.
+        Uses miner_aggregates_mv to get aggregated data without loading all agent runs.
+        """
+        from sqlalchemy import cast, Float, Integer
+
+        round_key = str(round_number)
+
+        # Get all miners that participated in this round from materialized view
+        stmt = select(MinerAggregatesMV).where(
+            MinerAggregatesMV.rounds.has_key(round_key),  # type: ignore[attr-defined]
+            MinerAggregatesMV.is_sota == False,  # Only non-SOTA miners
+        )
+        result = await self.session.execute(stmt)
+        miners = list(result.scalars().all())
+
+        if not miners:
+            return None
+
+        # Get validator rounds for this round_number (lightweight query, no agent runs)
+        stmt = select(RoundORM).where(
+            RoundORM.round_number == round_number
+        ).options(
+            selectinload(RoundORM.validator_snapshots),
+            selectinload(RoundORM.miner_snapshots),
+        )
+        round_rows = list(await self.session.scalars(stmt))
+
+        if not round_rows:
+            return None
+
+        # Build records from round rows
+        records = [RoundRecord(row=row, model=self._deserialize_round(row)) for row in round_rows]
+
+        # Get current round for status determination
+        current = await self.get_current_round_overview()
+        latest_round_number = current["round"] if current else round_number
+
+        # Build overview using existing method
+        overview = self._build_round_day_overview_from_records(
+            round_number,
+            records,
+            latest_round_number,
+        )
+
+        # Build validator rounds with simplified agent runs from materialized view
+        detailed_validator_rounds: List[Dict[str, Any]] = []
+        
+        # Group miners by their round data
+        miners_by_round: Dict[int, List[MinerAggregatesMV]] = {}
+        for miner in miners:
+            rounds_json = miner.rounds or {}
+            round_data = rounds_json.get(round_key, {})
+            if round_data:
+                miners_by_round.setdefault(round_number, []).append(miner)
+
+        # Build validator rounds
+        for record in records:
+            summary = self._summarize_validator_round(record)
+            
+            # Build simplified agent runs from materialized view data
+            agent_runs: List[Dict[str, Any]] = []
+            
+            # Get miners that participated in this round
+            round_miners = miners_by_round.get(round_number, [])
+            
+            # Sort by score descending
+            round_miners_sorted = sorted(
+                round_miners,
+                key=lambda m: float(m.rounds.get(round_key, {}).get("avgScore", 0.0)),
+                reverse=True,
+            )
+
+            for miner in round_miners_sorted:
+                round_data = miner.rounds.get(round_key, {})
+                avg_score = float(round_data.get("avgScore", 0.0))
+                rank = int(round_data.get("rank", 0)) if round_data.get("rank") else None
+                total_runs = int(round_data.get("totalRuns", 0))
+
+                # Build simplified agent run from MV data
+                agent_run = {
+                    "agentRunId": f"mv-{miner.uid}-{round_number}",
+                    "minerUid": miner.uid,
+                    "minerHotkey": miner.hotkey or "",
+                    "agentName": miner.name or f"agent-{miner.uid}",
+                    "averageScore": round(avg_score, 4),
+                    "rank": rank,
+                    "totalRuns": total_runs,
+                    "isSota": miner.is_sota,
+                    "imageUrl": miner.image_url or "",
+                    # Simplified fields - not available in MV
+                    "startedAt": None,
+                    "endedAt": None,
+                    "totalTasks": miner.total_tasks,
+                    "completedTasks": miner.completed_tasks,
+                    "failedTasks": miner.failed_tasks,
+                    "tasks": [],  # Empty - would need separate query
+                    "taskSolutions": [],  # Empty - would need separate query
+                    "evaluationResults": [],  # Empty - would need separate query
+                }
+                agent_runs.append(agent_run)
+
+            summary["agentEvaluationRuns"] = agent_runs
+            # Serialize ValidatorRound model to dict
+            round_data = {
+                "validatorRoundId": record.validator_round_id,
+                "validatorUid": record.model.validator_uid,
+                "validatorHotkey": record.model.validator_hotkey,
+                "roundNumber": record.model.round_number,
+                "startBlock": record.model.start_block,
+                "endBlock": record.model.end_block,
+                "startedAt": record.model.started_at,
+                "endedAt": record.model.ended_at,
+                "status": record.model.status,
+                "nTasks": record.model.n_tasks,
+                "averageScore": record.model.average_score,
+                "topScore": record.model.top_score,
+            }
+            summary["roundData"] = round_data
+            detailed_validator_rounds.append(summary)
+
+        overview["validatorRounds"] = detailed_validator_rounds
+        overview["id"] = round_number
+        overview["round"] = round_number
+        overview["roundNumber"] = round_number
+
         return overview
 
     async def list_agent_runs(
@@ -657,17 +827,22 @@ class RoundsService:
         include_details: bool = True,
         agent_run_ids: Optional[Iterable[str]] = None,
     ) -> List[AgentRunContext]:
+        # OPTIMIZED: Only load validator_round relationship (needed for round_number)
+        # Don't load snapshots unless details are needed
         stmt = select(AgentEvaluationRunORM).options(
-            selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                RoundORM.miner_snapshots
-            ),
-            selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                RoundORM.validator_snapshots
-            ),
+            selectinload(AgentEvaluationRunORM.validator_round),
         )
 
+        # Only load snapshots if details are needed (they're used in _resolve_validator_identity)
+        # For list view, we can skip snapshots to improve performance
         if include_details:
             stmt = stmt.options(
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.miner_snapshots
+                ),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.validator_snapshots
+                ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(AgentEvaluationRunORM.evaluation_results),
             )
@@ -2887,7 +3062,9 @@ class RoundsService:
         )
 
         miners: List[MinerInfo] = []
-        for miner_snapshot in getattr(round_row, "miner_snapshots", []) or []:
+        # OPTIMIZED: Use safe getter to avoid lazy loading
+        miner_snapshots = self._get_loaded_snapshots(round_row, "miner_snapshots")
+        for miner_snapshot in miner_snapshots:
             miners.append(
                 MinerInfo(
                     uid=miner_snapshot.miner_uid,
@@ -2902,7 +3079,9 @@ class RoundsService:
             )
 
         validators = [validator_info]
-        for snapshot in getattr(round_row, "validator_snapshots", []) or []:
+        # OPTIMIZED: Use safe getter to avoid lazy loading
+        validator_snapshots = self._get_loaded_snapshots(round_row, "validator_snapshots")
+        for snapshot in validator_snapshots:
             if snapshot.validator_uid == validator_info.uid:
                 continue
             validators.append(

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+import logging
+from sqlalchemy import select, func, cast, Float, Integer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ui.miner_list import (
@@ -15,6 +17,10 @@ from app.services.ui.miners_service import MinersService
 from app.utils.images import resolve_agent_image
 from app.services.service_utils import rollback_on_error
 from app.services.redis_cache import redis_cache
+from app.db.models import MinerAggregatesMV
+
+
+logger = logging.getLogger(__name__)
 
 
 class MinerListService:
@@ -33,7 +39,25 @@ class MinerListService:
         search: str | None = None,
         round_number: Optional[int] = None,
     ) -> MinimalMinerListResponse:
-        # Fast path: try Redis snapshot first
+        # Primary path: materialized view (PostgreSQL)
+        try:
+            mv_response = await self._list_miners_from_materialized_view(
+                page=page,
+                limit=limit,
+                is_sota=is_sota,
+                search=search,
+                round_number=round_number,
+            )
+            if mv_response is not None:
+                return mv_response
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Failed to query miner_aggregates_mv, falling back to Redis/SQL path: %s",
+                exc,
+                exc_info=True,
+            )
+
+        # Fallback 1: Redis snapshot (equivalent to Redis fallback in NestJS)
         snapshot = redis_cache.get("AGGREGATES:agents:v1")
         if isinstance(snapshot, dict) and snapshot:
             lowered = search.lower() if search else None
@@ -91,7 +115,7 @@ class MinerListService:
                 round=round_number if round_number and round_number > 0 else None,
             )
 
-        # Fallback to SQL aggregate path
+        # Fallback 2: SQL aggregate path (last resort, similar to direct DB in NestJS)
         aggregates = await self.miners_service.agents_service._aggregate_agents()  # type: ignore[attr-defined]
         round_candidates = self._collect_round_candidates(aggregates)
         snapshot_cache: Dict[int, List[RoundAgentSnapshot]] = {}
@@ -190,6 +214,220 @@ class MinerListService:
             page=full.pagination.page,
             limit=full.pagination.limit,
             round=None,
+        )
+
+    async def _list_miners_from_materialized_view(
+        self,
+        *,
+        page: int,
+        limit: int,
+        is_sota: bool | None,
+        search: str | None,
+        round_number: Optional[int],
+    ) -> Optional[MinimalMinerListResponse]:
+        """
+        Query the `miner_aggregates_mv` materialized view.
+
+        Behaviour mirrors the NestJS implementation:
+        - If `round_number` is provided, use round-specific metrics from JSONB `rounds`
+          and rank by that round's average score.
+        - Otherwise, use global `avg_score` ordering.
+        """
+        if page < 1 or limit < 1:
+            return None
+
+        offset = (page - 1) * limit
+
+        if round_number is not None and round_number > 0:
+            return await self._list_miners_from_mv_by_round(
+                page=page,
+                limit=limit,
+                offset=offset,
+                is_sota=is_sota,
+                search=search,
+                round_number=round_number,
+            )
+
+        # Global query (no round filter) – use ORM/select for clarity
+        stmt = select(MinerAggregatesMV)
+
+        conditions = []
+        if is_sota is not None:
+            conditions.append(MinerAggregatesMV.is_sota.is_(is_sota))
+
+        # Name / UID search (case-insensitive name, numeric UID match)
+        if search:
+            lowered = search.lower()
+            search_filters = [func.lower(MinerAggregatesMV.name).contains(lowered)]
+            if search.isdigit():
+                try:
+                    uid_val = int(search)
+                    search_filters.append(MinerAggregatesMV.uid == uid_val)
+                except ValueError:
+                    pass
+            conditions.append(func.or_(*search_filters))
+
+        if conditions:
+            stmt = stmt.where(*conditions)
+
+        stmt = stmt.order_by(MinerAggregatesMV.avg_score.desc())
+        stmt = stmt.offset(offset).limit(limit)
+
+        count_stmt = select(func.count()).select_from(MinerAggregatesMV)
+        if conditions:
+            count_stmt = count_stmt.where(*conditions)
+
+        result, total = await self.session.execute(stmt), await self.session.execute(
+            count_stmt
+        )
+        rows = list(result.scalars().all())
+        total_count = int(total.scalar() or 0)
+
+        if not rows:
+            return MinimalMinerListResponse(
+                miners=[],
+                total=0,
+                page=page,
+                limit=limit,
+                round=None,
+            )
+
+        items: List[MinerListItem] = []
+        for row in rows:
+            # Use materialized view global metrics
+            score = float(getattr(row, "avg_score", 0.0) or 0.0)
+            current_rank = int(getattr(row, "current_rank", 0) or 0)
+            items.append(
+                MinerListItem(
+                    uid=row.uid,
+                    name=row.name or f"agent-{row.uid}",
+                    ranking=current_rank,
+                    score=round(score, 4),
+                    isSota=bool(row.is_sota),
+                    imageUrl=row.image_url or "",
+                )
+            )
+
+        # Apply sequential rankings (1, 2, 3, ...) as in NestJS MinerListItemEntity.applyRankings
+        ranked_items = self._apply_rankings(items, start_rank=1)
+
+        return MinimalMinerListResponse(
+            miners=ranked_items,
+            total=total_count,
+            page=page,
+            limit=limit,
+            round=None,
+        )
+
+    async def _list_miners_from_mv_by_round(
+        self,
+        *,
+        page: int,
+        limit: int,
+        offset: int,
+        is_sota: bool | None,
+        search: str | None,
+        round_number: int,
+    ) -> Optional[MinimalMinerListResponse]:
+        """
+        Round-specific query against `miner_aggregates_mv`, using JSONB `rounds`.
+
+        We approximate the NestJS raw SQL behaviour:
+        - Filter only miners that have data for the requested round.
+        - Order by that round's `avgScore` (desc).
+        - Use per-round `rank` when available; otherwise fall back to sequential rank.
+        """
+        # Build base query with JSONB access
+        round_key = str(round_number)
+
+        # `rounds` contains per-round aggregates keyed by round_number as string.
+        has_round = MinerAggregatesMV.rounds.has_key(round_key)  # type: ignore[attr-defined]
+
+        # Extract per-round average score and rank from JSONB (as text → cast to proper types)
+        round_avg_score_col = cast(
+            MinerAggregatesMV.rounds[round_key]["avgScore"].astext,  # type: ignore[index]
+            Float,
+        ).label("round_avg_score")
+        round_rank_col = cast(
+            MinerAggregatesMV.rounds[round_key]["rank"].astext,  # type: ignore[index]
+            Integer,
+        ).label("round_rank")
+
+        stmt = (
+            select(
+                MinerAggregatesMV,
+                round_avg_score_col,
+                round_rank_col,
+            )
+            .where(has_round)
+        )
+
+        conditions = []
+
+        if is_sota is not None:
+            conditions.append(MinerAggregatesMV.is_sota.is_(is_sota))
+
+        if search:
+            lowered = search.lower()
+            search_filters = [func.lower(MinerAggregatesMV.name).contains(lowered)]
+            if search.isdigit():
+                try:
+                    uid_val = int(search)
+                    search_filters.append(MinerAggregatesMV.uid == uid_val)
+                except ValueError:
+                    pass
+            conditions.append(func.or_(*search_filters))
+
+        if conditions:
+            stmt = stmt.where(*conditions)
+
+        # Order by round-specific average score (desc), falling back to 0.0 when NULL
+        stmt = stmt.order_by(func.coalesce(round_avg_score_col, 0.0).desc())
+        stmt = stmt.offset(offset).limit(limit)
+
+        count_stmt = select(func.count()).select_from(MinerAggregatesMV).where(has_round)
+        if conditions:
+            count_stmt = count_stmt.where(*conditions)
+
+        result = await self.session.execute(stmt)
+        total_result = await self.session.execute(count_stmt)
+
+        rows = list(result.all())
+        total_count = int(total_result.scalar() or 0)
+
+        if not rows:
+            return MinimalMinerListResponse(
+                miners=[],
+                total=0,
+                page=page,
+                limit=limit,
+                round=round_number,
+            )
+
+        items: List[MinerListItem] = []
+        for row, round_avg_score, round_rank in rows:
+            mv_row: MinerAggregatesMV = row
+            score_val = float(round_avg_score or 0.0)
+            rank_val = int(round_rank or 0)
+            items.append(
+                MinerListItem(
+                    uid=mv_row.uid,
+                    name=mv_row.name or f"agent-{mv_row.uid}",
+                    ranking=rank_val,
+                    score=round(score_val, 4),
+                    isSota=bool(mv_row.is_sota),
+                    imageUrl=mv_row.image_url or "",
+                )
+            )
+
+        ranked_items = self._apply_rankings(items, start_rank=1)
+
+        return MinimalMinerListResponse(
+            miners=ranked_items,
+            total=total_count,
+            page=page,
+            limit=limit,
+            round=round_number,
         )
 
     @rollback_on_error

@@ -142,6 +142,7 @@ class AgentRunsService:
         end_date: Optional[datetime] = None,
         sort_by: str = "startTime",
         sort_order: str = "desc",
+        include_stats: bool = False,
     ) -> Dict[str, object]:
         skip = max(0, (page - 1) * limit)
 
@@ -264,12 +265,21 @@ class AgentRunsService:
                 "selectedRound": round_number,
             }
 
+        # OPTIMIZED: Only load details if include_stats is requested
+        # For list view, we can use aggregated fields from AgentEvaluationRunORM
         contexts: List[AgentRunContext] = await self.rounds_service.list_agent_run_contexts(
-            include_details=True,
+            include_details=include_stats,  # Only load full details if stats are needed
             agent_run_ids=agent_run_ids,
         )
 
         runs = [self._build_run_summary(context) for context in contexts]
+
+        # Include stats if requested
+        if include_stats:
+            for i, context in enumerate(contexts):
+                stats = self._build_statistics(context)
+                if stats:
+                    runs[i]["stats"] = stats.model_dump()
 
         available_rounds = await self._list_available_round_numbers()
 
@@ -890,6 +900,8 @@ class AgentRunsService:
             getattr(run_model, "n_tasks_failed", None) or run_model.failed_tasks or 0
         )
 
+        # OPTIMIZED: Only compute from evaluation_results if details are loaded
+        # Otherwise use aggregated fields from run_model
         if completed_tasks == 0 and context.evaluation_results:
             completed_tasks = sum(
                 1
@@ -903,7 +915,8 @@ class AgentRunsService:
         average_score = (
             getattr(run_model, "avg_eval_score", None) or run_model.average_score
         )
-        if average_score is None:
+        # Only compute from evaluation_results if details are loaded and score is missing
+        if average_score is None and context.evaluation_results:
             average_score = self._compute_average_score(context.evaluation_results)
         average_score = float(average_score or 0.0)
 
@@ -931,40 +944,42 @@ class AgentRunsService:
 
         # Compute unique websites involved in this run only (based on
         # tasks that have a solution and/or evaluation result).
+        # OPTIMIZED: Only compute if details are loaded, otherwise use 0
         websites_count = 0
-        try:
-            relevant_task_ids = set()
+        if context.evaluation_results or context.task_solutions:
             try:
-                relevant_task_ids.update(
-                    result.task_id for result in (context.evaluation_results or [])
-                )
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                relevant_task_ids.update(
-                    solution.task_id for solution in (context.task_solutions or [])
-                )
-            except Exception:  # noqa: BLE001
-                pass
+                relevant_task_ids = set()
+                try:
+                    relevant_task_ids.update(
+                        result.task_id for result in (context.evaluation_results or [])
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    relevant_task_ids.update(
+                        solution.task_id for solution in (context.task_solutions or [])
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
-            if relevant_task_ids:
-                task_by_id = {
-                    getattr(t, "task_id", None): t for t in (context.tasks or [])
-                }
-                hosts = set()
-                for task_id in relevant_task_ids:
-                    task = task_by_id.get(task_id)
-                    if not task:
-                        continue
-                    website = None
-                    if isinstance(getattr(task, "relevant_data", None), dict):
-                        website = task.relevant_data.get("website")
-                    if not website:
-                        website = getattr(task, "url", None)
-                    hosts.add(_map_website_port_to_name(website))
-                websites_count = len(hosts)
-        except Exception:  # noqa: BLE001
-            websites_count = 0
+                if relevant_task_ids and context.tasks:
+                    task_by_id = {
+                        getattr(t, "task_id", None): t for t in (context.tasks or [])
+                    }
+                    hosts = set()
+                    for task_id in relevant_task_ids:
+                        task = task_by_id.get(task_id)
+                        if not task:
+                            continue
+                        website = None
+                        if isinstance(getattr(task, "relevant_data", None), dict):
+                            website = task.relevant_data.get("website")
+                        if not website:
+                            website = getattr(task, "url", None)
+                        hosts.add(_map_website_port_to_name(website))
+                    websites_count = len(hosts)
+            except Exception:  # noqa: BLE001
+                websites_count = 0
 
         return {
             "runId": run_model.agent_run_id,
@@ -1230,18 +1245,22 @@ class AgentRunsService:
 
     @staticmethod
     def _find_validator(context: AgentRunContext):
-        return next(
-            (
-                validator
-                for validator in context.round.validators
-                if validator.uid == context.run.validator_uid
-            ),
-            None,
-        )
+        # OPTIMIZED: Handle case when snapshots are not loaded
+        if hasattr(context.round, "validators") and context.round.validators:
+            return next(
+                (
+                    validator
+                    for validator in context.round.validators
+                    if validator.uid == context.run.validator_uid
+                ),
+                None,
+            )
+        return None
 
     @staticmethod
     def _find_miner(context: AgentRunContext):
-        if context.round.miners:
+        # OPTIMIZED: Handle case when snapshots are not loaded
+        if hasattr(context.round, "miners") and context.round.miners:
             return next(
                 (
                     miner
@@ -1250,7 +1269,8 @@ class AgentRunsService:
                 ),
                 None,
             )
-        return context.run.miner_info
+        # Fallback to miner_info from run if available
+        return getattr(context.run, "miner_info", None)
 
     def _resolve_agent_identity(
         self,

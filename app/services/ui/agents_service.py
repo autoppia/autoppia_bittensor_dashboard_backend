@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 
-from app.db.models import AgentEvaluationRunORM, RoundORM
+from app.db.models import AgentEvaluationRunORM, RoundORM, MinerAggregatesMV
 from app.models.core import MinerInfo, ValidatorRound
 from app.models.ui.agents import (
     Agent,
@@ -362,6 +362,144 @@ class AgentsService:
         agent_id: str,
         round_number: Optional[int] = None,
     ) -> AgentDetailResponse:
+        """
+        Optimized: Load only the specific agent's data instead of all agents.
+        Falls back to full aggregation if needed.
+        """
+        uid = self._extract_uid(agent_id)
+        if uid is None:
+            # Fallback to original method if we can't extract UID
+            return await self._get_agent_fallback(agent_id, round_number)
+
+        # Fast path: Load only this agent's runs
+        try:
+            contexts = await self._fetch_agent_contexts(agent_id)
+            if not contexts:
+                raise ValueError(f"Agent {agent_id} not found")
+
+            # Build aggregate only for this agent
+            aggregate = await self._build_single_agent_aggregate(contexts, agent_id, uid)
+            if aggregate is None:
+                raise ValueError(f"Agent {agent_id} not found")
+
+            # Get round metrics using materialized view (fast) instead of loading all agents
+            all_aggregates = None
+            round_metrics_from_mv = None
+            if round_number is not None and round_number > 0:
+                # Try to get round metrics from materialized view first (fast path)
+                try:
+                    round_metrics_from_mv = await self._get_round_metrics_from_mv(
+                        uid, round_number, aggregate
+                    )
+                except Exception as mv_exc:
+                    logger.debug(
+                        f"Could not get round metrics from MV for agent {uid} round {round_number}: {mv_exc}"
+                    )
+                    # Fallback: load all aggregates only if MV fails (slow but complete)
+                    try:
+                        all_aggregates = await self._aggregate_agents()
+                    except Exception:
+                        logger.warning(
+                            f"Failed to load all aggregates for round {round_number} rankings"
+                        )
+
+            agent_model = self._aggregate_to_agent(aggregate)
+            
+            # Build score round data from this agent's data only
+            score_round_data = self._build_round_score_series(
+                aggregate, 
+                {agent_id: aggregate} if all_aggregates is None else all_aggregates
+            )
+
+            available_rounds = sorted(
+                {
+                    round_id
+                    for round_id in aggregate.rounds
+                    if isinstance(round_id, int) and round_id > 0
+                },
+                reverse=True,
+            )
+
+            requested_round = round_number if round_number and round_number > 0 else None
+            snapshot_round = requested_round or (
+                available_rounds[0] if available_rounds else None
+            )
+
+            round_metrics = None
+            # Use round metrics from materialized view if available (fast)
+            if round_metrics_from_mv is not None:
+                round_metrics = round_metrics_from_mv
+            elif snapshot_round is not None and all_aggregates is not None:
+                snapshots = await self.build_round_snapshots(snapshot_round, all_aggregates)
+                sequential_ranks = {
+                    snap.aggregate.agent_id: position
+                    for position, snap in enumerate(snapshots, start=1)
+                }
+                snapshot = next(
+                    (
+                        item
+                        for item in snapshots
+                        if item.aggregate.agent_id == aggregate.agent_id
+                    ),
+                    None,
+                )
+                top_score = snapshots[0].average_score if snapshots else 0.0
+
+                if snapshot:
+                    rank_value = sequential_ranks.get(aggregate.agent_id)
+                    if rank_value is None and snapshot.rank > 0:
+                        rank_value = snapshot.rank
+                    round_metrics = AgentRoundMetrics(
+                        roundId=snapshot_round,
+                        score=snapshot.average_score,
+                        topScore=top_score,
+                        rank=rank_value,
+                        totalRuns=snapshot.total_runs,
+                        totalValidators=len(snapshot.validator_details),
+                        validatorUids=snapshot.validator_uids,
+                        validators=snapshot.validator_details,
+                        totalTasks=snapshot.total_tasks,
+                        completedTasks=snapshot.completed_tasks,
+                        failedTasks=snapshot.failed_tasks,
+                        successRate=snapshot.success_rate,
+                        averageResponseTime=snapshot.average_duration,
+                    )
+                elif requested_round is not None:
+                    round_metrics = AgentRoundMetrics(
+                        roundId=requested_round,
+                        score=0.0,
+                        topScore=top_score,
+                        rank=None,
+                        totalRuns=0,
+                        totalValidators=0,
+                        validatorUids=[],
+                        validators=[],
+                        totalTasks=0,
+                        completedTasks=0,
+                        failedTasks=0,
+                        successRate=0.0,
+                        averageResponseTime=0.0,
+                    )
+
+            return AgentDetailResponse(
+                agent=agent_model,
+                scoreRoundData=score_round_data,
+                availableRounds=available_rounds,
+                roundMetrics=round_metrics,
+            )
+        except Exception as exc:
+            # Fallback to original method on any error
+            logger.warning(
+                f"Fast path failed for agent {agent_id}, falling back to full aggregation: {exc}"
+            )
+            return await self._get_agent_fallback(agent_id, round_number)
+
+    async def _get_agent_fallback(
+        self,
+        agent_id: str,
+        round_number: Optional[int] = None,
+    ) -> AgentDetailResponse:
+        """Original implementation: loads all agents (slow but reliable)."""
         aggregates = await self._aggregate_agents()
         aggregate = self._resolve_aggregate(aggregates, agent_id)
         if aggregate is None:
@@ -442,6 +580,211 @@ class AgentsService:
             scoreRoundData=score_round_data,
             availableRounds=available_rounds,
             roundMetrics=round_metrics,
+        )
+
+    async def _build_single_agent_aggregate(
+        self,
+        contexts: List[AgentRunContext],
+        agent_id: str,
+        uid: int,
+    ) -> Optional[AgentAggregate]:
+        """Build an AgentAggregate from contexts for a single agent."""
+        if not contexts:
+            return None
+
+        # Get miner info from first context
+        miner_info = self._find_miner_info(contexts[0])
+        
+        aggregate = AgentAggregate(
+            agent_id=agent_id,
+            uid=uid,
+            miner=miner_info,
+            is_sota=contexts[0].run.is_sota if contexts else False,
+            version=contexts[0].run.version if contexts else None,
+        )
+
+        # Process all contexts for this agent
+        for context in contexts:
+            aggregate.runs.append(context)
+            aggregate.total_runs += 1
+            run_score = self._compute_run_score(context)
+            aggregate.total_score += run_score
+            aggregate.best_score = max(aggregate.best_score, run_score)
+            if run_score >= 0.5:
+                aggregate.successful_runs += 1
+
+            round_identifier = int(
+                context.round.round_number
+                or _round_id_to_int(context.round.validator_round_id)
+            )
+            aggregate.rounds.add(round_identifier)
+            if round_identifier:
+                aggregate.round_scores.setdefault(round_identifier, []).append(
+                    run_score
+                )
+
+            duration = self._compute_run_duration(context)
+            if duration is not None:
+                aggregate.durations.append(duration)
+
+            task_total = context.run.total_tasks or len(context.tasks)
+            aggregate.total_tasks += task_total
+
+            completed_from_run = context.run.completed_tasks or None
+            if completed_from_run is not None and completed_from_run > 0:
+                aggregate.completed_tasks += completed_from_run
+            elif context.evaluation_results:
+                aggregate.completed_tasks += len(
+                    [er for er in context.evaluation_results if er.final_score >= 0.5]
+                )
+
+            rank_value: Optional[int] = None
+            if context.run.rank is not None:
+                rank_value = context.run.rank
+
+            if rank_value is not None and rank_value > 0:
+                aggregate.ranks.append(rank_value)
+                if round_identifier:
+                    aggregate.round_ranks.setdefault(round_identifier, []).append(
+                        rank_value
+                    )
+
+            started = context.run.started_at or context.round.started_at or _ts(None)
+            ended = context.run.ended_at or started
+            aggregate.first_seen = min(aggregate.first_seen, started)
+            aggregate.last_seen = max(aggregate.last_seen, ended)
+            if rank_value is not None and started >= aggregate.latest_rank_time:
+                aggregate.latest_rank = rank_value
+                aggregate.latest_rank_time = started
+
+        # Compute latest round info
+        if aggregate.round_scores:
+            latest_round = max(aggregate.round_scores.keys())
+            aggregate.latest_round_number = latest_round
+            latest_scores = aggregate.round_scores.get(latest_round, [])
+            aggregate.latest_round_score = (
+                sum(latest_scores) / len(latest_scores) if latest_scores else None
+            )
+
+        # Compute best round average
+        best_avg = 0.0
+        best_round_num = None
+        for round_number, scores in aggregate.round_scores.items():
+            if not scores:
+                continue
+            avg_score = sum(scores) / len(scores)
+            if avg_score > best_avg:
+                best_avg = avg_score
+                best_round_num = round_number
+        aggregate.best_round_average = best_avg
+        aggregate.best_round_number = best_round_num
+
+        return aggregate
+
+    async def _get_round_metrics_from_mv(
+        self,
+        uid: int,
+        round_number: int,
+        aggregate: AgentAggregate,
+    ) -> Optional[AgentRoundMetrics]:
+        """
+        Get round-specific metrics from materialized view (fast path).
+        Avoids loading all agents just to compute rankings.
+        """
+        from sqlalchemy import cast, Float, Integer
+        from app.models.ui.agents import AgentRoundMetrics
+
+        round_key = str(round_number)
+        
+        # Get this agent's round data from MV
+        stmt = select(MinerAggregatesMV).where(
+            MinerAggregatesMV.uid == uid,
+            MinerAggregatesMV.rounds.has_key(round_key),  # type: ignore[attr-defined]
+        )
+        result = await self.session.execute(stmt)
+        mv_row = result.scalar_one_or_none()
+        
+        if not mv_row:
+            return None
+
+        # Extract round-specific data from JSONB
+        rounds_data = mv_row.rounds or {}
+        round_data = rounds_data.get(round_key, {})
+        round_avg_score = float(round_data.get("avgScore", 0.0))
+        round_rank = int(round_data.get("rank", 0)) if round_data.get("rank") else None
+        round_total_runs = int(round_data.get("totalRuns", 0))
+
+        # Get top score for this round (query MV for max score in this round)
+        top_score_stmt = select(
+            func.max(
+                cast(
+                    MinerAggregatesMV.rounds[round_key]["avgScore"].astext,  # type: ignore[index]
+                    Float,
+                )
+            )
+        ).where(
+            MinerAggregatesMV.rounds.has_key(round_key)  # type: ignore[attr-defined]
+        )
+        top_score_result = await self.session.execute(top_score_stmt)
+        top_score = float(top_score_result.scalar() or round_avg_score)
+
+        # Get validator info from contexts for this round
+        round_contexts = [
+            ctx
+            for ctx in aggregate.runs
+            if int(
+                ctx.round.round_number
+                or _round_id_to_int(ctx.round.validator_round_id)
+            )
+            == round_number
+        ]
+
+        validator_details: Dict[int, Dict[str, Any]] = {}
+        total_tasks = 0
+        completed_tasks = 0
+        failed_tasks = 0
+        durations: List[float] = []
+
+        for context in round_contexts:
+            total_tasks += context.run.total_tasks or len(context.tasks)
+            completed_tasks += context.run.completed_tasks or 0
+            failed_tasks += context.run.failed_tasks or 0
+
+            duration = self._compute_run_duration(context)
+            if duration is not None:
+                durations.append(duration)
+
+            validator_uid = context.run.validator_uid
+            if validator_uid is not None:
+                if validator_uid not in validator_details:
+                    validator_details[validator_uid] = {
+                        "uid": validator_uid,
+                        "hotkey": context.run.validator_hotkey,
+                        "name": None,
+                    }
+
+        # Calculate success rate
+        success_rate = (
+            (completed_tasks / total_tasks) if total_tasks > 0 else 0.0
+        )
+        avg_response_time = (
+            sum(durations) / len(durations) if durations else 0.0
+        )
+
+        return AgentRoundMetrics(
+            roundId=round_number,
+            score=round_avg_score,
+            topScore=top_score,
+            rank=round_rank,
+            totalRuns=round_total_runs,
+            totalValidators=len(validator_details),
+            validatorUids=list(validator_details.keys()),
+            validators=list(validator_details.values()),
+            totalTasks=total_tasks,
+            completedTasks=completed_tasks,
+            failedTasks=failed_tasks,
+            successRate=success_rate,
+            averageResponseTime=avg_response_time,
         )
 
     @rollback_on_error
