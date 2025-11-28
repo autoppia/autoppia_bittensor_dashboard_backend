@@ -219,11 +219,7 @@ class TasksService:
         # Only show tasks that have evaluations (i.e., completed tasks with agent_runs)
         stmt = (
             select(TaskORM)
-            .where(
-                TaskORM.task_id.in_(
-                    select(EvaluationResultORM.task_id).distinct()
-                )
-            )
+            .where(TaskORM.task_id.in_(select(EvaluationResultORM.task_id).distinct()))
             .options(
                 selectinload(TaskORM.task_solutions),
                 selectinload(TaskORM.evaluation_results),
@@ -404,16 +400,53 @@ class TasksService:
 
         base_stmt = select(TaskORM)
         filters = []
-        
+
         # Only show tasks that have evaluations (i.e., completed tasks with agent_runs)
         filters.append(
-            TaskORM.task_id.in_(
-                select(EvaluationResultORM.task_id).distinct()
-            )
+            TaskORM.task_id.in_(select(EvaluationResultORM.task_id).distinct())
         )
 
         if website:
-            filters.append(TaskORM.url == website)
+            # Map website name to port for filtering
+            # Support both exact URL match and friendly name match
+            website_lower = website.lower()
+            NAME_TO_PORT = {
+                "autocinema": "8000",
+                "autobooks": "8001",
+                "autozone": "8002",
+                "autodining": "8003",
+                "autocrm": "8004",
+                "automail": "8005",
+                "autodelivery": "8006",
+                "autolodge": "8007",
+                "autoconnect": "8008",
+                "autowork": "8009",
+                "autocalendar": "8010",
+                "autolist": "8011",
+                "autodrive": "8012",
+                "autohealth": "8013",
+                "autofinance": "8014",
+            }
+
+            if website_lower in NAME_TO_PORT:
+                # Filter by port in URL
+                port = NAME_TO_PORT[website_lower]
+                filters.append(TaskORM.url.like(f"%localhost:{port}%"))
+            else:
+                # Fallback to exact URL match
+                filters.append(TaskORM.url == website)
+
+        if use_case:
+            # Filter by use_case name in JSON field
+            # Normalize use_case: handle both "ADD BOOK" and "ADD_BOOK"
+            use_case_normalized = use_case.upper().replace(" ", "_")
+            # Use PostgreSQL JSON operator to filter
+            # use_case is stored as {"name": "ADD_BOOK", ...}
+            filters.append(
+                func.upper(func.replace(TaskORM.use_case["name"].astext, " ", "_"))
+                == use_case_normalized
+            )
+
         if query:
             like = f"%{query}%"
             filters.append(
