@@ -368,6 +368,28 @@ class FinishRoundAgentRun(BaseModel):
     agent_run_id: str
     rank: int | None = None
     weight: float | None = None
+    # FASE 1: Nuevos campos opcionales (backward compatible)
+    miner_name: str | None = None
+    score: float | None = None
+    avg_evaluation_time: float | None = None
+    tasks_attempted: int | None = None
+    tasks_completed: int | None = None
+    tasks_failed: int | None = None
+
+
+class RoundMetadata(BaseModel):
+    """Round timing and metadata."""
+    round_number: int
+    started_at: float
+    ended_at: float
+    start_block: int
+    end_block: int
+    start_epoch: float
+    end_epoch: float
+    tasks_total: int
+    tasks_completed: int
+    miners_responded_handshake: int
+    miners_active: int
 
 
 class FinishRoundRequest(BaseModel):
@@ -382,6 +404,12 @@ class FinishRoundRequest(BaseModel):
         default=None, description="Optional summary metadata"
     )
     agent_runs: list[FinishRoundAgentRun] = Field(default_factory=list)
+    # FASE 1: Nuevos campos opcionales (backward compatible)
+    round_metadata: RoundMetadata | None = Field(default=None, alias="round")
+    local_evaluation: Dict[str, Any] | None = None
+    # FASE 2: IPFS data
+    ipfs_uploaded: Dict[str, Any] | None = None
+    ipfs_downloaded: Dict[str, Any] | None = None
 
 
 @router.post("/auth-check", dependencies=[Depends(require_validator_auth)])
@@ -1236,12 +1264,22 @@ async def finish_round(
                         "agent_run_id": ar.agent_run_id,
                         "rank": ar.rank,
                         "weight": ar.weight,
+                        "miner_name": ar.miner_name,
+                        "score": ar.score,
+                        "avg_evaluation_time": ar.avg_evaluation_time,
+                        "tasks_attempted": ar.tasks_attempted,
+                        "tasks_completed": ar.tasks_completed,
+                        "tasks_failed": ar.tasks_failed,
                     }
                     for ar in payload.agent_runs
                 ]
                 if payload.agent_runs
                 else None
             ),
+            round_metadata=payload.round_metadata.model_dump() if payload.round_metadata else None,
+            local_evaluation=payload.local_evaluation,
+            ipfs_uploaded=payload.ipfs_uploaded,
+            ipfs_downloaded=payload.ipfs_downloaded,
         )
         await session.commit()
 

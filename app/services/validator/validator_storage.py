@@ -477,6 +477,10 @@ class ValidatorRoundPersistenceService:
         ended_at: float,
         summary: Optional[Dict[str, int]],
         agent_runs: Optional[List[Dict[str, Any]]] = None,
+        round_metadata: Optional[Dict[str, Any]] = None,
+        local_evaluation: Optional[Dict[str, Any]] = None,
+        ipfs_uploaded: Optional[Dict[str, Any]] = None,
+        ipfs_downloaded: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Mark a validator round as completed."""
         round_row = await self._ensure_round_exists(validator_round_id)
@@ -504,12 +508,26 @@ class ValidatorRoundPersistenceService:
             normalized_status = "finished"
         
         round_row.status = normalized_status
-        round_row.meta = {
+        
+        # Build meta with all data (FASE 1 & 2: add all enriched data)
+        meta_data = {
             **round_row.meta,
             "winners": winners,
             "winner_scores": winner_scores,
             "weights": weights,
         }
+        
+        # Add new fields if present (backward compatible)
+        if round_metadata:
+            meta_data["round"] = round_metadata
+        if local_evaluation:
+            meta_data["local_evaluation"] = local_evaluation
+        if ipfs_uploaded:
+            meta_data["ipfs_uploaded"] = ipfs_uploaded
+        if ipfs_downloaded:
+            meta_data["ipfs_downloaded"] = ipfs_downloaded
+        
+        round_row.meta = meta_data
         round_row.n_winners = len(winners)
         round_row.ended_at = ended_at
         if summary is not None:
