@@ -454,13 +454,12 @@ class TasksService:
     ) -> Dict[str, object]:
         from sqlalchemy import func
 
-        base_stmt = select(TaskORM)
-        filters = []
-
-        # Only show tasks that have evaluations (i.e., completed tasks with agent_runs)
-        filters.append(
-            TaskORM.task_id.in_(select(EvaluationResultORM.task_id).distinct())
+        # Start from EVALUATIONS (one row per task+miner) instead of tasks
+        base_stmt = (
+            select(EvaluationResultORM)
+            .join(TaskORM, EvaluationResultORM.task_id == TaskORM.task_id)
         )
+        filters = []
 
         if website:
             # Map website name to port for filtering
@@ -492,6 +491,12 @@ class TasksService:
                 # Fallback to exact URL match
                 filters.append(TaskORM.url == website)
 
+        # Add score filter if provided
+        if min_score is not None:
+            filters.append(EvaluationResultORM.final_score >= min_score)
+        if max_score is not None:
+            filters.append(EvaluationResultORM.final_score <= max_score)
+        
         if use_case:
             # Filter by use_case name in JSON field
             # Normalize use_case: handle both "ADD BOOK" and "ADD_BOOK"
@@ -518,35 +523,32 @@ class TasksService:
         if filters:
             base_stmt = base_stmt.where(*filters)
 
-        # Sorting: default to created_at since startTime maps to run start (best-effort)
-        sort_column = TaskORM.created_at
+        # Sorting: default to evaluation created_at
+        sort_column = EvaluationResultORM.created_at
         if sort_by.lower() in {"starttime", "start_time"}:
-            sort_column = TaskORM.created_at
+            sort_column = EvaluationResultORM.created_at
         elif sort_by.lower() in {"endtime", "end_time"}:
-            sort_column = TaskORM.updated_at
+            sort_column = EvaluationResultORM.created_at
         elif sort_by.lower() == "score":
-            # We sort later after attaching evaluations
-            sort_column = None
+            sort_column = EvaluationResultORM.final_score
 
-        order_expr = None
-        if sort_column is not None:
-            order_expr = (
-                sort_column.desc()
-                if sort_order.lower() == "desc"
-                else sort_column.asc()
-            )
-            base_stmt = base_stmt.order_by(order_expr)
+        order_expr = (
+            sort_column.desc()
+            if sort_order.lower() == "desc"
+            else sort_column.asc()
+        )
+        base_stmt = base_stmt.order_by(order_expr)
 
-        # Total before pagination (SQL count)
+        # Total before pagination (count ALL evaluations)
         total_stmt = select(func.count()).select_from(base_stmt.subquery())
         total = (await self.session.execute(total_stmt)).scalar_one()
 
+        # Paginate over EVALUATIONS
         offset = (page - 1) * limit
         page_stmt = base_stmt.offset(offset).limit(limit)
-        task_rows = list(await self.session.scalars(page_stmt))
+        eval_rows = list(await self.session.scalars(page_stmt))
 
-        task_ids = [row.task_id for row in task_rows]
-        if not task_ids:
+        if not eval_rows:
             return {
                 "tasks": [],
                 "total": 0,
@@ -559,41 +561,41 @@ class TasksService:
                 ),
             }
 
-        # Fetch ALL solutions for these tasks (one per miner, not grouped)
-        solution_rows = await self.session.scalars(
-            select(TaskSolutionORM).where(TaskSolutionORM.task_id.in_(task_ids))
+        # Get unique task_ids and agent_run_ids from the paginated evaluations
+        task_ids = list(set(ev.task_id for ev in eval_rows))
+        agent_run_ids_from_evals = list(set(ev.agent_run_id for ev in eval_rows))
+
+        # Fetch tasks for these evaluations
+        task_stmt = select(TaskORM).where(TaskORM.task_id.in_(task_ids))
+        task_rows_list = await self.session.scalars(task_stmt)
+        tasks_by_id: Dict[str, TaskORM] = {t.task_id: t for t in task_rows_list}
+
+        # Fetch solutions for these evaluations
+        solution_stmt = select(TaskSolutionORM).where(
+            TaskSolutionORM.task_id.in_(task_ids),
+            TaskSolutionORM.agent_run_id.in_(agent_run_ids_from_evals)
         )
+        solution_rows_list = await self.session.scalars(solution_stmt)
         solutions_by_key: Dict[tuple[str, str], TaskSolutionORM] = {
-            (sol.task_id, sol.agent_run_id): sol for sol in solution_rows
+            (sol.task_id, sol.agent_run_id): sol for sol in solution_rows_list
         }
 
-        # Fetch ALL evaluations for these tasks (one per miner, not grouped)
-        evaluation_rows = await self.session.scalars(
-            select(EvaluationResultORM).where(EvaluationResultORM.task_id.in_(task_ids))
-        )
-        evals_by_key: Dict[tuple[str, str], EvaluationResultORM] = {
-            (ev.task_id, ev.agent_run_id): ev for ev in evaluation_rows
-        }
-
-        # Fetch agent runs for ALL solutions/evaluations (not grouped)
+        # Fetch agent runs for these evaluations with validator and miner info
         from sqlalchemy.orm import selectinload
-        agent_run_ids = {
-            sol.agent_run_id for sol in solutions_by_key.values() if sol.agent_run_id
-        } | {ev.agent_run_id for ev in evals_by_key.values() if ev.agent_run_id}
         agent_runs_by_id: Dict[str, AgentEvaluationRunORM] = {}
-        if agent_run_ids:
+        if agent_run_ids_from_evals:
             run_rows = await self.session.scalars(
                 select(AgentEvaluationRunORM)
                 .options(
                     selectinload(AgentEvaluationRunORM.validator),
                     selectinload(AgentEvaluationRunORM.miner),
                 )
-                .where(AgentEvaluationRunORM.agent_run_id.in_(agent_run_ids))
+                .where(AgentEvaluationRunORM.agent_run_id.in_(agent_run_ids_from_evals))
             )
             agent_runs_by_id = {run.agent_run_id: run for run in run_rows}
 
-        # Fetch round info for tasks to populate roundNumber and get snapshots
-        round_ids = {row.validator_round_id for row in task_rows}
+        # Fetch round info for these evaluations
+        round_ids = list(set(ev.validator_round_id for ev in eval_rows))
         round_map: Dict[str, ValidatorRoundORM] = {}
         if round_ids:
             round_rows = await self.session.scalars(
@@ -605,9 +607,6 @@ class TasksService:
                 .where(ValidatorRoundORM.validator_round_id.in_(round_ids))
             )
             round_map = {r.validator_round_id: r for r in round_rows}
-        
-        # Create a map of tasks for easy lookup
-        tasks_by_id = {row.task_id: row for row in task_rows}
 
         def _use_case_name(raw: Any) -> str:
             if isinstance(raw, dict):
@@ -630,15 +629,15 @@ class TasksService:
                 return None
 
         items: List[UITask] = []
-        # Iterate over ALL evaluations (one item per task+miner combination)
-        for (task_id, agent_run_id), ev in evals_by_key.items():
-            task_row = tasks_by_id.get(task_id)
+        # Iterate over paginated evaluations
+        for ev in eval_rows:
+            task_row = tasks_by_id.get(ev.task_id)
             if not task_row:
                 continue
             
-            sol = solutions_by_key.get((task_id, agent_run_id))
-            run = agent_runs_by_id.get(agent_run_id)
-            round_row = round_map.get(task_row.validator_round_id)
+            sol = solutions_by_key.get((ev.task_id, ev.agent_run_id))
+            run = agent_runs_by_id.get(ev.agent_run_id)
+            round_row = round_map.get(ev.validator_round_id)
 
             score = ev.final_score if ev else 0.0
             duration = (
@@ -653,7 +652,7 @@ class TasksService:
             )
 
             # Filters that depend on run/eval info (applied after enrichment)
-            if agent_run_id and (run is None or run.agent_run_id != agent_run_id):
+            if agent_run_id and ev.agent_run_id != agent_run_id:
                 continue
             if agent_id:
                 try:
@@ -661,7 +660,7 @@ class TasksService:
                 except Exception:
                     parsed_agent = None
                 if parsed_agent is not None:
-                    miner_uid = run.miner_uid if run else (ev.miner_uid if ev else None)
+                    miner_uid = ev.miner_uid
                     if miner_uid != parsed_agent:
                         continue
             if validator_id:
@@ -670,15 +669,9 @@ class TasksService:
                 except Exception:
                     parsed_validator = None
                 if parsed_validator is not None:
-                    validator_uid = (
-                        run.validator_uid if run else (ev.validator_uid if ev else None)
-                    )
+                    validator_uid = ev.validator_uid
                     if validator_uid != parsed_validator:
                         continue
-            if min_score is not None and score < min_score:
-                continue
-            if max_score is not None and score > max_score:
-                continue
             if status and status_val.value.lower() != status.lower():
                 continue
 
@@ -727,7 +720,7 @@ class TasksService:
         total_filtered = len(items)
         result: Dict[str, Any] = {
             "tasks": [task.model_dump() for task in items],
-            "total": total_filtered,  # Use actual count of items (evaluations), not task count
+            "total": total,  # Use SQL count (total evaluations in DB matching filters)
             "page": page,
             "limit": limit,
         }
