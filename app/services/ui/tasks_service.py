@@ -727,11 +727,7 @@ class TasksService:
         total_filtered = len(items)
         result: Dict[str, Any] = {
             "tasks": [task.model_dump() for task in items],
-            "total": (
-                total
-                if status is None and min_score is None and max_score is None
-                else total_filtered
-            ),
+            "total": total_filtered,  # Use actual count of items (evaluations), not task count
             "page": page,
             "limit": limit,
         }
