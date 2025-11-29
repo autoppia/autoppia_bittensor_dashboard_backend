@@ -131,6 +131,9 @@ class MinerAggregate:
     last_seen_iso: Optional[str] = None
     best_run_score: float = float("-inf")
     best_validator_id: Optional[str] = None
+    # Stake-weighted scoring
+    weighted_score_sum: float = 0.0
+    total_validator_stake: float = 0.0
 
     def update(
         self,
@@ -163,8 +166,8 @@ class MinerAggregate:
             self.total_duration += float(duration)
             self.duration_count += 1
 
-        stake = performance.get("stake") or 0
-        self.total_stake += int(stake)
+        validator_stake = float(performance.get("stake") or 0)
+        self.total_stake += int(validator_stake)
 
         emission = performance.get("emission")
         if emission:
@@ -177,15 +180,23 @@ class MinerAggregate:
                 self.last_seen_ts = ts
                 self.last_seen_iso = last_seen_str
 
+        # Calculate score (simple average for backward compatibility)
         if evaluation_scores:
             self.total_score += sum(float(score) for score in evaluation_scores)
             self.score_count += len(evaluation_scores)
+            # Stake-weighted score
+            avg_eval_score = sum(evaluation_scores) / len(evaluation_scores) if evaluation_scores else 0.0
+            self.weighted_score_sum += avg_eval_score * validator_stake
+            self.total_validator_stake += validator_stake
         else:
             weight = int(tasks_total) if tasks_total else 1
             score_value = performance.get("score") or 0.0
             self.total_score += float(score_value) * weight
             if weight:
                 self.score_count += weight
+            # Stake-weighted score
+            self.weighted_score_sum += float(score_value) * validator_stake
+            self.total_validator_stake += validator_stake
 
         score = performance.get("score") or 0.0
         if score > self.best_run_score:
@@ -197,6 +208,13 @@ class MinerAggregate:
         if self.score_count == 0:
             return 0.0
         return self.total_score / self.score_count
+    
+    @property
+    def stake_weighted_score(self) -> float:
+        """Score ponderado por stake de los validators."""
+        if self.total_validator_stake == 0:
+            return 0.0
+        return self.weighted_score_sum / self.total_validator_stake
 
     @property
     def average_duration(self) -> float:
@@ -206,12 +224,14 @@ class MinerAggregate:
 
     def to_performance(self, ranking: int) -> Dict[str, Any]:
         emission = self.total_emission or int(self.total_stake * 0.05)
+        # Use stake-weighted score (validators with more stake count more)
+        display_score = self.stake_weighted_score if self.total_validator_stake > 0 else self.average_score
         return {
             "uid": self.uid,
             "name": self.name,
             "hotkey": self.hotkey,
             "success": self.success_runs > 0 and self.success_runs == self.total_runs,
-            "score": round(self.average_score, 3),
+            "score": round(display_score, 3),
             "duration": round(self.average_duration, 2),
             "ranking": ranking,
             "tasksCompleted": self.total_tasks_completed,
@@ -2270,9 +2290,10 @@ class RoundsService:
         aggregated = await self._fetch_aggregated_round(round_identifier)
         miner_aggregates, best_by_validator, _ = self._aggregate_round_data(aggregated)
 
+        # Sort by stake-weighted score (validators with more stake count more)
         sorted_aggregates = sorted(
             miner_aggregates.values(),
-            key=lambda aggregate: aggregate.average_score,
+            key=lambda aggregate: aggregate.stake_weighted_score,
             reverse=True,
         )
 
@@ -2739,13 +2760,33 @@ class RoundsService:
         success = (context.run.n_tasks_failed or 0) == 0
         if tasks_total:
             success = success and completed_tasks >= tasks_total
-        weight = 0.0
+        
+        # Get miner weight (for emission calculation)
+        miner_weight = 0.0
         if context.run.miner_uid is not None and str(context.run.miner_uid) in weights:
-            weight = weights[str(context.run.miner_uid)]
+            miner_weight = weights[str(context.run.miner_uid)]
         elif str(context.run.agent_run_id) in weights:
-            weight = weights[str(context.run.agent_run_id)]
-        stake = int(weight) if weight > 1 else int(weight * 1000)
-        emission = int(stake * 0.05)
+            miner_weight = weights[str(context.run.agent_run_id)]
+        miner_stake = int(miner_weight) if miner_weight > 1 else int(miner_weight * 1000)
+        emission = int(miner_stake * 0.05)
+        
+        # Get VALIDATOR stake (for weighted scoring)
+        validator_stake = 0.0
+        if round_obj.validator_info:
+            validator_stake = float(round_obj.validator_info.stake or 0)
+        elif round_obj.validators:
+            # Find the validator for this run
+            validator = next(
+                (v for v in round_obj.validators if v.uid == context.run.validator_uid),
+                None
+            )
+            if validator:
+                validator_stake = float(validator.stake or 0)
+        
+        # Fallback: if stake is 0 (local dev without metagraph), use equal weights
+        # This makes all validators count equally in local development
+        if validator_stake == 0:
+            validator_stake = 1.0
 
         return {
             "uid": miner_uid,
@@ -2757,7 +2798,7 @@ class RoundsService:
             "ranking": context.run.rank or 0,
             "tasksCompleted": completed_tasks,
             "tasksTotal": tasks_total,
-            "stake": stake,
+            "stake": validator_stake,  # VALIDATOR stake, not miner weight
             "emission": emission,
             "lastSeen": _iso_timestamp(context.run.ended_at or context.run.started_at),
             "validatorId": f"validator-{context.run.validator_uid}",
