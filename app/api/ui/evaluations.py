@@ -99,6 +99,172 @@ async def get_evaluation_as_task_details(
     return {"success": True, "data": {"details": detail}}
 
 
+@router.get("/{evaluation_id}/personas")
+async def get_evaluation_personas(
+    evaluation_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get personas for an evaluation (same format as task personas)."""
+    from app.services.ui.tasks_service import TasksService
+    
+    task_service = TasksService(session)
+    try:
+        task_context = await task_service.get_task_by_evaluation_id(evaluation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    
+    personas = task_service.build_personas(task_context)
+    return {"success": True, "data": {"personas": personas.model_dump()}}
+
+
+@router.get("/{evaluation_id}/results")
+async def get_evaluation_results(
+    evaluation_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get results for an evaluation (same format as task results)."""
+    from app.services.ui.tasks_service import TasksService
+    
+    task_service = TasksService(session)
+    try:
+        task_context = await task_service.get_task_by_evaluation_id(evaluation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    
+    results = task_service.build_task_results(task_context)
+    return {"success": True, "data": {"results": results}}
+
+
+@router.get("/{evaluation_id}/actions")
+async def get_evaluation_actions(
+    evaluation_id: str,
+    session: AsyncSession = Depends(get_session),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Get actions for an evaluation (same format as task actions)."""
+    from app.services.ui.tasks_service import TasksService
+    
+    task_service = TasksService(session)
+    try:
+        task_context = await task_service.get_task_by_evaluation_id(evaluation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    
+    actions = task_service.build_actions(task_context)
+    total = len(actions)
+    success_count = sum(1 for action in actions if getattr(action, 'success', False))
+    fail_count = sum(1 for action in actions if getattr(action, 'error', False) or not getattr(action, 'success', False))
+    
+    start = (page - 1) * limit
+    end = start + limit
+    paginated = actions[start:end]
+    return {
+        "success": True,
+        "data": {
+            "actions": [action.model_dump() for action in paginated],
+            "total": total,
+            "successCount": success_count,
+            "failCount": fail_count,
+            "page": page,
+            "limit": limit,
+        },
+    }
+
+
+@router.get("/{evaluation_id}/screenshots")
+async def get_evaluation_screenshots(
+    evaluation_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get screenshots for an evaluation (same format as task screenshots)."""
+    from app.services.ui.tasks_service import TasksService
+    
+    task_service = TasksService(session)
+    try:
+        task_context = await task_service.get_task_by_evaluation_id(evaluation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    
+    screenshots = task_service.build_screenshots(task_context)
+    return {
+        "success": True,
+        "data": {"screenshots": [shot.model_dump() for shot in screenshots]},
+    }
+
+
+@router.get("/{evaluation_id}/logs")
+async def get_evaluation_logs(
+    evaluation_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get logs for an evaluation (same format as task logs)."""
+    from app.services.ui.tasks_service import TasksService
+    
+    task_service = TasksService(session)
+    try:
+        task_context = await task_service.get_task_by_evaluation_id(evaluation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    
+    logs = task_service.build_logs(task_context)
+    return {"success": True, "data": {"logs": [log.model_dump() for log in logs]}}
+
+
+@router.get("/{evaluation_id}/timeline")
+async def get_evaluation_timeline(
+    evaluation_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get timeline for an evaluation (same format as task timeline)."""
+    from app.services.ui.tasks_service import TasksService
+    
+    task_service = TasksService(session)
+    try:
+        task_context = await task_service.get_task_by_evaluation_id(evaluation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    
+    timeline = task_service.build_timeline(task_context)
+    return {"success": True, "data": {"timeline": [item.model_dump() for item in timeline]}}
+
+
+@router.get("/{evaluation_id}/metrics")
+async def get_evaluation_metrics(
+    evaluation_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get metrics for an evaluation (same format as task metrics)."""
+    from app.services.ui.tasks_service import TasksService
+    
+    task_service = TasksService(session)
+    try:
+        task_context = await task_service.get_task_by_evaluation_id(evaluation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    
+    metrics = task_service.build_metrics(task_context)
+    return {"success": True, "data": {"metrics": metrics}}
+
+
+@router.get("/{evaluation_id}/statistics")
+async def get_evaluation_statistics(
+    evaluation_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get statistics for an evaluation (same format as task statistics)."""
+    from app.services.ui.tasks_service import TasksService
+    
+    task_service = TasksService(session)
+    try:
+        task_context = await task_service.get_task_by_evaluation_id(evaluation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    
+    statistics = task_service.build_task_statistics(task_context)
+    return {"success": True, "data": {"statistics": statistics.model_dump()}}
+
+
 @router.post(
     "/{evaluation_id}/gif",
     status_code=201,
