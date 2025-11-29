@@ -78,6 +78,27 @@ async def get_evaluation(
     return EvaluationDetailResponse(success=True, data={"evaluation": detail})
 
 
+@router.get("/{evaluation_id}/task-details")
+async def get_evaluation_as_task_details(
+    evaluation_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Get evaluation in task details format (for UI compatibility).
+    This allows using the same UI components for both tasks and evaluations.
+    """
+    from app.services.ui.tasks_service import TasksService
+    
+    task_service = TasksService(session)
+    try:
+        task_context = await task_service.get_task_by_evaluation_id(evaluation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    
+    detail = task_service.build_task_detail(task_context)
+    return {"success": True, "data": {"details": detail}}
+
+
 @router.post(
     "/{evaluation_id}/gif",
     status_code=201,
