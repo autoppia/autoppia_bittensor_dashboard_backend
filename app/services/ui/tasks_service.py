@@ -374,6 +374,62 @@ class TasksService:
         )
 
     # ------------------------------------------------------------------
+    # Helper methods for extracting validator/miner info
+    # ------------------------------------------------------------------
+    
+    @staticmethod
+    def _get_validator_name(run: Optional[AgentEvaluationRunORM], round_row: Optional[ValidatorRoundORM]) -> Optional[str]:
+        """Extract validator name from agent_run or round snapshots."""
+        if not run:
+            return None
+        if round_row and hasattr(round_row, "validator_snapshots"):
+            for snapshot in round_row.validator_snapshots:
+                if snapshot.validator_uid == run.validator_uid:
+                    return snapshot.name
+        if hasattr(run, "validator") and run.validator:
+            return getattr(run.validator, "name", None)
+        return None
+    
+    @staticmethod
+    def _get_validator_image(run: Optional[AgentEvaluationRunORM], round_row: Optional[ValidatorRoundORM]) -> Optional[str]:
+        """Extract validator image from agent_run or round snapshots."""
+        if not run:
+            return None
+        if round_row and hasattr(round_row, "validator_snapshots"):
+            for snapshot in round_row.validator_snapshots:
+                if snapshot.validator_uid == run.validator_uid:
+                    return snapshot.image_url
+        if hasattr(run, "validator") and run.validator:
+            return getattr(run.validator, "image", None)
+        return None
+    
+    @staticmethod
+    def _get_miner_name(run: Optional[AgentEvaluationRunORM], round_row: Optional[ValidatorRoundORM]) -> Optional[str]:
+        """Extract miner name from agent_run or round snapshots."""
+        if not run:
+            return None
+        if round_row and hasattr(round_row, "miner_snapshots"):
+            for snapshot in round_row.miner_snapshots:
+                if snapshot.miner_uid == run.miner_uid:
+                    return snapshot.agent_name
+        if hasattr(run, "miner") and run.miner:
+            return getattr(run.miner, "agent_name", None)
+        return None
+    
+    @staticmethod
+    def _get_miner_image(run: Optional[AgentEvaluationRunORM], round_row: Optional[ValidatorRoundORM]) -> Optional[str]:
+        """Extract miner image from agent_run or round snapshots."""
+        if not run:
+            return None
+        if round_row and hasattr(round_row, "miner_snapshots"):
+            for snapshot in round_row.miner_snapshots:
+                if snapshot.miner_uid == run.miner_uid:
+                    return snapshot.image_url
+        if hasattr(run, "miner") and run.miner:
+            return getattr(run.miner, "image", None)
+        return None
+
+    # ------------------------------------------------------------------
     # Lightweight listing path (no heavy context building)
     # ------------------------------------------------------------------
 
@@ -503,75 +559,55 @@ class TasksService:
                 ),
             }
 
-        # Fetch latest solution per task (best-effort, scoped to same round)
-        latest_solution_sq = (
-            select(
-                TaskSolutionORM.task_id,
-                func.max(TaskSolutionORM.created_at).label("latest_created_at"),
-            )
-            .where(TaskSolutionORM.task_id.in_(task_ids))
-            .group_by(TaskSolutionORM.task_id)
-            .subquery()
-        )
+        # Fetch ALL solutions for these tasks (one per miner, not grouped)
         solution_rows = await self.session.scalars(
-            select(TaskSolutionORM).join(
-                latest_solution_sq,
-                (TaskSolutionORM.task_id == latest_solution_sq.c.task_id)
-                & (
-                    TaskSolutionORM.created_at == latest_solution_sq.c.latest_created_at
-                ),
-            )
+            select(TaskSolutionORM).where(TaskSolutionORM.task_id.in_(task_ids))
         )
-        solutions_by_task: Dict[str, TaskSolutionORM] = {
-            sol.task_id: sol for sol in solution_rows
+        solutions_by_key: Dict[tuple[str, str], TaskSolutionORM] = {
+            (sol.task_id, sol.agent_run_id): sol for sol in solution_rows
         }
 
-        # Fetch latest evaluation per task (best-effort, scoped to same round)
-        latest_eval_sq = (
-            select(
-                EvaluationResultORM.task_id,
-                func.max(EvaluationResultORM.created_at).label("latest_created_at"),
-            )
-            .where(EvaluationResultORM.task_id.in_(task_ids))
-            .group_by(EvaluationResultORM.task_id)
-            .subquery()
-        )
+        # Fetch ALL evaluations for these tasks (one per miner, not grouped)
         evaluation_rows = await self.session.scalars(
-            select(EvaluationResultORM).join(
-                latest_eval_sq,
-                (EvaluationResultORM.task_id == latest_eval_sq.c.task_id)
-                & (
-                    EvaluationResultORM.created_at == latest_eval_sq.c.latest_created_at
-                ),
-            )
+            select(EvaluationResultORM).where(EvaluationResultORM.task_id.in_(task_ids))
         )
-        evals_by_task: Dict[str, EvaluationResultORM] = {
-            ev.task_id: ev for ev in evaluation_rows
+        evals_by_key: Dict[tuple[str, str], EvaluationResultORM] = {
+            (ev.task_id, ev.agent_run_id): ev for ev in evaluation_rows
         }
 
-        # Fetch agent runs for referenced solutions/evaluations
+        # Fetch agent runs for ALL solutions/evaluations (not grouped)
+        from sqlalchemy.orm import selectinload
         agent_run_ids = {
-            sol.agent_run_id for sol in solutions_by_task.values() if sol.agent_run_id
-        } | {ev.agent_run_id for ev in evals_by_task.values() if ev.agent_run_id}
+            sol.agent_run_id for sol in solutions_by_key.values() if sol.agent_run_id
+        } | {ev.agent_run_id for ev in evals_by_key.values() if ev.agent_run_id}
         agent_runs_by_id: Dict[str, AgentEvaluationRunORM] = {}
         if agent_run_ids:
             run_rows = await self.session.scalars(
-                select(AgentEvaluationRunORM).where(
-                    AgentEvaluationRunORM.agent_run_id.in_(agent_run_ids)
+                select(AgentEvaluationRunORM)
+                .options(
+                    selectinload(AgentEvaluationRunORM.validator),
+                    selectinload(AgentEvaluationRunORM.miner),
                 )
+                .where(AgentEvaluationRunORM.agent_run_id.in_(agent_run_ids))
             )
             agent_runs_by_id = {run.agent_run_id: run for run in run_rows}
 
-        # Fetch round info for tasks to populate roundNumber
+        # Fetch round info for tasks to populate roundNumber and get snapshots
         round_ids = {row.validator_round_id for row in task_rows}
         round_map: Dict[str, ValidatorRoundORM] = {}
         if round_ids:
             round_rows = await self.session.scalars(
-                select(ValidatorRoundORM).where(
-                    ValidatorRoundORM.validator_round_id.in_(round_ids)
+                select(ValidatorRoundORM)
+                .options(
+                    selectinload(ValidatorRoundORM.validator_snapshots),
+                    selectinload(ValidatorRoundORM.miner_snapshots),
                 )
+                .where(ValidatorRoundORM.validator_round_id.in_(round_ids))
             )
             round_map = {r.validator_round_id: r for r in round_rows}
+        
+        # Create a map of tasks for easy lookup
+        tasks_by_id = {row.task_id: row for row in task_rows}
 
         def _use_case_name(raw: Any) -> str:
             if isinstance(raw, dict):
@@ -594,10 +630,14 @@ class TasksService:
                 return None
 
         items: List[UITask] = []
-        for task_row in task_rows:
-            sol = solutions_by_task.get(task_row.task_id)
-            ev = evals_by_task.get(task_row.task_id)
-            run = agent_runs_by_id.get(sol.agent_run_id) if sol else None
+        # Iterate over ALL evaluations (one item per task+miner combination)
+        for (task_id, agent_run_id), ev in evals_by_key.items():
+            task_row = tasks_by_id.get(task_id)
+            if not task_row:
+                continue
+            
+            sol = solutions_by_key.get((task_id, agent_run_id))
+            run = agent_runs_by_id.get(agent_run_id)
             round_row = round_map.get(task_row.validator_round_id)
 
             score = ev.final_score if ev else 0.0
@@ -645,6 +685,7 @@ class TasksService:
             items.append(
                 UITask(
                     taskId=task_row.task_id,
+                    evaluationId=ev.result_id if ev else None,
                     agentRunId=(
                         run.agent_run_id
                         if run
@@ -671,10 +712,10 @@ class TasksService:
                     screenshots=None,
                     logs=None,
                     metadata=None,
-                    validatorName=None,
-                    validatorImage=None,
-                    minerName=None,
-                    minerImage=None,
+                    validatorName=self._get_validator_name(run, round_row),
+                    validatorImage=self._get_validator_image(run, round_row),
+                    minerName=self._get_miner_name(run, round_row),
+                    minerImage=self._get_miner_image(run, round_row),
                 )
             )
 
