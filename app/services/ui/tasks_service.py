@@ -685,7 +685,7 @@ class TasksService:
             items.append(
                 UITask(
                     taskId=task_row.task_id,
-                    evaluationId=ev.result_id if ev else None,
+                    evaluationId=ev.evaluation_id if ev else None,
                     agentRunId=(
                         run.agent_run_id
                         if run
@@ -797,6 +797,59 @@ class TasksService:
             raise ValueError(f"Task {task_id} not found")
         context_cache: Dict[str, AgentRunContext] = {}
         return await self._build_context(task_row, context_cache)
+    
+    async def get_task_by_evaluation_id(self, evaluation_id: str) -> TaskContext:
+        """Get task context from an evaluation_id."""
+        # Get the evaluation
+        eval_stmt = select(EvaluationResultORM).where(
+            EvaluationResultORM.evaluation_id == evaluation_id
+        )
+        eval_row = await self.session.scalar(eval_stmt)
+        if not eval_row:
+            raise ValueError(f"Evaluation {evaluation_id} not found")
+        
+        # Get the task
+        task_stmt = (
+            select(TaskORM)
+            .options(
+                selectinload(TaskORM.task_solutions),
+                selectinload(TaskORM.evaluation_results),
+            )
+            .where(TaskORM.task_id == eval_row.task_id)
+        )
+        task_row = await self.session.scalar(task_stmt)
+        if not task_row:
+            raise ValueError(f"Task {eval_row.task_id} not found")
+        
+        # Get the agent_run context
+        agent_run_id = eval_row.agent_run_id
+        context = await self.rounds_service.get_agent_run_context(agent_run_id)
+        
+        # Find the specific task, solution, and evaluation in the context
+        task_model = next(
+            (t for t in context.tasks if t.task_id == eval_row.task_id),
+            None
+        )
+        if not task_model:
+            task_model = self._deserialize_task(task_row)
+        
+        solution_model = next(
+            (s for s in context.task_solutions if s.task_id == eval_row.task_id),
+            None
+        )
+        
+        evaluation_model = next(
+            (e for e in context.evaluation_results if e.evaluation_id == evaluation_id),
+            None
+        )
+        
+        return TaskContext(
+            round=context.round,
+            agent_run=context.run,
+            task=task_model,
+            solution=solution_model,
+            evaluation=evaluation_model,
+        )
 
     async def analytics(self) -> TaskAnalytics:
         stmt = select(TaskORM).options(
@@ -1772,6 +1825,7 @@ class TasksService:
 
         return UITask(
             taskId=context.task.task_id,
+            evaluationId=evaluation.evaluation_id if evaluation else None,
             agentRunId=context.agent_run.agent_run_id,
             website=context.task.url,
             seed=seed_val,

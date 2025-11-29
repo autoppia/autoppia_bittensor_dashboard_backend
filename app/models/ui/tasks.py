@@ -128,6 +128,9 @@ class Task(BaseModel):
     """Main task model"""
 
     taskId: str = Field(..., description="Unique task identifier")
+    evaluationId: Optional[str] = Field(
+        None, description="Unique evaluation identifier for this task+miner combination"
+    )
     agentRunId: str = Field(..., description="Associated agent run ID")
     roundNumber: Optional[int] = Field(
         None, description="Round number this task belongs to"
