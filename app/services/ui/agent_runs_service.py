@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db.models import AgentEvaluationRunORM, RoundORM
 
@@ -269,6 +270,9 @@ class AgentRunsService:
             agent_run_ids=agent_run_ids,
         )
 
+        # Calculate ranks for all contexts (with score + time tiebreaker)
+        await self._calculate_ranks_for_contexts(contexts)
+
         runs = [self._build_run_summary(context) for context in contexts]
 
         available_rounds = await self._list_available_round_numbers()
@@ -292,12 +296,151 @@ class AgentRunsService:
         result = await self.session.scalars(stmt)
         return [int(value) for value in result if value is not None]
 
+    async def _calculate_ranks_for_contexts(self, contexts: List[AgentRunContext]) -> None:
+        """
+        Calculate ranks for multiple contexts from the same validator_round.
+        This is more efficient than calculating one by one.
+        """
+        if not contexts:
+            return
+        
+        # Group by validator_round_id
+        from collections import defaultdict
+        grouped: Dict[str, List[AgentRunContext]] = defaultdict(list)
+        for ctx in contexts:
+            grouped[ctx.round.validator_round_id].append(ctx)
+        
+        # Calculate ranks for each validator_round
+        for validator_round_id, round_contexts in grouped.items():
+            # Get all agent_runs in this validator_round (not just the ones in contexts)
+            stmt = (
+                select(AgentEvaluationRunORM)
+                .where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
+                .options(selectinload(AgentEvaluationRunORM.evaluation_results))
+            )
+            all_runs = await self.session.scalars(stmt)
+            
+            # Calculate metrics for all runs
+            run_metrics = []
+            for run in all_runs:
+                if run.is_sota or run.miner_uid is None:
+                    continue
+                
+                eval_results = getattr(run, 'evaluation_results', []) or []
+                if eval_results:
+                    scores = [er.final_score for er in eval_results if er.final_score is not None]
+                    avg_score = sum(scores) / len(scores) if scores else 0.0
+                    times = [er.evaluation_time for er in eval_results if er.evaluation_time is not None and er.evaluation_time > 0]
+                    avg_time = sum(times) / len(times) if times else float('inf')
+                else:
+                    avg_score = run.average_score or 0.0
+                    avg_time = run.average_execution_time or float('inf')
+                
+                run_metrics.append({
+                    'agent_run_id': run.agent_run_id,
+                    'score': avg_score,
+                    'avg_time': avg_time
+                })
+            
+            # Sort by score (desc) then by time (asc)
+            run_metrics.sort(key=lambda x: (-x['score'], x['avg_time']))
+            
+            # Assign ranks
+            ranks_map = {}
+            last_score = None
+            last_time = None
+            current_rank = 0
+            for position, run_info in enumerate(run_metrics, start=1):
+                score = run_info['score']
+                time = run_info['avg_time']
+                
+                if (last_score is None or abs(score - last_score) > 1e-6 or 
+                    (abs(score - last_score) < 1e-6 and abs(time - last_time) > 1e-6)):
+                    current_rank = position
+                    last_score = score
+                    last_time = time
+                
+                ranks_map[run_info['agent_run_id']] = current_rank
+            
+            # Apply ranks to contexts
+            for ctx in round_contexts:
+                ctx.run.rank = ranks_map.get(ctx.run.agent_run_id, 0)
+
+    async def _calculate_rank_for_context(self, context: AgentRunContext) -> None:
+        """
+        Calculate rank for this agent_run by comparing with all runs in the same validator_round.
+        Ranking criteria:
+        1. Higher score is better
+        2. In case of tie, lower average evaluation time is better (faster)
+        """
+        validator_round_id = context.round.validator_round_id
+        
+        # Get all agent_runs in this validator_round
+        stmt = (
+            select(AgentEvaluationRunORM)
+            .where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
+            .options(selectinload(AgentEvaluationRunORM.evaluation_results))
+        )
+        all_runs = await self.session.scalars(stmt)
+        
+        # Calculate scores and times for all runs
+        run_metrics = []
+        for run in all_runs:
+            if run.is_sota or run.miner_uid is None:
+                continue  # Skip SOTA runs
+            
+            # Calculate average score from evaluation_results
+            eval_results = getattr(run, 'evaluation_results', []) or []
+            if eval_results:
+                scores = [er.final_score for er in eval_results if er.final_score is not None]
+                avg_score = sum(scores) / len(scores) if scores else 0.0
+                
+                # Calculate average evaluation time
+                times = [er.evaluation_time for er in eval_results if er.evaluation_time is not None and er.evaluation_time > 0]
+                avg_time = sum(times) / len(times) if times else float('inf')
+            else:
+                avg_score = run.average_score or 0.0
+                avg_time = run.average_execution_time or float('inf')
+            
+            run_metrics.append({
+                'agent_run_id': run.agent_run_id,
+                'miner_uid': run.miner_uid,
+                'score': avg_score,
+                'avg_time': avg_time
+            })
+        
+        # Sort by score (descending) then by time (ascending - lower is better)
+        run_metrics.sort(key=lambda x: (-x['score'], x['avg_time']))
+        
+        # Assign ranks (handle ties: same score AND same time get same rank)
+        last_score = None
+        last_time = None
+        current_rank = 0
+        for position, run_info in enumerate(run_metrics, start=1):
+            score = run_info['score']
+            time = run_info['avg_time']
+            
+            # Only increment rank if score OR time is different
+            if (last_score is None or abs(score - last_score) > 1e-6 or 
+                (abs(score - last_score) < 1e-6 and abs(time - last_time) > 1e-6)):
+                current_rank = position
+                last_score = score
+                last_time = time
+            
+            if run_info['agent_run_id'] == context.run.agent_run_id:
+                context.run.rank = current_rank
+                break
+
     @rollback_on_error
     async def get_agent_run(self, agent_run_id: str) -> Optional[AgentRun]:
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
         except ValueError:
             return None
+        
+        # Calculate rank by comparing with all other runs in the same validator_round
+        await self._calculate_rank_for_context(context)
+        
         return self._build_agent_run(context)
 
     @rollback_on_error
