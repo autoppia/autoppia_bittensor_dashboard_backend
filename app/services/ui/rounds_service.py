@@ -2771,20 +2771,24 @@ class RoundsService:
         emission = int(miner_stake * 0.05)
         
         # Get VALIDATOR stake (for weighted scoring)
+        # Try multiple sources in order of preference
         validator_stake = 0.0
-        if round_obj.validator_info:
-            validator_stake = float(round_obj.validator_info.stake or 0)
-        elif round_obj.validators:
-            # Find the validator for this run
+        
+        # 1. Try validator_info (primary validator for this round)
+        if round_obj.validator_info and round_obj.validator_info.stake:
+            validator_stake = float(round_obj.validator_info.stake)
+        
+        # 2. Try validators list
+        if validator_stake == 0 and round_obj.validators:
             validator = next(
                 (v for v in round_obj.validators if v.uid == context.run.validator_uid),
                 None
             )
-            if validator:
-                validator_stake = float(validator.stake or 0)
+            if validator and validator.stake:
+                validator_stake = float(validator.stake)
         
-        # Fallback: if stake is 0 (local dev without metagraph), use equal weights
-        # This makes all validators count equally in local development
+        # Fallback: if stake is still 0, use equal weight (1.0)
+        # This happens in local dev or when validator snapshots aren't saved
         if validator_stake == 0:
             validator_stake = 1.0
 
