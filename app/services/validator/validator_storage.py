@@ -355,17 +355,20 @@ class ValidatorRoundPersistenceService:
             )
             solution_row = TaskSolutionORM(**solution_kwargs)
             self.session.add(solution_row)
-            
+
             # Handle race condition: another request may have inserted between SELECT and INSERT
             try:
                 await self.session.flush()
             except Exception as e:
                 from sqlalchemy.exc import IntegrityError
+
                 if isinstance(e, IntegrityError) and "uq_solution_id" in str(e):
                     # Race condition: solution was inserted by concurrent request
                     await self.session.rollback()
                     # Reload the existing solution
-                    existing_solution = await self.get_task_solution_row(task_solution.solution_id)
+                    existing_solution = await self.get_task_solution_row(
+                        task_solution.solution_id
+                    )
                     if existing_solution:
                         solution_row = existing_solution
                     else:
@@ -390,15 +393,18 @@ class ValidatorRoundPersistenceService:
             evaluation_kwargs = self._evaluation_kwargs(evaluation, miner_id=miner_id)
             evaluation_row = EvaluationORM(**evaluation_kwargs)
             self.session.add(evaluation_row)
-            
+
             # Handle race condition for evaluation
             try:
                 await self.session.flush()
             except Exception as e:
                 from sqlalchemy.exc import IntegrityError
+
                 if isinstance(e, IntegrityError) and "uq_evaluation_id" in str(e):
                     await self.session.rollback()
-                    existing_eval = await self.get_evaluation_row(evaluation.evaluation_id)
+                    existing_eval = await self.get_evaluation_row(
+                        evaluation.evaluation_id
+                    )
                     if existing_eval:
                         evaluation_row = existing_eval
                     else:
@@ -431,12 +437,13 @@ class ValidatorRoundPersistenceService:
             )
             result_orm = EvaluationResultORM(**result_kwargs)
             self.session.add(result_orm)
-            
+
             # Handle race condition for evaluation_result
             try:
                 await self.session.flush()
             except Exception as e:
                 from sqlalchemy.exc import IntegrityError
+
                 if isinstance(e, IntegrityError) and "uq_result_id" in str(e):
                     # Race condition handled - result already exists
                     await self.session.rollback()
@@ -471,14 +478,12 @@ class ValidatorRoundPersistenceService:
         *,
         validator_round_id: str,
         status: str,
-        winners: List[Dict[str, Any]],
-        winner_scores: List[float],
-        weights: Dict[str, float],
         ended_at: float,
         summary: Optional[Dict[str, int]],
         agent_runs: Optional[List[Dict[str, Any]]] = None,
         round_metadata: Optional[Dict[str, Any]] = None,
         local_evaluation: Optional[Dict[str, Any]] = None,
+        post_consensus_evaluation: Optional[Dict[str, Any]] = None,
         ipfs_uploaded: Optional[Dict[str, Any]] = None,
         ipfs_downloaded: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -499,36 +504,85 @@ class ValidatorRoundPersistenceService:
         except Exception:
             # If boundary computation fails, proceed without blocking finish
             pass
-        
+
         # Normalize status to match ValidatorRound literal type
         normalized_status = status.lower()
         if normalized_status in {"completed", "complete"}:
             normalized_status = "finished"
-        elif normalized_status not in {"active", "finished", "pending", "evaluating_finished"}:
+        elif normalized_status not in {
+            "active",
+            "finished",
+            "pending",
+            "evaluating_finished",
+        }:
             normalized_status = "finished"
-        
+
         round_row.status = normalized_status
-        
-        # Build meta with all data (FASE 1 & 2: add all enriched data)
+
+        # Build meta with all data
         meta_data = {
             **round_row.meta,
-            "winners": winners,
-            "winner_scores": winner_scores,
-            "weights": weights,
         }
-        
-        # Add new fields if present (backward compatible)
+
+        # Process post_consensus_evaluation first to extract emission info
+        emission_info = None
+        if post_consensus_evaluation:
+            import copy
+            from app.services.subnet_utils import get_price
+            from app.config import settings
+
+            post_consensus_copy = copy.deepcopy(post_consensus_evaluation)
+
+            # Extract emission info if present
+            emission_info = post_consensus_copy.get("emission", {})
+
+            # Calculate alpha_price from cached metagraph price
+            try:
+                alpha_price = get_price(netuid=settings.VALIDATOR_NETUID)
+                if alpha_price <= 0:
+                    # Fallback to env if cached price is invalid
+                    alpha_price = float(settings.SUBNET_PRICE_FALLBACK)
+            except Exception:
+                # Safe fallback to env config
+                alpha_price = float(settings.SUBNET_PRICE_FALLBACK)
+
+            # Ensure emission dict exists and add alpha_price
+            if "emission" not in post_consensus_copy:
+                post_consensus_copy["emission"] = {}
+            post_consensus_copy["emission"]["alpha_price"] = float(alpha_price)
+            emission_info = post_consensus_copy["emission"]
+
+            meta_data["post_consensus_evaluation"] = post_consensus_copy
+
+        # Add round_metadata and merge emission info into it
         if round_metadata:
-            meta_data["round"] = round_metadata
+            round_metadata_copy = dict(round_metadata)
+            # Add emission info to round_metadata if available
+            if emission_info:
+                round_metadata_copy["emission"] = emission_info
+            meta_data["round"] = round_metadata_copy
+        elif emission_info:
+            # If no round_metadata but we have emission, create minimal round metadata with emission
+            meta_data["round"] = {"emission": emission_info}
+
+        # Add other fields
         if local_evaluation:
             meta_data["local_evaluation"] = local_evaluation
         if ipfs_uploaded:
             meta_data["ipfs_uploaded"] = ipfs_uploaded
         if ipfs_downloaded:
             meta_data["ipfs_downloaded"] = ipfs_downloaded
-        
+
         round_row.meta = meta_data
-        round_row.n_winners = len(winners)
+
+        # Calculate n_winners from post_consensus_evaluation
+        if post_consensus_evaluation:
+            miners = post_consensus_evaluation.get("miners", [])
+            n_winners = len([m for m in miners if m.get("weight", 0) > 0])
+            round_row.n_winners = n_winners
+        else:
+            round_row.n_winners = 0
+
         round_row.ended_at = ended_at
         if summary is not None:
             round_row.summary = summary
