@@ -379,6 +379,7 @@ class FinishRoundAgentRun(BaseModel):
 
 class RoundMetadata(BaseModel):
     """Round timing and metadata."""
+
     round_number: int
     started_at: float
     ended_at: float
@@ -394,9 +395,6 @@ class RoundMetadata(BaseModel):
 
 class FinishRoundRequest(BaseModel):
     status: str = Field(default="finished", description="Final status for the round")
-    winners: list[Dict[str, Any]] = Field(default_factory=list)
-    winner_scores: list[float] = Field(default_factory=list)
-    weights: Dict[str, float] = Field(default_factory=dict)
     ended_at: float | None = Field(
         default=None, description="Epoch timestamp when the round finished"
     )
@@ -404,10 +402,10 @@ class FinishRoundRequest(BaseModel):
         default=None, description="Optional summary metadata"
     )
     agent_runs: list[FinishRoundAgentRun] = Field(default_factory=list)
-    # FASE 1: Nuevos campos opcionales (backward compatible)
     round_metadata: RoundMetadata | None = Field(default=None, alias="round")
     local_evaluation: Dict[str, Any] | None = None
-    # FASE 2: IPFS data
+    post_consensus_evaluation: Dict[str, Any] | None = None
+    # IPFS data
     ipfs_uploaded: Dict[str, Any] | None = None
     ipfs_downloaded: Dict[str, Any] | None = None
 
@@ -1253,9 +1251,6 @@ async def finish_round(
         await service.finish_round(
             validator_round_id=validator_round_id,
             status=normalized_status,
-            winners=payload.winners,
-            winner_scores=payload.winner_scores,
-            weights=payload.weights,
             ended_at=payload.ended_at or time.time(),
             summary=payload.summary,
             agent_runs=(
@@ -1276,17 +1271,26 @@ async def finish_round(
                 if payload.agent_runs
                 else None
             ),
-            round_metadata=payload.round_metadata.model_dump() if payload.round_metadata else None,
+            round_metadata=(
+                payload.round_metadata.model_dump() if payload.round_metadata else None
+            ),
             local_evaluation=payload.local_evaluation,
+            post_consensus_evaluation=payload.post_consensus_evaluation,
             ipfs_uploaded=payload.ipfs_uploaded,
             ipfs_downloaded=payload.ipfs_downloaded,
         )
         await session.commit()
 
+        # Determine number of winners from post_consensus_evaluation
+        n_winners = 0
+        if payload.post_consensus_evaluation:
+            miners = payload.post_consensus_evaluation.get("miners", [])
+            n_winners = len([m for m in miners if m.get("weight", 0) > 0])
+
         logger.info(
             "Finished round %s with %d winners, %d agent_runs updated",
             validator_round_id,
-            len(payload.winners),
+            n_winners,
             len(payload.agent_runs) if payload.agent_runs else 0,
         )
 
