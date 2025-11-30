@@ -106,6 +106,9 @@ class ValidatorRoundPersistenceService:
         validator_snapshot: ValidatorRoundValidator,
     ) -> ValidatorRoundORM:
         """Create a new validator round and store the initial snapshot."""
+        await self._purge_round_for_validator_and_number(
+            validator_round.validator_uid, validator_round.round_number
+        )
         await self._ensure_unique_round_number(
             validator_round.validator_uid,
             validator_round.round_number,
@@ -911,6 +914,23 @@ class ValidatorRoundPersistenceService:
             ValidatorRoundORM.validator_round_id == validator_round_id
         )
         return await self.session.scalar(stmt)
+
+    async def _purge_round_for_validator_and_number(
+        self, validator_uid: int, round_number: Optional[int]
+    ) -> None:
+        """Delete any existing round for this validator and round_number (and cascade children)."""
+        if round_number is None:
+            return
+        stmt = select(ValidatorRoundORM).where(
+            ValidatorRoundORM.validator_uid == validator_uid,
+            ValidatorRoundORM.round_number == round_number,
+        )
+        rows = list(await self.session.scalars(stmt))
+        if not rows:
+            return
+        for row in rows:
+            self.session.delete(row)
+        await self.session.flush()
 
     async def _get_agent_run_row(
         self, agent_run_id: str
