@@ -581,8 +581,8 @@ async def start_round(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
     except RoundConflictError as exc:
-        # Idempotency: if a round with this (validator_uid, round_number) already exists,
-        # return its validator_round_id without performing writes.
+        # Si ya existe un round con ese round_number para este validator,
+        # BORRAR todos los datos del round anterior y crear uno nuevo
         try:
             existing = await service.get_round_by_validator_and_number(
                 validator_uid=int(validator_round.validator_uid),  # type: ignore[arg-type]
@@ -591,15 +591,65 @@ async def start_round(
         except Exception:
             existing = None
         if existing is not None:
-            logger.info(
-                "Validator %s already has round_number=%s; returning existing round_id=%s idempotently",
+            logger.warning(
+                "Validator %s (hotkey=%s) already has round_number=%s with round_id=%s; "
+                "deleting ALL data for this validator and round_number to allow new start",
                 validator_round.validator_uid,
+                validator_round.validator_hotkey,
                 validator_round.round_number,
                 existing.validator_round_id,
             )
+
+            # Borrar el round anterior (cascade borra automáticamente todos los datos relacionados:
+            # - tasks, agent_runs, evaluations, evaluation_results
+            # - validator_snapshots, miner_snapshots
+            await session.delete(existing)
+            await session.flush()  # Ejecutar el delete antes de continuar
+
+            # Invalidar caché del round si existe
+            from app.services.smart_cache import invalidate_round_cache
+
+            if existing.round_number:
+                await invalidate_round_cache(existing.round_number)
+
+            logger.info(
+                "Deleted old round %s for validator %s (round_number=%s); proceeding with new round creation",
+                existing.validator_round_id,
+                validator_round.validator_uid,
+                validator_round.round_number,
+            )
+
+            # Ahora crear el nuevo round
+            try:
+                await service.start_round(
+                    validator_identity=validator_identity,
+                    validator_round=validator_round,
+                    validator_snapshot=validator_snapshot,
+                )
+                await session.commit()
+            except Exception as inner_exc:
+                await session.rollback()
+                logger.error(
+                    "Failed to create new round after deleting old one: %s",
+                    inner_exc,
+                    exc_info=True,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to create new round after deleting old one: {inner_exc}",
+                ) from inner_exc
+
+            logger.info(
+                "Successfully replaced round for validator %s (round_number=%s): "
+                "old_round_id=%s -> new_round_id=%s",
+                validator_round.validator_uid,
+                validator_round.round_number,
+                existing.validator_round_id,
+                validator_round.validator_round_id,
+            )
             return {
-                "message": "Validator round created",
-                "validator_round_id": existing.validator_round_id,
+                "message": "Validator round created (replaced existing round)",
+                "validator_round_id": validator_round.validator_round_id,
             }
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
