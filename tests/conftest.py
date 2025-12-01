@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
@@ -38,15 +39,10 @@ from app.db.base import Base  # noqa: E402
 from app.db.session import AsyncSessionLocal, engine  # noqa: E402
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an event loop for the entire test session."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+# Use default pytest-asyncio event loop (function-scoped, asyncio: mode=auto)
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def reset_database():
     """Ensure the PostgreSQL schema is rebuilt and clean for every test."""
     await engine.dispose()
@@ -63,7 +59,7 @@ async def reset_database():
         await conn.run_sync(Base.metadata.create_all)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client():
     """Provide an AsyncClient with the FastAPI app."""
     await app.router.startup()
@@ -73,7 +69,7 @@ async def client():
     await app.router.shutdown()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db_session():
     """Provide a database session for assertions."""
     async with AsyncSessionLocal() as session:

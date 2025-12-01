@@ -929,7 +929,7 @@ class ValidatorRoundPersistenceService:
         if not rows:
             return
         for row in rows:
-            self.session.delete(row)
+            await self.session.delete(row)  # Fixed: added await
         await self.session.flush()
 
     async def _get_agent_run_row(
