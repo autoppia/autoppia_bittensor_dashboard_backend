@@ -95,6 +95,7 @@ async def get_tasks_with_solutions(
     min_score: Optional[float] = None,
     max_score: Optional[float] = None,
     status: Optional[str] = None,
+    success: Optional[bool] = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> Dict[str, Any]:
@@ -213,6 +214,13 @@ async def get_tasks_with_solutions(
         elif status_lower == "pending":
             filters.append(EvaluationORM.final_score.is_(None))
 
+    # Filter by success (true = score = 1.0, false = score < 1.0)
+    if success is not None:
+        if success:
+            filters.append(EvaluationORM.final_score == 1.0)
+        else:
+            filters.append(EvaluationORM.final_score < 1.0)
+
     # Apply all filters
     for flt in filters:
         base_stmt = base_stmt.where(flt)
@@ -233,16 +241,15 @@ async def get_tasks_with_solutions(
 
     base_stmt = base_stmt.order_by(order_clause)
 
-    # If we have Python-side filters (website or use_case), we need to fetch more records
-    # because filtering happens after DB fetch
+    # Simple pagination: apply offset and limit directly
     if website_filter or use_case_filter:
-        # Fetch more records to account for filtering
-        # Use a multiplier to ensure we get enough records
-        fetch_limit = limit * 10  # Fetch 10x more to account for filtering
-        base_stmt = base_stmt.offset(0).limit(
-            fetch_limit
-        )  # Always start from page 1 when filtering
+        # For Python-side filters, we need to fetch more and filter after
+        # Then apply pagination in Python
+        fetch_limit = min(limit * 5, 500)
+        fetch_offset = max(0, (page - 1) * limit)
+        base_stmt = base_stmt.offset(fetch_offset).limit(fetch_limit)
     else:
+        # Direct SQL pagination - simple: offset and limit
         base_stmt = base_stmt.offset(skip).limit(limit)
 
     # Execute queries
@@ -334,11 +341,13 @@ async def get_tasks_with_solutions(
 
     # If website or use_case filters were applied in Python, update total and apply pagination
     if website_filter or use_case_filter:
+        # We filtered in Python, so update total and apply pagination
         total = len(tasks_with_solutions)
         # Apply pagination after filtering
         start_idx = skip
         end_idx = skip + limit
         tasks_with_solutions = tasks_with_solutions[start_idx:end_idx]
+    # else: total from DB count is already accurate - no need to filter duplicates
 
     return {
         "tasks": tasks_with_solutions,
