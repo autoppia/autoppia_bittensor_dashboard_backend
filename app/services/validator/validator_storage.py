@@ -527,40 +527,47 @@ class ValidatorRoundPersistenceService:
             **round_row.meta,
         }
 
-        # Process post_consensus_evaluation first to extract emission info
+        # Process emission info - check round_metadata first, then post_consensus_evaluation (for backward compatibility)
         emission_info = None
-        if post_consensus_evaluation:
-            import copy
-            from app.services.subnet_utils import get_price
-            from app.config import settings
+        from app.services.subnet_utils import get_price
+        from app.config import settings
 
-            post_consensus_copy = copy.deepcopy(post_consensus_evaluation)
-
-            # Extract emission info if present
-            emission_info = post_consensus_copy.get("emission", {})
-
-            # Calculate alpha_price from cached metagraph price
-            try:
-                alpha_price = get_price(netuid=settings.VALIDATOR_NETUID)
-                if alpha_price <= 0:
-                    # Fallback to env if cached price is invalid
-                    alpha_price = float(settings.SUBNET_PRICE_FALLBACK)
-            except Exception:
-                # Safe fallback to env config
+        # Calculate alpha_price from cached metagraph price
+        try:
+            alpha_price = get_price(netuid=settings.VALIDATOR_NETUID)
+            if alpha_price <= 0:
+                # Fallback to env if cached price is invalid
                 alpha_price = float(settings.SUBNET_PRICE_FALLBACK)
+        except Exception:
+            # Safe fallback to env config
+            alpha_price = float(settings.SUBNET_PRICE_FALLBACK)
 
-            # Ensure emission dict exists and add alpha_price
-            if "emission" not in post_consensus_copy:
-                post_consensus_copy["emission"] = {}
-            post_consensus_copy["emission"]["alpha_price"] = float(alpha_price)
-            emission_info = post_consensus_copy["emission"]
-
+        # Check if emission is already in round_metadata (preferred)
+        if round_metadata and isinstance(round_metadata, dict):
+            emission_info = round_metadata.get("emission", {})
+        
+        # Fallback: extract from post_consensus_evaluation (backward compatibility)
+        if not emission_info and post_consensus_evaluation:
+            import copy
+            post_consensus_copy = copy.deepcopy(post_consensus_evaluation)
+            emission_info = post_consensus_copy.get("emission", {})
+            # Remove emission from post_consensus_evaluation if it was there
+            if "emission" in post_consensus_copy:
+                del post_consensus_copy["emission"]
             meta_data["post_consensus_evaluation"] = post_consensus_copy
+        elif post_consensus_evaluation:
+            # post_consensus_evaluation exists but no emission - use as is
+            meta_data["post_consensus_evaluation"] = post_consensus_evaluation
 
-        # Add round_metadata and merge emission info into it
+        # Add alpha_price to emission info if we have it
+        if emission_info:
+            emission_info = dict(emission_info)  # Make a copy
+            emission_info["alpha_price"] = float(alpha_price)
+
+        # Add round_metadata with emission info
         if round_metadata:
             round_metadata_copy = dict(round_metadata)
-            # Add emission info to round_metadata if available
+            # Add/update emission info with alpha_price
             if emission_info:
                 round_metadata_copy["emission"] = emission_info
             meta_data["round"] = round_metadata_copy
