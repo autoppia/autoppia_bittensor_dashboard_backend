@@ -69,7 +69,14 @@ class ValidatorAuthService:
 
         subtensor_kwargs: Dict[str, str] = {}
         if settings.SUBTENSOR_NETWORK:
-            subtensor_kwargs["network"] = settings.SUBTENSOR_NETWORK
+            # Check if it's a URL (chain_endpoint) or a network name
+            network_value = settings.SUBTENSOR_NETWORK.strip()
+            if network_value.startswith(("ws://", "wss://", "http://", "https://")):
+                # It's a URL, use chain_endpoint parameter
+                subtensor_kwargs["chain_endpoint"] = network_value
+            else:
+                # It's a network name (finney, testnet, etc.), use network parameter
+                subtensor_kwargs["network"] = network_value
 
         try:
             subtensor = bt.subtensor(**subtensor_kwargs)  # type: ignore[attr-defined]
