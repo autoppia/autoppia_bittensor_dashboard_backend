@@ -34,16 +34,11 @@ def _fetch_current_block() -> Optional[int]:
 
     kwargs = {}
     if settings.SUBTENSOR_NETWORK:
-        # Check if it's a URL (chain_endpoint) or a network name
+        # Bittensor accepts URLs directly as the network parameter
+        # This works for both URLs (ws://...) and network names (finney, testnet)
         network_value = settings.SUBTENSOR_NETWORK.strip()
-        if network_value.startswith(("ws://", "wss://", "http://", "https://")):
-            # It's a URL, use chain_endpoint parameter
-            kwargs["chain_endpoint"] = network_value
-            _logger.debug("Connecting to Subtensor via chain_endpoint: %s", network_value)
-        else:
-            # It's a network name (finney, testnet, etc.), use network parameter
-            kwargs["network"] = network_value
-            _logger.debug("Connecting to Subtensor network: %s", network_value)
+        kwargs["network"] = network_value
+        _logger.debug("Connecting to Subtensor with network: %s", network_value)
 
     try:
         subtensor = bt.subtensor(**kwargs)  # type: ignore[attr-defined]
