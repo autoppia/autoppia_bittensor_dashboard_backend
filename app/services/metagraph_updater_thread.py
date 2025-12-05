@@ -368,7 +368,13 @@ def get_price_from_redis() -> Optional[float]:
         Cached price or None if not available
     """
     try:
-        return redis_cache.get(REDIS_KEY_SUBNET_PRICE)
+        value = redis_cache.get(REDIS_KEY_SUBNET_PRICE)
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
     except Exception:
         return None
 
