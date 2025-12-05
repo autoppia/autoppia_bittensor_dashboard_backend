@@ -13,7 +13,14 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AgentEvaluationRunORM, EvaluationResultORM, RoundORM, TaskORM
+from app.db.models import (
+    AgentEvaluationRunORM,
+    EvaluationResultORM,
+    RoundORM,
+    TaskORM,
+    ValidatorRoundMinersScoreORM,
+    ValidatorRoundMinerORM,
+)
 from app.models.core import ValidatorRound
 from app.models.ui.overview import (
     ActivityMetadata,
@@ -476,15 +483,13 @@ class OverviewService:
                             if top_miner_name:
                                 break
 
-                        # If not found in contexts, try to get from DB
+                        # If not found in contexts, try to get from ValidatorRoundMinerORM
                         if not top_miner_name and top_miner_uid:
                             try:
-                                from app.db.models import MinerORM
-
-                                stmt = select(MinerORM.name).where(
-                                    MinerORM.uid == top_miner_uid
-                                )
-                                result = await session.execute(stmt)
+                                stmt = select(ValidatorRoundMinerORM.name).where(
+                                    ValidatorRoundMinerORM.miner_uid == top_miner_uid
+                                ).order_by(ValidatorRoundMinerORM.created_at.desc()).limit(1)
+                                result = await self.session.execute(stmt)
                                 miner_name_row = result.scalar_one_or_none()
                                 if miner_name_row:
                                     top_miner_name = miner_name_row
@@ -693,8 +698,13 @@ class OverviewService:
         time_range: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> Tuple[List[LeaderboardEntry], Dict[str, str]]:
+        """
+        Obtiene el leaderboard usando las nuevas tablas:
+        - validator_rounds: round_number, ended_at
+        - validator_round_miners_score: score_consensus, miner_uid (ganador = max score_consensus por round)
+        - validator_round_miners: name (para el winnerUid)
+        """
         normalized_range = (time_range or "").strip().lower()
-        # Support both "D" (legacy) and "R" (rounds) - both mean "last N rounds"
         range_limits = {
             "7d": 7,
             "15d": 15,
@@ -720,234 +730,153 @@ class OverviewService:
                 derived_limit = None
 
         if derived_limit is None and not unlimited:
-            # Default to a sensible window when no explicit range is provided.
             derived_limit = 30
 
         if limit is not None:
-            # When an explicit limit is provided, it takes precedence and disables the "all" flag.
             unlimited = False
             derived_limit = min(limit, derived_limit) if derived_limit else limit
 
-        # Performance optimization: Even with "unlimited" (timeRange=all),
-        # limit to 365 rounds (max ~1 year) to prevent loading thousands of rounds
         if unlimited:
-            fetch_limit = 365  # Max 1 year of rounds (reasonable for "all" time range)
+            fetch_limit = 365
         else:
-            # Fetch a wider window than requested so we can collapse multiple validator rounds
-            # for the same logical day into a single aggregated round.
-            fetch_limit = max((derived_limit or 30) * 5, derived_limit or 1)
+            fetch_limit = derived_limit or 30
 
-        records_with_contexts = await self._recent_round_records(
-            limit=fetch_limit,
-            include_details=True,  # Need eval results to compute scores correctly
-            context_limit=None,  # Don't truncate agent runs; winners may be beyond first 20
+        # Query SQL simplificada usando las nuevas tablas
+        # Para cada round_number, obtenemos el miner_uid con el máximo score_consensus
+        
+        # Subquery para obtener el máximo score_consensus por round_number
+        max_scores_subq = (
+            select(
+                RoundORM.round_number,
+                func.max(ValidatorRoundMinersScoreORM.score_consensus).label(
+                    "max_score_consensus"
+                ),
+            )
+            .select_from(
+                RoundORM.__table__.join(
+                    ValidatorRoundMinersScoreORM.__table__,
+                    RoundORM.validator_round_id
+                    == ValidatorRoundMinersScoreORM.validator_round_id,
+                )
+            )
+            .where(RoundORM.round_number.isnot(None))
+            .where(RoundORM.status == "finished")
+            .group_by(RoundORM.round_number)
+            .subquery()
         )
-        logger.info(f"Leaderboard: Loaded {len(records_with_contexts)} round records")
-        if not records_with_contexts:
+
+        # Subquery para obtener los round_numbers más recientes (limitados)
+        recent_rounds_subq = (
+            select(RoundORM.round_number)
+            .where(RoundORM.round_number.isnot(None))
+            .where(RoundORM.status == "finished")
+            .order_by(RoundORM.round_number.desc())
+            .limit(fetch_limit)
+            .subquery()
+        )
+
+        # Query principal: obtener el ganador (miner_uid con max score_consensus) por round
+        # Usamos DISTINCT ON de PostgreSQL para obtener solo el primer registro por round_number
+        stmt = (
+            select(
+                RoundORM.round_number,
+                ValidatorRoundMinersScoreORM.score_consensus,
+                ValidatorRoundMinersScoreORM.miner_uid,
+                ValidatorRoundMinerORM.name,
+                RoundORM.ended_at,
+            )
+            .select_from(
+                RoundORM.__table__.join(
+                    ValidatorRoundMinersScoreORM.__table__,
+                    RoundORM.validator_round_id
+                    == ValidatorRoundMinersScoreORM.validator_round_id,
+                )
+                .join(
+                    max_scores_subq,
+                    (RoundORM.round_number == max_scores_subq.c.round_number)
+                    & (
+                        ValidatorRoundMinersScoreORM.score_consensus
+                        == max_scores_subq.c.max_score_consensus
+                    ),
+                )
+                .join(
+                    recent_rounds_subq,
+                    RoundORM.round_number == recent_rounds_subq.c.round_number,
+                )
+            )
+            .outerjoin(
+                ValidatorRoundMinerORM,
+                (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id)
+                & (
+                    ValidatorRoundMinersScoreORM.miner_uid
+                    == ValidatorRoundMinerORM.miner_uid
+                ),
+            )
+            .where(RoundORM.round_number.isnot(None))
+            .where(RoundORM.status == "finished")
+            .order_by(
+                RoundORM.round_number.desc(),
+                ValidatorRoundMinersScoreORM.score_consensus.desc(),
+                ValidatorRoundMinersScoreORM.miner_uid.asc(),
+            )
+        )
+
+        result = await self.session.execute(stmt)
+        rows = result.all()
+
+        if not rows:
             now_iso = datetime.now(timezone.utc).isoformat()
-            logger.warning("Leaderboard: No round records found, returning empty")
             return [], {"start": now_iso, "end": now_iso}
 
-        def _scores_for_provider(
-            contexts: List[AgentRunContext],
-            provider_tokens: List[str],
-        ) -> List[float]:
-            scores: List[float] = []
-            for ctx in contexts:
-                miner_info = ctx.run.miner_info
-                source_parts: List[str] = []
-                if miner_info:
-                    if getattr(miner_info, "agent_name", None):
-                        source_parts.append(str(miner_info.agent_name))
-                    if getattr(miner_info, "github", None):
-                        source_parts.append(str(miner_info.github))
-
-                metadata = getattr(ctx.run, "metadata", None)
-                if isinstance(metadata, dict):
-                    for value in metadata.values():
-                        if isinstance(value, str):
-                            source_parts.append(value)
-
-                provider_hint = " ".join(source_parts).lower()
-                if provider_hint and any(
-                    token in provider_hint for token in provider_tokens
-                ):
-                    scores.append(self.rounds_service._context_score(ctx))
-            return scores
-
-        # Get current block to determine which rounds are officially finished
-        try:
-            current_block = get_current_block_estimate()
-        except Exception:
-            current_block = None
-
-        # Calculate CURRENT round number (the one in progress). If the chain
-        # height cannot be resolved or returns an obviously low value, fall
-        # back to permissive behaviour (include recent rounds even if status
-        # isn't "finished").
-        current_round_number = 0
-        if current_block is not None:
-            try:
-                current_round_number = compute_round_number(current_block)
-            except Exception:
-                current_round_number = 0
-        if current_round_number is not None and current_round_number <= 1:
-            current_round_number = 0
-
-        total_rounds = len(records_with_contexts)
+        # Agrupar por round_number y tomar el primero (ganador con max score_consensus)
+        # Como la query está ordenada por score_consensus DESC, el primero es el ganador
+        seen_rounds: Dict[int, bool] = {}
         entries: List[LeaderboardEntry] = []
-        for idx, (record, contexts) in enumerate(records_with_contexts):
-            round_obj = record.model
-            round_number = round_obj.round_number or 0
+        
+        for row in rows:
+            round_number, score_consensus, miner_uid, miner_name, ended_at = row
 
-            # Decide whether this round should be included. Prefer chain signal,
-            # but fall back to presence of data even if status is still "active".
-            include_round = True
-            if current_round_number > 0:
-                if round_number >= current_round_number:
-                    if not (
-                        round_obj.ended_at
-                        or round_obj.status in ("finished", "evaluating_finished")
-                    ):
-                        include_round = False
-            else:
-                if (
-                    round_obj.status not in ("finished", "evaluating_finished")
-                    and not contexts
-                ):
-                    include_round = False
-
-            if not include_round:
-                logger.info(
-                    "Leaderboard: Skipping round %s (round_number=%s, status=%s, current_round=%s)",
-                    round_obj.validator_round_id,
-                    round_number,
-                    round_obj.status,
-                    current_round_number,
-                )
+            if round_number is None:
                 continue
 
-            logger.info(
-                f"Leaderboard: Including round {round_number}, contexts={len(contexts)}"
-            )
+            round_num = int(round_number)
+            # Solo tomar el primer registro por round_number (el ganador)
+            if round_num in seen_rounds:
+                continue
+            seen_rounds[round_num] = True
 
-            non_sota_contexts = [
-                ctx for ctx in contexts if not getattr(ctx.run, "is_sota", False)
-            ]
-            run_scores = [
-                self.rounds_service._context_score(ctx) for ctx in non_sota_contexts
-            ]
-
-            average_score = (
-                round_obj.average_score
-                if round_obj.average_score is not None
-                else (sum(run_scores) / len(run_scores) if run_scores else 0.0)
-            )
-
-            # Find the winner (highest score)
-            winner_uid: Optional[int] = None
-            winner_name: Optional[str] = None
-            if non_sota_contexts:
-                winner_ctx = max(
-                    non_sota_contexts,
-                    key=lambda ctx: self.rounds_service._context_score(ctx),
-                )
-                winner_uid = winner_ctx.run.miner_uid
-                miner_info = getattr(winner_ctx.run, "miner_info", None)
-                if miner_info and miner_info.agent_name:
-                    winner_name = miner_info.agent_name
-
-            openai_scores = _scores_for_provider(contexts, ["openai"])
-            anthropic_scores = _scores_for_provider(contexts, ["anthropic"])
-            browser_scores = _scores_for_provider(contexts, ["browser"])
-
-            def _avg(values: List[float]) -> Optional[float]:
-                if not values:
-                    return None
-                return round(sum(values) / len(values), 3)
-
-            timestamp = datetime.fromtimestamp(
-                round_obj.started_at or datetime.now(timezone.utc).timestamp(),
-                tz=timezone.utc,
-            ).isoformat()
-
-            round_number = round_obj.round_number or _round_id_to_int(
-                round_obj.validator_round_id
-            )
-            if not round_number or round_number <= 0:
-                round_number = total_rounds - idx
+            # Convertir ended_at (float timestamp) a ISO string
+            if ended_at:
+                timestamp = datetime.fromtimestamp(ended_at, tz=timezone.utc).isoformat()
+            else:
+                timestamp = datetime.now(timezone.utc).isoformat()
 
             entries.append(
                 LeaderboardEntry(
-                    round=round_number,
-                    subnet36=round(average_score, 3),
-                    winnerUid=winner_uid,
-                    winnerName=winner_name,
-                    openai_cua=_avg(openai_scores),
-                    anthropic_cua=_avg(anthropic_scores),
-                    browser_use=_avg(browser_scores),
+                    round=round_num,
+                    subnet36=round(float(score_consensus), 3),
+                    winnerUid=int(miner_uid) if miner_uid is not None else None,
+                    winnerName=str(miner_name) if miner_name else None,
+                    openai_cua=None,
+                    anthropic_cua=None,
+                    browser_use=None,
                     timestamp=timestamp,
                 )
             )
 
-        grouped_entries: Dict[int, List[LeaderboardEntry]] = defaultdict(list)
-        for entry in entries:
-            grouped_entries[entry.round].append(entry)
-
-        aggregated_entries: List[LeaderboardEntry] = []
-        for round_number, round_entries in grouped_entries.items():
-            latest_timestamp = max(entry.timestamp for entry in round_entries)
-            subnet36_values = [entry.subnet36 for entry in round_entries]
-            openai_values = [
-                value
-                for value in (entry.openai_cua for entry in round_entries)
-                if value is not None
-            ]
-            anthropic_values = [
-                value
-                for value in (entry.anthropic_cua for entry in round_entries)
-                if value is not None
-            ]
-            browser_values = [
-                value
-                for value in (entry.browser_use for entry in round_entries)
-                if value is not None
-            ]
-
-            # Get winner from the entry with highest score
-            winner_entry = max(round_entries, key=lambda e: e.subnet36, default=None)
-            winner_uid = winner_entry.winnerUid if winner_entry else None
-            winner_name = winner_entry.winnerName if winner_entry else None
-
-            aggregated_entries.append(
-                LeaderboardEntry(
-                    round=round_number,
-                    subnet36=round(max(subnet36_values), 3) if subnet36_values else 0.0,
-                    winnerUid=winner_uid,
-                    winnerName=winner_name,
-                    openai_cua=round(max(openai_values), 3) if openai_values else None,
-                    anthropic_cua=(
-                        round(max(anthropic_values), 3) if anthropic_values else None
-                    ),
-                    browser_use=(
-                        round(max(browser_values), 3) if browser_values else None
-                    ),
-                    timestamp=latest_timestamp,
-                )
-            )
-
-        aggregated_entries.sort(key=lambda entry: entry.timestamp, reverse=True)
+        # Ordenar por timestamp descendente (más reciente primero)
+        entries.sort(key=lambda e: e.timestamp, reverse=True)
 
         if not unlimited and derived_limit:
-            aggregated_entries = aggregated_entries[:derived_limit]
+            entries = entries[:derived_limit]
 
-        if not aggregated_entries:
+        if not entries:
             now_iso = datetime.now(timezone.utc).isoformat()
             return [], {"start": now_iso, "end": now_iso}
 
-        start = min(entry.timestamp for entry in aggregated_entries)
-        end = max(entry.timestamp for entry in aggregated_entries)
-        return aggregated_entries, {"start": start, "end": end}
+        start = min(entry.timestamp for entry in entries)
+        end = max(entry.timestamp for entry in entries)
+        return entries, {"start": start, "end": end}
 
     @rollback_on_error
     async def statistics(self) -> SubnetStatistics:

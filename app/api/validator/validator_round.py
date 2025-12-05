@@ -43,7 +43,8 @@ from app.utils.images import (
     resolve_validator_image,
     sanitize_miner_image,
 )
-from app.services.snapshot_service import SnapshotService
+# Snapshot functionality removed
+# from app.services.snapshot_service import SnapshotService
 from app.services.validator.validator_storage import (
     RoundConflictError,
     DuplicateIdentifierError,

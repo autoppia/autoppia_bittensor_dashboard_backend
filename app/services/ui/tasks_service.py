@@ -411,7 +411,7 @@ class TasksService:
         if round_row and hasattr(round_row, "miner_snapshots"):
             for snapshot in round_row.miner_snapshots:
                 if snapshot.miner_uid == run.miner_uid:
-                    return snapshot.agent_name
+                    return snapshot.name
         if hasattr(run, "miner") and run.miner:
             return getattr(run.miner, "agent_name", None)
         return None
@@ -586,10 +586,6 @@ class TasksService:
         if agent_run_ids_from_evals:
             run_rows = await self.session.scalars(
                 select(AgentEvaluationRunORM)
-                .options(
-                    selectinload(AgentEvaluationRunORM.validator),
-                    selectinload(AgentEvaluationRunORM.miner),
-                )
                 .where(AgentEvaluationRunORM.agent_run_id.in_(agent_run_ids_from_evals))
             )
             agent_runs_by_id = {run.agent_run_id: run for run in run_rows}

@@ -2938,7 +2938,7 @@ class RoundsService:
                     uid=miner_snapshot.miner_uid,
                     hotkey=miner_snapshot.miner_hotkey,
                     coldkey=miner_snapshot.miner_coldkey,
-                    agent_name=miner_snapshot.agent_name or "",
+                    agent_name=miner_snapshot.name or "",
                     agent_image=miner_snapshot.image_url or "",
                     github=miner_snapshot.github_url or "",
                     is_sota=bool(getattr(miner_snapshot, "is_sota", False)),
