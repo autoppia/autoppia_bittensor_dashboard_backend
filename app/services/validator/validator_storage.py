@@ -12,10 +12,8 @@ from app.db.models import (
     AgentEvaluationRunORM,
     EvaluationORM,
     EvaluationResultORM,
-    MinerORM,
     TaskORM,
     TaskSolutionORM,
-    ValidatorORM,
     ValidatorRoundMinerORM,
     ValidatorRoundORM,
     ValidatorRoundValidatorORM,
@@ -120,16 +118,14 @@ class ValidatorRoundPersistenceService:
                 f"validator_round_id {validator_round.validator_round_id} is already registered"
             )
 
-        validator_row = await self._upsert_validator_identity(validator_identity)
-
         round_row = ValidatorRoundORM(
-            **self._validator_round_kwargs(validator_round, validator_row.id)
+            **self._validator_round_kwargs(validator_round)
         )
         self.session.add(round_row)
         await self.session.flush()
 
         snapshot_row = await self._upsert_validator_snapshot(
-            round_row, validator_snapshot, validator_row.id
+            round_row, validator_snapshot
         )
 
         return round_row
@@ -183,12 +179,9 @@ class ValidatorRoundPersistenceService:
                 f"agent_run_id {agent_run.agent_run_id} is already registered"
             )
 
-        miner_row = await self._upsert_miner_identity(miner_identity)
-        await self._upsert_miner_snapshot(round_row, miner_snapshot, miner_row.id)
+        await self._upsert_miner_snapshot(round_row, miner_snapshot)
 
-        kwargs = self._agent_run_kwargs(
-            agent_run, validator_id=round_row.validator_id, miner_id=miner_row.id
-        )
+        kwargs = self._agent_run_kwargs(agent_run)
 
         row = AgentEvaluationRunORM(**kwargs)
         self.session.add(row)
@@ -244,13 +237,8 @@ class ValidatorRoundPersistenceService:
                 f"not {validator_round_id}"
             )
 
-        miner_id = await self._resolve_miner_identity_id(
-            task_solution.miner_uid,
-            task_solution.miner_hotkey,
-        )
-
         # Task solution
-        solution_kwargs = self._task_solution_kwargs(task_solution, miner_id=miner_id)
+        solution_kwargs = self._task_solution_kwargs(task_solution)
         stmt_solution = select(TaskSolutionORM).where(
             TaskSolutionORM.solution_id == task_solution.solution_id
         )
@@ -264,7 +252,7 @@ class ValidatorRoundPersistenceService:
 
         await self.session.flush()
 
-        evaluation_kwargs = self._evaluation_kwargs(evaluation, miner_id=miner_id)
+        evaluation_kwargs = self._evaluation_kwargs(evaluation)
         stmt_evaluation = select(EvaluationORM).where(
             EvaluationORM.evaluation_id == evaluation.evaluation_id
         )
@@ -279,7 +267,6 @@ class ValidatorRoundPersistenceService:
         result_kwargs = self._evaluation_result_kwargs(
             evaluation_row,
             evaluation_result,
-            miner_id=miner_id,
         )
         stmt_result = select(EvaluationResultORM).where(
             EvaluationResultORM.result_id == evaluation_result.result_id
@@ -335,11 +322,6 @@ class ValidatorRoundPersistenceService:
                 f"Task {task.task_id} is registered under validator_round {existing_task.validator_round_id}, not {validator_round_id}"
             )
 
-        miner_id = await self._resolve_miner_identity_id(
-            task_solution.miner_uid,
-            task_solution.miner_hotkey,
-        )
-
         # Task solution upsert/validate
         existing_solution = await self.get_task_solution_row(task_solution.solution_id)
         if existing_solution is not None:
@@ -353,9 +335,7 @@ class ValidatorRoundPersistenceService:
                 )
             solution_row = existing_solution
         else:
-            solution_kwargs = self._task_solution_kwargs(
-                task_solution, miner_id=miner_id
-            )
+            solution_kwargs = self._task_solution_kwargs(task_solution)
             solution_row = TaskSolutionORM(**solution_kwargs)
             self.session.add(solution_row)
 
@@ -393,7 +373,7 @@ class ValidatorRoundPersistenceService:
                 )
             evaluation_row = existing_eval
         else:
-            evaluation_kwargs = self._evaluation_kwargs(evaluation, miner_id=miner_id)
+            evaluation_kwargs = self._evaluation_kwargs(evaluation)
             evaluation_row = EvaluationORM(**evaluation_kwargs)
             self.session.add(evaluation_row)
 
@@ -436,7 +416,6 @@ class ValidatorRoundPersistenceService:
             result_kwargs = self._evaluation_result_kwargs(
                 evaluation_row,
                 evaluation_result,
-                miner_id=miner_id,
             )
             result_orm = EvaluationResultORM(**result_kwargs)
             self.session.add(result_orm)
@@ -653,11 +632,6 @@ class ValidatorRoundPersistenceService:
     ) -> PersistenceResult:
         """Persist the entire round submission payload."""
         self._assert_unique_payload(payload)
-        # Identities
-        for identity in payload.validator_identities:
-            await self._upsert_validator_identity(identity)
-        for identity in payload.miner_identities:
-            await self._upsert_miner_identity(identity)
 
         validator_round = payload.validator_round
         await self._ensure_unique_round_number(
@@ -667,12 +641,7 @@ class ValidatorRoundPersistenceService:
         )
 
         existing_round = await self._get_round_row(validator_round.validator_round_id)
-        validator_id = self._find_validator_id(
-            validator_round.validator_uid, validator_round.validator_hotkey
-        )
-        round_kwargs = self._validator_round_kwargs(
-            validator_round, validator_id=validator_id
-        )
+        round_kwargs = self._validator_round_kwargs(validator_round)
 
         if existing_round:
             for key, value in round_kwargs.items():
@@ -689,33 +658,18 @@ class ValidatorRoundPersistenceService:
             row = await self._upsert_validator_snapshot(
                 round_row,
                 snapshot,
-                self._find_validator_id(
-                    snapshot.validator_uid, snapshot.validator_hotkey
-                ),
             )
             validator_snapshot_ids.append(row.id)
 
         miner_snapshot_ids: List[int] = []
         for snapshot in payload.miner_snapshots:
-            miner_id = await self._resolve_miner_identity_id(
-                snapshot.miner_uid,
-                snapshot.miner_hotkey,
-            )
-            row = await self._upsert_miner_snapshot(round_row, snapshot, miner_id)
+            row = await self._upsert_miner_snapshot(round_row, snapshot)
             miner_snapshot_ids.append(row.id)
 
         # Agent runs
         agent_run_ids: List[str] = []
         for agent_run in payload.agent_evaluation_runs:
-            miner_id = await self._resolve_miner_identity_id(
-                agent_run.miner_uid,
-                agent_run.miner_hotkey,
-            )
-            kwargs = self._agent_run_kwargs(
-                agent_run,
-                validator_id=round_row.validator_id,
-                miner_id=miner_id,
-            )
+            kwargs = self._agent_run_kwargs(agent_run)
             stmt = select(AgentEvaluationRunORM).where(
                 AgentEvaluationRunORM.agent_run_id == agent_run.agent_run_id
             )
@@ -734,11 +688,7 @@ class ValidatorRoundPersistenceService:
         # Task solutions
         task_solution_ids: List[str] = []
         for solution in payload.task_solutions:
-            miner_id = await self._resolve_miner_identity_id(
-                solution.miner_uid,
-                solution.miner_hotkey,
-            )
-            kwargs = self._task_solution_kwargs(solution, miner_id=miner_id)
+            kwargs = self._task_solution_kwargs(solution)
             stmt = select(TaskSolutionORM).where(
                 TaskSolutionORM.solution_id == solution.solution_id
             )
@@ -754,11 +704,7 @@ class ValidatorRoundPersistenceService:
         evaluation_ids: List[str] = []
         evaluation_rows: Dict[str, EvaluationORM] = {}
         for evaluation in payload.evaluations:
-            miner_id = await self._resolve_miner_identity_id(
-                evaluation.miner_uid,
-                evaluation.miner_hotkey,
-            )
-            kwargs = self._evaluation_kwargs(evaluation, miner_id=miner_id)
+            kwargs = self._evaluation_kwargs(evaluation)
             stmt = select(EvaluationORM).where(
                 EvaluationORM.evaluation_id == evaluation.evaluation_id
             )
@@ -777,10 +723,6 @@ class ValidatorRoundPersistenceService:
         # Evaluation results
         evaluation_result_ids: List[str] = []
         for result in payload.evaluation_results:
-            miner_id = await self._resolve_miner_identity_id(
-                result.miner_uid,
-                None,
-            )
             evaluation_row = evaluation_rows.get(result.evaluation_id)
             if evaluation_row is None:
                 evaluation_row = await self.session.scalar(
@@ -795,7 +737,6 @@ class ValidatorRoundPersistenceService:
             kwargs = self._evaluation_result_kwargs(
                 evaluation_row,
                 result,
-                miner_id=miner_id,
             )
             stmt = select(EvaluationResultORM).where(
                 EvaluationResultORM.result_id == result.result_id
@@ -991,53 +932,10 @@ class ValidatorRoundPersistenceService:
             validator_uid, round_number, exclude_round_id=exclude_round_id
         )
 
-    async def _upsert_validator_identity(self, identity: Validator) -> ValidatorORM:
-        stmt = select(ValidatorORM).where(
-            ValidatorORM.uid == identity.uid,
-            ValidatorORM.hotkey == identity.hotkey,
-        )
-        existing = await self.session.scalar(stmt)
-        if existing:
-            existing.coldkey = identity.coldkey
-            return existing
-
-        row = ValidatorORM(
-            uid=identity.uid,
-            hotkey=identity.hotkey,
-            coldkey=identity.coldkey,
-        )
-        self.session.add(row)
-        await self.session.flush()
-        return row
-
-    async def _upsert_miner_identity(self, identity: Miner) -> MinerORM:
-        stmt = select(MinerORM)
-        if identity.uid is not None and identity.hotkey:
-            stmt = stmt.where(
-                MinerORM.uid == identity.uid, MinerORM.hotkey == identity.hotkey
-            )
-        else:
-            raise ValueError("Miner identity must include uid and hotkey")
-
-        existing = await self.session.scalar(stmt)
-        if existing:
-            existing.coldkey = identity.coldkey
-            return existing
-
-        row = MinerORM(
-            uid=identity.uid,
-            hotkey=identity.hotkey,
-            coldkey=identity.coldkey,
-        )
-        self.session.add(row)
-        await self.session.flush()
-        return row
-
     async def _upsert_validator_snapshot(
         self,
         round_row: ValidatorRoundORM,
         snapshot: ValidatorRoundValidator,
-        validator_id: Optional[int],
     ) -> ValidatorRoundValidatorORM:
         stmt = select(ValidatorRoundValidatorORM).where(
             ValidatorRoundValidatorORM.validator_round_id
@@ -1048,7 +946,6 @@ class ValidatorRoundPersistenceService:
         existing = await self.session.scalar(stmt)
         kwargs = {
             "validator_round_id": round_row.validator_round_id,
-            "validator_id": validator_id,
             "validator_uid": snapshot.validator_uid,
             "validator_hotkey": snapshot.validator_hotkey,
             "name": snapshot.name,
@@ -1070,7 +967,6 @@ class ValidatorRoundPersistenceService:
         self,
         round_row: ValidatorRoundORM,
         snapshot: ValidatorRoundMiner,
-        miner_id: Optional[int],
     ) -> ValidatorRoundMinerORM:
         stmt = select(ValidatorRoundMinerORM).where(
             ValidatorRoundMinerORM.validator_round_id == round_row.validator_round_id,
@@ -1080,11 +976,10 @@ class ValidatorRoundPersistenceService:
         existing = await self.session.scalar(stmt)
         kwargs = {
             "validator_round_id": round_row.validator_round_id,
-            "miner_id": miner_id,
             "miner_uid": snapshot.miner_uid,
             "miner_hotkey": snapshot.miner_hotkey,
             "miner_coldkey": snapshot.miner_coldkey,
-            "agent_name": snapshot.agent_name,
+            "name": snapshot.agent_name,
             "image_url": snapshot.image_url,
             "github_url": snapshot.github_url,
             "description": snapshot.description,
@@ -1102,11 +997,10 @@ class ValidatorRoundPersistenceService:
         return row
 
     def _validator_round_kwargs(
-        self, model: ValidatorRound, validator_id: Optional[int]
+        self, model: ValidatorRound
     ) -> Dict[str, Any]:
         return {
             "validator_round_id": model.validator_round_id,
-            "validator_id": validator_id,
             "validator_uid": model.validator_uid,
             "validator_hotkey": model.validator_hotkey,
             "validator_coldkey": model.validator_coldkey,
@@ -1133,17 +1027,12 @@ class ValidatorRoundPersistenceService:
     def _agent_run_kwargs(
         self,
         model: AgentEvaluationRun,
-        *,
-        validator_id: Optional[int],
-        miner_id: Optional[int],
     ) -> Dict[str, Any]:
         return {
             "agent_run_id": model.agent_run_id,
             "validator_round_id": model.validator_round_id,
-            "validator_id": validator_id,
             "validator_uid": model.validator_uid,
             "validator_hotkey": model.validator_hotkey,
-            "miner_id": miner_id,
             "miner_uid": model.miner_uid,
             "miner_hotkey": model.miner_hotkey,
             "is_sota": model.is_sota,
@@ -1186,8 +1075,6 @@ class ValidatorRoundPersistenceService:
     def _task_solution_kwargs(
         self,
         model: TaskSolution,
-        *,
-        miner_id: Optional[int],
     ) -> Dict[str, Any]:
         return {
             "solution_id": model.solution_id,
@@ -1198,7 +1085,6 @@ class ValidatorRoundPersistenceService:
             "validator_hotkey": model.validator_hotkey,
             "miner_uid": model.miner_uid,
             "miner_hotkey": model.miner_hotkey,
-            "miner_id": miner_id,
             "actions": _action_dump(model.actions),
             "web_agent_id": model.web_agent_id,
         }
@@ -1206,8 +1092,6 @@ class ValidatorRoundPersistenceService:
     def _evaluation_kwargs(
         self,
         model: Evaluation,
-        *,
-        miner_id: Optional[int],
     ) -> Dict[str, Any]:
         summary = _non_empty_dict(model.summary)
         if "test_results" in summary:
@@ -1226,7 +1110,6 @@ class ValidatorRoundPersistenceService:
             "validator_hotkey": model.validator_hotkey,
             "miner_uid": model.miner_uid,
             "miner_hotkey": model.miner_hotkey,
-            "miner_id": miner_id,
             "final_score": model.final_score,
             "raw_score": model.raw_score,
             "evaluation_time": model.evaluation_time,
@@ -1237,8 +1120,6 @@ class ValidatorRoundPersistenceService:
         self,
         evaluation_row: EvaluationORM,
         model: EvaluationResult,
-        *,
-        miner_id: Optional[int],
     ) -> Dict[str, Any]:
         return {
             "result_id": model.result_id,
@@ -1249,7 +1130,6 @@ class ValidatorRoundPersistenceService:
             "task_solution_id": model.task_solution_id,
             "validator_uid": model.validator_uid,
             "miner_uid": model.miner_uid,
-            "miner_id": miner_id,
             "final_score": model.final_score,
             "test_results_matrix": _test_results_dump(model.test_results_matrix),
             "execution_history": list(model.execution_history),
@@ -1261,32 +1141,6 @@ class ValidatorRoundPersistenceService:
             "gif_recording": model.gif_recording,
             "meta": _non_empty_dict(model.metadata),
         }
-
-    def _find_validator_id(self, uid: int, hotkey: str) -> Optional[int]:
-        for instance in self.session.identity_map.values():
-            if isinstance(instance, ValidatorORM):
-                if instance.uid == uid and instance.hotkey == hotkey:
-                    return instance.id
-        return None
-
-    async def _resolve_miner_identity_id(
-        self,
-        uid: Optional[int],
-        hotkey: Optional[str],
-    ) -> Optional[int]:
-        if uid is None:
-            return None
-
-        stmt = select(MinerORM)
-        if uid is not None:
-            stmt = stmt.where(MinerORM.uid == uid)
-            if hotkey:
-                stmt = stmt.where(MinerORM.hotkey == hotkey)
-
-        row = await self.session.scalar(stmt)
-        if row:
-            return row.id
-        return None
 
     @staticmethod
     def _assert_unique(sequence: Iterable[str], name: str) -> None:

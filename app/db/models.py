@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    and_,
 )
 
 # Always use PostgreSQL JSONB (PostgreSQL is required)
@@ -53,73 +54,6 @@ class TimestampMixin:
 
 
 # ---------------------------------------------------------------------------
-# Identity tables
-# ---------------------------------------------------------------------------
-
-
-class ValidatorORM(TimestampMixin, Base):
-    """Immutable validator identity."""
-
-    __tablename__ = "validators"
-    __table_args__ = (
-        UniqueConstraint("uid", "hotkey", name="uq_validator_uid_hotkey"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    hotkey: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    coldkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-
-    validator_rounds: Mapped[list["ValidatorRoundORM"]] = relationship(
-        back_populates="validator",
-        cascade="all, delete-orphan",
-    )
-    snapshots: Mapped[list["ValidatorRoundValidatorORM"]] = relationship(
-        back_populates="validator",
-        cascade="all, delete-orphan",
-    )
-    agent_runs: Mapped[list["AgentEvaluationRunORM"]] = relationship(
-        back_populates="validator",
-        cascade="all, delete-orphan",
-    )
-
-
-class MinerORM(TimestampMixin, Base):
-    """Immutable miner identity."""
-
-    __tablename__ = "miners"
-    __table_args__ = (UniqueConstraint("uid", "hotkey", name="uq_miner_uid_hotkey"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    hotkey: Mapped[Optional[str]] = mapped_column(
-        String(128), nullable=True, index=True
-    )
-    coldkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-
-    snapshots: Mapped[list["ValidatorRoundMinerORM"]] = relationship(
-        back_populates="miner",
-        cascade="all, delete-orphan",
-    )
-    agent_runs: Mapped[list["AgentEvaluationRunORM"]] = relationship(
-        back_populates="miner",
-        cascade="all, delete-orphan",
-    )
-    task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(
-        back_populates="miner",
-        cascade="all, delete-orphan",
-    )
-    evaluations: Mapped[list["EvaluationORM"]] = relationship(
-        back_populates="miner",
-        cascade="all, delete-orphan",
-    )
-    evaluation_results: Mapped[list["EvaluationResultORM"]] = relationship(
-        back_populates="miner",
-        cascade="all, delete-orphan",
-    )
-
-
-# ---------------------------------------------------------------------------
 # Validator rounds and snapshots
 # ---------------------------------------------------------------------------
 
@@ -139,9 +73,6 @@ class ValidatorRoundORM(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     validator_round_id: Mapped[str] = mapped_column(
         String(128), unique=True, index=True
-    )
-    validator_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("validators.id", ondelete="SET NULL"), nullable=True
     )
     validator_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     validator_hotkey: Mapped[str] = mapped_column(
@@ -173,14 +104,15 @@ class ValidatorRoundORM(TimestampMixin, Base):
     summary: Mapped[dict[str, int]] = mapped_column(JSON, nullable=False, default=dict)
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
-    validator: Mapped[Optional[ValidatorORM]] = relationship(
-        back_populates="validator_rounds"
-    )
     validator_snapshots: Mapped[list["ValidatorRoundValidatorORM"]] = relationship(
         back_populates="validator_round",
         cascade="all, delete-orphan",
     )
     miner_snapshots: Mapped[list["ValidatorRoundMinerORM"]] = relationship(
+        back_populates="validator_round",
+        cascade="all, delete-orphan",
+    )
+    miner_scores: Mapped[list["ValidatorRoundMinersScoreORM"]] = relationship(
         back_populates="validator_round",
         cascade="all, delete-orphan",
     )
@@ -232,13 +164,11 @@ class ValidatorRoundValidatorORM(TimestampMixin, Base):
         ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
         nullable=False,
     )
-    validator_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("validators.id", ondelete="SET NULL"), nullable=True
-    )
     validator_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     validator_hotkey: Mapped[str] = mapped_column(
         String(128), nullable=False, index=True
     )
+    validator_coldkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     name: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     stake: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -249,7 +179,6 @@ class ValidatorRoundValidatorORM(TimestampMixin, Base):
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="validator_snapshots"
     )
-    validator: Mapped[Optional[ValidatorORM]] = relationship(back_populates="snapshots")
 
 
 class ValidatorRoundMinerORM(TimestampMixin, Base):
@@ -270,16 +199,13 @@ class ValidatorRoundMinerORM(TimestampMixin, Base):
         ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
         nullable=False,
     )
-    miner_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("miners.id", ondelete="SET NULL"), nullable=True
-    )
     miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     miner_hotkey: Mapped[Optional[str]] = mapped_column(
         String(128), nullable=True, index=True
     )
     miner_coldkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
-    agent_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     github_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -290,7 +216,29 @@ class ValidatorRoundMinerORM(TimestampMixin, Base):
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="miner_snapshots"
     )
-    miner: Mapped[Optional[MinerORM]] = relationship(back_populates="snapshots")
+
+
+class ValidatorRoundMinersScoreORM(TimestampMixin, Base):
+    """Scores and consensus data for miners in a validator round."""
+
+    __tablename__ = "validator_round_miners_score"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    validator_round_id: Mapped[str] = mapped_column(
+        ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    miner_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    score_consensus: Mapped[float] = mapped_column(Float, nullable=False)
+    rank_consensus: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    validator_round: Mapped["ValidatorRoundORM"] = relationship(
+        back_populates="miner_scores"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -314,17 +262,11 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    validator_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("validators.id", ondelete="SET NULL"), nullable=True
-    )
     validator_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     validator_hotkey: Mapped[str] = mapped_column(
         String(128), nullable=False, index=True
     )
 
-    miner_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("miners.id", ondelete="SET NULL"), nullable=True
-    )
     miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     miner_hotkey: Mapped[Optional[str]] = mapped_column(
         String(128), nullable=True, index=True
@@ -353,10 +295,6 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="agent_runs"
     )
-    validator: Mapped[Optional[ValidatorORM]] = relationship(
-        back_populates="agent_runs"
-    )
-    miner: Mapped[Optional[MinerORM]] = relationship(back_populates="agent_runs")
     task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(
         back_populates="agent_run", cascade="all, delete-orphan"
     )
@@ -461,9 +399,6 @@ class TaskSolutionORM(TimestampMixin, Base):
         String(128), nullable=False, index=True
     )
 
-    miner_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("miners.id", ondelete="SET NULL"), nullable=True
-    )
     miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     miner_hotkey: Mapped[Optional[str]] = mapped_column(
         String(128), nullable=True, index=True
@@ -478,7 +413,6 @@ class TaskSolutionORM(TimestampMixin, Base):
     agent_run: Mapped["AgentEvaluationRunORM"] = relationship(
         back_populates="task_solutions"
     )
-    miner: Mapped[Optional[MinerORM]] = relationship(back_populates="task_solutions")
     evaluations: Mapped[list["EvaluationORM"]] = relationship(
         back_populates="task_solution", cascade="all, delete-orphan"
     )
@@ -542,9 +476,6 @@ class EvaluationORM(TimestampMixin, Base):
         String(128), nullable=False, index=True
     )
 
-    miner_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("miners.id", ondelete="SET NULL"), nullable=True
-    )
     miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     miner_hotkey: Mapped[Optional[str]] = mapped_column(
         String(128), nullable=True, index=True
@@ -565,7 +496,6 @@ class EvaluationORM(TimestampMixin, Base):
     agent_run: Mapped["AgentEvaluationRunORM"] = relationship(
         back_populates="evaluations"
     )
-    miner: Mapped[Optional[MinerORM]] = relationship(back_populates="evaluations")
     results: Mapped[list["EvaluationResultORM"]] = relationship(
         back_populates="evaluation", cascade="all, delete-orphan"
     )
@@ -604,9 +534,6 @@ class EvaluationResultORM(TimestampMixin, Base):
         ForeignKey("task_solutions.solution_id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-    )
-    miner_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("miners.id", ondelete="SET NULL"), nullable=True
     )
     miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     validator_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
@@ -650,9 +577,6 @@ class EvaluationResultORM(TimestampMixin, Base):
     agent_run: Mapped["AgentEvaluationRunORM"] = relationship(
         back_populates="evaluation_results"
     )
-    miner: Mapped[Optional[MinerORM]] = relationship(
-        back_populates="evaluation_results"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -660,70 +584,11 @@ class EvaluationResultORM(TimestampMixin, Base):
 # ---------------------------------------------------------------------------
 
 
-class RoundSnapshotORM(TimestampMixin, Base):
-    __tablename__ = "round_snapshots"
-    round_number: Mapped[int] = mapped_column(Integer, primary_key=True)
-    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    data_size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    __table_args__ = (
-        CheckConstraint("round_number > 0", name="ck_round_snapshots_positive_number"),
-    )
-
-
-class AgentStatsORM(TimestampMixin, Base):
-    __tablename__ = "agent_stats"
-    uid: Mapped[int] = mapped_column(Integer, primary_key=True)
-    hotkey: Mapped[Optional[str]] = mapped_column(
-        String(128), nullable=True, index=True
-    )
-    name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    image_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    is_sota: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    total_rounds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    total_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    avg_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    best_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    worst_score: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
-    successful_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    total_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    completed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    current_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    best_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    recent_rounds: Mapped[dict[str, Any]] = mapped_column(
-        JSON, nullable=False, default=list
-    )
-    first_seen: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    last_seen: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
-    )
-    last_round_number: Mapped[Optional[int]] = mapped_column(
-        Integer, nullable=True, index=True
-    )
-    __table_args__ = (
-        CheckConstraint("total_rounds >= 0", name="ck_agent_stats_positive_rounds"),
-        CheckConstraint("total_runs >= 0", name="ck_agent_stats_positive_runs"),
-        CheckConstraint(
-            "avg_score >= 0.0 AND avg_score <= 1.0", name="ck_agent_stats_score_range"
-        ),
-        CheckConstraint(
-            "best_score >= 0.0 AND best_score <= 1.0",
-            name="ck_agent_stats_best_score_range",
-        ),
-        Index("idx_agent_stats_avg_score", "avg_score", postgresql_using="btree"),
-    )
-
-
 __all__ = [
-    "RoundSnapshotORM",
-    "AgentStatsORM",
-    "ValidatorORM",
-    "MinerORM",
     "ValidatorRoundORM",
     "ValidatorRoundValidatorORM",
     "ValidatorRoundMinerORM",
+    "ValidatorRoundMinersScoreORM",
     "AgentEvaluationRunORM",
     "TaskORM",
     "TaskSolutionORM",

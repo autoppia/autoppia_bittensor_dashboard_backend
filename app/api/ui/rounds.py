@@ -23,7 +23,8 @@ from app.models.ui.rounds import (
     RoundsListResponse,
 )
 from app.services.ui.rounds_service import RoundsService
-from app.services.snapshot_service import SnapshotService
+# Snapshot functionality removed
+# from app.services.snapshot_service import SnapshotService
 from app.services.chain_state import get_current_block_estimate
 from app.services.redis_cache import cache
 
@@ -36,56 +37,7 @@ async def _service(session: AsyncSession) -> RoundsService:
     return RoundsService(session)
 
 
-async def _persist_snapshot_from_detail(
-    session: AsyncSession,
-    round_id: str,
-    detail_data: dict,
-) -> None:
-    """
-    Persist a round snapshot if the round is completed.
-    This is called automatically when a round is requested and no snapshot exists.
-    """
-    from app.db.models import RoundSnapshotORM, ValidatorRoundORM
-
-    # Only persist if round is completed
-    round_status = detail_data.get("status", "")
-    if round_status not in ("finished", "completed", "complete"):
-        logger.debug(
-            f"Round {round_id} not finished ({round_status}), skipping snapshot"
-        )
-        return
-
-    # Extract round_number
-    round_number = detail_data.get("roundNumber") or detail_data.get("round")
-    if not round_number or not isinstance(round_number, int):
-        logger.warning(f"Cannot persist snapshot for {round_id}: no valid round_number")
-        return
-
-    # Check if snapshot already exists
-    existing = await session.get(RoundSnapshotORM, round_number)
-    if existing:
-        logger.debug(f"Snapshot for round {round_number} already exists, skipping")
-        return
-
-    # Create snapshot
-    import json
-
-    snapshot_json = detail_data
-    json_str = json.dumps(snapshot_json, default=str)
-    data_size = len(json_str.encode("utf-8"))
-
-    new_snapshot = RoundSnapshotORM(
-        round_number=round_number,
-        snapshot_json=snapshot_json,
-        snapshot_version=1,
-        data_size_bytes=data_size,
-    )
-    session.add(new_snapshot)
-    await session.flush()
-
-    logger.info(
-        f"✅ Created snapshot for round {round_number} ({data_size / 1024:.1f} KB)"
-    )
+# Snapshot functionality removed - no longer using round_snapshots table
 
 
 @router.get("/ids")
@@ -235,7 +187,6 @@ async def get_round(
     - Current round cached in Redis (updates frequently)
     - Auto-caching on first request
     """
-    from app.db.models import RoundSnapshotORM
     from app.services.redis_cache import redis_cache
     import logging
 
@@ -253,19 +204,7 @@ async def get_round(
             select(RoundORM.round_number).where(RoundORM.validator_round_id == round_id)
         )
 
-    # Try to get from PostgreSQL snapshot first (for finished rounds)
-    snapshot = None
-    if round_number is not None:
-        snapshot = await session.get(RoundSnapshotORM, round_number)
-
-    if snapshot and snapshot.snapshot_json:
-        logger.info(
-            "✅ Serving round %s from PostgreSQL snapshot (instant)", round_number
-        )
-        return {
-            "success": True,
-            "data": {"round": snapshot.snapshot_json},
-        }
+    # Snapshot functionality removed - always calculate from DB
 
     # Check if it's the current/active round - use Redis cache (1 day TTL)
     service = await _service(session)
@@ -331,20 +270,20 @@ async def get_round(
         )
         try:
             from app.db.session import AsyncSessionLocal
-            from app.services.snapshot_service import SnapshotService
+            # Snapshot functionality removed
+# from app.services.snapshot_service import SnapshotService
 
             async with AsyncSessionLocal() as snapshot_session:
-                await _persist_snapshot_from_detail(
-                    snapshot_session, round_id, detail_data
-                )
+                # Snapshot functionality removed
+                # await _persist_snapshot_from_detail(snapshot_session, round_id, detail_data)
                 
-                # Also update agent_stats incrementally
-                logger.info("📊 Updating agent stats for round %s...", round_number)
-                snapshot_service = SnapshotService(snapshot_session)
-                await snapshot_service.update_agent_stats(round_number)
+                # Snapshot functionality removed - no longer using agent_stats table
+                # logger.info("📊 Updating agent stats for round %s...", round_number)
+                # snapshot_service = SnapshotService(snapshot_session)
+                # await snapshot_service.update_agent_stats(round_number)
                 
                 await snapshot_session.commit()
-                logger.info("✅ Round %s snapshot and agent stats saved", round_number)
+                logger.info("✅ Round %s data saved", round_number)
         except Exception:
             logger.exception("Failed to persist snapshot for round %s", round_id)
     elif is_current_round and round_number:
