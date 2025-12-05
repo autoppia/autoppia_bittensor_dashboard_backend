@@ -65,16 +65,25 @@ def fetch_and_cache_block() -> bool:
 def fetch_and_cache_price() -> bool:
     """Fetch subnet price and cache in Redis."""
     try:
-        from app.services.subnet_utils import get_subnet_price
+        from app.services.subnet_utils import _try_fetch_price_sync, _env_fallback
 
-        price = get_subnet_price(settings.VALIDATOR_NETUID)
-        if price is not None and price > 0:
-            redis_cache.set(REDIS_KEY_SUBNET_PRICE, str(price), ttl=PRICE_UPDATE_INTERVAL * 2)
-            redis_cache.set(REDIS_KEY_PRICE_LAST_UPDATE, str(time.time()), ttl=PRICE_UPDATE_INTERVAL * 2)
-            logger.info(f"✅ Subnet price updated: {price:.6f} TAO (source: chain)")
-            return True
-        logger.warning(f"⚠️  Invalid price returned: {price}")
-        return False
+        netuid = settings.VALIDATOR_NETUID
+
+        # Try to fetch from chain
+        price = _try_fetch_price_sync(netuid)
+        source = "chain"
+
+        if price is None or price <= 0:
+            # Fallback to env if blockchain fetch fails
+            price = _env_fallback(netuid)
+            source = "env-fallback"
+            logger.warning(f"⚠️  Could not fetch price from blockchain, using env fallback: {price:.6f} TAO")
+
+        # Store in Redis (either from chain or fallback)
+        redis_cache.set(REDIS_KEY_SUBNET_PRICE, str(price), ttl=PRICE_UPDATE_INTERVAL * 2)
+        redis_cache.set(REDIS_KEY_PRICE_LAST_UPDATE, str(time.time()), ttl=PRICE_UPDATE_INTERVAL * 2)
+        logger.info(f"✅ Subnet price updated: {price:.6f} TAO (source: {source})")
+        return True
     except Exception as exc:
         logger.error(f"❌ Failed to update subnet price: {exc}")
         return False
@@ -203,6 +212,7 @@ def main():
     last_round_cache = time.time()
 
     # Main update loop
+    logger.info("🔄 Entering main update loop...")
     try:
         while True:
             now = time.time()
@@ -225,21 +235,25 @@ def main():
 
             # Perform updates if due
             if metagraph_due:
+                logger.info("📊 Metagraph update due...")
                 metagraph_update_count += 1
                 perform_metagraph_update()
                 last_metagraph_update = now
 
             if price_due:
+                logger.info("💰 Price update due...")
                 price_update_count += 1
                 fetch_and_cache_price()
                 last_price_update = now
 
             if block_due:
+                logger.info("🔢 Block update due...")
                 block_update_count += 1
                 fetch_and_cache_block()
                 last_block_update = now
 
             if round_cache_due:
+                logger.info("📦 Round cache update due...")
                 round_cache_count += 1
                 cache_recent_rounds()
                 last_round_cache = now
