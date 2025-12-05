@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import (
+    RoundORM,
+    ValidatorRoundMinersScoreORM,
+    ValidatorRoundMinerORM,
+)
 from app.models.ui.miner_list import (
     MinerDetail,
     MinerDetailResponse,
@@ -33,7 +39,18 @@ class MinerListService:
         search: str | None = None,
         round_number: Optional[int] = None,
     ) -> MinimalMinerListResponse:
-        # Fast path: try Redis snapshot first
+        # If round_number is specified, query directly from validator_round_miners_score
+        # This bypasses Redis cache to ensure we get the correct score_consensus values
+        if round_number is not None and round_number > 0:
+            return await self._list_miners_from_scores(
+                round_number=round_number,
+                page=page,
+                limit=limit,
+                is_sota=is_sota,
+                search=search,
+            )
+
+        # Fast path: try Redis snapshot first (only when no specific round is requested)
         snapshot = redis_cache.get("AGGREGATES:agents:v1")
         if isinstance(snapshot, dict) and snapshot:
             lowered = search.lower() if search else None
@@ -125,16 +142,7 @@ class MinerListService:
                     return candidate, snapshots
             return None, []
 
-        preferred_rounds: List[int]
-        if round_number is not None and round_number > 0:
-            preferred_rounds = [round_number]
-            preferred_rounds.extend(
-                candidate
-                for candidate in round_candidates
-                if candidate < round_number and candidate not in preferred_rounds
-            )
-        else:
-            preferred_rounds = round_candidates
+        preferred_rounds = round_candidates
 
         resolved_round, snapshots = await resolve_round(preferred_rounds)
 
@@ -279,6 +287,100 @@ class MinerListService:
             )
 
         return items
+
+    @rollback_on_error
+    async def _list_miners_from_scores(
+        self,
+        round_number: int,
+        page: int,
+        limit: int,
+        is_sota: Optional[bool],
+        search: Optional[str],
+    ) -> MinimalMinerListResponse:
+        """List miners for a specific round using score_consensus from validator_round_miners_score."""
+        # Query miners with scores for this round
+        stmt = (
+            select(
+                ValidatorRoundMinersScoreORM.miner_uid,
+                ValidatorRoundMinersScoreORM.score_consensus,
+                ValidatorRoundMinersScoreORM.rank_consensus,
+                ValidatorRoundMinerORM.name,
+                ValidatorRoundMinerORM.image_url,
+                ValidatorRoundMinerORM.is_sota,
+            )
+            .select_from(
+                ValidatorRoundMinersScoreORM.__table__.join(
+                    RoundORM.__table__,
+                    ValidatorRoundMinersScoreORM.validator_round_id
+                    == RoundORM.validator_round_id,
+                ).outerjoin(
+                    ValidatorRoundMinerORM.__table__,
+                    (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id)
+                    & (
+                        ValidatorRoundMinersScoreORM.miner_uid
+                        == ValidatorRoundMinerORM.miner_uid
+                    ),
+                )
+            )
+            .where(RoundORM.round_number == round_number)
+            .order_by(
+                ValidatorRoundMinersScoreORM.rank_consensus.asc().nulls_last(),
+                ValidatorRoundMinersScoreORM.score_consensus.desc(),
+            )
+        )
+
+        result = await self.session.execute(stmt)
+        rows = result.all()
+
+        # Build items from query results
+        items: List[MinerListItem] = []
+        lowered = search.lower() if search else None
+
+        for row in rows:
+            miner_uid = row.miner_uid
+            score_consensus = float(row.score_consensus) if row.score_consensus else 0.0
+            rank_consensus = row.rank_consensus
+            name = row.name or f"Miner {miner_uid}"
+            image_url = row.image_url or ""
+            is_sota_value = row.is_sota if row.is_sota is not None else False
+
+            # Apply filters
+            if is_sota is not None and is_sota_value != is_sota:
+                continue
+
+            if lowered:
+                if (
+                    lowered not in name.lower()
+                    and lowered not in str(miner_uid)
+                ):
+                    continue
+
+            items.append(
+                MinerListItem(
+                    uid=miner_uid,
+                    name=name,
+                    ranking=rank_consensus or 0,
+                    score=round(score_consensus, 4),
+                    isSota=is_sota_value,
+                    imageUrl=image_url,
+                )
+            )
+
+        # Apply rankings (in case rank_consensus is None for some)
+        ranked_items = self._apply_rankings(items, start_rank=1)
+
+        total = len(ranked_items)
+        start = (page - 1) * limit
+        end = start + limit
+        paginated = ranked_items[start:end]
+
+        return MinimalMinerListResponse(
+            miners=paginated,
+            total=total,
+            page=page,
+            limit=limit,
+            round=round_number,
+        )
 
     @staticmethod
     def _apply_rankings(

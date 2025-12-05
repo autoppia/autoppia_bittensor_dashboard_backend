@@ -16,7 +16,12 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 
-from app.db.models import AgentEvaluationRunORM, RoundORM
+from app.db.models import (
+    AgentEvaluationRunORM,
+    RoundORM,
+    ValidatorRoundMinersScoreORM,
+    ValidatorRoundValidatorORM,
+)
 from app.models.core import MinerInfo, ValidatorRound
 from app.models.ui.agents import (
     Agent,
@@ -368,7 +373,7 @@ class AgentsService:
             raise ValueError(f"Agent {agent_id} not found")
 
         agent_model = self._aggregate_to_agent(aggregate)
-        score_round_data = self._build_round_score_series(aggregate, aggregates)
+        score_round_data = await self._build_round_score_series(aggregate, aggregates)
 
         available_rounds = sorted(
             {
@@ -1106,17 +1111,75 @@ class AgentsService:
         if aggregates is None:
             aggregates = await self._aggregate_agents()
 
+        # Get score_consensus from validator_round_miners_score for all miners in this round
+        scores_stmt = (
+            select(
+                ValidatorRoundMinersScoreORM.miner_uid,
+                ValidatorRoundMinersScoreORM.score_consensus,
+                ValidatorRoundMinersScoreORM.rank_consensus,
+            )
+            .select_from(
+                ValidatorRoundMinersScoreORM.__table__.join(
+                    RoundORM.__table__,
+                    ValidatorRoundMinersScoreORM.validator_round_id
+                    == RoundORM.validator_round_id,
+                )
+            )
+            .where(RoundORM.round_number == round_number)
+        )
+        scores_result = await self.session.execute(scores_stmt)
+        scores_by_miner: Dict[int, float] = {
+            row.miner_uid: float(row.score_consensus) if row.score_consensus else 0.0
+            for row in scores_result.all()
+        }
+
+        # Get validator names from validator_round_validators
+        validators_stmt = (
+            select(
+                ValidatorRoundValidatorORM.validator_uid,
+                ValidatorRoundValidatorORM.name,
+                ValidatorRoundValidatorORM.validator_hotkey,
+            )
+            .select_from(
+                ValidatorRoundValidatorORM.__table__.join(
+                    RoundORM.__table__,
+                    ValidatorRoundValidatorORM.validator_round_id
+                    == RoundORM.validator_round_id,
+                )
+            )
+            .where(RoundORM.round_number == round_number)
+        )
+        validators_result = await self.session.execute(validators_stmt)
+        validator_names: Dict[int, Optional[str]] = {}
+        validator_hotkeys: Dict[int, Optional[str]] = {}
+        for row in validators_result.all():
+            validator_names[row.validator_uid] = row.name
+            validator_hotkeys[row.validator_uid] = row.validator_hotkey
+
         snapshots: List[RoundAgentSnapshot] = []
         for aggregate in aggregates.values():
+            if aggregate.uid is None:
+                continue
+
+            # Use score_consensus if available, otherwise fallback to computed score
+            score_consensus = scores_by_miner.get(aggregate.uid)
             round_contexts = [
                 context
                 for context in aggregate.runs
                 if _context_round_number(context) == round_number
             ]
-            if not round_contexts:
-                continue
+            
+            if score_consensus is None:
+                # Fallback: compute from contexts
+                if not round_contexts:
+                    continue
+                scores = [self._compute_run_score(ctx) for ctx in round_contexts]
+                if not scores:
+                    continue
+                average_score = sum(scores) / len(scores)
+            else:
+                average_score = score_consensus
 
-            scores: List[float] = []
             durations: List[float] = []
             total_tasks = 0
             completed_tasks = 0
@@ -1124,7 +1187,6 @@ class AgentsService:
             validator_details: Dict[int, Dict[str, Any]] = {}
 
             for context in round_contexts:
-                scores.append(self._compute_run_score(context))
                 duration = self._compute_run_duration(context)
                 if duration is not None:
                     durations.append(duration)
@@ -1139,34 +1201,22 @@ class AgentsService:
                 detail_key = validator_uid if validator_uid is not None else -1
                 entry = validator_details.get(detail_key)
                 if entry is None:
+                    # Get validator name from validator_round_validators
+                    validator_name = validator_names.get(validator_uid) if validator_uid else None
+                    validator_hotkey_from_db = validator_hotkeys.get(validator_uid) if validator_uid else validator_hotkey
+                    
                     entry = {
                         "uid": validator_uid,
-                        "hotkey": validator_hotkey,
-                        "name": None,
+                        "hotkey": validator_hotkey_from_db or validator_hotkey,
+                        "name": validator_name,
                     }
                     validator_details[detail_key] = entry
-
-                if validator_hotkey and not entry.get("hotkey"):
-                    entry["hotkey"] = validator_hotkey
-
-                round_metadata = getattr(context.round, "metadata", {}) or {}
-                validator_meta = round_metadata.get("validator") or {}
-                validator_name = (
-                    validator_meta.get("name")
-                    or validator_meta.get("validator_name")
-                    or validator_meta.get("display_name")
-                )
-                if validator_name and not entry.get("name"):
-                    entry["name"] = validator_name
-
-            if not scores:
-                continue
 
             snapshot = RoundAgentSnapshot(
                 aggregate=aggregate,
                 round_number=round_number,
-                average_score=sum(scores) / len(scores),
-                best_score=max(scores),
+                average_score=average_score,
+                best_score=average_score,  # Use same score as best for now
                 total_runs=len(round_contexts),
                 total_tasks=total_tasks,
                 completed_tasks=completed_tasks,
@@ -1859,80 +1909,98 @@ class AgentsService:
             return self._compute_run_score(context)
         return max(benchmark_scores)
 
-    def _build_round_score_series(
+    async def _build_round_score_series(
         self,
         aggregate: AgentAggregate,
         aggregates: Dict[str, AgentAggregate],
     ) -> List[ScoreRoundDataPoint]:
-        contexts_by_round: Dict[int, List[AgentRunContext]] = defaultdict(list)
-        for context in aggregate.runs:
-            round_id = self._round_number(context)
-            if round_id <= 0:
-                continue
-            contexts_by_round[round_id].append(context)
-
-        if not contexts_by_round:
+        """Build score round data series using score_consensus from validator_round_miners_score."""
+        if not aggregate.uid:
             return []
 
-        top_scores_by_round: Dict[int, float] = {}
-        for other in aggregates.values():
-            if other.is_sota:
-                continue
-            for round_id, scores in other.round_scores.items():
-                if not scores:
-                    continue
-                average = sum(scores) / len(scores)
-                current = top_scores_by_round.get(round_id)
-                if current is None or average > current:
-                    top_scores_by_round[round_id] = average
+        # Get all round numbers where this agent participated
+        round_ids = sorted(aggregate.rounds)
+        if not round_ids:
+            return []
 
+        # Query score_consensus from validator_round_miners_score for this miner
+        stmt = (
+            select(
+                RoundORM.round_number,
+                ValidatorRoundMinersScoreORM.score_consensus,
+                ValidatorRoundMinersScoreORM.rank_consensus,
+                RoundORM.ended_at,
+            )
+            .select_from(
+                RoundORM.__table__.join(
+                    ValidatorRoundMinersScoreORM.__table__,
+                    RoundORM.validator_round_id
+                    == ValidatorRoundMinersScoreORM.validator_round_id,
+                )
+            )
+            .where(
+                RoundORM.round_number.in_(round_ids),
+                ValidatorRoundMinersScoreORM.miner_uid == aggregate.uid,
+            )
+            .order_by(RoundORM.round_number)
+        )
+
+        result = await self.session.execute(stmt)
+        rows = result.all()
+
+        # Get top scores per round (max score_consensus for each round)
+        top_scores_stmt = (
+            select(
+                RoundORM.round_number,
+                func.max(ValidatorRoundMinersScoreORM.score_consensus).label("top_score"),
+            )
+            .select_from(
+                RoundORM.__table__.join(
+                    ValidatorRoundMinersScoreORM.__table__,
+                    RoundORM.validator_round_id
+                    == ValidatorRoundMinersScoreORM.validator_round_id,
+                )
+            )
+            .where(RoundORM.round_number.in_(round_ids))
+            .group_by(RoundORM.round_number)
+        )
+        top_scores_result = await self.session.execute(top_scores_stmt)
+        top_scores_by_round = {
+            row.round_number: float(row.top_score) for row in top_scores_result.all()
+        }
+
+        # Build datapoints from query results
         datapoints: List[ScoreRoundDataPoint] = []
-        for round_id in sorted(contexts_by_round.keys()):
-            contexts = contexts_by_round[round_id]
-            scores = [self._compute_run_score(ctx) for ctx in contexts]
-            if not scores:
-                continue
+        for row in rows:
+            round_id = row.round_number
+            score_consensus = float(row.score_consensus) if row.score_consensus else 0.0
+            rank_consensus = row.rank_consensus
+            top_score = top_scores_by_round.get(round_id, score_consensus)
 
-            average_score = sum(scores) / len(scores)
-            top_score = top_scores_by_round.get(round_id, average_score)
-
-            rank: Optional[int] = aggregate.global_round_ranks.get(round_id)
-            if rank is None:
-                ranks = aggregate.round_ranks.get(round_id)
-                if ranks:
-                    rank = min(ranks)
-                else:
-                    rank_candidates = [
-                        ctx.run.rank for ctx in contexts if ctx.run.rank is not None
-                    ]
-                    if rank_candidates:
-                        rank = min(rank_candidates)
-
-            timestamp_candidates: List[float] = []
-            for ctx in contexts:
-                for candidate in (
-                    ctx.run.ended_at,
-                    ctx.run.started_at,
-                    ctx.round.started_at,
-                ):
-                    if candidate is not None:
-                        timestamp_candidates.append(float(candidate))
-                        break
+            # Get timestamp from round ended_at
             timestamp_value = (
-                min(timestamp_candidates) if timestamp_candidates else _ts(None)
+                float(row.ended_at) if row.ended_at else _ts(None)
             )
             timestamp_dt = datetime.fromtimestamp(
                 float(timestamp_value), tz=timezone.utc
             )
 
-            benchmark_entries = self._round_benchmark_entries(contexts[0])
+            # Get reward from aggregate
             reward_value = aggregate.round_rewards.get(round_id, 0.0)
+
+            # Get benchmark entries (keep existing logic for now)
+            benchmark_entries = None
+            for context in aggregate.runs:
+                round_id_from_context = self._round_number(context)
+                if round_id_from_context == round_id:
+                    benchmark_entries = self._round_benchmark_entries(context)
+                    break
 
             datapoints.append(
                 ScoreRoundDataPoint(
                     round_id=round_id,
-                    score=round(average_score, 3),
-                    rank=rank,
+                    score=round(score_consensus, 3),
+                    rank=rank_consensus,
                     topScore=round(top_score, 3),
                     reward=round(reward_value, 6) if reward_value else 0.0,
                     timestamp=timestamp_dt,
