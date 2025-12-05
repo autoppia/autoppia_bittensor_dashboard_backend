@@ -80,8 +80,8 @@ def fetch_and_cache_price() -> bool:
             logger.warning(f"⚠️  Could not fetch price from blockchain, using env fallback: {price:.6f} TAO")
 
         # Store in Redis (either from chain or fallback)
-        redis_cache.set(REDIS_KEY_SUBNET_PRICE, str(price), ttl=PRICE_UPDATE_INTERVAL * 2)
-        redis_cache.set(REDIS_KEY_PRICE_LAST_UPDATE, str(time.time()), ttl=PRICE_UPDATE_INTERVAL * 2)
+        redis_cache.set(REDIS_KEY_SUBNET_PRICE, float(price), ttl=PRICE_UPDATE_INTERVAL * 2)
+        redis_cache.set(REDIS_KEY_PRICE_LAST_UPDATE, float(time.time()), ttl=PRICE_UPDATE_INTERVAL * 2)
         logger.info(f"✅ Subnet price updated: {price:.6f} TAO (source: {source})")
         return True
     except Exception as exc:
