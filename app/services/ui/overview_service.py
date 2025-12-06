@@ -299,6 +299,33 @@ class OverviewService:
             seen_tasks: set[str] = set()
             # Track agent_runs with NULL average_score to query from DB
             agent_runs_to_query: List[str] = []
+            
+            # First, try to fetch consensus scores for all contexts in this round
+            consensus_scores_map: Dict[Tuple[str, int], float] = {}
+            if contexts:
+                validator_round_id = contexts[0].round.validator_round_id
+                miner_uids = [
+                    ctx.run.miner_uid
+                    for ctx in contexts
+                    if ctx.run.miner_uid is not None
+                ]
+                if miner_uids:
+                    try:
+                        stmt = select(
+                            ValidatorRoundMinersScoreORM.miner_uid,
+                            ValidatorRoundMinersScoreORM.score_consensus,
+                        ).where(
+                            ValidatorRoundMinersScoreORM.validator_round_id == validator_round_id,
+                            ValidatorRoundMinersScoreORM.miner_uid.in_(miner_uids),
+                        )
+                        result = await self.session.execute(stmt)
+                        rows = result.all()
+                        for row in rows:
+                            consensus_scores_map[(validator_round_id, row.miner_uid)] = float(
+                                row.score_consensus
+                            )
+                    except Exception as e:
+                        logger.debug(f"Could not fetch consensus scores: {e}")
 
             for ctx in contexts:
                 # Ignore SOTA/baseline runs when computing miner leaderboard metrics
@@ -312,7 +339,14 @@ class OverviewService:
                 if miner_identifier:
                     miners.add(miner_identifier)
 
-                score = self.rounds_service._context_score(ctx)
+                # Prefer consensus_score if available, otherwise use _context_score
+                score = None
+                if ctx.run.miner_uid is not None:
+                    consensus_key = (ctx.round.validator_round_id, ctx.run.miner_uid)
+                    score = consensus_scores_map.get(consensus_key)
+                
+                if score is None:
+                    score = self.rounds_service._context_score(ctx)
 
                 # If score is 0 and average_score is NULL, we need to query from DB
                 if (
@@ -354,7 +388,7 @@ class OverviewService:
                             AgentEvaluationRunORM.miner_uid,
                         )
                     )
-                    result = await session.execute(stmt)
+                    result = await self.session.execute(stmt)
                     rows = result.all()
 
                     if rows:
@@ -398,109 +432,142 @@ class OverviewService:
                     top_score = max(top_score, round(round_top, 6))
                     logger.info(f"Using winners: top_score={round_top}")
                 else:
-                    # Fallback: query evaluations directly from DB for this round
+                    # Fallback: first try consensus scores, then query evaluations directly from DB
                     logger.info(
                         f"No winners, querying DB for round {round_obj.validator_round_id}"
                     )
                     try:
-                        from app.db.models import EvaluationORM
-
-                        # Get all evaluations for this validator_round and calculate avg per miner
-                        stmt = (
-                            select(
-                                AgentEvaluationRunORM.miner_uid,
-                                func.avg(EvaluationORM.final_score).label("avg_score"),
-                            )
-                            .join(
-                                EvaluationORM,
-                                EvaluationORM.agent_run_id
-                                == AgentEvaluationRunORM.agent_run_id,
-                            )
-                            .where(
-                                AgentEvaluationRunORM.validator_round_id
-                                == round_obj.validator_round_id
-                            )
-                            .group_by(AgentEvaluationRunORM.miner_uid)
+                        # First try to get consensus scores
+                        stmt = select(
+                            ValidatorRoundMinersScoreORM.miner_uid,
+                            ValidatorRoundMinersScoreORM.score_consensus,
+                        ).where(
+                            ValidatorRoundMinersScoreORM.validator_round_id
+                            == round_obj.validator_round_id
                         )
-                        result = await session.execute(stmt)
-                        rows = result.all()
+                        result = await self.session.execute(stmt)
+                        consensus_rows = result.all()
 
-                        logger.info(
-                            f"DB query returned {len(rows)} rows for round {round_obj.validator_round_id}"
-                        )
-                        if rows:
-                            for row in rows:
-                                miner_uid, avg_score = row
-                                logger.debug(f"  Miner {miner_uid}: {avg_score}")
-                                if avg_score is not None:
+                        if consensus_rows:
+                            logger.info(
+                                f"Found {len(consensus_rows)} consensus scores for round {round_obj.validator_round_id}"
+                            )
+                            for row in consensus_rows:
+                                miner_uid, score_consensus = row
+                                if score_consensus is not None:
                                     miner_identifier = f"uid:{miner_uid}"
                                     miners.add(miner_identifier)
                                     tracker = miner_score_tracker.setdefault(
                                         miner_identifier, []
                                     )
-                                    tracker.append(float(avg_score))
+                                    tracker.append(float(score_consensus))
                             logger.info(
-                                f"✅ Loaded {len(rows)} miner scores from DB for round {round_obj.validator_round_id}"
+                                f"✅ Loaded {len(consensus_rows)} consensus scores from DB for round {round_obj.validator_round_id}"
                             )
                         else:
-                            logger.warning(
-                                f"No evaluation data found in DB for round {round_obj.validator_round_id}"
+                            # Fallback to evaluations if no consensus scores
+                            from app.db.models import EvaluationORM
+
+                            # Get all evaluations for this validator_round and calculate avg per miner
+                            stmt = (
+                                select(
+                                    AgentEvaluationRunORM.miner_uid,
+                                    func.avg(EvaluationORM.final_score).label("avg_score"),
+                                )
+                                .join(
+                                    EvaluationORM,
+                                    EvaluationORM.agent_run_id
+                                    == AgentEvaluationRunORM.agent_run_id,
+                                )
+                                .where(
+                                    AgentEvaluationRunORM.validator_round_id
+                                    == round_obj.validator_round_id
+                                )
+                                .group_by(AgentEvaluationRunORM.miner_uid)
                             )
+                            result = await self.session.execute(stmt)
+                            rows = result.all()
+
+                            logger.info(
+                                f"DB query returned {len(rows)} rows for round {round_obj.validator_round_id}"
+                            )
+                            if rows:
+                                for row in rows:
+                                    miner_uid, avg_score = row
+                                    logger.debug(f"  Miner {miner_uid}: {avg_score}")
+                                    if avg_score is not None:
+                                        miner_identifier = f"uid:{miner_uid}"
+                                        miners.add(miner_identifier)
+                                        tracker = miner_score_tracker.setdefault(
+                                            miner_identifier, []
+                                        )
+                                        tracker.append(float(avg_score))
+                                logger.info(
+                                    f"✅ Loaded {len(rows)} miner scores from DB for round {round_obj.validator_round_id}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"No evaluation data found in DB for round {round_obj.validator_round_id}"
+                                )
                     except Exception as e:
                         logger.error(
-                            f"Failed to load evaluations for round {round_obj.validator_round_id}: {e}"
+                            f"Failed to load scores for round {round_obj.validator_round_id}: {e}"
                         )
 
         top_miner_uid = None
         top_miner_name = None
+        top_score = 0.0
 
-        if miner_score_tracker:
-            # Calculate average score for each miner and find the top one
-            miner_averages = {
-                identifier: sum(scores) / len(scores)
-                for identifier, scores in miner_score_tracker.items()
-                if scores
-            }
-            if miner_averages:
-                top_score = max(miner_averages.values())
-                # Find the miner with the top score
-                for identifier, avg_score in miner_averages.items():
-                    if avg_score == top_score:
-                        # Extract UID from identifier (format: "uid:80" or "run:...")
-                        if identifier.startswith("uid:"):
-                            try:
-                                top_miner_uid = int(identifier.split(":", 1)[1])
-                            except (ValueError, IndexError):
-                                pass
-                        # Try to find miner name from contexts
-                        for record, contexts in target_records:
-                            for ctx in contexts:
-                                if ctx.run.miner_uid == top_miner_uid:
-                                    miner_info = getattr(ctx.run, "miner_info", None)
-                                    if miner_info and miner_info.agent_name:
-                                        top_miner_name = miner_info.agent_name
-                                        break
-                            if top_miner_name:
-                                break
-
-                        # If not found in contexts, try to get from ValidatorRoundMinerORM
-                        if not top_miner_name and top_miner_uid:
-                            try:
-                                stmt = select(ValidatorRoundMinerORM.name).where(
-                                    ValidatorRoundMinerORM.miner_uid == top_miner_uid
-                                ).order_by(ValidatorRoundMinerORM.created_at.desc()).limit(1)
-                                result = await self.session.execute(stmt)
-                                miner_name_row = result.scalar_one_or_none()
-                                if miner_name_row:
-                                    top_miner_name = miner_name_row
-                            except Exception as e:
-                                logger.debug(
-                                    f"Could not fetch miner name for UID {top_miner_uid}: {e}"
-                                )
-                        break
-        else:
-            # If we have no context data, fall back to best single score captured earlier.
-            top_score = max(top_score, 0.0)
+        # Query directly from validator_round_miners_score for the metrics round
+        if metrics_round_number and metrics_round_number > 0:
+            try:
+                # Get the best score_consensus for this round
+                stmt = (
+                    select(
+                        ValidatorRoundMinersScoreORM.miner_uid,
+                        ValidatorRoundMinersScoreORM.score_consensus,
+                    )
+                    .join(
+                        RoundORM,
+                        ValidatorRoundMinersScoreORM.validator_round_id
+                        == RoundORM.validator_round_id,
+                    )
+                    .where(RoundORM.round_number == metrics_round_number)
+                    .order_by(ValidatorRoundMinersScoreORM.score_consensus.desc())
+                    .limit(1)
+                )
+                result = await self.session.execute(stmt)
+                row = result.first()
+                
+                if row:
+                    top_miner_uid = row.miner_uid
+                    top_score = float(row.score_consensus)
+                    
+                    # Get miner name from validator_round_miners
+                    try:
+                        stmt_name = (
+                            select(ValidatorRoundMinerORM.name)
+                            .join(
+                                RoundORM,
+                                ValidatorRoundMinerORM.validator_round_id
+                                == RoundORM.validator_round_id,
+                            )
+                            .where(
+                                RoundORM.round_number == metrics_round_number,
+                                ValidatorRoundMinerORM.miner_uid == top_miner_uid,
+                            )
+                            .limit(1)
+                        )
+                        result_name = await self.session.execute(stmt_name)
+                        miner_name_row = result_name.scalar_one_or_none()
+                        if miner_name_row:
+                            top_miner_name = miner_name_row
+                    except Exception as e:
+                        logger.debug(
+                            f"Could not fetch miner name for UID {top_miner_uid}: {e}"
+                        )
+            except Exception as e:
+                logger.debug(f"Could not fetch top score for round {metrics_round_number}: {e}")
 
         subnet_version = version_candidates[0] if version_candidates else "1.0.0"
         total_websites = (
