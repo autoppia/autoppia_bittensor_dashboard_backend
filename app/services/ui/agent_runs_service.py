@@ -12,7 +12,11 @@ from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import AgentEvaluationRunORM, RoundORM
+from app.db.models import (
+    AgentEvaluationRunORM,
+    RoundORM,
+    ValidatorRoundMinersScoreORM,
+)
 
 from app.models.core import EvaluationResult, Task, TaskSolution
 from app.models.ui.agent_runs import (
@@ -273,7 +277,13 @@ class AgentRunsService:
         # Calculate ranks for all contexts (with score + time tiebreaker)
         await self._calculate_ranks_for_contexts(contexts)
 
-        runs = [self._build_run_summary(context) for context in contexts]
+        # Fetch consensus scores for all contexts
+        consensus_scores = await self._fetch_consensus_scores_for_contexts(contexts)
+
+        runs = [
+            self._build_run_summary(context, consensus_scores.get(context.run.agent_run_id))
+            for context in contexts
+        ]
 
         available_rounds = await self._list_available_round_numbers()
 
@@ -432,6 +442,72 @@ class AgentRunsService:
                 break
 
     @rollback_on_error
+    async def _fetch_consensus_score_for_context(
+        self, context: AgentRunContext
+    ) -> Optional[float]:
+        """Fetch score_consensus from validator_round_miners_score for a context."""
+        if not context.run.miner_uid:
+            return None
+        
+        stmt = select(ValidatorRoundMinersScoreORM.score_consensus).where(
+            ValidatorRoundMinersScoreORM.validator_round_id == context.round.validator_round_id,
+            ValidatorRoundMinersScoreORM.miner_uid == context.run.miner_uid,
+        )
+        result = await self.session.scalar(stmt)
+        return float(result) if result is not None else None
+
+    @rollback_on_error
+    async def _fetch_consensus_scores_for_contexts(
+        self, contexts: List[AgentRunContext]
+    ) -> Dict[str, Optional[float]]:
+        """Fetch score_consensus from validator_round_miners_score for multiple contexts."""
+        if not contexts:
+            return {}
+        
+        # Build a map of (validator_round_id, miner_uid) -> agent_run_id
+        score_map: Dict[str, Optional[float]] = {}
+        queries: List[Tuple[str, str, int]] = []
+        
+        for context in contexts:
+            if context.run.miner_uid:
+                queries.append((
+                    context.run.agent_run_id,
+                    context.round.validator_round_id,
+                    context.run.miner_uid,
+                ))
+        
+        if not queries:
+            return {}
+        
+        # Query all at once
+        validator_round_ids = list(set(q[1] for q in queries))
+        miner_uids = list(set(q[2] for q in queries))
+        
+        stmt = select(
+            ValidatorRoundMinersScoreORM.validator_round_id,
+            ValidatorRoundMinersScoreORM.miner_uid,
+            ValidatorRoundMinersScoreORM.score_consensus,
+        ).where(
+            ValidatorRoundMinersScoreORM.validator_round_id.in_(validator_round_ids),
+            ValidatorRoundMinersScoreORM.miner_uid.in_(miner_uids),
+        )
+        
+        result = await self.session.execute(stmt)
+        rows = result.all()
+        
+        # Build a lookup map: (validator_round_id, miner_uid) -> score_consensus
+        score_lookup: Dict[Tuple[str, int], float] = {}
+        for row in rows:
+            score_lookup[(row.validator_round_id, row.miner_uid)] = float(row.score_consensus)
+        
+        # Map back to agent_run_id
+        for agent_run_id, validator_round_id, miner_uid in queries:
+            key = (validator_round_id, miner_uid)
+            score_map[agent_run_id] = score_lookup.get(key)
+        
+        return score_map
+
+    @rollback_on_error
     async def get_agent_run(self, agent_run_id: str) -> Optional[AgentRun]:
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
@@ -441,7 +517,10 @@ class AgentRunsService:
         # Calculate rank by comparing with all other runs in the same validator_round
         await self._calculate_rank_for_context(context)
         
-        return self._build_agent_run(context)
+        # Fetch consensus score if available
+        consensus_score = await self._fetch_consensus_score_for_context(context)
+        
+        return self._build_agent_run(context, consensus_score)
 
     @rollback_on_error
     async def get_personas(self, agent_run_id: str) -> Optional[Personas]:
@@ -607,7 +686,13 @@ class AgentRunsService:
                 continue
             contexts.append(context)
 
-        runs: List[AgentRun] = [self._build_agent_run(context) for context in contexts]
+        # Fetch consensus scores for all contexts
+        consensus_scores = await self._fetch_consensus_scores_for_contexts(contexts)
+
+        runs: List[AgentRun] = [
+            self._build_agent_run(context, consensus_scores.get(context.run.agent_run_id))
+            for context in contexts
+        ]
 
         if not runs:
             return {
@@ -645,12 +730,18 @@ class AgentRunsService:
             },
         }
 
-    def _build_agent_run(self, context: AgentRunContext) -> AgentRun:
+    def _build_agent_run(
+        self, context: AgentRunContext, consensus_score: Optional[float] = None
+    ) -> AgentRun:
         websites, ui_tasks, success_count = self._build_websites_and_tasks(context)
         total_tasks = len(ui_tasks)
         failed_tasks = max(total_tasks - success_count, 0)
 
-        average_score = self._compute_average_score(context.evaluation_results)
+        # Prefer consensus_score if available, otherwise compute from evaluation_results
+        if consensus_score is not None:
+            average_score = float(consensus_score)
+        else:
+            average_score = self._compute_average_score(context.evaluation_results)
         overall_score = _safe_int(average_score * 100)
         average_evaluation_time = self._average_evaluation_time(context)
 
@@ -1015,7 +1106,9 @@ class AgentRunsService:
             recentActivity=recent_activity,
         )
 
-    def _build_run_summary(self, context: AgentRunContext) -> Dict[str, object]:
+    def _build_run_summary(
+        self, context: AgentRunContext, consensus_score: Optional[float] = None
+    ) -> Dict[str, object]:
         run_model = context.run
 
         total_tasks = (
@@ -1043,12 +1136,16 @@ class AgentRunsService:
         if failed_tasks == 0 and total_tasks:
             failed_tasks = max(total_tasks - completed_tasks, 0)
 
-        average_score = (
-            getattr(run_model, "avg_eval_score", None) or run_model.average_score
-        )
-        if average_score is None:
-            average_score = self._compute_average_score(context.evaluation_results)
-        average_score = float(average_score or 0.0)
+        # Prefer consensus_score if available, otherwise fall back to average_score or computed score
+        if consensus_score is not None:
+            average_score = float(consensus_score)
+        else:
+            average_score = (
+                getattr(run_model, "avg_eval_score", None) or run_model.average_score
+            )
+            if average_score is None:
+                average_score = self._compute_average_score(context.evaluation_results)
+            average_score = float(average_score or 0.0)
 
         average_evaluation_time = self._average_evaluation_time(context)
 
