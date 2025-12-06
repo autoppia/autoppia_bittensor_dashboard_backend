@@ -80,8 +80,8 @@ def fetch_and_cache_price() -> bool:
             logger.warning(f"⚠️  Could not fetch price from blockchain, using env fallback: {price:.6f} TAO")
 
         # Store in Redis (either from chain or fallback)
-        redis_cache.set(REDIS_KEY_SUBNET_PRICE, str(price), ttl=PRICE_UPDATE_INTERVAL * 2)
-        redis_cache.set(REDIS_KEY_PRICE_LAST_UPDATE, str(time.time()), ttl=PRICE_UPDATE_INTERVAL * 2)
+        redis_cache.set(REDIS_KEY_SUBNET_PRICE, float(price), ttl=PRICE_UPDATE_INTERVAL * 2)
+        redis_cache.set(REDIS_KEY_PRICE_LAST_UPDATE, float(time.time()), ttl=PRICE_UPDATE_INTERVAL * 2)
         logger.info(f"✅ Subnet price updated: {price:.6f} TAO (source: {source})")
         return True
     except Exception as exc:
@@ -200,7 +200,20 @@ def main():
     if should_update_immediately:
         logger.info("🔄 Performing initial metagraph update...")
         perform_metagraph_update()
-    
+
+    # Always prime price and block on startup so we don't wait for the first interval
+    try:
+        logger.info("💰 Performing initial price update...")
+        fetch_and_cache_price()
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"Failed initial price update: {exc}")
+
+    try:
+        logger.info("🔢 Performing initial block update...")
+        fetch_and_cache_block()
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"Failed initial block update: {exc}")
+
     # Initialize counters and timestamps
     metagraph_update_count = 0
     price_update_count = 0
