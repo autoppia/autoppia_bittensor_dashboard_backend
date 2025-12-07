@@ -216,9 +216,6 @@ class TaskAgentRunSummary(BaseModel):
     )
     completedTasks: Optional[int] = Field(None, description="Number of tasks completed")
     failedTasks: Optional[int] = Field(None, description="Number of tasks failed")
-    averageScore: Optional[float] = Field(
-        None, description="Average evaluation score across tasks"
-    )
 
 
 class TaskEvaluationSummary(BaseModel):
@@ -345,7 +342,6 @@ class WebsitePerformance(BaseModel):
     tasks: int = Field(..., description="Total number of tasks")
     successful: int = Field(..., description="Number of successful tasks")
     failed: int = Field(..., description="Number of failed tasks")
-    averageScore: float = Field(..., description="Average score")
     averageDuration: float = Field(..., description="Average duration")
 
 
@@ -356,7 +352,6 @@ class UseCasePerformance(BaseModel):
     tasks: int = Field(..., description="Total number of tasks")
     successful: int = Field(..., description="Number of successful tasks")
     failed: int = Field(..., description="Number of failed tasks")
-    averageScore: float = Field(..., description="Average score")
     averageDuration: float = Field(..., description="Average duration")
 
 
@@ -375,7 +370,6 @@ class TaskStatistics(BaseModel):
     completedTasks: int = Field(..., description="Number of completed tasks")
     failedTasks: int = Field(..., description="Number of failed tasks")
     runningTasks: int = Field(..., description="Number of running tasks")
-    averageScore: float = Field(..., description="Average score across all tasks")
     averageDuration: float = Field(..., description="Average duration across all tasks")
     successRate: float = Field(..., description="Overall success rate")
     performanceByWebsite: List[WebsitePerformance] = Field(
@@ -464,7 +458,6 @@ class PerformanceOverTime(BaseModel):
 
     timestamp: datetime = Field(..., description="Timestamp")
     tasks: int = Field(..., description="Number of tasks")
-    averageScore: float = Field(..., description="Average score")
     successRate: float = Field(..., description="Success rate")
 
 
@@ -474,7 +467,6 @@ class TaskAnalytics(BaseModel):
     totalTasks: int = Field(..., description="Total number of tasks")
     completedTasks: int = Field(..., description="Number of completed tasks")
     failedTasks: int = Field(..., description="Number of failed tasks")
-    averageScore: float = Field(..., description="Average score")
     averageDuration: float = Field(..., description="Average duration")
     successRate: float = Field(..., description="Success rate")
     performanceByWebsite: List[WebsitePerformance] = Field(

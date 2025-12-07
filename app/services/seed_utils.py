@@ -792,16 +792,10 @@ def build_seed_payload(
         end_epoch=None,
         started_at=started_at,
         ended_at=None,
-        elapsed_sec=None,
-        max_epochs=20,
-        max_blocks=360,
         n_tasks=num_tasks,
         n_miners=num_miners,
         n_winners=min(3, num_miners),
         status="active",
-        average_score=None,
-        top_score=None,
-        summary={},
         metadata={"source": "seed"},
     )
 
@@ -836,11 +830,15 @@ def build_seed_payload(
         else None
     )
 
+    # Store removed fields in metadata instead
     validator_round = validator_round.model_copy(
         update={
-            "summary": summary,
-            "top_score": top_score,
-            "average_score": avg_score,
+            "metadata": {
+                **validator_round.metadata,
+                "summary": summary,
+                "top_score": top_score,
+                "average_score": avg_score,
+            }
         }
     )
 

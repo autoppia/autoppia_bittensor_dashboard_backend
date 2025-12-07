@@ -20,8 +20,6 @@ class ValidatorRoundSummary(BaseModel):
     status: str
     startTime: str
     endTime: Optional[str] = None
-    averageScore: float
-    topScore: float
     totalTasks: int
     completedTasks: int
     icon: Optional[str] = None
@@ -44,8 +42,6 @@ class RoundInfo(BaseModel):
     status: str  # active, finished, pending, evaluating_finished
     totalTasks: int
     completedTasks: int
-    averageScore: float
-    topScore: float
     currentBlock: int
     blocksRemaining: int
     progress: float
@@ -62,13 +58,8 @@ class RoundStatistics(BaseModel):
     completedTasks: int
     totalValidators: int = Field(default=0)
     averageTasksPerValidator: float = Field(default=0.0)
-    averageScore: float
-    winnerAverageScore: float = Field(default=0.0)
     winnerMinerUid: Optional[int] = Field(default=None)
-    validatorAverageTopScore: Optional[float] = Field(default=None)
-    topScore: float
     successRate: float
-    averageDuration: float
     totalStake: int
     totalEmission: int
     lastUpdated: str  # ISO timestamp
@@ -103,8 +94,6 @@ class ValidatorPerformance(BaseModel):
     completedTasks: int
     totalMiners: int = Field(default=0)
     activeMiners: int = Field(default=0)
-    averageScore: float
-    topScore: float
     weight: int
     trust: float
     version: int
@@ -157,18 +146,17 @@ class RoundSummary(BaseModel):
     status: str
     progress: float
     totalMiners: int
-    averageScore: float
-    topScore: float
     timeRemaining: str
 
 
 class TimelinePoint(BaseModel):
     """Timeline data point."""
 
+    model_config = {"extra": "allow"}
+
     timestamp: str  # ISO timestamp
     block: int
     completedTasks: int
-    averageScore: float
     activeMiners: int
 
 

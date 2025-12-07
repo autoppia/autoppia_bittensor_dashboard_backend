@@ -195,9 +195,16 @@ class ValidatorRoundPersistenceService:
         round_number: int,
     ) -> Optional[ValidatorRoundORM]:
         """Fetch an existing round row by (validator_uid, round_number) without modifying DB state."""
-        stmt = select(ValidatorRoundORM).where(
-            ValidatorRoundORM.validator_uid == validator_uid,
-            ValidatorRoundORM.round_number == round_number,
+        stmt = (
+            select(ValidatorRoundORM)
+            .join(
+                ValidatorRoundValidatorORM,
+                ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+            )
+            .where(
+                ValidatorRoundValidatorORM.validator_uid == validator_uid,
+                ValidatorRoundORM.round_number == round_number,
+            )
         )
         return await self.session.scalar(stmt)
 
@@ -461,7 +468,6 @@ class ValidatorRoundPersistenceService:
         validator_round_id: str,
         status: str,
         ended_at: float,
-        summary: Optional[Dict[str, int]],
         agent_runs: Optional[List[Dict[str, Any]]] = None,
         round_metadata: Optional[Dict[str, Any]] = None,
         local_evaluation: Optional[Dict[str, Any]] = None,
@@ -573,8 +579,6 @@ class ValidatorRoundPersistenceService:
             round_row.n_winners = 0
 
         round_row.ended_at = ended_at
-        if summary is not None:
-            round_row.summary = summary
 
         rank_map: Dict[str, Optional[int]] = {}
         weight_map: Dict[str, Optional[float]] = {}
@@ -652,9 +656,11 @@ class ValidatorRoundPersistenceService:
             self.session.add(round_row)
         await self.session.flush()
 
-        # Snapshots
+        # Snapshots (1:1 relationship - only one snapshot per round)
         validator_snapshot_ids: List[int] = []
-        for snapshot in payload.validator_snapshots:
+        if payload.validator_snapshots:
+            # Take the first snapshot (should only be one)
+            snapshot = payload.validator_snapshots[0]
             row = await self._upsert_validator_snapshot(
                 round_row,
                 snapshot,
@@ -759,8 +765,12 @@ class ValidatorRoundPersistenceService:
             "evaluations": evaluation_ids,
             "evaluation_results": evaluation_result_ids,
         }
+        # Get validator_uid from snapshot (1:1 relationship)
+        validator_uid = payload.validator_snapshots[0].validator_uid if payload.validator_snapshots else None
+        if validator_uid is None:
+            raise ValueError("No validator snapshot provided")
         return PersistenceResult(
-            validator_uid=payload.validator_round.validator_uid,
+            validator_uid=validator_uid,
             saved_entities=saved,
         )
 
@@ -858,8 +868,11 @@ class ValidatorRoundPersistenceService:
     async def _get_round_row(
         self, validator_round_id: str
     ) -> Optional[ValidatorRoundORM]:
-        stmt = select(ValidatorRoundORM).where(
-            ValidatorRoundORM.validator_round_id == validator_round_id
+        # Load with eager loading for validator_snapshot (1:1 relationship)
+        stmt = (
+            select(ValidatorRoundORM)
+            .options(selectinload(ValidatorRoundORM.validator_snapshot))
+            .where(ValidatorRoundORM.validator_round_id == validator_round_id)
         )
         return await self.session.scalar(stmt)
 
@@ -869,9 +882,16 @@ class ValidatorRoundPersistenceService:
         """Delete any existing round for this validator and round_number (and cascade children)."""
         if round_number is None:
             return
-        stmt = select(ValidatorRoundORM).where(
-            ValidatorRoundORM.validator_uid == validator_uid,
-            ValidatorRoundORM.round_number == round_number,
+        stmt = (
+            select(ValidatorRoundORM)
+            .join(
+                ValidatorRoundValidatorORM,
+                ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+            )
+            .where(
+                ValidatorRoundValidatorORM.validator_uid == validator_uid,
+                ValidatorRoundORM.round_number == round_number,
+            )
         )
         rows = list(await self.session.scalars(stmt))
         if not rows:
@@ -893,7 +913,13 @@ class ValidatorRoundPersistenceService:
         return await self.session.scalar(stmt)
 
     async def _ensure_round_exists(self, validator_round_id: str) -> ValidatorRoundORM:
-        round_row = await self._get_round_row(validator_round_id)
+        # Load with eager loading for validator_snapshot (1:1 relationship)
+        stmt = (
+            select(ValidatorRoundORM)
+            .options(selectinload(ValidatorRoundORM.validator_snapshot))
+            .where(ValidatorRoundORM.validator_round_id == validator_round_id)
+        )
+        round_row = await self.session.scalar(stmt)
         if not round_row:
             raise ValueError(f"Validator round {validator_round_id} not found")
         return round_row
@@ -908,9 +934,16 @@ class ValidatorRoundPersistenceService:
         if round_number is None:
             return
 
-        stmt = select(ValidatorRoundORM).where(
-            ValidatorRoundORM.validator_uid == validator_uid,
-            ValidatorRoundORM.round_number == round_number,
+        stmt = (
+            select(ValidatorRoundORM)
+            .join(
+                ValidatorRoundValidatorORM,
+                ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+            )
+            .where(
+                ValidatorRoundValidatorORM.validator_uid == validator_uid,
+                ValidatorRoundORM.round_number == round_number,
+            )
         )
         if exclude_round_id is not None:
             stmt = stmt.where(ValidatorRoundORM.validator_round_id != exclude_round_id)
@@ -937,17 +970,17 @@ class ValidatorRoundPersistenceService:
         round_row: ValidatorRoundORM,
         snapshot: ValidatorRoundValidator,
     ) -> ValidatorRoundValidatorORM:
+        # 1:1 relationship - only one snapshot per round
         stmt = select(ValidatorRoundValidatorORM).where(
-            ValidatorRoundValidatorORM.validator_round_id
-            == round_row.validator_round_id,
-            ValidatorRoundValidatorORM.validator_uid == snapshot.validator_uid,
-            ValidatorRoundValidatorORM.validator_hotkey == snapshot.validator_hotkey,
+            ValidatorRoundValidatorORM.validator_round_id == round_row.validator_round_id,
         )
         existing = await self.session.scalar(stmt)
         kwargs = {
             "validator_round_id": round_row.validator_round_id,
             "validator_uid": snapshot.validator_uid,
             "validator_hotkey": snapshot.validator_hotkey,
+            "validator_coldkey": snapshot.validator_coldkey,
+            "round_number": round_row.round_number,  # Copy from round_row
             "name": snapshot.name,
             "stake": snapshot.stake,
             "vtrust": snapshot.vtrust,
@@ -999,11 +1032,9 @@ class ValidatorRoundPersistenceService:
     def _validator_round_kwargs(
         self, model: ValidatorRound
     ) -> Dict[str, Any]:
+        # validator_uid, validator_hotkey, validator_coldkey moved to ValidatorRoundValidatorORM
         return {
             "validator_round_id": model.validator_round_id,
-            "validator_uid": model.validator_uid,
-            "validator_hotkey": model.validator_hotkey,
-            "validator_coldkey": model.validator_coldkey,
             "round_number": model.round_number,
             "start_block": model.start_block,
             "end_block": model.end_block,
@@ -1011,16 +1042,10 @@ class ValidatorRoundPersistenceService:
             "end_epoch": model.end_epoch,
             "started_at": model.started_at,
             "ended_at": model.ended_at,
-            "elapsed_sec": model.elapsed_sec,
-            "max_epochs": model.max_epochs,
-            "max_blocks": model.max_blocks,
             "n_tasks": model.n_tasks,
             "n_miners": model.n_miners,
             "n_winners": model.n_winners,
             "status": model.status,
-            "average_score": model.average_score,
-            "top_score": model.top_score,
-            "summary": _non_empty_dict(model.summary),
             "meta": _non_empty_dict(model.metadata),
         }
 

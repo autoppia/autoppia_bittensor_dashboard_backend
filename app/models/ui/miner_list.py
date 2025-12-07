@@ -7,8 +7,8 @@ class MinerListItem(BaseModel):
     """Minimal miner data for listing."""
     uid: int = Field(..., description="Miner UID")
     name: str = Field(..., description="Miner name")
-    ranking: int = Field(..., description="Current ranking based on average score")
-    score: float = Field(..., description="Average score")
+    ranking: int = Field(..., description="Current ranking")
+    score: float = Field(..., description="Score")
     isSota: bool = Field(..., description="Whether miner is SOTA (company agent)")
     imageUrl: str = Field(..., description="Miner image URL (must be valid URL or empty string)")
 
@@ -44,7 +44,6 @@ class MinerDetail(BaseModel):
     description: Optional[str] = Field(None, description="Miner description")
     totalRuns: int = Field(..., description="Total number of runs")
     successfulRuns: int = Field(..., description="Number of successful runs")
-    averageScore: float = Field(..., description="Average score")
     bestScore: float = Field(..., description="Best score achieved")
     successRate: float = Field(..., description="Success rate percentage")
     averageResponseTime: float = Field(..., description="Average response time in seconds")

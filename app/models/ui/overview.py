@@ -22,7 +22,8 @@ class BaseResponse(BaseModel):
 class OverviewMetrics(BaseModel):
     """Overview dashboard metrics."""
 
-    topScore: float
+    model_config = {"extra": "allow"}
+
     topMinerUid: Optional[int] = None
     topMinerName: Optional[str] = None
     totalWebsites: int
@@ -99,6 +100,8 @@ class ValidatorsFilterResponse(BaseResponse):
 class RoundInfo(BaseModel):
     """Round information for overview section."""
 
+    model_config = {"extra": "allow"}
+
     id: int
     startBlock: int
     endBlock: int
@@ -108,8 +111,6 @@ class RoundInfo(BaseModel):
     status: str  # "active", "finished", "pending", "evaluating_finished"
     totalTasks: int
     completedTasks: int
-    averageScore: float
-    topScore: float
 
 
 class CurrentRoundResponse(BaseResponse):
@@ -219,8 +220,9 @@ class RecentActivityResponse(BaseResponse):
 class PerformanceTrend(BaseModel):
     """Performance trend data point."""
 
+    model_config = {"extra": "allow"}
+
     date: str
-    averageScore: float
     totalTasks: int
     activeValidators: int
 

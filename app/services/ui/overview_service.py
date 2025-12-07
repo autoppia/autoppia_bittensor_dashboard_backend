@@ -748,7 +748,7 @@ class OverviewService:
         stmt = (
             select(RoundORM)
             .options(
-                selectinload(RoundORM.validator_snapshots),
+                selectinload(RoundORM.validator_snapshot),  # 1:1 relationship
                 selectinload(RoundORM.miner_snapshots),
             )
             .where(RoundORM.validator_round_id == validator_round_id)
@@ -1003,9 +1003,12 @@ class OverviewService:
         validators = await self._aggregate_validators()
         rounds = await self._recent_rounds(limit=5)
         now = datetime.now(timezone.utc)
-        network_latency_samples = [
-            round_obj.elapsed_sec for round_obj in rounds if round_obj.elapsed_sec
-        ]
+        # elapsed_sec field removed - calculate from started_at/ended_at
+        network_latency_samples = []
+        for round_obj in rounds:
+            if round_obj.started_at and round_obj.ended_at:
+                elapsed = round_obj.ended_at - round_obj.started_at
+                network_latency_samples.append(elapsed)
         average_latency = (
             int(sum(network_latency_samples) / len(network_latency_samples))
             if network_latency_samples

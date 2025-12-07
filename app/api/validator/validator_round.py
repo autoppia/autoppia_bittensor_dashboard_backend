@@ -62,7 +62,13 @@ def _ensure_request_matches_round_owner(request: Request, round_row: Any) -> Non
     if not header_hotkey:
         # When auth is disabled in tests we do not enforce the check
         return
-    round_hotkey = getattr(round_row, "validator_hotkey", None)
+    # Access validator_hotkey through validator_snapshot (1:1 relationship)
+    round_hotkey = None
+    if hasattr(round_row, "validator_snapshot") and round_row.validator_snapshot:
+        round_hotkey = round_row.validator_snapshot.validator_hotkey
+    elif hasattr(round_row, "validator_hotkey"):
+        # Fallback for backwards compatibility
+        round_hotkey = getattr(round_row, "validator_hotkey", None)
     if round_hotkey and header_hotkey != round_hotkey:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -160,6 +166,7 @@ def _legacy_to_start_request(payload: LegacyStartRoundRequest) -> StartRoundRequ
         validator_round_id=payload.validator_round_id,
         validator_uid=uid,
         validator_hotkey=hotkey,
+        validator_coldkey=primary_validator.get("coldkey"),  # Copy coldkey from validator
         name=primary_validator.get("name"),
         stake=primary_validator.get("stake"),
         vtrust=primary_validator.get("vtrust"),
@@ -214,8 +221,13 @@ async def _legacy_to_start_agent_run_request(
     service: ValidatorRoundPersistenceService,
 ) -> StartAgentRunRequest:
     round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
-    validator_hotkey = round_row.validator_hotkey
-    validator_uid = round_row.validator_uid
+    if not round_row.validator_snapshot:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Validator snapshot not found for round",
+        )
+    validator_hotkey = round_row.validator_snapshot.validator_hotkey
+    validator_uid = round_row.validator_snapshot.validator_uid
 
     agent_run_data = dict(payload.agent_run)
     agent_run_data.setdefault("validator_round_id", validator_round_id)
@@ -279,8 +291,13 @@ async def _legacy_to_add_evaluation_request(
             detail=f"Agent run {agent_run_id} not found",
         )
 
-    validator_uid = round_row.validator_uid
-    validator_hotkey = round_row.validator_hotkey
+    if not round_row.validator_snapshot:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Validator snapshot not found for round",
+        )
+    validator_uid = round_row.validator_snapshot.validator_uid
+    validator_hotkey = round_row.validator_snapshot.validator_hotkey
     miner_uid = agent_run_row.miner_uid
     miner_hotkey = agent_run_row.miner_hotkey
 
@@ -398,9 +415,6 @@ class FinishRoundRequest(BaseModel):
     status: str = Field(default="finished", description="Final status for the round")
     ended_at: float | None = Field(
         default=None, description="Epoch timestamp when the round finished"
-    )
-    summary: Dict[str, int] | None = Field(
-        default=None, description="Optional summary metadata"
     )
     agent_runs: list[FinishRoundAgentRun] = Field(default_factory=list)
     round_metadata: RoundMetadata | None = Field(default=None, alias="round")
@@ -527,8 +541,6 @@ async def start_round(
         validator_round.end_block = bounds.end_block
         validator_round.start_epoch = int(bounds.start_epoch)
         validator_round.end_epoch = int(bounds.end_epoch)
-        validator_round.max_epochs = int(settings.ROUND_SIZE_EPOCHS)
-        validator_round.max_blocks = settings.BLOCKS_PER_EPOCH
 
     # Use canonical directory as FALLBACK only (don't override validator-provided values)
     try:
@@ -548,6 +560,10 @@ async def start_round(
         validator_snapshot.name,
         existing=validator_snapshot.image_url,
     )
+    
+    # Copy coldkey from validator_round to validator_snapshot if not already set
+    if validator_snapshot.validator_coldkey is None and validator_round.validator_coldkey:
+        validator_snapshot.validator_coldkey = validator_round.validator_coldkey
 
     service = ValidatorRoundPersistenceService(session)
 
@@ -567,8 +583,9 @@ async def start_round(
             existing_round = None
         if existing_round is not None:
             if (
-                existing_round.validator_uid == validator_round.validator_uid
-                and existing_round.validator_hotkey == validator_round.validator_hotkey
+                existing_round.validator_snapshot
+                and existing_round.validator_snapshot.validator_uid == validator_round.validator_uid
+                and existing_round.validator_snapshot.validator_hotkey == validator_round.validator_hotkey
             ):
                 logger.info(
                     "Validator round %s already registered; treating as idempotent",
@@ -818,10 +835,15 @@ async def start_agent_run(
         # Ensure agent_run validator identity matches the round's registered validator
         round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
         _ensure_request_matches_round_owner(request, round_row)
+        if not round_row.validator_snapshot:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Validator snapshot not found for round",
+            )
         if (
             agent_run.validator_uid is not None
-            and round_row.validator_uid is not None
-            and int(agent_run.validator_uid) != int(round_row.validator_uid)
+            and round_row.validator_snapshot.validator_uid is not None
+            and int(agent_run.validator_uid) != int(round_row.validator_snapshot.validator_uid)
         ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -829,8 +851,8 @@ async def start_agent_run(
             )
         if (
             agent_run.validator_hotkey
-            and round_row.validator_hotkey
-            and agent_run.validator_hotkey != round_row.validator_hotkey
+            and round_row.validator_snapshot.validator_hotkey
+            and agent_run.validator_hotkey != round_row.validator_snapshot.validator_hotkey
         ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1147,13 +1169,18 @@ async def add_evaluation(
             (evaluation.validator_uid, evaluation.validator_hotkey, "evaluation"),
             (evaluation_result.validator_uid, None, "evaluation_result"),
         ]
+        if not round_row.validator_snapshot:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Validator snapshot not found for round",
+            )
         for uid_value, hotkey_value, label in check_pairs:
-            if uid_value is not None and int(uid_value) != int(round_row.validator_uid):
+            if uid_value is not None and int(uid_value) != int(round_row.validator_snapshot.validator_uid):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"{label}.validator_uid must match the round's validator_uid",
                 )
-            if hotkey_value and hotkey_value != round_row.validator_hotkey:
+            if hotkey_value and hotkey_value != round_row.validator_snapshot.validator_hotkey:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"{label}.validator_hotkey must match the round's validator_hotkey",
@@ -1303,7 +1330,6 @@ async def finish_round(
             validator_round_id=validator_round_id,
             status=normalized_status,
             ended_at=payload.ended_at or time.time(),
-            summary=payload.summary,
             agent_runs=(
                 [
                     {
