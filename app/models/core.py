@@ -211,17 +211,6 @@ class ValidatorRound(BaseModel):
     ended_at: Optional[float] = Field(
         default=None, description="End timestamp for the round"
     )
-    elapsed_sec: Optional[float] = Field(
-        default=None, description="Total elapsed time in seconds"
-    )
-
-    # Round configuration
-    max_epochs: int = Field(
-        default=20, description="Maximum number of epochs configured for the round"
-    )
-    max_blocks: int = Field(
-        default=360, description="Maximum number of blocks configured per epoch"
-    )
     n_tasks: int = Field(..., description="Total number of tasks issued in the round")
     n_miners: int = Field(..., description="Total number of miners evaluated")
     n_winners: int = Field(..., description="Number of winners selected")
@@ -229,15 +218,6 @@ class ValidatorRound(BaseModel):
     # Summary metrics
     status: Literal["active", "finished", "pending", "evaluating_finished"] = Field(
         default="active", description="Lifecycle status for the validator round"
-    )
-    average_score: Optional[float] = Field(
-        default=None, description="Average score across all evaluations"
-    )
-    top_score: Optional[float] = Field(
-        default=None, description="Highest score achieved in the round"
-    )
-    summary: Dict[str, int] = Field(
-        default_factory=dict, description="Computed summary counts (tasks, runs, etc.)"
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
@@ -251,6 +231,9 @@ class ValidatorRoundValidator(BaseModel):
     validator_round_id: str = Field(..., description="Validator round identifier")
     validator_uid: int = Field(..., description="Validator UID for the snapshot")
     validator_hotkey: str = Field(..., description="Validator hotkey for the snapshot")
+    validator_coldkey: Optional[str] = Field(
+        default=None, description="Validator coldkey for the snapshot"
+    )
 
     name: Optional[str] = Field(default=None, description="Validator display name")
     stake: Optional[float] = Field(default=None, description="Recorded stake")

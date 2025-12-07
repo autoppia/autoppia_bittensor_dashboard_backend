@@ -68,7 +68,10 @@ class RoundRecord:
 
     @property
     def validator_uid(self) -> Optional[int]:
-        return self.row.validator_uid
+        # Access through validator_snapshot (1:1 relationship)
+        if self.row.validator_snapshot:
+            return self.row.validator_snapshot.validator_uid
+        return None
 
 
 @dataclass
@@ -352,10 +355,10 @@ class RoundsService:
     def _snapshot_for_validator(round_row: RoundORM, validator_uid: Optional[int]):
         if validator_uid is None:
             return None
-        snapshots = getattr(round_row, "validator_snapshots", None) or []
-        for snapshot in snapshots:
-            if snapshot.validator_uid == validator_uid:
-                return snapshot
+        # 1:1 relationship - only one snapshot per round
+        snapshot = getattr(round_row, "validator_snapshot", None)
+        if snapshot and snapshot.validator_uid == validator_uid:
+            return snapshot
         return None
 
     def _build_validator_profile(
@@ -446,7 +449,7 @@ class RoundsService:
         stmt = (
             select(RoundORM)
             .options(
-                selectinload(RoundORM.validator_snapshots),
+                selectinload(RoundORM.validator_snapshot),  # 1:1 relationship
                 selectinload(RoundORM.miner_snapshots),
             )
             .order_by(RoundORM.validator_round_id.desc())
@@ -769,7 +772,7 @@ class RoundsService:
         stmt = (
             select(RoundORM)
             .options(
-                selectinload(RoundORM.validator_snapshots),
+                selectinload(RoundORM.validator_snapshot),  # 1:1 relationship
                 selectinload(RoundORM.miner_snapshots),
             )
             .order_by(RoundORM.id.desc())
@@ -836,7 +839,7 @@ class RoundsService:
         stmt = (
             select(RoundORM)
             .options(
-                selectinload(RoundORM.validator_snapshots),
+                selectinload(RoundORM.validator_snapshot),  # 1:1 relationship
                 selectinload(RoundORM.miner_snapshots),
             )
             .where(RoundORM.round_number.in_(numbers))
@@ -1073,12 +1076,6 @@ class RoundsService:
                 except (TypeError, ValueError):
                     continue
 
-            top_score_candidate = round_obj.top_score
-            if top_score_candidate is None and per_validator_scores:
-                top_score_candidate = max(per_validator_scores)
-            if top_score_candidate is not None:
-                validator_top_scores.append(top_score_candidate)
-
         metrics = {
             "miner_ids": miner_ids,
             "active_miner_ids": active_miner_ids,
@@ -1086,7 +1083,6 @@ class RoundsService:
             "total_tasks": total_tasks,
             "tasks_per_validator": tasks_per_validator,
             "scores": scores,
-            "validator_top_scores": validator_top_scores,
             "durations": durations,
             "total_stake": total_stake,
         }
@@ -1147,8 +1143,6 @@ class RoundsService:
             "endTime": (
                 _iso_timestamp(round_obj.ended_at) if round_obj.ended_at else None
             ),
-            "averageScore": round(round_obj.average_score or 0.0, 3),
-            "topScore": round(round_obj.top_score or 0.0, 3),
             "totalTasks": round_obj.n_tasks,
             "completedTasks": completed_tasks,
             "icon": icon,
@@ -1169,7 +1163,8 @@ class RoundsService:
             round_obj = record.model
             end_block = round_obj.end_block
             if end_block is None:
-                end_block = round_obj.start_block + round_obj.max_blocks
+                # max_blocks field removed - use default of 360 blocks
+                end_block = round_obj.start_block + 360
             end_block_candidates.append(end_block)
         end_block_value = max(end_block_candidates)
 
@@ -1224,24 +1219,6 @@ class RoundsService:
             self._estimate_completed_tasks(record.model) for record in records
         )
 
-        score_weights: List[Tuple[float, int]] = []
-        top_scores: List[float] = []
-        for record in records:
-            score = record.model.average_score
-            if score is not None:
-                score_weights.append((score, record.model.n_tasks or 1))
-            if record.model.top_score is not None:
-                top_scores.append(record.model.top_score)
-
-        if score_weights:
-            numerator = sum(score * weight for score, weight in score_weights)
-            denominator = sum(weight for _, weight in score_weights)
-            average_score = numerator / denominator if denominator else 0.0
-        else:
-            average_score = 0.0
-
-        top_score = max(top_scores) if top_scores else 0.0
-
         progress_ratio = (
             1.0
             if status == "finished"
@@ -1269,8 +1246,6 @@ class RoundsService:
             "status": status,
             "totalTasks": total_tasks,
             "completedTasks": completed_tasks,
-            "averageScore": round(average_score, 3),
-            "topScore": round(top_score, 3),
             "currentBlock": current_block,
             "blocksRemaining": blocks_remaining,
             "progress": round(progress_ratio, 3),
@@ -1293,8 +1268,6 @@ class RoundsService:
             "roundNumber",
             "totalTasks",
             "completedTasks",
-            "averageScore",
-            "topScore",
             "currentBlock",
             "blocksRemaining",
             "progress",
@@ -1417,15 +1390,17 @@ class RoundsService:
                 start_value = round_obj.start_block
                 if start_value is None:
                     start_value = getattr(record.row, "start_block", start_block)
-                max_blocks = round_obj.max_blocks or 0
+                # max_blocks field removed - use default of 360 blocks
                 try:
-                    end_block = int(start_value or 0) + int(max_blocks)
+                    end_block = int(start_value or 0) + 360
                 except (TypeError, ValueError):
                     end_block = None
             end_block_candidates.append(end_block)
             statuses.append((round_obj.status or "").lower())
-            if round_obj.elapsed_sec is not None:
-                elapsed_values.append(round_obj.elapsed_sec)
+            # elapsed_sec field removed - calculate from started_at/ended_at
+            if round_obj.started_at and round_obj.ended_at:
+                elapsed = round_obj.ended_at - round_obj.started_at
+                elapsed_values.append(elapsed)
 
         safe_end_candidates = [
             value for value in end_block_candidates if isinstance(value, (int, float))
@@ -1707,11 +1682,9 @@ class RoundsService:
             "completedTasks": completed_tasks,
             "totalValidators": total_validators,
             "averageTasksPerValidator": round(average_tasks_per_validator_per_miner, 2),
-            "averageScore": round(winner_average, 3),
             "winnerAverageScore": round(winner_average, 3),
             "winnerMinerUid": winner_uid,
             "validatorAverageTopScore": round(validator_average_top, 3),
-            "topScore": round(top_score, 3),
             "successRate": round(success_rate, 2),
             "averageDuration": round(average_duration, 2),
             "totalStake": int(total_stake),
@@ -2015,8 +1988,6 @@ class RoundsService:
                     "completedTasks": completed_tasks,
                     "totalMiners": total_miners,
                     "activeMiners": active_miners,
-                    "averageScore": round(average_score, 3),
-                    "topScore": round(top_score, 3),
                     "weight": int(weight),
                     "trust": round(trust, 3),
                     "version": (
@@ -2418,7 +2389,8 @@ class RoundsService:
         for entry in aggregated.validator_rounds:
             end_block = entry.round.end_block
             if end_block is None:
-                end_block = entry.round.start_block + entry.round.max_blocks
+                # max_blocks field removed - use default of 360 blocks
+                end_block = entry.round.start_block + 360
             end_block_candidates.append(end_block)
         end_block_value = max(end_block_candidates)
         block_span = max(1, end_block_value - start_block)
@@ -2484,8 +2456,6 @@ class RoundsService:
             "status": status,
             "progress": round(progress_ratio, 3),
             "totalMiners": statistics.get("totalMiners", 0),
-            "averageScore": statistics.get("averageScore", 0.0),
-            "topScore": statistics.get("topScore", 0.0),
             "timeRemaining": (
                 None
                 if progress_ratio >= 1
@@ -2705,17 +2675,17 @@ class RoundsService:
 
         round_model.n_winners = len(winners)
         round_model.winners = winners
-        round_model.average_score = average_score
-        round_model.top_score = top_score
 
         metadata = dict(round_model.metadata or {})
         metadata["winners"] = winners
         metadata["winner_scores"] = winner_scores
+        metadata["winning_miners"] = len(winners)
+        # Store average_score and top_score in metadata instead of direct fields
+        if average_score is not None:
+            metadata["average_score"] = average_score
+        if top_score is not None:
+            metadata["top_score"] = top_score
         round_model.metadata = metadata
-
-        summary = dict(round_model.summary or {})
-        summary["winning_miners"] = len(winners)
-        round_model.summary = summary
         # NOTE: Do NOT mutate ORM rows here.
         # This method runs within UI read flows. Writing to record.row would mark
         # the session dirty and can trigger an autoflush (UPDATE) before later
@@ -2844,7 +2814,7 @@ class RoundsService:
                     selectinload(RoundORM.agent_runs).selectinload(
                         AgentEvaluationRunORM.evaluation_results
                     ),
-                    selectinload(RoundORM.validator_snapshots),
+                    selectinload(RoundORM.validator_snapshot),  # 1:1 relationship
                     selectinload(RoundORM.miner_snapshots),
                 )
             stmt = stmt.where(RoundORM.validator_round_id == candidate)
@@ -2909,21 +2879,26 @@ class RoundsService:
 
     def _deserialize_round(self, round_row: RoundORM) -> ValidatorRound:
         meta = dict(round_row.meta or {})
-        summary = dict(round_row.summary or {})
+        # summary field removed from ValidatorRoundORM - use metadata instead
 
         # For completed rounds, use DB data only (no fresh metagraph lookups)
         use_fresh = round_row.ended_at is None
+        # Access validator data through validator_snapshot (1:1 relationship)
+        validator_uid = round_row.validator_snapshot.validator_uid if round_row.validator_snapshot else None
+        validator_hotkey = round_row.validator_snapshot.validator_hotkey if round_row.validator_snapshot else None
+        validator_coldkey = round_row.validator_snapshot.validator_coldkey if round_row.validator_snapshot else None
+        
         profile = self._build_validator_profile(
             round_row=round_row,
-            validator_uid=round_row.validator_uid,
-            fallback_hotkey=round_row.validator_hotkey,
+            validator_uid=validator_uid,
+            fallback_hotkey=validator_hotkey,
             use_fresh_data=use_fresh,
         )
 
         validator_info = ValidatorInfo(
-            uid=round_row.validator_uid or profile.get("uid") or 0,
+            uid=validator_uid or profile.get("uid") or 0,
             hotkey=profile.get("hotkey") or "",
-            coldkey=round_row.validator_coldkey,
+            coldkey=validator_coldkey,
             stake=float(profile.get("stake") or 0.0),
             vtrust=float(profile.get("vtrust") or 0.0),
             name=profile.get("name"),
@@ -2946,21 +2921,10 @@ class RoundsService:
                 )
             )
 
+        # 1:1 relationship - only one validator snapshot per round
         validators = [validator_info]
-        for snapshot in getattr(round_row, "validator_snapshots", []) or []:
-            if snapshot.validator_uid == validator_info.uid:
-                continue
-            validators.append(
-                ValidatorInfo(
-                    uid=snapshot.validator_uid,
-                    hotkey=snapshot.validator_hotkey or "",
-                    coldkey=None,
-                    stake=float(snapshot.stake or 0.0),
-                    vtrust=float(snapshot.vtrust or 0.0),
-                    name=snapshot.name,
-                    version=snapshot.version,
-                )
-            )
+        # Note: In the new schema, there's only one validator per round (1:1 relationship)
+        # The old code iterated over multiple snapshots, but now we only have one
 
         meta.setdefault(
             "validatorProfile",
@@ -2976,7 +2940,7 @@ class RoundsService:
         )
 
         winners = meta.get("winners")
-        winner_scores = meta.get("winner_scores") or summary.get("winner_scores") or []
+        winner_scores = meta.get("winner_scores") or []
         weights = meta.get("weights")
 
         # Normalize status to match ValidatorRound literal type
@@ -3002,9 +2966,6 @@ class RoundsService:
             end_epoch=round_row.end_epoch,
             started_at=round_row.started_at or datetime.now(timezone.utc).timestamp(),
             ended_at=round_row.ended_at,
-            elapsed_sec=round_row.elapsed_sec,
-            max_epochs=round_row.max_epochs or 0,
-            max_blocks=round_row.max_blocks or 0,
             n_tasks=round_row.n_tasks or 0,
             n_miners=round_row.n_miners or 0,
             n_winners=round_row.n_winners or 0,
@@ -3013,14 +2974,10 @@ class RoundsService:
             winners=winners,
             winner_scores=list(winner_scores),
             weights=weights,
-            average_score=round_row.average_score,
-            top_score=round_row.top_score,
             status=normalized_status,
-            summary=summary,
             metadata=meta,
             model_extra={
                 "meta": meta,
-                "summary": summary,
             },
         )
 

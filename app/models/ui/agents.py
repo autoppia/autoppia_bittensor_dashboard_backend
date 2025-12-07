@@ -170,7 +170,6 @@ class ScoreRoundDataPoint(BaseModel):
     round_id: int = Field(..., description="Round identifier")
     score: float = Field(..., description="Score achieved in this round")
     rank: Optional[int] = Field(None, description="Rank in this round")
-    topScore: Optional[float] = Field(None, description="Top benchmark score achieved in this round")
     reward: Optional[float] = Field(None, description="Reward received in this round")
     timestamp: datetime = Field(..., description="Round timestamp")
     benchmarks: Optional[List[Dict[str, Any]]] = Field(
@@ -187,7 +186,6 @@ class AgentPerformanceMetrics(BaseModel):
     failedRuns: int = Field(default=0, description="Failed runs in time range")
     successRate: float = Field(default=0.0, description="Success rate percentage")
     currentScore: float = Field(default=0.0, description="Current score")
-    currentTopScore: float = Field(default=0.0, description="Top score achieved")
     worstScore: float = Field(default=0.0, description="Worst score")
     averageResponseTime: float = Field(default=0.0, description="Average response time")
     totalTasks: int = Field(default=0, description="Total tasks")
@@ -201,7 +199,6 @@ class AgentRoundMetrics(BaseModel):
     """Round-specific metrics for an agent."""
     roundId: int = Field(..., description="Round identifier")
     score: float = Field(..., description="Average score achieved in the round")
-    topScore: float = Field(..., description="Top score among agents in the round")
     rank: Optional[int] = Field(None, description="Agent rank within the round leaderboard")
     totalRuns: int = Field(default=0, description="Number of validator runs for the agent in the round")
     totalValidators: int = Field(default=0, description="Number of validators that evaluated the agent in the round")

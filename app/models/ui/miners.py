@@ -72,7 +72,6 @@ class Miner(BaseModel):
     description: Optional[str] = Field(None, description="Miner description")
     totalRuns: int = Field(..., description="Total number of runs")
     successfulRuns: int = Field(..., description="Number of successful runs")
-    averageScore: float = Field(..., description="Average score")
     bestScore: float = Field(..., description="Best score achieved")
     successRate: float = Field(..., description="Success rate percentage")
     averageResponseTime: float = Field(..., description="Average response time in seconds")
@@ -153,7 +152,6 @@ class MinerPerformanceMetrics(BaseModel):
     totalRuns: int = Field(..., description="Total runs in period")
     successfulRuns: int = Field(..., description="Successful runs in period")
     failedRuns: int = Field(..., description="Failed runs in period")
-    averageScore: float = Field(..., description="Average score in period")
     bestScore: float = Field(..., description="Best score in period")
     worstScore: float = Field(..., description="Worst score in period")
     successRate: float = Field(..., description="Success rate in period")
@@ -197,7 +195,6 @@ class MinerStatistics(BaseModel):
     totalRuns: int = Field(..., description="Total number of runs")
     successfulRuns: int = Field(..., description="Number of successful runs")
     averageSuccessRate: float = Field(..., description="Average success rate")
-    averageScore: float = Field(..., description="Average score")
     topPerformingMiner: TopMiner = Field(..., description="Top performing miner")
     mostActiveMiner: MostActiveMiner = Field(..., description="Most active miner")
     performanceDistribution: PerformanceDistribution = Field(..., description="Performance distribution")
@@ -206,7 +203,6 @@ class MinerStatistics(BaseModel):
 
 class MinerComparisonMetrics(BaseModel):
     """Miner comparison metrics model."""
-    averageScore: float = Field(..., description="Average score")
     successRate: float = Field(..., description="Success rate")
     averageResponseTime: float = Field(..., description="Average response time")
     totalRuns: int = Field(..., description="Total runs")
@@ -242,7 +238,7 @@ class MinerListQuery(BaseModel):
     limit: int = Field(50, ge=1, le=100, description="Items per page")
     isSota: Optional[bool] = Field(None, description="Filter by SOTA status")
     status: Optional[MinerStatus] = Field(None, description="Filter by status")
-    sortBy: str = Field("averageScore", description="Sort field")
+    sortBy: str = Field("name", description="Sort field")
     sortOrder: str = Field("desc", description="Sort order")
     search: Optional[str] = Field(None, description="Search term")
 
