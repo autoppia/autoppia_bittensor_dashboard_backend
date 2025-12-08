@@ -7,6 +7,8 @@ from typing import Optional
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import os
+
 from app.main import app
 from app.config import settings
 from app.services.validator.validator_auth import (
@@ -15,6 +17,12 @@ from app.services.validator.validator_auth import (
     VALIDATOR_HOTKEY_HEADER,
     VALIDATOR_SIGNATURE_HEADER,
 )
+
+# Skip this file unless explicitly enabled (hits live subtensor network)
+if os.getenv("RUN_LIVE_TESTS", "0").lower() not in ("1", "true", "yes", "on"):
+    import pytest  # noqa: WPS433
+
+    pytest.skip("Skipping live stake tests (set RUN_LIVE_TESTS=1 to run)", allow_module_level=True)
 
 
 class _SigNoop_RealStake_Service:
@@ -92,4 +100,3 @@ async def test_auth_check_uses_live_stake_threshold():
                 assert "below the required minimum" in resp.json().get("detail", "")
             finally:
                 settings.MIN_VALIDATOR_STAKE = prev
-

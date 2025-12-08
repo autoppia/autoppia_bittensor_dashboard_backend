@@ -17,8 +17,7 @@ dependencies = [
     "bittensor>=6.9.0,<10.0.0"
 ]
 
-[project.scripts]
-iwap = "scripts.iwap:main"
+# [project.scripts] removed - using bash scripts instead
 
 [project.optional-dependencies]
 dev = [

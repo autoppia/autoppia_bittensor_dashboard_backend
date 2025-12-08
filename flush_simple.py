@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
 """
-Simple script to flush (reset) the PostgreSQL database using the .env DATABASE_URL.
+Simple script to flush (reset) the PostgreSQL database.
+This is a wrapper that calls the bash script truncate_all_tables.sh
 """
 
-import asyncio
-import os
-from dotenv import load_dotenv
+import subprocess
+import sys
+from pathlib import Path
 
-# Load DATABASE_URL from .env
-load_dotenv()
-
-async def main():
-    from scripts.flush_db import flush_seed_database
-
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        raise RuntimeError("DATABASE_URL not found in environment or .env file")
-
-    print(f"🔄 Flushing database: {database_url}")
-    flush_seed_database(database_url=database_url, assume_yes=True)
-    print("✅ Database flushed successfully!")
+def main():
+    script_path = Path(__file__).parent / "scripts" / "bash" / "truncate_all_tables.sh"
+    
+    if not script_path.exists():
+        print(f"❌ Script not found: {script_path}")
+        sys.exit(1)
+    
+    print("🔄 Flushing database using truncate_all_tables.sh...")
+    result = subprocess.run(["bash", str(script_path)], cwd=script_path.parent.parent.parent)
+    sys.exit(result.returncode)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
