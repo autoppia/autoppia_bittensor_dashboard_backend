@@ -1904,31 +1904,187 @@ class TasksService:
     async def get_evaluation_complete(self, evaluation_id: str) -> Dict[str, Any]:
         """
         Get all evaluation data in a single call, similar to get-round.
-        Returns details, personas, results, actions, screenshots, logs, timeline, metrics, and statistics.
+        Returns: actions, screenshots, task_details, results, info
         """
         context = await self.get_task_by_evaluation_id(evaluation_id)
         
-        # Build all data in one go
-        details = self.build_task_detail(context)
-        personas = self.build_personas(context)
-        results = self.build_task_results(context)
+        # Build all data
         actions = self.build_actions(context)
         screenshots = self.build_screenshots(context)
         logs = self.build_logs(context)
-        timeline = self.build_timeline(context)
-        metrics = self.build_metrics(context)
-        statistics = self.build_task_statistics(context)
+        
+        # Build task_details without actions, screenshots, logs
+        task_details = self._build_task_details_clean(context)
+        
+        # Build results without actions, screenshots, logs
+        results = self._build_results_clean(context, actions)
+        
+        # Build info object
+        info = self._build_info(context)
         
         return {
-            "details": details.model_dump(),
-            "personas": personas.model_dump(),
-            "results": results.model_dump(),
             "actions": [action.model_dump() for action in actions],
             "screenshots": [shot.model_dump() for shot in screenshots],
-            "logs": [log.model_dump() for log in logs],
-            "timeline": [item.model_dump() for item in timeline],
-            "metrics": metrics,
-            "statistics": statistics.model_dump(),
+            "task_details": task_details,
+            "results": results,
+            "info": info,
+        }
+    
+    def _build_task_details_clean(self, context: TaskContext) -> Dict[str, Any]:
+        """Build task details without actions, screenshots, logs."""
+        # Build actions separately to calculate performance
+        actions = self.build_actions(context)
+        
+        # Build task without actions
+        task = self._build_ui_task(context)
+        performance = TaskPerformance(
+            totalActions=len(actions),
+            successfulActions=len([a for a in actions if a.success]),
+            failedActions=len([a for a in actions if not a.success]),
+            averageActionDuration=self._average_action_duration(actions),
+            totalWaitTime=0.0,
+            totalNavigationTime=0.0,
+        )
+        
+        metadata = TaskMetadata(
+            environment="production",
+            browser="chrome",
+            viewport={"width": 1920, "height": 1080},
+            userAgent="Auto-generated",
+            resources={
+                "cpu": 1.0,
+                "memory": 512,
+                "network": 100,
+            },
+        )
+        
+        task_dict = task.model_dump()
+        # Remove actions, screenshots, logs from task_details
+        task_dict.pop("actions", None)
+        task_dict.pop("screenshots", None)
+        task_dict.pop("logs", None)
+        
+        task_dict["performance"] = performance.model_dump()
+        task_dict["metadata"] = metadata.model_dump()
+        
+        return task_dict
+    
+    def _build_results_clean(self, context: TaskContext, actions: List[TaskAction]) -> Dict[str, Any]:
+        """Build results without actions, screenshots, logs."""
+        results = self.build_task_results(context)
+        results_dict = results.model_dump()
+        
+        # Remove actions, screenshots, logs from results
+        results_dict.pop("actions", None)
+        results_dict.pop("screenshots", None)
+        results_dict.pop("logs", None)
+        results_dict.pop("timeline", None)
+        
+        return results_dict
+    
+    def _build_info(self, context: TaskContext) -> Dict[str, Any]:
+        """Build info object with evaluationId, taskId, miner_run_id, round, validator, miner."""
+        # Get evaluation ID
+        evaluation_id = context.evaluation.evaluation_id if context.evaluation else None
+        
+        # Get task ID
+        task_id = context.task.task_id
+        
+        # Get miner_run_id (agentRunId)
+        miner_run_id = context.agent_run.agent_run_id
+        
+        # Build round info
+        start_epoch_val = getattr(context.round, "start_epoch", None)
+        end_epoch_val = getattr(context.round, "end_epoch", None)
+        if end_epoch_val is None:
+            try:
+                status_lower = str(context.round.status or "").lower()
+                if status_lower in {"completed", "finished", "complete"}:
+                    bounds = compute_boundaries_for_round(
+                        int(context.round.round_number or 0)
+                    )
+                    end_epoch_val = int(bounds.end_epoch)
+                    if start_epoch_val is None:
+                        start_epoch_val = int(bounds.start_epoch)
+            except Exception:  # noqa: BLE001
+                pass
+        
+        round_info = {
+            "validatorRoundId": context.round.validator_round_id,
+            "roundNumber": context.round.round_number,
+            "status": context.round.status,
+            "startedAt": _parse_iso(context.round.started_at).isoformat() if context.round.started_at else None,
+            "endedAt": _parse_iso(context.round.ended_at).isoformat() if context.round.ended_at else None,
+            "startEpoch": start_epoch_val,
+            "endEpoch": end_epoch_val,
+        }
+        
+        # Build validator info
+        validator_uid = _get_validator_uid_from_context(context)
+        validator_model: Optional[ValidatorInfo] = None
+        if context.round.validators:
+            validator_model = next(
+                (
+                    val
+                    for val in context.round.validators
+                    if val.uid == validator_uid
+                ),
+                context.round.validators[0],
+            )
+        elif getattr(context.round, "validator_info", None):
+            validator_model = context.round.validator_info
+        
+        if validator_model is None:
+            validator_model = ValidatorInfo(
+                uid=validator_uid or 0,
+                hotkey=_format_validator_id(validator_uid) if validator_uid else "unknown",
+                coldkey=None,
+                stake=0.0,
+                vtrust=0.0,
+                name=None,
+                version=None,
+            )
+        
+        validator_info = {
+            "uid": abs(int(validator_model.uid)) if validator_model.uid is not None else 0,
+            "hotkey": validator_model.hotkey,
+            "coldkey": validator_model.coldkey,
+            "name": validator_model.name,
+            "stake": float(getattr(validator_model, "stake", 0.0) or 0.0),
+            "vtrust": float(getattr(validator_model, "vtrust", 0.0) or 0.0),
+            "version": getattr(validator_model, "version", None),
+            "image": resolve_validator_image(
+                name=validator_model.name,
+                existing=getattr(validator_model, "image_url", None),
+            ),
+        }
+        
+        # Build miner info
+        miner_model = context.agent_run.miner_info
+        miner_info = {
+            "uid": (
+                abs(int(miner_model.uid))
+                if (miner_model and miner_model.uid is not None)
+                else abs(int(context.agent_run.miner_uid))
+            ),
+            "hotkey": miner_model.hotkey if miner_model else None,
+            "name": (
+                miner_model.agent_name
+                if miner_model and miner_model.agent_name
+                else _format_agent_id(context.agent_run.miner_uid)
+            ),
+            "github": getattr(miner_model, "github", None) if miner_model else None,
+            "image": resolve_agent_image(miner_model),
+            "isSota": context.agent_run.is_sota,
+        }
+        
+        return {
+            "evaluationId": evaluation_id,
+            "taskId": task_id,
+            "miner_run_id": miner_run_id,
+            "round": round_info,
+            "validator": validator_info,
+            "miner": miner_info,
         }
 
     @staticmethod
