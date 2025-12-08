@@ -366,6 +366,14 @@ async def _legacy_to_add_evaluation_request(
     if "metadata" not in evaluation_data and "meta" in evaluation_data:
         evaluation_data["metadata"] = evaluation_data.pop("meta")
     
+    # Handle legacy final_score → eval_score mapping
+    if "final_score" in evaluation_data and "eval_score" not in evaluation_data:
+        evaluation_data["eval_score"] = evaluation_data["final_score"]
+    
+    # Handle reward: if not present, use eval_score as fallback (legacy compatibility)
+    if "reward" not in evaluation_data:
+        evaluation_data["reward"] = evaluation_data.get("eval_score") or evaluation_data.get("final_score", 0.0)
+    
     evaluation = Evaluation(**evaluation_data)
 
     return AddEvaluationRequest(
@@ -379,9 +387,9 @@ class FinishRoundAgentRun(BaseModel):
     agent_run_id: str
     rank: int | None = None
     weight: float | None = None
-    # FASE 1: Nuevos campos opcionales (backward compatible)
+    # FASE 1: Nuevos campos opcionales
     miner_name: str | None = None
-    score: float | None = None
+    avg_reward: float | None = None  # Average reward (eval_score + time_score)
     avg_evaluation_time: float | None = None
     tasks_attempted: int | None = None
     tasks_completed: int | None = None
@@ -1271,7 +1279,7 @@ async def finish_round(
                         "rank": ar.rank,
                         "weight": ar.weight,
                         "miner_name": ar.miner_name,
-                        "score": ar.score,
+                        "avg_reward": ar.avg_reward,
                         "avg_evaluation_time": ar.avg_evaluation_time,
                         "tasks_attempted": ar.tasks_attempted,
                         "tasks_completed": ar.tasks_completed,

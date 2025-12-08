@@ -283,7 +283,9 @@ class EvaluationsService:
         )
 
     def _build_list_item(self, context: EvaluationContext) -> EvaluationListItem:
-        status = self._status_from_score(context.evaluation.final_score)
+        eval_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0))
+        reward = getattr(context.evaluation, "reward", eval_score)
+        status = self._status_from_score(eval_score)
         round_int = _round_id_to_int(context.round.validator_round_id)
         task_url = context.task.url
 
@@ -300,8 +302,8 @@ class EvaluationsService:
             taskId=context.task.task_id,
             taskUrl=task_url,
             status=status,
-            score=_safe_round(context.evaluation.final_score),
-            reward=_safe_round(context.evaluation.final_score),
+            score=_safe_round(eval_score),
+            reward=_safe_round(reward),
             responseTime=_safe_round(
                 getattr(context.evaluation, "evaluation_time", 0.0)
             ),
@@ -415,7 +417,8 @@ class EvaluationsService:
         data.setdefault("validator_hotkey", evaluation_row.validator_hotkey)
         data.setdefault("miner_uid", evaluation_row.miner_uid)
         data.setdefault("miner_hotkey", evaluation_row.miner_hotkey)
-        data.setdefault("final_score", evaluation_row.final_score)
+        data.setdefault("eval_score", getattr(evaluation_row, "eval_score", getattr(evaluation_row, "final_score", 0.0)))
+        data.setdefault("reward", getattr(evaluation_row, "reward", getattr(evaluation_row, "eval_score", getattr(evaluation_row, "final_score", 0.0))))
         data.setdefault("evaluation_time", evaluation_row.evaluation_time)
         data.setdefault("execution_history", evaluation_row.execution_history)
         data.setdefault("feedback", evaluation_row.feedback)

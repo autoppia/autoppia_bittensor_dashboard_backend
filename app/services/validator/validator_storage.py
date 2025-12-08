@@ -59,7 +59,9 @@ def _clean_meta_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "notes": "",
         "error_message": "",
         "version_ok": True,  # Default value
-        "final_score": 0.0,  # Already stored in final_score column
+        "eval_score": 0.0,  # Already stored in eval_score column
+        "reward": 0.0,  # Already stored in reward column
+        "final_score": 0.0,  # Legacy field name (replaced by eval_score)
     }
     
     cleaned = {}
@@ -734,7 +736,8 @@ class ValidatorRoundPersistenceService:
 
         scores: List[float] = []
         for eval_obj in evaluations:
-            value = self._to_float(getattr(eval_obj, "final_score", None))
+            # Try eval_score first, fallback to final_score for legacy compatibility
+            value = self._to_float(getattr(eval_obj, "eval_score", None)) or self._to_float(getattr(eval_obj, "final_score", None))
             if value is not None:
                 scores.append(value)
         average_score = sum(scores) / len(scores) if scores else None
@@ -754,24 +757,16 @@ class ValidatorRoundPersistenceService:
         )
 
         reward_values: List[float] = []
-        reward_keys = (
-            "reward",
-            "total_reward",
-            "final_reward",
-            "wta_reward",
-            "reward_value",
-            "score_reward",
-        )
         for eval_obj in evaluations:
-            meta = getattr(eval_obj, "meta", {}) or {}
-            reward_candidate: Any = None
-            if isinstance(meta, dict):
-                for key in reward_keys:
-                    if key in meta:
-                        reward_candidate = meta[key]
-                        break
+            # Try reward field first (new), then fallback to meta or final_score for legacy compatibility
+            reward_candidate: Any = getattr(eval_obj, "reward", None)
             if reward_candidate is None:
-                reward_candidate = getattr(result, "final_score", None)
+                meta = getattr(eval_obj, "meta", {}) or {}
+                if isinstance(meta, dict):
+                    reward_candidate = meta.get("reward") or meta.get("total_reward") or meta.get("final_reward")
+            if reward_candidate is None:
+                # Legacy fallback: use eval_score or final_score
+                reward_candidate = getattr(eval_obj, "eval_score", None) or getattr(eval_obj, "final_score", None)
             value = self._to_float(reward_candidate)
             if value is not None:
                 reward_values.append(value)
@@ -1042,7 +1037,6 @@ class ValidatorRoundPersistenceService:
             "miner_uid": model.miner_uid,
             "miner_hotkey": model.miner_hotkey,
             "actions": _action_dump(model.actions),
-            "web_agent_id": model.web_agent_id,
         }
 
     def _evaluation_kwargs(
@@ -1059,7 +1053,8 @@ class ValidatorRoundPersistenceService:
             "validator_hotkey": model.validator_hotkey,
             "miner_uid": model.miner_uid,
             "miner_hotkey": model.miner_hotkey,
-            "final_score": model.final_score,
+            "eval_score": getattr(model, "eval_score", getattr(model, "final_score", 0.0)),  # Support both new and legacy field names
+            "reward": getattr(model, "reward", 0.0),
             "evaluation_time": model.evaluation_time,
             "execution_history": list(model.execution_history),
             "feedback": _optional_dump(model.feedback),

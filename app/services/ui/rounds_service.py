@@ -212,7 +212,8 @@ class MinerAggregate:
             self.total_validator_stake += validator_stake
         else:
             weight = int(tasks_total) if tasks_total else 1
-            score_value = performance.get("score") or 0.0
+            # Try avg_reward (local_evaluation) or consensus_reward (post_consensus_evaluation)
+            score_value = performance.get("avg_reward") or performance.get("consensus_reward") or 0.0
             self.total_score += float(score_value) * weight
             if weight:
                 self.score_count += weight
@@ -220,7 +221,7 @@ class MinerAggregate:
             self.weighted_score_sum += float(score_value) * validator_stake
             self.total_validator_stake += validator_stake
 
-        score = performance.get("score") or 0.0
+        score = performance.get("avg_reward") or performance.get("consensus_reward") or 0.0
         if score > self.best_run_score:
             self.best_run_score = float(score)
             self.best_validator_id = performance.get("validatorId")
@@ -1045,9 +1046,9 @@ class RoundsService:
                     miner_aggregates[uid] = aggregate
 
                 evaluation_scores = [
-                    er.final_score
+                    getattr(er, "eval_score", getattr(er, "final_score", 0.0))
                     for er in ctx.evaluations
-                    if er.final_score is not None
+                    if getattr(er, "eval_score", getattr(er, "final_score", None)) is not None
                 ]
                 tasks_total = ctx.run.n_tasks_total
                 if tasks_total is None:
@@ -1068,7 +1069,7 @@ class RoundsService:
                         [
                             er
                             for er in ctx.evaluations
-                            if er.final_score is not None and er.final_score >= 0.5
+                            if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5
                         ]
                     )
                 completed_tasks += completed
@@ -1078,7 +1079,7 @@ class RoundsService:
                     total = len(ctx.tasks)
                 total_tasks += total
 
-                score = performance.get("score")
+                score = performance.get("avg_reward") or performance.get("consensus_reward")
                 if score is not None:
                     scores.append(score)
                     per_validator_scores.append(score)
@@ -1869,11 +1870,11 @@ class RoundsService:
                             run.run.n_tasks_completed
                             if run.run.n_tasks_completed is not None
                             else len(
-                                [
-                                    er
-                                    for er in run.evaluation_results
-                                    if er.final_score >= 0.5
-                                ]
+                        [
+                            er
+                            for er in run.evaluation_results
+                            if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5
+                        ]
                             )
                         )
                         for run in valid_runs
@@ -1916,7 +1917,7 @@ class RoundsService:
                     score = run.run.avg_eval_score
                     if score is None and run.evaluation_results:
                         score = sum(
-                            er.final_score for er in run.evaluation_results
+                            getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in run.evaluation_results
                         ) / len(run.evaluation_results)
                     if score is not None:
                         scores.append(score)
@@ -1986,7 +1987,7 @@ class RoundsService:
                         run_score = run.run.avg_eval_score
                         if run_score is None and run.evaluation_results:
                             run_score = sum(
-                                er.final_score for er in run.evaluation_results
+                                getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in run.evaluation_results
                             ) / len(run.evaluation_results)
                         run_score = run_score or 0.0
                         if run_score > best_score:
@@ -2158,7 +2159,7 @@ class RoundsService:
                                 "validatorId": f"validator-{_get_validator_uid_from_context(ctx) or 'unknown'}",
                                 "validatorRoundId": round_key,
                                 "taskId": evaluation.task_id,
-                                "score": getattr(evaluation, "final_score", None),
+                                "score": getattr(evaluation, "eval_score", getattr(evaluation, "final_score", None)),
                             },
                         }
                     )
@@ -2357,11 +2358,11 @@ class RoundsService:
                     miner_entries.append(
                         self._build_miner_performance(ctx, entry.round, weights)
                     )
-            miner_entries.sort(key=lambda item: item.get("score", 0.0), reverse=True)
+            miner_entries.sort(key=lambda item: item.get("avg_reward") or item.get("consensus_reward") or 0.0, reverse=True)
             top_miners = [
                 {
                     "uid": entry.get("uid"),
-                    "score": entry.get("score"),
+                    "score": entry.get("avg_reward") or entry.get("consensus_reward") or 0.0,
                     "ranking": entry.get("ranking"),
                 }
                 for entry in miner_entries[:5]
@@ -2615,13 +2616,13 @@ class RoundsService:
         if score is None:
             score = getattr(context.run, "avg_eval_score", None)
         if score is None and context.evaluation_results:
-            score = sum(er.final_score for er in context.evaluation_results) / len(
+            score = sum(getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in context.evaluation_results) / len(
                 context.evaluation_results
             )
         # If still None and we have evaluations list, calculate from there
         if score is None and hasattr(context, "evaluations") and context.evaluations:
             scores = [
-                e.final_score for e in context.evaluations if e.final_score is not None
+                getattr(e, "eval_score", getattr(e, "final_score", 0.0)) for e in context.evaluations if getattr(e, "eval_score", getattr(e, "final_score", None)) is not None
             ]
             if scores:
                 score = sum(scores) / len(scores)
@@ -2731,7 +2732,7 @@ class RoundsService:
 
         score = context.run.avg_eval_score
         if score is None and context.evaluation_results:
-            score = sum(er.final_score for er in context.evaluation_results) / len(
+            score = sum(getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in context.evaluation_results) / len(
                 context.evaluation_results
             )
         score = score or 0.0
@@ -2745,7 +2746,7 @@ class RoundsService:
         completed_tasks = context.run.n_tasks_completed
         if completed_tasks is None:
             completed_tasks = len(
-                [er for er in context.evaluation_results if er.final_score >= 0.5]
+                [er for er in context.evaluation_results if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5]
             )
 
         success = (context.run.n_tasks_failed or 0) == 0
@@ -3163,7 +3164,6 @@ class RoundsService:
                         miner_uid=solution_row.miner_uid,
                         miner_hotkey=solution_row.miner_hotkey,
                         actions=actions,
-                        web_agent_id=solution_row.web_agent_id,
                     )
                 )
             except Exception as exc:  # noqa: BLE001
@@ -3192,7 +3192,8 @@ class RoundsService:
                         miner_hotkey=evaluation_row.miner_hotkey,
                         validator_uid=evaluation_row.validator_uid,
                         validator_hotkey=evaluation_row.validator_hotkey,
-                        final_score=evaluation_row.final_score or 0.0,
+                        eval_score=getattr(evaluation_row, "eval_score", getattr(evaluation_row, "final_score", 0.0)),
+                        reward=getattr(evaluation_row, "reward", getattr(evaluation_row, "eval_score", getattr(evaluation_row, "final_score", 0.0))),
                         execution_history=evaluation_row.execution_history or [],
                         feedback=evaluation_row.feedback,
                         evaluation_time=evaluation_row.evaluation_time or 0.0,

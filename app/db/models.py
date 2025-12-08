@@ -389,7 +389,6 @@ class TaskSolutionORM(TimestampMixin, Base):
     actions: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, nullable=False, default=list
     )
-    web_agent_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     task: Mapped["TaskORM"] = relationship(back_populates="task_solutions")
     agent_run: Mapped["AgentEvaluationRunORM"] = relationship(
@@ -412,7 +411,6 @@ class TaskSolutionORM(TimestampMixin, Base):
             "miner_uid": self.miner_uid,
             "miner_hotkey": self.miner_hotkey,
             "actions": list(self.actions or []),
-            "web_agent_id": self.web_agent_id,
         }
 
 
@@ -459,7 +457,8 @@ class EvaluationORM(TimestampMixin, Base):
         String(128), nullable=False, index=True
     )
 
-    final_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    eval_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # Evaluation score (tests/actions only, 0-1)
+    reward: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # Reward value (eval_score + time_score, used for consensus)
     evaluation_time: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     execution_history: Mapped[list[Any]] = mapped_column(
         JSON, nullable=False, default=list
@@ -484,7 +483,8 @@ class EvaluationORM(TimestampMixin, Base):
         """Backwards-compatible accessor for legacy JSON payloads."""
         return {
             "evaluation_id": self.evaluation_id,
-            "final_score": self.final_score,
+            "eval_score": self.eval_score,
+            "reward": self.reward,
             "evaluation_time": self.evaluation_time,
             "meta": dict(self.meta or {}),
         }
