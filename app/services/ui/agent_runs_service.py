@@ -343,7 +343,7 @@ class AgentRunsService:
                 
                 eval_results = getattr(run, 'evaluations', []) or []
                 if eval_results:
-                    scores = [er.final_score for er in eval_results if er.final_score is not None]
+                    scores = [getattr(er, 'eval_score', getattr(er, 'final_score', None)) for er in eval_results if getattr(er, 'eval_score', getattr(er, 'final_score', None)) is not None]
                     avg_score = sum(scores) / len(scores) if scores else 0.0
                     times = [er.evaluation_time for er in eval_results if er.evaluation_time is not None and er.evaluation_time > 0]
                     avg_time = sum(times) / len(times) if times else float('inf')
@@ -407,7 +407,7 @@ class AgentRunsService:
             # Calculate average score from evaluations
             eval_results = getattr(run, 'evaluations', []) or []
             if eval_results:
-                scores = [er.final_score for er in eval_results if er.final_score is not None]
+                scores = [getattr(er, 'eval_score', getattr(er, 'final_score', None)) for er in eval_results if getattr(er, 'eval_score', getattr(er, 'final_score', None)) is not None]
                 avg_score = sum(scores) / len(scores) if scores else 0.0
                 
                 # Calculate average evaluation time
@@ -979,13 +979,13 @@ class AgentRunsService:
             )
 
         excellent = len(
-            [er for er in context.evaluations if er.final_score >= 0.9]
+            [er for er in context.evaluations if getattr(er, 'eval_score', getattr(er, 'final_score', 0.0)) >= 0.9]
         )
         good = len(
-            [er for er in context.evaluations if 0.7 <= er.final_score < 0.9]
+            [er for er in context.evaluations if 0.7 <= getattr(er, 'eval_score', getattr(er, 'final_score', 0.0)) < 0.9]
         )
         average = len(
-            [er for er in context.evaluations if 0.5 <= er.final_score < 0.7]
+            [er for er in context.evaluations if 0.5 <= getattr(er, 'eval_score', getattr(er, 'final_score', 0.0)) < 0.7]
         )
         poor = len(context.evaluations) - excellent - good - average
 
@@ -1138,7 +1138,7 @@ class AgentRunsService:
             completed_tasks = sum(
                 1
                 for evaluation in context.evaluations
-                if evaluation.final_score >= 0.5
+                if getattr(evaluation, 'eval_score', getattr(evaluation, 'final_score', 0.0)) >= 0.5
             )
 
         if failed_tasks == 0 and total_tasks:
@@ -1279,14 +1279,13 @@ class AgentRunsService:
             if ui_task is None:
                 continue
             evaluation = evaluation_map.get(task_id)
-            success = evaluation is not None and evaluation.final_score >= 0.5
+            eval_score = getattr(evaluation, 'eval_score', getattr(evaluation, 'final_score', 0.0)) if evaluation else 0.0
+            success = evaluation is not None and eval_score >= 0.5
             host = _map_website_port_to_name(ui_task.website)
 
             host_stats_entry = host_stats[host]
             host_stats_entry["tasks"] += 1
-            host_stats_entry["score_sum"] += (
-                evaluation.final_score if evaluation else 0.0
-            )
+            host_stats_entry["score_sum"] += eval_score
             if success:
                 host_stats_entry["successful"] += 1
                 success_count += 1
@@ -1335,12 +1334,13 @@ class AgentRunsService:
         run,
         round_obj: ValidatorRound,
     ) -> UITask:
+        eval_score = getattr(evaluation, 'eval_score', getattr(evaluation, 'final_score', 0.0)) if evaluation else 0.0
         status = (
             TaskStatus.COMPLETED
-            if evaluation and evaluation.final_score >= 0.5
+            if evaluation and eval_score >= 0.5
             else TaskStatus.FAILED
         )
-        score = evaluation.final_score if evaluation else 0.0
+        score = eval_score
 
         # Use evaluation_time directly from the database
         # This is the time the evaluator took to process the task
@@ -1466,7 +1466,7 @@ class AgentRunsService:
     def _compute_average_score(evaluations: List[Evaluation]) -> float:
         if not evaluations:
             return 0.0
-        return sum(result.final_score for result in evaluations) / len(
+        return sum(getattr(result, 'eval_score', getattr(result, 'final_score', 0.0)) for result in evaluations) / len(
             evaluations
         )
 
