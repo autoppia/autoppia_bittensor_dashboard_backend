@@ -530,9 +530,6 @@ class TaskSolution(BaseModel):
         default_factory=list,
         description="Ordered list of actions executed by the agent",
     )
-    web_agent_id: Optional[str] = Field(
-        default=None, description="Identifier for the web agent instance"
-    )
 
     model_config = {"extra": "allow"}
 
@@ -671,8 +668,11 @@ class Evaluation(BaseModel):
         ..., description="Validator hotkey that produced the evaluation"
     )
 
-    final_score: float = Field(
-        default=0.0, description="Final score recorded for the evaluation"
+    eval_score: float = Field(
+        default=0.0, description="Evaluation score (tests/actions only, 0-1)"
+    )
+    reward: float = Field(
+        default=0.0, description="Reward value (eval_score + time_score, used for consensus)"
     )
     evaluation_time: float = Field(
         default=0.0, description="Time taken to evaluate the solution (seconds)"
