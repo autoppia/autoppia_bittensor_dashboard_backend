@@ -199,6 +199,7 @@ class ValidatorRoundMinerORM(TimestampMixin, Base):
     github_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_sota: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     first_seen_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     last_seen_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
@@ -254,18 +255,13 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    validator_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    validator_hotkey: Mapped[str] = mapped_column(
-        String(128), nullable=False, index=True
-    )
+    # validator_uid and validator_hotkey removed - obtain via validator_round.validator_snapshot
 
     miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     miner_hotkey: Mapped[Optional[str]] = mapped_column(
         String(128), nullable=True, index=True
     )
-
-    is_sota: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # is_sota and version removed - obtain via validator_round.miner_snapshots
 
     started_at: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     ended_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -280,8 +276,7 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     total_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     completed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # rank and weight removed - obtain via validator_round_miners_score
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(

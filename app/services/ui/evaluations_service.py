@@ -36,7 +36,10 @@ from app.models.ui.evaluations import (
     EvaluationStatus,
     EvaluationTaskInfo,
 )
-from app.services.ui.rounds_service import RoundsService
+from app.services.ui.rounds_service import (
+    RoundsService,
+    _get_validator_uid_from_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +156,8 @@ class EvaluationsService:
                     continue
             if validator_id:
                 validator_uid = _parse_identifier(validator_id)
-                if context.agent_run.validator_uid != validator_uid:
+                context_validator_uid = _get_validator_uid_from_context(context)
+                if context_validator_uid != validator_uid:
                     continue
 
             contexts.append(context)
@@ -286,11 +290,12 @@ class EvaluationsService:
         created = context.agent_run.started_at or context.round.started_at
         updated = context.agent_run.ended_at or created
 
+        validator_uid = _get_validator_uid_from_context(context)
         return EvaluationListItem(
             evaluationId=context.evaluation.evaluation_id,
             runId=context.agent_run.agent_run_id,
             agentId=_format_agent_id(context.agent_run.miner_uid),
-            validatorId=_format_validator_id(context.agent_run.validator_uid),
+            validatorId=_format_validator_id(validator_uid) if validator_uid else "unknown",
             roundId=round_int,
             taskId=context.task.task_id,
             taskUrl=task_url,

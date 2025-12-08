@@ -274,6 +274,9 @@ class ValidatorRoundMiner(BaseModel):
         default=False,
         description="Whether the agent is a benchmark/SOTA rather than a miner",
     )
+    version: Optional[str] = Field(
+        default=None, description="Version or build identifier for the agent"
+    )
     first_seen_at: Optional[float] = Field(
         default=None, description="Timestamp when the miner first appeared"
     )
@@ -305,19 +308,11 @@ class AgentEvaluationRun(BaseModel):
     validator_round_id: str = Field(
         ..., description="Foreign key to the validator round"
     )
-    validator_uid: int = Field(..., description="Validator UID that produced the run")
-    validator_hotkey: str = Field(
-        ..., description="Validator hotkey recorded for the run"
-    )
+    # validator_uid and validator_hotkey removed - obtain via validator_round.validator_snapshot
 
     miner_uid: Optional[int] = Field(default=None, description="Miner UID")
     miner_hotkey: Optional[str] = Field(default=None, description="Miner hotkey")
-    is_sota: bool = Field(
-        default=False, description="Whether this run corresponds to a benchmark agent"
-    )
-    version: Optional[str] = Field(
-        default=None, description="Version or build identifier for the agent"
-    )
+    # is_sota and version removed - obtain via validator_round.miner_snapshots
 
     started_at: float = Field(
         default_factory=now_ts, description="Start timestamp for the evaluation run"
@@ -345,13 +340,7 @@ class AgentEvaluationRun(BaseModel):
     total_tasks: int = Field(default=0, description="Total tasks attempted")
     completed_tasks: int = Field(default=0, description="Tasks completed successfully")
     failed_tasks: int = Field(default=0, description="Tasks that failed")
-
-    rank: Optional[int] = Field(
-        default=None, description="Final rank assigned to the agent in the round"
-    )
-    weight: Optional[float] = Field(
-        default=None, description="Weight applied to the agent after the round"
-    )
+    # rank and weight removed - obtain via validator_round_miners_score
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Extensible metadata for the run"
     )
@@ -360,8 +349,10 @@ class AgentEvaluationRun(BaseModel):
     def _validate_identity(  # type: ignore[override]
         cls, values: "AgentEvaluationRun"
     ) -> "AgentEvaluationRun":
-        if not values.is_sota and values.miner_uid is None:
-            raise ValueError("miner_uid is required for non-SOTA runs")
+        # is_sota validation removed - now obtained from validator_round.miner_snapshots
+        if values.miner_uid is None:
+            # Allow miner_uid to be None for SOTA agents (determined from miner_snapshots)
+            pass
         return values
 
 

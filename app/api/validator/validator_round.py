@@ -231,11 +231,12 @@ async def _legacy_to_start_agent_run_request(
 
     agent_run_data = dict(payload.agent_run)
     agent_run_data.setdefault("validator_round_id", validator_round_id)
-    agent_run_data.setdefault("validator_uid", validator_uid)
-    agent_run_data.setdefault("validator_hotkey", validator_hotkey)
+    # validator_uid and validator_hotkey removed - no longer needed in agent_run_data
 
     miner_info = dict(agent_run_data.get("miner_info") or {})
-    if not agent_run_data.get("is_sota"):
+    # is_sota and version removed from agent_run_data - they come from miner_snapshot
+    is_sota = bool(miner_info.get("is_sota") or agent_run_data.get("is_sota", False))
+    if not is_sota:
         agent_run_data.setdefault("miner_uid", miner_info.get("uid"))
         agent_run_data.setdefault("miner_hotkey", miner_info.get("hotkey"))
 
@@ -258,7 +259,8 @@ async def _legacy_to_start_agent_run_request(
         image_url=miner_info.get("agent_image") or miner_info.get("image"),
         github_url=miner_info.get("github"),
         description=miner_info.get("description"),
-        is_sota=bool(miner_info.get("is_sota")),
+        is_sota=is_sota,
+        version=miner_info.get("version") or agent_run_data.get("version"),
     )
     # Canonicalize miner image asset (allowlist + fallback)
     _resolve_miner_snapshot_image(miner_snapshot)
@@ -808,19 +810,11 @@ async def start_agent_run(
         # return 200 without enforcing window checks. This enables safe replays even if
         # the validator has moved past the active window.
         existing_run = await service._get_agent_run_row(agent_run.agent_run_id)  # type: ignore[attr-defined]
+        # validator_uid and validator_hotkey removed from agent_evaluation_runs
+        # Validation is done via validator_round_id matching
         if (
             existing_run is not None
             and existing_run.validator_round_id == validator_round_id
-            and (
-                existing_run.validator_uid is None
-                or agent_run.validator_uid is None
-                or int(existing_run.validator_uid) == int(agent_run.validator_uid)
-            )
-            and (
-                not existing_run.validator_hotkey
-                or not agent_run.validator_hotkey
-                or existing_run.validator_hotkey == agent_run.validator_hotkey
-            )
         ):
             logger.info(
                 "Agent run %s already registered (round %s); treating as idempotent",
@@ -832,31 +826,14 @@ async def start_agent_run(
                 "agent_run_id": agent_run.agent_run_id,
             }
 
-        # Ensure agent_run validator identity matches the round's registered validator
+        # Ensure round exists and request matches round owner
+        # validator_uid and validator_hotkey removed from agent_run - validation done via validator_round_id
         round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
         _ensure_request_matches_round_owner(request, round_row)
         if not round_row.validator_snapshot:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Validator snapshot not found for round",
-            )
-        if (
-            agent_run.validator_uid is not None
-            and round_row.validator_snapshot.validator_uid is not None
-            and int(agent_run.validator_uid) != int(round_row.validator_snapshot.validator_uid)
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="agent_run.validator_uid must match the round's validator_uid",
-            )
-        if (
-            agent_run.validator_hotkey
-            and round_row.validator_snapshot.validator_hotkey
-            and agent_run.validator_hotkey != round_row.validator_snapshot.validator_hotkey
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="agent_run.validator_hotkey must match the round's validator_hotkey",
             )
 
         miner_snapshot = request_payload.miner_snapshot
@@ -915,7 +892,8 @@ async def start_agent_run(
             "miner_snapshot.validator_round_id",
         )
 
-        if not agent_run.is_sota:
+        # is_sota now comes from miner_snapshot, not agent_run
+        if not request_payload.miner_snapshot.is_sota:
             if agent_run.miner_uid is None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -973,12 +951,9 @@ async def start_agent_run(
         await session.commit()
     except DuplicateIdentifierError as exc:
         existing_run = await service._get_agent_run_row(agent_run.agent_run_id)  # type: ignore[attr-defined]
+        # validator_uid and validator_hotkey removed from agent_evaluation_runs
         if existing_run is not None:
-            if (
-                existing_run.validator_round_id == validator_round_id
-                and existing_run.validator_uid == agent_run.validator_uid
-                and existing_run.validator_hotkey == agent_run.validator_hotkey
-            ):
+            if existing_run.validator_round_id == validator_round_id:
                 logger.info(
                     "Agent run %s already registered; treating as idempotent registration",
                     agent_run.agent_run_id,
