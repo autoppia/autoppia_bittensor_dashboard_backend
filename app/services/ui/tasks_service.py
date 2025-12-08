@@ -1768,7 +1768,7 @@ class TasksService:
 
     def _build_ui_task(self, context: TaskContext) -> UITask:
         evaluation = context.evaluation
-        score = evaluation.final_score if evaluation else 0.0
+        score = getattr(evaluation, "eval_score", getattr(evaluation, "final_score", 0.0)) if evaluation else 0.0
         status = TaskStatus.COMPLETED if score >= 0.5 else TaskStatus.FAILED
         success_rate = int(score * 100)
 
@@ -1900,6 +1900,36 @@ class TasksService:
         data.setdefault("metadata", evaluation_row.meta)
         result = Evaluation(**data)
         return result
+
+    async def get_evaluation_complete(self, evaluation_id: str) -> Dict[str, Any]:
+        """
+        Get all evaluation data in a single call, similar to get-round.
+        Returns details, personas, results, actions, screenshots, logs, timeline, metrics, and statistics.
+        """
+        context = await self.get_task_by_evaluation_id(evaluation_id)
+        
+        # Build all data in one go
+        details = self.build_task_detail(context)
+        personas = self.build_personas(context)
+        results = self.build_task_results(context)
+        actions = self.build_actions(context)
+        screenshots = self.build_screenshots(context)
+        logs = self.build_logs(context)
+        timeline = self.build_timeline(context)
+        metrics = self.build_metrics(context)
+        statistics = self.build_task_statistics(context)
+        
+        return {
+            "details": details.model_dump(),
+            "personas": personas.model_dump(),
+            "results": results.model_dump(),
+            "actions": [action.model_dump() for action in actions],
+            "screenshots": [shot.model_dump() for shot in screenshots],
+            "logs": [log.model_dump() for log in logs],
+            "timeline": [item.model_dump() for item in timeline],
+            "metrics": metrics,
+            "statistics": statistics.model_dump(),
+        }
 
     @staticmethod
     def _sort_tasks(tasks: List[UITask], sort_by: str, sort_order: str) -> List[UITask]:

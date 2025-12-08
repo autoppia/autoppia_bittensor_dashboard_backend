@@ -78,6 +78,26 @@ async def get_evaluation(
     return EvaluationDetailResponse(success=True, data={"evaluation": detail})
 
 
+@router.get("/{evaluation_id}/get-evaluation")
+async def get_evaluation_complete(
+    evaluation_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Get all evaluation data in a single call (similar to get-round).
+    Returns details, personas, results, actions, screenshots, logs, timeline, metrics, and statistics.
+    """
+    from app.services.ui.tasks_service import TasksService
+    
+    task_service = TasksService(session)
+    try:
+        data = await task_service.get_evaluation_complete(evaluation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    
+    return {"success": True, "data": data}
+
+
 @router.get("/{evaluation_id}/task-details")
 async def get_evaluation_as_task_details(
     evaluation_id: str,
