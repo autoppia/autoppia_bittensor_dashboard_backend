@@ -318,6 +318,32 @@ class ValidatorRoundMiner(BaseModel):
         return values
 
 
+class ValidatorRoundSummary(BaseModel):
+    """Summary of miner performance in a validator round (local and post-consensus)."""
+
+    id: Optional[int] = None
+    validator_round_id: str = Field(..., description="Foreign key to the validator round")
+    miner_uid: int = Field(..., description="Miner UID")
+    miner_hotkey: Optional[str] = Field(default=None, description="Miner hotkey")
+
+    # Local evaluation (pre-consensus, from this validator)
+    local_rank: Optional[int] = Field(default=None, description="Local rank (pre-consensus)")
+    local_avg_reward: Optional[float] = Field(default=None, description="Local average reward")
+    local_avg_eval_score: Optional[float] = Field(default=None, description="Local average eval score")
+    local_avg_eval_time: Optional[float] = Field(default=None, description="Local average evaluation time")
+    local_tasks_received: Optional[int] = Field(default=None, description="Local tasks received")
+    local_tasks_success: Optional[int] = Field(default=None, description="Local tasks success")
+
+    # Post-consensus evaluation (aggregated from all validators)
+    post_consensus_rank: Optional[int] = Field(default=None, description="Post-consensus rank")
+    post_consensus_avg_reward: Optional[float] = Field(default=None, description="Post-consensus average reward")
+    post_consensus_avg_eval_score: Optional[float] = Field(default=None, description="Post-consensus average eval score")
+    post_consensus_avg_eval_time: Optional[float] = Field(default=None, description="Post-consensus average evaluation time")
+    post_consensus_tasks_received: Optional[int] = Field(default=None, description="Post-consensus tasks received")
+    post_consensus_tasks_success: Optional[int] = Field(default=None, description="Post-consensus tasks success")
+    weight: Optional[float] = Field(default=None, description="Final weight assigned to the miner")
+
+
 # ---------------------------------------------------------------------------
 # Agent evaluation runs
 # ---------------------------------------------------------------------------

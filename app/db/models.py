@@ -95,10 +95,6 @@ class ValidatorRoundORM(TimestampMixin, Base):
         back_populates="validator_round",
         cascade="all, delete-orphan",
     )
-    miner_scores: Mapped[list["ValidatorRoundMinersScoreORM"]] = relationship(
-        back_populates="validator_round",
-        cascade="all, delete-orphan",
-    )
     agent_runs: Mapped[list["AgentEvaluationRunORM"]] = relationship(
         back_populates="validator_round",
         cascade="all, delete-orphan",
@@ -108,6 +104,10 @@ class ValidatorRoundORM(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     evaluations: Mapped[list["EvaluationORM"]] = relationship(
+        back_populates="validator_round",
+        cascade="all, delete-orphan",
+    )
+    round_summaries: Mapped[list["ValidatorRoundSummaryORM"]] = relationship(
         back_populates="validator_round",
         cascade="all, delete-orphan",
     )
@@ -209,10 +209,21 @@ class ValidatorRoundMinerORM(TimestampMixin, Base):
     )
 
 
-class ValidatorRoundMinersScoreORM(TimestampMixin, Base):
-    """Scores and consensus data for miners in a validator round."""
+class ValidatorRoundSummaryORM(TimestampMixin, Base):
+    """Summary of miner performance in a validator round (local and post-consensus)."""
 
-    __tablename__ = "validator_round_miners_score"
+    __tablename__ = "validator_round_summary_miners"
+    __table_args__ = (
+        UniqueConstraint(
+            "validator_round_id",
+            "miner_uid",
+            name="uq_round_summary_round_miner",
+        ),
+        Index("ix_round_summary_miners_round", "validator_round_id"),
+        Index("ix_round_summary_miners_miner", "miner_uid"),
+        Index("ix_round_summary_miners_local_rank", "validator_round_id", "local_rank"),
+        Index("ix_round_summary_miners_consensus_rank", "validator_round_id", "post_consensus_rank"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     validator_round_id: Mapped[str] = mapped_column(
@@ -224,14 +235,26 @@ class ValidatorRoundMinersScoreORM(TimestampMixin, Base):
     miner_hotkey: Mapped[Optional[str]] = mapped_column(
         String(128), nullable=True, index=True
     )
-    score_consensus: Mapped[float] = mapped_column(Float, nullable=False)
-    rank_consensus: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Local evaluation (pre-consensus, from this validator)
+    local_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    local_avg_reward: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    local_avg_eval_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    local_avg_eval_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    local_tasks_received: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    local_tasks_success: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Post-consensus evaluation (aggregated from all validators)
+    post_consensus_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    post_consensus_avg_reward: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    post_consensus_avg_eval_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    post_consensus_avg_eval_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    post_consensus_tasks_received: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    post_consensus_tasks_success: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
-        back_populates="miner_scores"
+        back_populates="round_summaries"
     )
 
 
@@ -243,7 +266,7 @@ class ValidatorRoundMinersScoreORM(TimestampMixin, Base):
 class AgentEvaluationRunORM(TimestampMixin, Base):
     """Execution record for an agent within a validator_round."""
 
-    __tablename__ = "agent_evaluation_runs"
+    __tablename__ = "miner_evaluation_runs"
     __table_args__ = (
         UniqueConstraint("agent_run_id", name="uq_agent_run_id"),
         Index("ix_agent_run_round", "validator_round_id", "agent_run_id"),
@@ -367,7 +390,7 @@ class TaskSolutionORM(TimestampMixin, Base):
         ForeignKey("tasks.task_id", ondelete="CASCADE"), nullable=False, index=True
     )
     agent_run_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_evaluation_runs.agent_run_id", ondelete="CASCADE"),
+        ForeignKey("miner_evaluation_runs.agent_run_id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -436,7 +459,7 @@ class EvaluationORM(TimestampMixin, Base):
         index=True,
     )
     agent_run_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_evaluation_runs.agent_run_id", ondelete="CASCADE"),
+        ForeignKey("miner_evaluation_runs.agent_run_id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -499,7 +522,6 @@ __all__ = [
     "ValidatorRoundORM",
     "ValidatorRoundValidatorORM",
     "ValidatorRoundMinerORM",
-    "ValidatorRoundMinersScoreORM",
     "AgentEvaluationRunORM",
     "TaskORM",
     "TaskSolutionORM",

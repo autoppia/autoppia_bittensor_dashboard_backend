@@ -18,7 +18,7 @@ from app.db.models import (
     EvaluationORM,
     RoundORM,
     TaskORM,
-    ValidatorRoundMinersScoreORM,
+    ValidatorRoundSummaryORM,
     ValidatorRoundMinerORM,
 )
 from app.models.core import ValidatorRound
@@ -312,18 +312,19 @@ class OverviewService:
                 if miner_uids:
                     try:
                         stmt = select(
-                            ValidatorRoundMinersScoreORM.miner_uid,
-                            ValidatorRoundMinersScoreORM.score_consensus,
+                            ValidatorRoundSummaryORM.miner_uid,
+                            ValidatorRoundSummaryORM.post_consensus_avg_reward,
                         ).where(
-                            ValidatorRoundMinersScoreORM.validator_round_id == validator_round_id,
-                            ValidatorRoundMinersScoreORM.miner_uid.in_(miner_uids),
+                            ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                            ValidatorRoundSummaryORM.miner_uid.in_(miner_uids),
                         )
                         result = await self.session.execute(stmt)
                         rows = result.all()
                         for row in rows:
-                            consensus_scores_map[(validator_round_id, row.miner_uid)] = float(
-                                row.score_consensus
-                            )
+                            if row.post_consensus_avg_reward is not None:
+                                consensus_scores_map[(validator_round_id, row.miner_uid)] = float(
+                                    row.post_consensus_avg_reward
+                                )
                     except Exception as e:
                         logger.debug(f"Could not fetch consensus scores: {e}")
 
@@ -439,10 +440,10 @@ class OverviewService:
                     try:
                         # First try to get consensus scores
                         stmt = select(
-                            ValidatorRoundMinersScoreORM.miner_uid,
-                            ValidatorRoundMinersScoreORM.score_consensus,
+                            ValidatorRoundSummaryORM.miner_uid,
+                            ValidatorRoundSummaryORM.post_consensus_avg_reward,
                         ).where(
-                            ValidatorRoundMinersScoreORM.validator_round_id
+                            ValidatorRoundSummaryORM.validator_round_id
                             == round_obj.validator_round_id
                         )
                         result = await self.session.execute(stmt)
@@ -453,14 +454,14 @@ class OverviewService:
                                 f"Found {len(consensus_rows)} consensus scores for round {round_obj.validator_round_id}"
                             )
                             for row in consensus_rows:
-                                miner_uid, score_consensus = row
-                                if score_consensus is not None:
+                                miner_uid, post_consensus_reward = row
+                                if post_consensus_reward is not None:
                                     miner_identifier = f"uid:{miner_uid}"
                                     miners.add(miner_identifier)
                                     tracker = miner_score_tracker.setdefault(
                                         miner_identifier, []
                                     )
-                                    tracker.append(float(score_consensus))
+                                    tracker.append(float(post_consensus_reward))
                             logger.info(
                                 f"✅ Loaded {len(consensus_rows)} consensus scores from DB for round {round_obj.validator_round_id}"
                             )
@@ -521,27 +522,27 @@ class OverviewService:
         # Query directly from validator_round_miners_score for the metrics round
         if metrics_round_number and metrics_round_number > 0:
             try:
-                # Get the best score_consensus for this round
+                # Get the best post_consensus_avg_reward for this round
                 stmt = (
                     select(
-                        ValidatorRoundMinersScoreORM.miner_uid,
-                        ValidatorRoundMinersScoreORM.score_consensus,
+                        ValidatorRoundSummaryORM.miner_uid,
+                        ValidatorRoundSummaryORM.post_consensus_avg_reward,
                     )
                     .join(
                         RoundORM,
-                        ValidatorRoundMinersScoreORM.validator_round_id
+                        ValidatorRoundSummaryORM.validator_round_id
                         == RoundORM.validator_round_id,
                     )
                     .where(RoundORM.round_number == metrics_round_number)
-                    .order_by(ValidatorRoundMinersScoreORM.score_consensus.desc())
+                    .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc().nulls_last())
                     .limit(1)
                 )
                 result = await self.session.execute(stmt)
                 row = result.first()
                 
-                if row:
+                if row and row.post_consensus_avg_reward is not None:
                     top_miner_uid = row.miner_uid
-                    top_score = float(row.score_consensus)
+                    top_score = float(row.post_consensus_avg_reward)
                     
                     # Get miner name from validator_round_miners
                     try:
@@ -768,7 +769,7 @@ class OverviewService:
         """
         Obtiene el leaderboard usando las nuevas tablas:
         - validator_rounds: round_number, ended_at
-        - validator_round_miners_score: score_consensus, miner_uid (ganador = max score_consensus por round)
+        - validator_round_summary_miners: post_consensus_avg_reward, miner_uid (ganador = max post_consensus_avg_reward por round)
         - validator_round_miners: name (para el winnerUid)
         """
         normalized_range = (time_range or "").strip().lower()
@@ -809,25 +810,26 @@ class OverviewService:
             fetch_limit = derived_limit or 30
 
         # Query SQL simplificada usando las nuevas tablas
-        # Para cada round_number, obtenemos el miner_uid con el máximo score_consensus
+        # Para cada round_number, obtenemos el miner_uid con el máximo post_consensus_avg_reward
         
-        # Subquery para obtener el máximo score_consensus por round_number
+        # Subquery para obtener el máximo post_consensus_avg_reward por round_number
         max_scores_subq = (
             select(
                 RoundORM.round_number,
-                func.max(ValidatorRoundMinersScoreORM.score_consensus).label(
-                    "max_score_consensus"
+                func.max(ValidatorRoundSummaryORM.post_consensus_avg_reward).label(
+                    "max_post_consensus_reward"
                 ),
             )
             .select_from(
                 RoundORM.__table__.join(
-                    ValidatorRoundMinersScoreORM.__table__,
+                    ValidatorRoundSummaryORM.__table__,
                     RoundORM.validator_round_id
-                    == ValidatorRoundMinersScoreORM.validator_round_id,
+                    == ValidatorRoundSummaryORM.validator_round_id,
                 )
             )
             .where(RoundORM.round_number.isnot(None))
             .where(RoundORM.status == "finished")
+            .where(ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None))
             .group_by(RoundORM.round_number)
             .subquery()
         )
@@ -842,28 +844,28 @@ class OverviewService:
             .subquery()
         )
 
-        # Query principal: obtener el ganador (miner_uid con max score_consensus) por round
+        # Query principal: obtener el ganador (miner_uid con max post_consensus_avg_reward) por round
         # Usamos DISTINCT ON de PostgreSQL para obtener solo el primer registro por round_number
         stmt = (
             select(
                 RoundORM.round_number,
-                ValidatorRoundMinersScoreORM.score_consensus,
-                ValidatorRoundMinersScoreORM.miner_uid,
+                ValidatorRoundSummaryORM.post_consensus_avg_reward,
+                ValidatorRoundSummaryORM.miner_uid,
                 ValidatorRoundMinerORM.name,
                 RoundORM.ended_at,
             )
             .select_from(
                 RoundORM.__table__.join(
-                    ValidatorRoundMinersScoreORM.__table__,
+                    ValidatorRoundSummaryORM.__table__,
                     RoundORM.validator_round_id
-                    == ValidatorRoundMinersScoreORM.validator_round_id,
+                    == ValidatorRoundSummaryORM.validator_round_id,
                 )
                 .join(
                     max_scores_subq,
                     (RoundORM.round_number == max_scores_subq.c.round_number)
                     & (
-                        ValidatorRoundMinersScoreORM.score_consensus
-                        == max_scores_subq.c.max_score_consensus
+                        ValidatorRoundSummaryORM.post_consensus_avg_reward
+                        == max_scores_subq.c.max_post_consensus_reward
                     ),
                 )
                 .join(
@@ -875,16 +877,17 @@ class OverviewService:
                 ValidatorRoundMinerORM,
                 (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id)
                 & (
-                    ValidatorRoundMinersScoreORM.miner_uid
+                    ValidatorRoundSummaryORM.miner_uid
                     == ValidatorRoundMinerORM.miner_uid
                 ),
             )
             .where(RoundORM.round_number.isnot(None))
             .where(RoundORM.status == "finished")
+            .where(ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None))
             .order_by(
                 RoundORM.round_number.desc(),
-                ValidatorRoundMinersScoreORM.score_consensus.desc(),
-                ValidatorRoundMinersScoreORM.miner_uid.asc(),
+                ValidatorRoundSummaryORM.post_consensus_avg_reward.desc(),
+                ValidatorRoundSummaryORM.miner_uid.asc(),
             )
         )
 
@@ -895,15 +898,15 @@ class OverviewService:
             now_iso = datetime.now(timezone.utc).isoformat()
             return [], {"start": now_iso, "end": now_iso}
 
-        # Agrupar por round_number y tomar el primero (ganador con max score_consensus)
-        # Como la query está ordenada por score_consensus DESC, el primero es el ganador
+        # Agrupar por round_number y tomar el primero (ganador con max post_consensus_avg_reward)
+        # Como la query está ordenada por post_consensus_avg_reward DESC, el primero es el ganador
         seen_rounds: Dict[int, bool] = {}
         entries: List[LeaderboardEntry] = []
         
         for row in rows:
-            round_number, score_consensus, miner_uid, miner_name, ended_at = row
+            round_number, post_consensus_reward, miner_uid, miner_name, ended_at = row
 
-            if round_number is None:
+            if round_number is None or post_consensus_reward is None:
                 continue
 
             round_num = int(round_number)
@@ -921,7 +924,7 @@ class OverviewService:
             entries.append(
                 LeaderboardEntry(
                     round=round_num,
-                    subnet36=round(float(score_consensus), 3),
+                    subnet36=round(float(post_consensus_reward), 3),
                     winnerUid=int(miner_uid) if miner_uid is not None else None,
                     winnerName=str(miner_name) if miner_name else None,
                     openai_cua=None,

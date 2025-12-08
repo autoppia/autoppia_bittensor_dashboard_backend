@@ -15,6 +15,7 @@ from app.db.models import (
     TaskSolutionORM,
     ValidatorRoundMinerORM,
     ValidatorRoundORM,
+    ValidatorRoundSummaryORM,
     ValidatorRoundValidatorORM,
 )
 from app.models.core import (
@@ -595,6 +596,13 @@ class ValidatorRoundPersistenceService:
             # rank and weight removed from agent_evaluation_runs
             # They are now stored in validator_round_miners_score and updated there
 
+        # Populate validator_round_summary_miners table
+        await self._populate_round_summary(
+            validator_round_id=validator_round_id,
+            local_evaluation=local_evaluation,
+            post_consensus_evaluation=post_consensus_evaluation,
+        )
+
     async def submit_round(
         self, payload: ValidatorRoundSubmissionRequest
     ) -> PersistenceResult:
@@ -1091,3 +1099,77 @@ class ValidatorRoundPersistenceService:
             [evaluation.evaluation_id for evaluation in payload.evaluations],
             "evaluation_id",
         )
+
+    async def _populate_round_summary(
+        self,
+        *,
+        validator_round_id: str,
+        local_evaluation: Optional[Dict[str, Any]] = None,
+        post_consensus_evaluation: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Populate validator_round_summary_miners table from local_evaluation and post_consensus_evaluation."""
+        # Build a map of miner_uid -> summary data
+        summary_map: Dict[int, Dict[str, Any]] = {}
+
+        # Process local_evaluation
+        if local_evaluation and isinstance(local_evaluation, dict):
+            local_miners = local_evaluation.get("miners", [])
+            for miner_data in local_miners:
+                if not isinstance(miner_data, dict):
+                    continue
+                miner_uid = miner_data.get("miner_uid")
+                if miner_uid is None:
+                    continue
+                
+                summary_map.setdefault(miner_uid, {})["miner_uid"] = int(miner_uid)
+                summary_map[miner_uid]["miner_hotkey"] = miner_data.get("miner_hotkey")
+                summary_map[miner_uid]["local_rank"] = miner_data.get("rank")
+                summary_map[miner_uid]["local_avg_reward"] = miner_data.get("avg_reward")
+                summary_map[miner_uid]["local_avg_eval_score"] = miner_data.get("avg_eval_score")
+                summary_map[miner_uid]["local_avg_eval_time"] = miner_data.get("avg_evaluation_time")
+                summary_map[miner_uid]["local_tasks_received"] = miner_data.get("tasks_attempted")
+                summary_map[miner_uid]["local_tasks_success"] = miner_data.get("tasks_completed")
+
+        # Process post_consensus_evaluation
+        if post_consensus_evaluation and isinstance(post_consensus_evaluation, dict):
+            post_consensus_miners = post_consensus_evaluation.get("miners", [])
+            for miner_data in post_consensus_miners:
+                if not isinstance(miner_data, dict):
+                    continue
+                miner_uid = miner_data.get("miner_uid")
+                if miner_uid is None:
+                    continue
+                
+                summary_map.setdefault(miner_uid, {})["miner_uid"] = int(miner_uid)
+                # Update miner_hotkey if not already set or if post_consensus has it
+                if "miner_hotkey" not in summary_map[miner_uid] or summary_map[miner_uid]["miner_hotkey"] is None:
+                    summary_map[miner_uid]["miner_hotkey"] = miner_data.get("miner_hotkey")
+                
+                summary_map[miner_uid]["post_consensus_rank"] = miner_data.get("rank")
+                summary_map[miner_uid]["post_consensus_avg_reward"] = miner_data.get("consensus_reward")
+                summary_map[miner_uid]["post_consensus_avg_eval_score"] = miner_data.get("avg_eval_score")
+                summary_map[miner_uid]["post_consensus_avg_eval_time"] = miner_data.get("avg_eval_time")
+                summary_map[miner_uid]["post_consensus_tasks_received"] = miner_data.get("tasks_sent")
+                summary_map[miner_uid]["post_consensus_tasks_success"] = miner_data.get("tasks_success")
+                summary_map[miner_uid]["weight"] = miner_data.get("weight")
+
+        # Upsert summary records
+        for miner_uid, summary_data in summary_map.items():
+            stmt = select(ValidatorRoundSummaryORM).where(
+                ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                ValidatorRoundSummaryORM.miner_uid == miner_uid,
+            )
+            existing = await self.session.scalar(stmt)
+            
+            if existing:
+                # Update existing record
+                for key, value in summary_data.items():
+                    if key != "miner_uid":  # Don't update the primary key
+                        setattr(existing, key, value)
+            else:
+                # Create new record
+                new_summary = ValidatorRoundSummaryORM(
+                    validator_round_id=validator_round_id,
+                    **summary_data
+                )
+                self.session.add(new_summary)

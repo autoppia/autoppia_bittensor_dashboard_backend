@@ -19,7 +19,7 @@ from app.config import settings
 from app.db.models import (
     AgentEvaluationRunORM,
     RoundORM,
-    ValidatorRoundMinersScoreORM,
+    ValidatorRoundSummaryORM,
     ValidatorRoundValidatorORM,
 )
 from app.models.core import MinerInfo, ValidatorRound
@@ -1116,17 +1116,17 @@ class AgentsService:
         if aggregates is None:
             aggregates = await self._aggregate_agents()
 
-        # Get score_consensus from validator_round_miners_score for all miners in this round
+        # Get post_consensus_avg_reward from validator_round_summary_miners for all miners in this round
         scores_stmt = (
             select(
-                ValidatorRoundMinersScoreORM.miner_uid,
-                ValidatorRoundMinersScoreORM.score_consensus,
-                ValidatorRoundMinersScoreORM.rank_consensus,
+                ValidatorRoundSummaryORM.miner_uid,
+                ValidatorRoundSummaryORM.post_consensus_avg_reward,
+                ValidatorRoundSummaryORM.post_consensus_rank,
             )
             .select_from(
-                ValidatorRoundMinersScoreORM.__table__.join(
+                ValidatorRoundSummaryORM.__table__.join(
                     RoundORM.__table__,
-                    ValidatorRoundMinersScoreORM.validator_round_id
+                    ValidatorRoundSummaryORM.validator_round_id
                     == RoundORM.validator_round_id,
                 )
             )
@@ -1134,7 +1134,7 @@ class AgentsService:
         )
         scores_result = await self.session.execute(scores_stmt)
         scores_by_miner: Dict[int, float] = {
-            row.miner_uid: float(row.score_consensus) if row.score_consensus else 0.0
+            row.miner_uid: float(row.post_consensus_avg_reward) if row.post_consensus_avg_reward else 0.0
             for row in scores_result.all()
         }
 
@@ -1166,15 +1166,15 @@ class AgentsService:
             if aggregate.uid is None:
                 continue
 
-            # Use score_consensus if available, otherwise fallback to computed score
-            score_consensus = scores_by_miner.get(aggregate.uid)
+            # Use post_consensus_avg_reward if available, otherwise fallback to computed score
+            post_consensus_reward = scores_by_miner.get(aggregate.uid)
             round_contexts = [
                 context
                 for context in aggregate.runs
                 if _context_round_number(context) == round_number
             ]
             
-            if score_consensus is None:
+            if post_consensus_reward is None:
                 # Fallback: compute from contexts
                 if not round_contexts:
                     continue
@@ -1183,7 +1183,7 @@ class AgentsService:
                     continue
                 average_score = sum(scores) / len(scores)
             else:
-                average_score = score_consensus
+                average_score = post_consensus_reward
 
             durations: List[float] = []
             total_tasks = 0
@@ -1920,7 +1920,7 @@ class AgentsService:
         aggregate: AgentAggregate,
         aggregates: Dict[str, AgentAggregate],
     ) -> List[ScoreRoundDataPoint]:
-        """Build score round data series using score_consensus from validator_round_miners_score."""
+        """Build score round data series using post_consensus_avg_reward from validator_round_summary_miners."""
         if not aggregate.uid:
             return []
 
@@ -1929,24 +1929,24 @@ class AgentsService:
         if not round_ids:
             return []
 
-        # Query score_consensus from validator_round_miners_score for this miner
+        # Query post_consensus_avg_reward from validator_round_summary_miners for this miner
         stmt = (
             select(
                 RoundORM.round_number,
-                ValidatorRoundMinersScoreORM.score_consensus,
-                ValidatorRoundMinersScoreORM.rank_consensus,
+                ValidatorRoundSummaryORM.post_consensus_avg_reward,
+                ValidatorRoundSummaryORM.post_consensus_rank,
                 RoundORM.ended_at,
             )
             .select_from(
                 RoundORM.__table__.join(
-                    ValidatorRoundMinersScoreORM.__table__,
+                    ValidatorRoundSummaryORM.__table__,
                     RoundORM.validator_round_id
-                    == ValidatorRoundMinersScoreORM.validator_round_id,
+                    == ValidatorRoundSummaryORM.validator_round_id,
                 )
             )
             .where(
                 RoundORM.round_number.in_(round_ids),
-                ValidatorRoundMinersScoreORM.miner_uid == aggregate.uid,
+                ValidatorRoundSummaryORM.miner_uid == aggregate.uid,
             )
             .order_by(RoundORM.round_number)
         )
@@ -1954,17 +1954,17 @@ class AgentsService:
         result = await self.session.execute(stmt)
         rows = result.all()
 
-        # Get top scores per round (max score_consensus for each round)
+        # Get top scores per round (max post_consensus_avg_reward for each round)
         top_scores_stmt = (
             select(
                 RoundORM.round_number,
-                func.max(ValidatorRoundMinersScoreORM.score_consensus).label("top_score"),
+                func.max(ValidatorRoundSummaryORM.post_consensus_avg_reward).label("top_score"),
             )
             .select_from(
                 RoundORM.__table__.join(
-                    ValidatorRoundMinersScoreORM.__table__,
+                    ValidatorRoundSummaryORM.__table__,
                     RoundORM.validator_round_id
-                    == ValidatorRoundMinersScoreORM.validator_round_id,
+                    == ValidatorRoundSummaryORM.validator_round_id,
                 )
             )
             .where(RoundORM.round_number.in_(round_ids))
@@ -1979,9 +1979,9 @@ class AgentsService:
         datapoints: List[ScoreRoundDataPoint] = []
         for row in rows:
             round_id = row.round_number
-            score_consensus = float(row.score_consensus) if row.score_consensus else 0.0
-            rank_consensus = row.rank_consensus
-            top_score = top_scores_by_round.get(round_id, score_consensus)
+            post_consensus_reward = float(row.post_consensus_avg_reward) if row.post_consensus_avg_reward else 0.0
+            post_consensus_rank = row.post_consensus_rank
+            top_score = top_scores_by_round.get(round_id, post_consensus_reward)
 
             # Get timestamp from round ended_at
             timestamp_value = (
@@ -2005,8 +2005,8 @@ class AgentsService:
             datapoints.append(
                 ScoreRoundDataPoint(
                     round_id=round_id,
-                    score=round(score_consensus, 3),
-                    rank=rank_consensus,
+                    score=round(post_consensus_reward, 3),
+                    rank=post_consensus_rank,
                     topScore=round(top_score, 3),
                     reward=round(reward_value, 6) if reward_value else 0.0,
                     timestamp=timestamp_dt,

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     RoundORM,
-    ValidatorRoundMinersScoreORM,
+    ValidatorRoundSummaryORM,
     ValidatorRoundMinerORM,
 )
 from app.models.ui.miner_list import (
@@ -39,8 +39,8 @@ class MinerListService:
         search: str | None = None,
         round_number: Optional[int] = None,
     ) -> MinimalMinerListResponse:
-        # If round_number is specified, query directly from validator_round_miners_score
-        # This bypasses Redis cache to ensure we get the correct score_consensus values
+        # If round_number is specified, query directly from validator_round_summary_miners
+        # This bypasses Redis cache to ensure we get the correct post_consensus_avg_reward values
         if round_number is not None and round_number > 0:
             return await self._list_miners_from_scores(
                 round_number=round_number,
@@ -297,35 +297,35 @@ class MinerListService:
         is_sota: Optional[bool],
         search: Optional[str],
     ) -> MinimalMinerListResponse:
-        """List miners for a specific round using score_consensus from validator_round_miners_score."""
+        """List miners for a specific round using post_consensus_avg_reward from validator_round_summary_miners."""
         # Query miners with scores for this round
         stmt = (
             select(
-                ValidatorRoundMinersScoreORM.miner_uid,
-                ValidatorRoundMinersScoreORM.score_consensus,
-                ValidatorRoundMinersScoreORM.rank_consensus,
+                ValidatorRoundSummaryORM.miner_uid,
+                ValidatorRoundSummaryORM.post_consensus_avg_reward,
+                ValidatorRoundSummaryORM.post_consensus_rank,
                 ValidatorRoundMinerORM.name,
                 ValidatorRoundMinerORM.image_url,
                 ValidatorRoundMinerORM.is_sota,
             )
             .select_from(
-                ValidatorRoundMinersScoreORM.__table__.join(
+                ValidatorRoundSummaryORM.__table__.join(
                     RoundORM.__table__,
-                    ValidatorRoundMinersScoreORM.validator_round_id
+                    ValidatorRoundSummaryORM.validator_round_id
                     == RoundORM.validator_round_id,
                 ).outerjoin(
                     ValidatorRoundMinerORM.__table__,
                     (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id)
                     & (
-                        ValidatorRoundMinersScoreORM.miner_uid
+                        ValidatorRoundSummaryORM.miner_uid
                         == ValidatorRoundMinerORM.miner_uid
                     ),
                 )
             )
             .where(RoundORM.round_number == round_number)
             .order_by(
-                ValidatorRoundMinersScoreORM.rank_consensus.asc().nulls_last(),
-                ValidatorRoundMinersScoreORM.score_consensus.desc(),
+                ValidatorRoundSummaryORM.post_consensus_rank.asc().nulls_last(),
+                ValidatorRoundSummaryORM.post_consensus_avg_reward.desc().nulls_last(),
             )
         )
 
@@ -338,8 +338,8 @@ class MinerListService:
 
         for row in rows:
             miner_uid = row.miner_uid
-            score_consensus = float(row.score_consensus) if row.score_consensus else 0.0
-            rank_consensus = row.rank_consensus
+            post_consensus_reward = float(row.post_consensus_avg_reward) if row.post_consensus_avg_reward else 0.0
+            post_consensus_rank = row.post_consensus_rank
             name = row.name or f"Miner {miner_uid}"
             image_url = row.image_url or ""
             is_sota_value = row.is_sota if row.is_sota is not None else False
@@ -359,14 +359,14 @@ class MinerListService:
                 MinerListItem(
                     uid=miner_uid,
                     name=name,
-                    ranking=rank_consensus or 0,
-                    score=round(score_consensus, 4),
+                    ranking=post_consensus_rank or 0,
+                    score=round(post_consensus_reward, 4),
                     isSota=is_sota_value,
                     imageUrl=image_url,
                 )
             )
 
-        # Apply rankings (in case rank_consensus is None for some)
+        # Apply rankings (in case post_consensus_rank is None for some)
         ranked_items = self._apply_rankings(items, start_rank=1)
 
         total = len(ranked_items)
