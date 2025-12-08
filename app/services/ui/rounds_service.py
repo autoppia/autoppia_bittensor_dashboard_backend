@@ -2176,11 +2176,14 @@ class RoundsService:
                     # ✅ Sobrescribir score con local_avg_reward del summary si existe
                     if miner_uid in summary_by_miner:
                         summary = summary_by_miner[miner_uid]
-                        miner_entry["score"] = round(float(summary.local_avg_reward or 0.0), 3)
+                        miner_entry["score"] = _truncate_decimal(float(summary.local_avg_reward or 0.0), 4)  # Reward (truncado a 4 decimales)
                         miner_entry["ranking"] = summary.local_rank or 0
-                        # Agregar avg_eval_time si está disponible
+                        # ✅ Agregar eval_score, eval_time y reward explícitamente para el tooltip
+                        miner_entry["eval_score"] = _truncate_decimal(float(summary.local_avg_eval_score or 0.0), 4)  # Score (eval_score)
+                        miner_entry["reward"] = _truncate_decimal(float(summary.local_avg_reward or 0.0), 4)  # Reward (reward)
                         if summary.local_avg_eval_time:
-                            miner_entry["avgEvalTime"] = round(float(summary.local_avg_eval_time), 2)
+                            miner_entry["avgEvalTime"] = _truncate_decimal(float(summary.local_avg_eval_time), 2)  # Time (truncado a 2 decimales)
+                            miner_entry["eval_time"] = _truncate_decimal(float(summary.local_avg_eval_time), 2)  # Time también como eval_time
                     
                     miners_list.append(miner_entry)
                 
