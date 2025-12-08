@@ -13,11 +13,6 @@ setup(
         "asyncpg",
         "boto3",
     ],
-    entry_points={
-        "console_scripts": [
-            "iwa = scripts.iwap:main",
-            "iwap = scripts.iwap:main",  # <— alias so `iwap` works too
-        ],
-    },
+    # entry_points removed - using bash scripts instead
     python_requires=">=3.9",
 )
