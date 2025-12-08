@@ -825,7 +825,7 @@ class AgentsService:
             completed_from_run = context.run.completed_tasks
             if completed_from_run is not None:
                 completed_tasks += completed_from_run
-            elif context.evaluation_results:
+            elif context.evaluations:
                 completed_tasks += len(
                     [er for er in context.evaluation_results if er.final_score >= 0.5]
                 )

@@ -81,9 +81,9 @@ def _iso_timestamp(seconds: float) -> str:
 
 def _score_from_run(context: AgentRunContext) -> float:
     """Return the average evaluation score for an agent run (0-1 range)."""
-    if context.evaluation_results:
-        return sum(result.final_score for result in context.evaluation_results) / len(
-            context.evaluation_results
+    if context.evaluations:
+        return sum(result.final_score for result in context.evaluations) / len(
+            context.evaluations
         )
     if context.run.avg_eval_score is not None:
         return context.run.avg_eval_score
@@ -242,7 +242,7 @@ class SubnetTimelineService:
                 selectinload(RoundORM.agent_runs)
                 .selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(RoundORM.agent_runs)
-                .selectinload(AgentEvaluationRunORM.evaluation_results),
+                .selectinload(AgentEvaluationRunORM.evaluations),
                 selectinload(RoundORM.validator_snapshots),
                 selectinload(RoundORM.miner_snapshots),
             )

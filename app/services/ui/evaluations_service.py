@@ -16,14 +16,14 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentEvaluationRunORM,
-    EvaluationResultORM,
+    EvaluationORM,
     RoundORM,
     TaskORM,
     TaskSolutionORM,
 )
 from app.models.core import (
     AgentEvaluationRun,
-    EvaluationResult,
+    Evaluation,
     ValidatorRound,
     Task,
     TaskSolution,
@@ -99,7 +99,7 @@ class EvaluationContext:
     agent_run: AgentEvaluationRun
     task: Task
     task_solution: TaskSolution
-    evaluation: EvaluationResult
+    evaluation: Evaluation
 
 
 class EvaluationsService:
@@ -120,30 +120,30 @@ class EvaluationsService:
         skip = (page - 1) * limit
 
         stmt = (
-            select(EvaluationResultORM)
+            select(EvaluationORM)
             .options(
-                selectinload(EvaluationResultORM.agent_run).selectinload(
+                selectinload(EvaluationORM.agent_run).selectinload(
                     AgentEvaluationRunORM.validator_round
                 ),
-                selectinload(EvaluationResultORM.agent_run)
+                selectinload(EvaluationORM.agent_run)
                 .selectinload(AgentEvaluationRunORM.validator_round)
                 .selectinload(RoundORM.miner_snapshots),
-                selectinload(EvaluationResultORM.agent_run)
+                selectinload(EvaluationORM.agent_run)
                 .selectinload(AgentEvaluationRunORM.validator_round)
                 .selectinload(RoundORM.validator_snapshots),
-                selectinload(EvaluationResultORM.task),
-                selectinload(EvaluationResultORM.task_solution),
+                selectinload(EvaluationORM.task),
+                selectinload(EvaluationORM.task_solution),
             )
-            .order_by(EvaluationResultORM.id.desc())
+            .order_by(EvaluationORM.id.desc())
         )
 
         if run_id:
-            stmt = stmt.where(EvaluationResultORM.agent_run_id == run_id)
+            stmt = stmt.where(EvaluationORM.agent_run_id == run_id)
         if task_id:
-            stmt = stmt.where(EvaluationResultORM.task_id == task_id)
+            stmt = stmt.where(EvaluationORM.task_id == task_id)
         if round_id is not None:
             stmt = stmt.where(
-                EvaluationResultORM.validator_round_id == f"round_{round_id:03d}"
+                EvaluationORM.validator_round_id == f"round_{round_id:03d}"
             )
 
         result = await self.session.scalars(stmt)
@@ -175,18 +175,18 @@ class EvaluationsService:
 
     async def get_evaluation(self, evaluation_id: str) -> EvaluationContext:
         stmt = (
-            select(EvaluationResultORM)
+            select(EvaluationORM)
             .options(
-                selectinload(EvaluationResultORM.agent_run)
+                selectinload(EvaluationORM.agent_run)
                 .selectinload(AgentEvaluationRunORM.validator_round)
                 .selectinload(RoundORM.miner_snapshots),
-                selectinload(EvaluationResultORM.agent_run)
+                selectinload(EvaluationORM.agent_run)
                 .selectinload(AgentEvaluationRunORM.validator_round)
                 .selectinload(RoundORM.validator_snapshots),
-                selectinload(EvaluationResultORM.task),
-                selectinload(EvaluationResultORM.task_solution),
+                selectinload(EvaluationORM.task),
+                selectinload(EvaluationORM.task_solution),
             )
-            .where(EvaluationResultORM.evaluation_id == evaluation_id)
+            .where(EvaluationORM.evaluation_id == evaluation_id)
         )
         evaluation_row = await self.session.scalar(stmt)
         if not evaluation_row:
@@ -198,13 +198,13 @@ class EvaluationsService:
         max_retries = 2
         for attempt in range(max_retries):
             try:
-                stmt = select(EvaluationResultORM).where(
-                    EvaluationResultORM.evaluation_id == evaluation_id
+                stmt = select(EvaluationORM).where(
+                    EvaluationORM.evaluation_id == evaluation_id
                 )
                 result_rows = await self.session.scalars(stmt)
                 rows = list(result_rows)
                 if not rows:
-                    raise ValueError(f"No evaluation results found for {evaluation_id}")
+                    raise ValueError(f"No evaluations found for {evaluation_id}")
 
                 for row in rows:
                     row.gif_recording = gif_url
@@ -240,7 +240,7 @@ class EvaluationsService:
                     await self.session.rollback()
                     raise
 
-    def _build_context(self, evaluation_row: EvaluationResultORM) -> EvaluationContext:
+    def _build_context(self, evaluation_row: EvaluationORM) -> EvaluationContext:
         agent_run_row = evaluation_row.agent_run
         if agent_run_row is None:
             raise ValueError(
@@ -301,7 +301,7 @@ class EvaluationsService:
             taskUrl=task_url,
             status=status,
             score=_safe_round(context.evaluation.final_score),
-            reward=_safe_round(getattr(context.evaluation, "raw_score", 0.0)),
+            reward=_safe_round(context.evaluation.final_score),
             responseTime=_safe_round(
                 getattr(context.evaluation, "evaluation_time", 0.0)
             ),
@@ -403,8 +403,8 @@ class EvaluationsService:
 
     @staticmethod
     def _deserialize_evaluation(
-        evaluation_row: EvaluationResultORM,
-    ) -> EvaluationResult:
+        evaluation_row: EvaluationORM,
+    ) -> Evaluation:
         data = dict(evaluation_row.data or {})
         data.setdefault("evaluation_id", evaluation_row.evaluation_id)
         data.setdefault("task_id", evaluation_row.task_id)
@@ -412,8 +412,16 @@ class EvaluationsService:
         data.setdefault("agent_run_id", evaluation_row.agent_run_id)
         data.setdefault("validator_round_id", evaluation_row.validator_round_id)
         data.setdefault("validator_uid", evaluation_row.validator_uid)
+        data.setdefault("validator_hotkey", evaluation_row.validator_hotkey)
         data.setdefault("miner_uid", evaluation_row.miner_uid)
-        result = EvaluationResult(**data)
-        if evaluation_row.gif_recording:
-            result.gif_recording = evaluation_row.gif_recording
+        data.setdefault("miner_hotkey", evaluation_row.miner_hotkey)
+        data.setdefault("final_score", evaluation_row.final_score)
+        data.setdefault("evaluation_time", evaluation_row.evaluation_time)
+        data.setdefault("execution_history", evaluation_row.execution_history)
+        data.setdefault("feedback", evaluation_row.feedback)
+        data.setdefault("web_agent_id", evaluation_row.web_agent_id)
+        data.setdefault("stats", evaluation_row.stats)
+        data.setdefault("gif_recording", evaluation_row.gif_recording)
+        data.setdefault("metadata", evaluation_row.meta)
+        result = Evaluation(**data)
         return result

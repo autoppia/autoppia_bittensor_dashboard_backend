@@ -18,7 +18,7 @@ from app.db.models import (
     ValidatorRoundMinersScoreORM,
 )
 
-from app.models.core import EvaluationResult, Task, TaskSolution
+from app.models.core import Evaluation, Task, TaskSolution
 from app.models.ui.agent_runs import (
     Action,
     AgentRun,
@@ -330,7 +330,7 @@ class AgentRunsService:
             stmt = (
                 select(AgentEvaluationRunORM)
                 .where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
-                .options(selectinload(AgentEvaluationRunORM.evaluation_results))
+                .options(selectinload(AgentEvaluationRunORM.evaluations))
             )
             all_runs = await self.session.scalars(stmt)
             
@@ -340,7 +340,7 @@ class AgentRunsService:
                 if run.is_sota or run.miner_uid is None:
                     continue
                 
-                eval_results = getattr(run, 'evaluation_results', []) or []
+                eval_results = getattr(run, 'evaluations', []) or []
                 if eval_results:
                     scores = [er.final_score for er in eval_results if er.final_score is not None]
                     avg_score = sum(scores) / len(scores) if scores else 0.0
@@ -393,7 +393,7 @@ class AgentRunsService:
         stmt = (
             select(AgentEvaluationRunORM)
             .where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
-            .options(selectinload(AgentEvaluationRunORM.evaluation_results))
+            .options(selectinload(AgentEvaluationRunORM.evaluations))
         )
         all_runs = await self.session.scalars(stmt)
         
@@ -403,8 +403,8 @@ class AgentRunsService:
             if run.is_sota or run.miner_uid is None:
                 continue  # Skip SOTA runs
             
-            # Calculate average score from evaluation_results
-            eval_results = getattr(run, 'evaluation_results', []) or []
+            # Calculate average score from evaluations
+            eval_results = getattr(run, 'evaluations', []) or []
             if eval_results:
                 scores = [er.final_score for er in eval_results if er.final_score is not None]
                 avg_score = sum(scores) / len(scores) if scores else 0.0
@@ -601,10 +601,11 @@ class AgentRunsService:
             )
         )
 
-        for evaluation in context.evaluation_results:
+        for evaluation in context.evaluations:
             task_event_time = start_time
-            if evaluation.stats and evaluation.stats.start_time:
-                task_event_time = _ts_to_iso(evaluation.stats.start_time) or start_time
+            # stats field removed - use evaluation_time or created_at if needed
+            # if evaluation.stats and evaluation.stats.start_time:
+            #     task_event_time = _ts_to_iso(evaluation.stats.start_time) or start_time
             events.append(
                 Event(
                     timestamp=task_event_time,
@@ -633,7 +634,7 @@ class AgentRunsService:
             return None
 
         logs: List[Log] = []
-        for evaluation in context.evaluation_results:
+        for evaluation in context.evaluations:
             if evaluation.feedback and evaluation.feedback.execution_history:
                 for entry in evaluation.feedback.execution_history:
                     message = str(entry)
@@ -741,11 +742,11 @@ class AgentRunsService:
         total_tasks = len(ui_tasks)
         failed_tasks = max(total_tasks - success_count, 0)
 
-        # Prefer consensus_score if available, otherwise compute from evaluation_results
+        # Prefer consensus_score if available, otherwise compute from evaluations
         if consensus_score is not None:
             average_score = float(consensus_score)
         else:
-            average_score = self._compute_average_score(context.evaluation_results)
+            average_score = self._compute_average_score(context.evaluations)
         overall_score = _safe_int(average_score * 100)
         average_evaluation_time = self._average_evaluation_time(context)
 
@@ -921,7 +922,7 @@ class AgentRunsService:
         total_tasks = len(ui_tasks)
         failed_tasks = max(total_tasks - success_count, 0)
         overall_score = _safe_int(
-            self._compute_average_score(context.evaluation_results) * 100
+            self._compute_average_score(context.evaluations) * 100
         )
 
         website_stats_map, use_case_stats_map, website_usecase_stats, total_duration = (
@@ -976,15 +977,15 @@ class AgentRunsService:
             )
 
         excellent = len(
-            [er for er in context.evaluation_results if er.final_score >= 0.9]
+            [er for er in context.evaluations if er.final_score >= 0.9]
         )
         good = len(
-            [er for er in context.evaluation_results if 0.7 <= er.final_score < 0.9]
+            [er for er in context.evaluations if 0.7 <= er.final_score < 0.9]
         )
         average = len(
-            [er for er in context.evaluation_results if 0.5 <= er.final_score < 0.7]
+            [er for er in context.evaluations if 0.5 <= er.final_score < 0.7]
         )
-        poor = len(context.evaluation_results) - excellent - good - average
+        poor = len(context.evaluations) - excellent - good - average
 
         score_distribution = ScoreDistribution(
             excellent=excellent,
@@ -1011,7 +1012,7 @@ class AgentRunsService:
         total_tasks = len(ui_tasks)
         failed_tasks = max(total_tasks - success_count, 0)
         overall_score = _safe_int(
-            self._compute_average_score(context.evaluation_results) * 100
+            self._compute_average_score(context.evaluations) * 100
         )
         agent_name, _, agent_uid, agent_hotkey, agent_identifier, _ = (
             self._resolve_agent_identity(context)
@@ -1131,10 +1132,10 @@ class AgentRunsService:
             getattr(run_model, "n_tasks_failed", None) or run_model.failed_tasks or 0
         )
 
-        if completed_tasks == 0 and context.evaluation_results:
+        if completed_tasks == 0 and context.evaluations:
             completed_tasks = sum(
                 1
-                for evaluation in context.evaluation_results
+                for evaluation in context.evaluations
                 if evaluation.final_score >= 0.5
             )
 
@@ -1149,7 +1150,7 @@ class AgentRunsService:
                 getattr(run_model, "avg_eval_score", None) or run_model.average_score
             )
             if average_score is None:
-                average_score = self._compute_average_score(context.evaluation_results)
+                average_score = self._compute_average_score(context.evaluations)
             average_score = float(average_score or 0.0)
 
         average_evaluation_time = self._average_evaluation_time(context)
@@ -1181,7 +1182,7 @@ class AgentRunsService:
             relevant_task_ids = set()
             try:
                 relevant_task_ids.update(
-                    result.task_id for result in (context.evaluation_results or [])
+                    result.task_id for result in (context.evaluations or [])
                 )
             except Exception:  # noqa: BLE001
                 pass
@@ -1306,9 +1307,9 @@ class AgentRunsService:
     def _index_results(
         self,
         context: AgentRunContext,
-    ) -> Tuple[Dict[str, EvaluationResult], Dict[str, TaskSolution], Dict[str, UITask]]:
+    ) -> Tuple[Dict[str, Evaluation], Dict[str, TaskSolution], Dict[str, UITask]]:
         evaluation_by_task = {
-            result.task_id: result for result in context.evaluation_results
+            result.task_id: result for result in context.evaluations
         }
         solution_by_task = {
             solution.task_id: solution for solution in context.task_solutions
@@ -1328,7 +1329,7 @@ class AgentRunsService:
         self,
         task: Task,
         solution: Optional[TaskSolution],
-        evaluation: Optional[EvaluationResult],
+        evaluation: Optional[Evaluation],
         run,
         round_obj: ValidatorRound,
     ) -> UITask:
@@ -1447,7 +1448,7 @@ class AgentRunsService:
     @staticmethod
     def _average_evaluation_time(context: AgentRunContext) -> Optional[float]:
         durations: List[float] = []
-        for result in context.evaluation_results:
+        for result in context.evaluations:
             value = getattr(result, "evaluation_time", None)
             if value is None:
                 continue
@@ -1460,11 +1461,11 @@ class AgentRunsService:
         return sum(durations) / len(durations)
 
     @staticmethod
-    def _compute_average_score(evaluation_results: List[EvaluationResult]) -> float:
-        if not evaluation_results:
+    def _compute_average_score(evaluations: List[Evaluation]) -> float:
+        if not evaluations:
             return 0.0
-        return sum(result.final_score for result in evaluation_results) / len(
-            evaluation_results
+        return sum(result.final_score for result in evaluations) / len(
+            evaluations
         )
 
     @staticmethod

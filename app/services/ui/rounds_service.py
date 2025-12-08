@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentEvaluationRunORM,
-    EvaluationResultORM,
+    EvaluationORM,
     RoundORM,
     TaskORM,
     TaskSolutionORM,
@@ -24,7 +24,7 @@ from app.models.core import (
     Action,
     AgentEvaluationRun,
     AgentEvaluationRunWithDetails,
-    EvaluationResult,
+    Evaluation,
     TestResult,
     ValidatorRound,
     ValidatorRoundWithDetails,
@@ -71,7 +71,7 @@ class AgentRunContext:
     run: AgentEvaluationRun
     tasks: List[Task]
     task_solutions: List[TaskSolution]
-    evaluation_results: List[EvaluationResult]
+    evaluations: List[Evaluation]
 
 
 @dataclass
@@ -601,7 +601,7 @@ class RoundsService:
                     **ctx.run.model_dump(),
                     tasks=ctx.tasks,
                     task_solutions=ctx.task_solutions,
-                    evaluation_results=ctx.evaluation_results,
+                    evaluations=ctx.evaluations,
                 ).model_dump()
                 for ctx in entry.contexts
             ]
@@ -646,7 +646,7 @@ class RoundsService:
                     RoundORM.validator_snapshots
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluation_results),
+                selectinload(AgentEvaluationRunORM.evaluations),
             )
 
         result = await self.session.scalars(stmt)
@@ -677,7 +677,7 @@ class RoundsService:
                     RoundORM.validator_snapshots
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluation_results),
+                selectinload(AgentEvaluationRunORM.evaluations),
             )
             .where(AgentEvaluationRunORM.agent_run_id == agent_run_id)
         )
@@ -711,7 +711,7 @@ class RoundsService:
         if include_details:
             stmt = stmt.options(
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluation_results),
+                selectinload(AgentEvaluationRunORM.evaluations),
             )
 
         stmt = stmt.order_by(AgentEvaluationRunORM.id.desc())
@@ -773,7 +773,7 @@ class RoundsService:
                     RoundORM.validator_snapshots
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluation_results),
+                selectinload(AgentEvaluationRunORM.evaluations),
             )
             .where(AgentEvaluationRunORM.agent_run_id == agent_run_id)
         )
@@ -1046,7 +1046,7 @@ class RoundsService:
 
                 evaluation_scores = [
                     er.final_score
-                    for er in ctx.evaluation_results
+                    for er in ctx.evaluations
                     if er.final_score is not None
                 ]
                 tasks_total = ctx.run.n_tasks_total
@@ -1067,7 +1067,7 @@ class RoundsService:
                     completed = len(
                         [
                             er
-                            for er in ctx.evaluation_results
+                            for er in ctx.evaluations
                             if er.final_score is not None and er.final_score >= 0.5
                         ]
                     )
@@ -3176,44 +3176,28 @@ class RoundsService:
 
     @staticmethod
     def _convert_evaluations(
-        evaluation_rows: List[EvaluationResultORM],
-    ) -> List[EvaluationResult]:
-        evaluations: List[EvaluationResult] = []
+        evaluation_rows: List[EvaluationORM],
+    ) -> List[Evaluation]:
+        evaluations: List[Evaluation] = []
         for evaluation_row in evaluation_rows:
             try:
-                matrix = []
-                for row in evaluation_row.test_results_matrix or []:
-                    test_row: List[TestResult] = []
-                    for item in row:
-                        if isinstance(item, dict):
-                            test_row.append(
-                                TestResult(
-                                    success=bool(item.get("success")),
-                                    extra_data=item.get("extra_data"),
-                                )
-                            )
-                        else:
-                            test_row.append(TestResult(success=False, extra_data=None))
-                    matrix.append(test_row)
-
                 evaluations.append(
-                    EvaluationResult(
+                    Evaluation(
                         evaluation_id=evaluation_row.evaluation_id,
                         task_id=evaluation_row.task_id,
                         task_solution_id=evaluation_row.task_solution_id,
                         validator_round_id=evaluation_row.validator_round_id,
                         agent_run_id=evaluation_row.agent_run_id,
                         miner_uid=evaluation_row.miner_uid,
+                        miner_hotkey=evaluation_row.miner_hotkey,
                         validator_uid=evaluation_row.validator_uid,
+                        validator_hotkey=evaluation_row.validator_hotkey,
                         final_score=evaluation_row.final_score or 0.0,
-                        test_results_matrix=matrix,
                         execution_history=evaluation_row.execution_history or [],
                         feedback=evaluation_row.feedback,
-                        web_agent_id=evaluation_row.web_agent_id,
-                        raw_score=evaluation_row.raw_score or 0.0,
                         evaluation_time=evaluation_row.evaluation_time or 0.0,
-                        stats=evaluation_row.stats,
                         gif_recording=evaluation_row.gif_recording,
+                        metadata=evaluation_row.meta or {},
                     )
                 )
             except Exception as exc:  # noqa: BLE001

@@ -11,7 +11,6 @@ from app.services.round_calc import compute_boundaries_for_round
 from app.db.models import (
     AgentEvaluationRunORM,
     EvaluationORM,
-    EvaluationResultORM,
     TaskORM,
     TaskSolutionORM,
     ValidatorRoundMinerORM,
@@ -21,7 +20,6 @@ from app.db.models import (
 from app.models.core import (
     AgentEvaluationRun,
     Evaluation,
-    EvaluationResult,
     Miner,
     ValidatorRoundMiner,
     Task,
@@ -49,6 +47,33 @@ class DuplicateIdentifierError(ValueError):
 
 def _non_empty_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return value or {}
+
+
+def _clean_meta_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Clean metadata dict, removing empty or useless fields."""
+    if not value:
+        return {}
+    
+    # Fields that are considered useless if empty or have default values
+    useless_fields = {
+        "notes": "",
+        "error_message": "",
+        "version_ok": True,  # Default value
+        "final_score": 0.0,  # Already stored in final_score column
+    }
+    
+    cleaned = {}
+    for key, val in value.items():
+        # Skip if it's a useless field with default/empty value
+        if key in useless_fields and val == useless_fields[key]:
+            continue
+        # Skip empty strings
+        if isinstance(val, str) and not val.strip():
+            continue
+        # Include the field
+        cleaned[key] = val
+    
+    return cleaned
 
 
 def _non_empty_list(value: Optional[List[Any]]) -> List[Any]:
@@ -216,9 +241,8 @@ class ValidatorRoundPersistenceService:
         task: Task,
         task_solution: TaskSolution,
         evaluation: Evaluation,
-        evaluation_result: EvaluationResult,
     ) -> None:
-        """Persist evaluation data (task, solution, evaluation record, and artefact)."""
+        """Persist evaluation data (task, solution, and evaluation with artefacts)."""
         round_row = await self._ensure_round_exists(validator_round_id)
         agent_run_row = await self._get_agent_run_row(agent_run_id)
         if not agent_run_row:
@@ -259,7 +283,12 @@ class ValidatorRoundPersistenceService:
 
         await self.session.flush()
 
+        # Evaluation (consolidated - contains all data including artefacts)
+        # Ensure validator_hotkey is set from round if not in evaluation model
         evaluation_kwargs = self._evaluation_kwargs(evaluation)
+        if not evaluation_kwargs.get("validator_hotkey") and round_row.validator_snapshot:
+            evaluation_kwargs["validator_hotkey"] = round_row.validator_snapshot.validator_hotkey
+        
         stmt_evaluation = select(EvaluationORM).where(
             EvaluationORM.evaluation_id == evaluation.evaluation_id
         )
@@ -270,20 +299,6 @@ class ValidatorRoundPersistenceService:
             )
         evaluation_row = EvaluationORM(**evaluation_kwargs)
         self.session.add(evaluation_row)
-
-        result_kwargs = self._evaluation_result_kwargs(
-            evaluation_row,
-            evaluation_result,
-        )
-        stmt_result = select(EvaluationResultORM).where(
-            EvaluationResultORM.result_id == evaluation_result.result_id
-        )
-        existing_result = await self.session.scalar(stmt_result)
-        if existing_result:
-            raise DuplicateIdentifierError(
-                f"evaluation_result_id {evaluation_result.result_id} is already registered"
-            )
-        self.session.add(EvaluationResultORM(**result_kwargs))
         # Reaching here means fresh insert path; idempotency is handled at endpoint by
         # detecting duplicates before writes. This method intentionally raises
         # DuplicateIdentifierError when any of the IDs already exist.
@@ -296,10 +311,9 @@ class ValidatorRoundPersistenceService:
         task: Task,
         task_solution: TaskSolution,
         evaluation: Evaluation,
-        evaluation_result: EvaluationResult,
     ) -> None:
         """
-        Insert any missing records for the (solution, evaluation, result) bundle and
+        Insert any missing records for the (solution, evaluation) bundle and
         validate consistency for any existing ones. This is an idempotent helper that
         only writes what is missing and raises when existing rows conflict
         (e.g., belong to a different round/run).
@@ -381,6 +395,9 @@ class ValidatorRoundPersistenceService:
             evaluation_row = existing_eval
         else:
             evaluation_kwargs = self._evaluation_kwargs(evaluation)
+            # Ensure validator_hotkey is set from round if not in evaluation model
+            if not evaluation_kwargs.get("validator_hotkey") and round_row.validator_snapshot:
+                evaluation_kwargs["validator_hotkey"] = round_row.validator_snapshot.validator_hotkey
             evaluation_row = EvaluationORM(**evaluation_kwargs)
             self.session.add(evaluation_row)
 
@@ -402,43 +419,6 @@ class ValidatorRoundPersistenceService:
                 else:
                     raise
 
-        # Evaluation result upsert/validate
-        existing_result = await self.get_evaluation_result_row(
-            evaluation_result.result_id
-        )
-        if existing_result is not None:
-            if (
-                existing_result.validator_round_id != validator_round_id
-                or existing_result.agent_run_id != agent_run_id
-                or existing_result.task_id != task.task_id
-                or existing_result.task_solution_id != task_solution.solution_id
-                or existing_result.evaluation_id != evaluation_row.evaluation_id
-            ):
-                raise DuplicateIdentifierError(
-                    f"evaluation_result_id {evaluation_result.result_id} already belongs to a different context"
-                )
-        else:
-            # We may need flush to ensure evaluation_row has PK for FK relations
-            await self.session.flush()
-            result_kwargs = self._evaluation_result_kwargs(
-                evaluation_row,
-                evaluation_result,
-            )
-            result_orm = EvaluationResultORM(**result_kwargs)
-            self.session.add(result_orm)
-
-            # Handle race condition for evaluation_result
-            try:
-                await self.session.flush()
-            except Exception as e:
-                from sqlalchemy.exc import IntegrityError
-
-                if isinstance(e, IntegrityError) and "uq_result_id" in str(e):
-                    # Race condition handled - result already exists
-                    await self.session.rollback()
-                    # Continue without error (result is already saved)
-                else:
-                    raise
 
     # ──────────────────────────────────────────────────────────────────────
     # Read-only helpers for idempotency checks
@@ -454,13 +434,6 @@ class ValidatorRoundPersistenceService:
         stmt = select(EvaluationORM).where(EvaluationORM.evaluation_id == evaluation_id)
         return await self.session.scalar(stmt)
 
-    async def get_evaluation_result_row(
-        self, result_id: str
-    ) -> Optional[EvaluationResultORM]:
-        stmt = select(EvaluationResultORM).where(
-            EvaluationResultORM.result_id == result_id
-        )
-        return await self.session.scalar(stmt)
 
     async def finish_round(
         self,
@@ -594,7 +567,7 @@ class ValidatorRoundPersistenceService:
             select(AgentEvaluationRunORM)
             .options(
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluation_results),
+                selectinload(AgentEvaluationRunORM.evaluations),
             )
             .where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
         )
@@ -715,35 +688,6 @@ class ValidatorRoundPersistenceService:
 
         await self.session.flush()
 
-        # Evaluation results
-        evaluation_result_ids: List[str] = []
-        for result in payload.evaluation_results:
-            evaluation_row = evaluation_rows.get(result.evaluation_id)
-            if evaluation_row is None:
-                evaluation_row = await self.session.scalar(
-                    select(EvaluationORM).where(
-                        EvaluationORM.evaluation_id == result.evaluation_id
-                    )
-                )
-                if evaluation_row is None:
-                    raise ValueError(
-                        f"Evaluation result {result.result_id} references unknown evaluation {result.evaluation_id}"
-                    )
-            kwargs = self._evaluation_result_kwargs(
-                evaluation_row,
-                result,
-            )
-            stmt = select(EvaluationResultORM).where(
-                EvaluationResultORM.result_id == result.result_id
-            )
-            existing = await self.session.scalar(stmt)
-            if existing:
-                raise DuplicateIdentifierError(
-                    f"evaluation_result_id {result.result_id} is provided multiple times"
-                )
-            self.session.add(EvaluationResultORM(**kwargs))
-            evaluation_result_ids.append(result.result_id)
-
         saved = {
             "validator_round": round_row.validator_round_id,
             "validator_snapshots": validator_snapshot_ids,
@@ -752,7 +696,6 @@ class ValidatorRoundPersistenceService:
             "tasks": task_ids,
             "task_solutions": task_solution_ids,
             "evaluations": evaluation_ids,
-            "evaluation_results": evaluation_result_ids,
         }
         # Get validator_uid from snapshot (1:1 relationship)
         validator_uid = payload.validator_snapshots[0].validator_uid if payload.validator_snapshots else None
@@ -776,22 +719,22 @@ class ValidatorRoundPersistenceService:
         self, run_row: AgentEvaluationRunORM
     ) -> Dict[str, Any]:
         task_solutions = list(getattr(run_row, "task_solutions", []) or [])
-        evaluation_results = list(getattr(run_row, "evaluation_results", []) or [])
+        evaluations = list(getattr(run_row, "evaluations", []) or [])
 
         task_ids = {solution.task_id for solution in task_solutions if solution.task_id}
         if not task_ids:
             task_ids = {
-                result.task_id for result in evaluation_results if result.task_id
+                eval_obj.task_id for eval_obj in evaluations if eval_obj.task_id
             }
 
         total_tasks = len(task_ids)
         if total_tasks == 0:
-            total_tasks = run_row.total_tasks or len(evaluation_results)
+            total_tasks = run_row.total_tasks or len(evaluations)
         total_tasks = int(total_tasks or 0)
 
         scores: List[float] = []
-        for result in evaluation_results:
-            value = self._to_float(getattr(result, "final_score", None))
+        for eval_obj in evaluations:
+            value = self._to_float(getattr(eval_obj, "final_score", None))
             if value is not None:
                 scores.append(value)
         average_score = sum(scores) / len(scores) if scores else None
@@ -802,8 +745,8 @@ class ValidatorRoundPersistenceService:
         failed_tasks = max(total_tasks - completed_tasks, 0)
 
         evaluation_times: List[float] = []
-        for result in evaluation_results:
-            value = self._to_float(getattr(result, "evaluation_time", None))
+        for eval_obj in evaluations:
+            value = self._to_float(getattr(eval_obj, "evaluation_time", None))
             if value is not None and value >= 0.0:
                 evaluation_times.append(value)
         average_execution_time = (
@@ -819,8 +762,8 @@ class ValidatorRoundPersistenceService:
             "reward_value",
             "score_reward",
         )
-        for result in evaluation_results:
-            meta = getattr(result, "meta", {}) or {}
+        for eval_obj in evaluations:
+            meta = getattr(eval_obj, "meta", {}) or {}
             reward_candidate: Any = None
             if isinstance(meta, dict):
                 for key in reward_keys:
@@ -828,7 +771,7 @@ class ValidatorRoundPersistenceService:
                         reward_candidate = meta[key]
                         break
             if reward_candidate is None:
-                reward_candidate = getattr(result, "raw_score", None)
+                reward_candidate = getattr(result, "final_score", None)
             value = self._to_float(reward_candidate)
             if value is not None:
                 reward_values.append(value)
@@ -1105,13 +1048,6 @@ class ValidatorRoundPersistenceService:
         self,
         model: Evaluation,
     ) -> Dict[str, Any]:
-        summary = _non_empty_dict(model.summary)
-        if "test_results" in summary:
-            try:
-                summary["test_results"] = _test_results_dump(summary["test_results"])
-            except Exception:
-                pass
-
         return {
             "evaluation_id": model.evaluation_id,
             "validator_round_id": model.validator_round_id,
@@ -1123,35 +1059,11 @@ class ValidatorRoundPersistenceService:
             "miner_uid": model.miner_uid,
             "miner_hotkey": model.miner_hotkey,
             "final_score": model.final_score,
-            "raw_score": model.raw_score,
             "evaluation_time": model.evaluation_time,
-            "summary": summary,
-        }
-
-    def _evaluation_result_kwargs(
-        self,
-        evaluation_row: EvaluationORM,
-        model: EvaluationResult,
-    ) -> Dict[str, Any]:
-        return {
-            "result_id": model.result_id,
-            "evaluation_id": evaluation_row.evaluation_id,
-            "validator_round_id": model.validator_round_id,
-            "agent_run_id": model.agent_run_id,
-            "task_id": model.task_id,
-            "task_solution_id": model.task_solution_id,
-            "validator_uid": model.validator_uid,
-            "miner_uid": model.miner_uid,
-            "final_score": model.final_score,
-            "test_results_matrix": _test_results_dump(model.test_results_matrix),
             "execution_history": list(model.execution_history),
             "feedback": _optional_dump(model.feedback),
-            "web_agent_id": model.web_agent_id,
-            "raw_score": model.raw_score,
-            "evaluation_time": model.evaluation_time,
-            "stats": _optional_dump(model.stats),
             "gif_recording": model.gif_recording,
-            "meta": _non_empty_dict(model.metadata),
+            "meta": _clean_meta_dict(model.metadata),
         }
 
     @staticmethod
@@ -1182,8 +1094,4 @@ class ValidatorRoundPersistenceService:
         self._assert_unique(
             [evaluation.evaluation_id for evaluation in payload.evaluations],
             "evaluation_id",
-        )
-        self._assert_unique(
-            [result.result_id for result in payload.evaluation_results],
-            "evaluation_result_id",
         )

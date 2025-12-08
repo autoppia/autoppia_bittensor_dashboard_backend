@@ -20,7 +20,6 @@ from app.models.core import (
     Action,
     AgentEvaluationRun,
     Evaluation,
-    EvaluationResult,
     Miner,
     ValidatorRoundMiner,
     Task,
@@ -126,7 +125,6 @@ class AgentRunBundle:
     agent_run: AgentEvaluationRun
     task_solutions: List[TaskSolution]
     evaluations: List[Evaluation]
-    evaluation_results: List[EvaluationResult]
     average_score: float
 
 
@@ -168,13 +166,6 @@ class SeedPayload:
             for evaluation in bundle.evaluations
         ]
 
-    @property
-    def evaluation_results(self) -> List[EvaluationResult]:
-        return [
-            result
-            for bundle in self.agent_bundles
-            for result in bundle.evaluation_results
-        ]
 
 
 def _try_fetch_metagraph(
@@ -656,7 +647,6 @@ def _build_agent_run_bundle(
 
     task_solutions: List[TaskSolution] = []
     evaluations: List[Evaluation] = []
-    evaluation_results: List[EvaluationResult] = []
 
     for task_index, task in enumerate(tasks):
         template = task_templates[task_index % len(task_templates)]
@@ -686,6 +676,7 @@ def _build_agent_run_bundle(
         evaluation_id = f"{solution_id}-evaluation"
         task_score = round(max(0.4, average_score - random.uniform(0, 0.1)), 4)
 
+        # Consolidated Evaluation (contains all data including artefacts)
         evaluation = Evaluation(
             evaluation_id=evaluation_id,
             validator_round_id=validator_round.validator_round_id,
@@ -697,47 +688,15 @@ def _build_agent_run_bundle(
             miner_uid=miner_identity.uid,
             miner_hotkey=miner_identity.hotkey,
             final_score=task_score,
-            raw_score=task_score,
             evaluation_time=random.uniform(1.0, 6.0),
-            summary={
-                "tests_passed": 1,
-                "tests_total": 1,
-                "template": template.website_slug,
-            },
-        )
-        evaluations.append(evaluation)
-
-        evaluation_result = EvaluationResult(
-            result_id=str(uuid.uuid4()),
-            evaluation_id=evaluation.evaluation_id,
-            validator_round_id=validator_round.validator_round_id,
-            agent_run_id=agent_run.agent_run_id,
-            task_id=task.task_id,
-            task_solution_id=task_solution.solution_id,
-            miner_uid=miner_identity.uid,
-            validator_uid=validator_round.validator_uid,
-            final_score=evaluation.final_score,
-            test_results_matrix=[
-                [
-                    TestResult(
-                        success=True,
-                        extra_data={
-                            "task_id": task.task_id,
-                            "template": template.website_slug,
-                        },
-                    )
-                ]
-            ],
             execution_history=[action.attributes for action in actions],
             feedback=None,
             web_agent_id=task_solution.web_agent_id,
-            raw_score=evaluation.raw_score,
-            evaluation_time=evaluation.evaluation_time,
             stats=None,
             gif_recording=SEED_GIF_URL,
-            metadata={"seed_index": task_index, "seed_gif": True},
+            metadata={"seed_index": task_index, "seed_gif": True, "tests_passed": 1, "tests_total": 1, "template": template.website_slug},
         )
-        evaluation_results.append(evaluation_result)
+        evaluations.append(evaluation)
 
     return AgentRunBundle(
         miner_identity=miner_identity,
@@ -745,7 +704,6 @@ def _build_agent_run_bundle(
         agent_run=agent_run,
         task_solutions=task_solutions,
         evaluations=evaluations,
-        evaluation_results=evaluation_results,
         average_score=average_score,
     )
 
@@ -864,7 +822,6 @@ def build_submission_request(payload: SeedPayload) -> ValidatorRoundSubmissionRe
         tasks=payload.tasks,
         task_solutions=payload.task_solutions,
         evaluations=payload.evaluations,
-        evaluation_results=payload.evaluation_results,
     )
 
 
@@ -1006,9 +963,8 @@ async def seed_validator_round(
                 "start_agent_run",
             )
 
-            for evaluation, evaluation_result, task_solution in zip(
+            for evaluation, task_solution in zip(
                 bundle.evaluations,
-                bundle.evaluation_results,
                 bundle.task_solutions,
             ):
                 task = tasks_by_id[evaluation.task_id]
@@ -1017,10 +973,7 @@ async def seed_validator_round(
                     "task_solution": task_solution.model_dump(
                         mode="json", exclude_none=True
                     ),
-                    "evaluation": evaluation.model_dump(mode="json", exclude_none=True),
-                    "evaluation_result": evaluation_result.model_dump(
-                        mode="json", exclude_none=True
-                    ),
+                    "evaluation_result": evaluation.model_dump(mode="json", exclude_none=True),
                 }
                 _ensure_response(
                     await http_client.post(
@@ -1064,9 +1017,6 @@ async def seed_validator_round(
             ],
             "evaluations": [
                 evaluation.evaluation_id for evaluation in payload.evaluations
-            ],
-            "evaluation_results": [
-                result.result_id for result in payload.evaluation_results
             ],
         }
 

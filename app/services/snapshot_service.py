@@ -91,7 +91,7 @@ class SnapshotService:
             stmt = (
                 select(AgentEvaluationRunORM)
                 .where(AgentEvaluationRunORM.validator_round_id == round_row.validator_round_id)
-                .options(selectinload(AgentEvaluationRunORM.evaluation_results))
+                .options(selectinload(AgentEvaluationRunORM.evaluations))
             )
             runs = list(await self.session.scalars(stmt))
             
@@ -143,10 +143,10 @@ class SnapshotService:
                 
                 for run in miner_runs:
                     # Score
-                    if run.evaluation_results:
+                    if run.evaluations:
                         scores = [
                             er.final_score 
-                            for er in run.evaluation_results 
+                            for er in run.evaluations 
                             if er.final_score is not None
                         ]
                         if scores:

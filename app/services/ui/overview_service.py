@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     AgentEvaluationRunORM,
-    EvaluationResultORM,
+    EvaluationORM,
     RoundORM,
     TaskORM,
     ValidatorRoundMinersScoreORM,
@@ -1304,7 +1304,7 @@ class OverviewService:
         Performance optimization: Uses AVG() in PostgreSQL instead of
         loading all evaluation results into Python memory.
         """
-        stmt = select(func.avg(EvaluationResultORM.final_score))
+        stmt = select(func.avg(EvaluationORM.final_score))
         result = await self.session.scalar(stmt)
         return float(result or 0.0)
 
@@ -1386,10 +1386,10 @@ class OverviewService:
                 TaskORM.relevant_data,
                 TaskORM.use_case,
             )
-            .join(EvaluationResultORM, EvaluationResultORM.task_id == TaskORM.task_id)
-            .where(EvaluationResultORM.validator_round_id == validator_round_id)
+            .join(EvaluationORM, EvaluationORM.task_id == TaskORM.task_id)
+            .where(EvaluationORM.validator_round_id == validator_round_id)
             .order_by(
-                EvaluationResultORM.created_at.desc(), EvaluationResultORM.id.desc()
+                EvaluationORM.created_at.desc(), EvaluationORM.id.desc()
             )
             .limit(1)
         )
