@@ -18,7 +18,9 @@ from app.db.models import (
     RoundORM,
     TaskORM,
     TaskSolutionORM,
+    ValidatorRoundMinerORM,
     ValidatorRoundSummaryORM,
+    ValidatorRoundValidatorORM,
 )
 from app.models.core import (
     Action,
@@ -1696,20 +1698,98 @@ class RoundsService:
         validator_top_scores = metrics["validator_top_scores"]
         durations = metrics["durations"]
 
+        # ✅ Leer directamente de validator_round_summary_miners para obtener el winner (post_consensus_rank = 1)
+        # El post_consensus_avg_reward debería ser el mismo para todos los validators del mismo round
+        # Preferir validator Autoppia (UID 83 en producción) en caso de duda
         winner_uid: Optional[int] = None
         winner_average = 0.0
-        for uid, aggregate in miner_aggregates.items():
-            avg_score = aggregate.average_score
-            if avg_score > winner_average:
-                winner_average = avg_score
-                winner_uid = uid
+        
+        round_number = aggregated.round_number
+        if round_number is not None:
+            # Buscar validator_round_ids de este round, priorizando Autoppia (UID 83)
+            validator_round_ids = [entry.validator_round_id for entry in aggregated.validator_rounds]
+            
+            # Ordenar para priorizar Autoppia (validator_83 en producción)
+            validator_round_ids.sort(key=lambda x: (0 if "validator_83" in x else 1, x))
+            
+            # Buscar el top miner (post_consensus_rank = 1) empezando por Autoppia
+            top_summary = None
+            for validator_round_id in validator_round_ids:
+                result = await self.session.execute(
+                    select(ValidatorRoundSummaryORM)
+                    .where(
+                        ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                        ValidatorRoundSummaryORM.post_consensus_rank == 1,  # Top miner post-consensus
+                    )
+                    .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc().nulls_last())
+                    .limit(1)
+                )
+                candidate = result.scalar_one_or_none()
+                if candidate and candidate.post_consensus_avg_reward is not None and candidate.post_consensus_avg_reward > 0.0:
+                    top_summary = candidate
+                    break  # Usar el primero encontrado (prioriza Autoppia)
+            
+            # Si no encontramos con rank=1, buscar el miner con mayor post_consensus_avg_reward
+            if top_summary is None:
+                for validator_round_id in validator_round_ids:
+                    result = await self.session.execute(
+                        select(ValidatorRoundSummaryORM)
+                        .where(
+                            ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                            ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None),
+                        )
+                        .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc())
+                        .limit(1)
+                    )
+                    candidate = result.scalar_one_or_none()
+                    if candidate and candidate.post_consensus_avg_reward and candidate.post_consensus_avg_reward > 0.0:
+                        top_summary = candidate
+                        break
+            
+            if top_summary and top_summary.post_consensus_avg_reward:
+                winner_uid = top_summary.miner_uid
+                winner_average = float(top_summary.post_consensus_avg_reward)
+        
+        # Fallback: usar miner_aggregates si no encontramos en summary
+        if winner_uid is None or winner_average == 0.0:
+            for uid, aggregate in miner_aggregates.items():
+                avg_score = aggregate.average_score
+                if avg_score > winner_average:
+                    winner_average = avg_score
+                    winner_uid = uid
 
+        # ✅ Usar post_consensus_avg_reward del top miner (rank 1) para top_score
+        # Preferir validator Autoppia (UID 83 en producción) en caso de duda
+        top_score = 0.0
+        if round_number is not None:
+            validator_round_ids = [entry.validator_round_id for entry in aggregated.validator_rounds]
+            validator_round_ids.sort(key=lambda x: (0 if "validator_83" in x else 1, x))
+            
+            for validator_round_id in validator_round_ids:
+                result = await self.session.execute(
+                    select(ValidatorRoundSummaryORM)
+                    .where(
+                        ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                        ValidatorRoundSummaryORM.post_consensus_rank == 1,
+                    )
+                    .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc())
+                    .limit(1)
+                )
+                top_summary = result.scalar_one_or_none()
+                if top_summary and top_summary.post_consensus_avg_reward:
+                    top_score = float(top_summary.post_consensus_avg_reward)
+                    break
+        
+        # Fallback: usar max de scores si no encontramos en summary
+        if top_score == 0.0:
+            top_score = max(scores) if scores else 0.0
+        
+        # validator_average_top: promedio de los top scores de cada validator (local)
         validator_average_top = (
             sum(validator_top_scores) / len(validator_top_scores)
             if validator_top_scores
             else (sum(scores) / len(scores) if scores else 0.0)
         )
-        top_score = max(scores) if scores else 0.0
         success_rate = (completed_tasks / total_tasks * 100.0) if total_tasks else 0.0
         average_duration = sum(durations) / len(durations) if durations else 0.0
         total_emission = int(total_stake * 0.05) if total_stake else 0
@@ -1727,8 +1807,9 @@ class RoundsService:
             "completedTasks": completed_tasks,
             "totalValidators": total_validators,
             "averageTasksPerValidator": round(average_tasks_per_validator_per_miner, 2),
-            "winnerAverageScore": round(winner_average, 3),
+            "winnerAverageScore": round(winner_average, 3),  # ✅ De post_consensus_avg_reward (rank 1), prioriza Autoppia (UID 83)
             "winnerMinerUid": winner_uid,
+            "topScore": round(top_score, 3),  # ✅ De post_consensus_avg_reward (rank 1), prioriza Autoppia (UID 83)
             "validatorAverageTopScore": round(validator_average_top, 3),
             "successRate": round(success_rate, 2),
             "averageDuration": round(average_duration, 2),
@@ -2002,26 +2083,97 @@ class RoundsService:
                 )
                 version_text = validator.version or profile.get("version")
 
+                # ✅ Leer directamente de validator_round_summary_miners para este validator
+                # Obtener TODOS los miners de este validator con sus local_avg_reward
+                all_summaries_result = await self.session.execute(
+                    select(ValidatorRoundSummaryORM)
+                    .where(
+                        ValidatorRoundSummaryORM.validator_round_id == entry.validator_round_id,
+                    )
+                    .order_by(ValidatorRoundSummaryORM.local_rank.asc())
+                )
+                all_summaries = all_summaries_result.scalars().all()
+                
+                # Construir mapa de miner_uid -> summary para acceso rápido
+                summary_by_miner: Dict[int, ValidatorRoundSummaryORM] = {
+                    summary.miner_uid: summary for summary in all_summaries if summary.miner_uid is not None
+                }
+                
+                # Buscar el top miner (local_rank = 1)
+                top_summary = next(
+                    (s for s in all_summaries if s.local_rank == 1),
+                    None
+                )
+                
                 top_miner_entry: Optional[Dict[str, Any]] = None
-                if runs:
-                    best_run: Optional[AgentRunContext] = None
-                    best_score = float("-inf")
-                    for run in runs:
-                        if run.run.is_sota or run.run.miner_uid is None:
-                            continue
-                        run_score = run.run.avg_eval_score
-                        if run_score is None and run.evaluations:
-                            run_score = sum(
-                                getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in run.evaluations
-                            ) / len(run.evaluations)
-                        run_score = run_score or 0.0
-                        if run_score > best_score:
-                            best_score = run_score
-                            best_run = run
-                    if best_run is not None:
-                        top_miner_entry = self._build_miner_performance(
-                            best_run, round_obj, weights
-                        )
+                top_score_from_summary: Optional[float] = None
+                local_avg_eval_time: Optional[float] = None
+                
+                if top_summary:
+                    # Usar datos de validator_round_summary_miners
+                    top_score_from_summary = float(top_summary.local_avg_reward or 0.0)
+                    local_avg_eval_time = float(top_summary.local_avg_eval_time or 0.0) if top_summary.local_avg_eval_time else None
+                    
+                    # Buscar el run del top miner para construir top_miner_entry
+                    top_miner_uid = top_summary.miner_uid
+                    if top_miner_uid is not None:
+                        for run in runs:
+                            if run.run.miner_uid == top_miner_uid and not run.run.is_sota:
+                                top_miner_entry = self._build_miner_performance(
+                                    run, round_obj, weights
+                                )
+                                # ✅ Sobrescribir el score con local_avg_reward del summary
+                                if top_miner_entry:
+                                    top_miner_entry["score"] = round(top_score_from_summary, 3)
+                                break
+                else:
+                    # Fallback: calcular desde runs si no hay summary
+                    if runs:
+                        best_run: Optional[AgentRunContext] = None
+                        best_score = float("-inf")
+                        for run in runs:
+                            if run.run.is_sota or run.run.miner_uid is None:
+                                continue
+                            run_score = run.run.avg_eval_score
+                            if run_score is None and run.evaluations:
+                                run_score = sum(
+                                    getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in run.evaluations
+                                ) / len(run.evaluations)
+                            run_score = run_score or 0.0
+                            if run_score > best_score:
+                                best_score = run_score
+                                best_run = run
+                        if best_run is not None:
+                            top_miner_entry = self._build_miner_performance(
+                                best_run, round_obj, weights
+                            )
+                            top_score_from_summary = best_score
+
+                # Usar top_score_from_summary si está disponible, sino usar top_score calculado
+                final_top_score = top_score_from_summary if top_score_from_summary is not None else top_score
+                
+                # ✅ Construir lista de miners con local_avg_reward de validator_round_summary_miners
+                miners_list: List[Dict[str, Any]] = []
+                for run in runs:
+                    if run.run.is_sota or run.run.miner_uid is None:
+                        continue
+                    
+                    miner_uid = run.run.miner_uid
+                    miner_entry = self._build_miner_performance(run, round_obj, weights)
+                    
+                    # ✅ Sobrescribir score con local_avg_reward del summary si existe
+                    if miner_uid in summary_by_miner:
+                        summary = summary_by_miner[miner_uid]
+                        miner_entry["score"] = round(float(summary.local_avg_reward or 0.0), 3)
+                        miner_entry["ranking"] = summary.local_rank or 0
+                        # Agregar avg_eval_time si está disponible
+                        if summary.local_avg_eval_time:
+                            miner_entry["avgEvalTime"] = round(float(summary.local_avg_eval_time), 2)
+                    
+                    miners_list.append(miner_entry)
+                
+                # Ordenar por score descendente
+                miners_list.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
                 key = f"{entry.validator_round_id}:{validator.uid}"
                 validator_map[key] = {
@@ -2044,6 +2196,9 @@ class RoundsService:
                     "emission": int(weight * 0.05),
                     "lastSeen": last_seen,
                     "uptime": round(min(100.0, completion_rate * 100.0), 2),
+                    "topScore": round(final_top_score, 3),  # ✅ Usar de validator_round_summary_miners (local_avg_reward)
+                    "avgEvalTime": round(local_avg_eval_time, 2) if local_avg_eval_time is not None else None,  # ✅ Average time del top miner
+                    "miners": miners_list,  # ✅ Lista de miners con local_avg_reward
                     **({"topMiner": top_miner_entry} if top_miner_entry else {}),
                 }
 
@@ -3257,3 +3412,218 @@ class RoundsService:
                     exc,
                 )
         return evaluations
+
+    async def get_aggregated_metrics(
+        self, round_number: int
+    ) -> Dict[str, Any]:
+        """
+        Obtiene métricas agregadas (post-consensus) y por validator (local) desde validator_round_summary_miners.
+        
+        Args:
+            round_number: Número del round (e.g., 2)
+        
+        Retorna:
+        - aggregated: winner (uid, name, image, hotkey), avg_winner_score, avg_eval_time, miners_evaluated, tasks_evaluated (todo post-consensus, filtrando por Autoppia UID 83)
+        - validators: lista de validators con sus métricas locales
+        """
+        
+        # Obtener todos los validator_round_ids de este round
+        stmt = select(RoundORM.validator_round_id).where(
+            RoundORM.round_number == round_number
+        )
+        result = await self.session.execute(stmt)
+        validator_round_ids = [row[0] for row in result.all()]
+        
+        if not validator_round_ids:
+            raise ValueError(f"Round {round_number} not found")
+        
+        # Buscar validator_round_id de Autoppia (UID 83) para métricas agregadas
+        autoppia_validator_round_id = None
+        for validator_round_id in validator_round_ids:
+            # Buscar si este validator_round tiene validator_uid = 83
+            stmt_validator = select(ValidatorRoundValidatorORM.validator_uid).where(
+                ValidatorRoundValidatorORM.validator_round_id == validator_round_id,
+                ValidatorRoundValidatorORM.validator_uid == 83,
+            ).limit(1)
+            result_validator = await self.session.execute(stmt_validator)
+            if result_validator.scalar_one_or_none():
+                autoppia_validator_round_id = validator_round_id
+                break
+        
+        # Si no encontramos Autoppia, usar el primero disponible
+        if not autoppia_validator_round_id:
+            autoppia_validator_round_id = validator_round_ids[0]
+        
+        # Obtener winner (post_consensus_rank = 1) desde Autoppia
+        winner_summary = None
+        if autoppia_validator_round_id:
+            stmt_winner = select(ValidatorRoundSummaryORM).where(
+                ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
+                ValidatorRoundSummaryORM.post_consensus_rank == 1,
+            ).limit(1)
+            result_winner = await self.session.execute(stmt_winner)
+            winner_summary = result_winner.scalar_one_or_none()
+        
+        # Si no hay rank=1, buscar el mayor post_consensus_avg_reward
+        if not winner_summary:
+            stmt_winner = select(ValidatorRoundSummaryORM).where(
+                ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
+                ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None),
+            ).order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc()).limit(1)
+            result_winner = await self.session.execute(stmt_winner)
+            winner_summary = result_winner.scalar_one_or_none()
+        
+        # Construir winner con name, image, hotkey y métricas
+        winner_data = None
+        if winner_summary and winner_summary.miner_uid is not None:
+            # Buscar miner info desde validator_round_miners
+            stmt_miner = select(ValidatorRoundMinerORM).where(
+                ValidatorRoundMinerORM.validator_round_id == autoppia_validator_round_id,
+                ValidatorRoundMinerORM.miner_uid == winner_summary.miner_uid,
+            ).limit(1)
+            result_miner = await self.session.execute(stmt_miner)
+            miner_snapshot = result_miner.scalar_one_or_none()
+            
+            winner_data = {
+                "uid": winner_summary.miner_uid,
+                "name": miner_snapshot.name if miner_snapshot else f"Miner {winner_summary.miner_uid}",
+                "image": miner_snapshot.image_url if miner_snapshot else None,
+                "hotkey": winner_summary.miner_hotkey or (miner_snapshot.miner_hotkey if miner_snapshot else None),
+                "avg_reward": round(float(winner_summary.post_consensus_avg_reward or 0.0), 3),
+                "avg_eval_score": round(float(winner_summary.post_consensus_avg_eval_score or 0.0), 3),
+                "avg_eval_time": round(float(winner_summary.post_consensus_avg_eval_time or 0.0), 2),
+            }
+        
+        # Obtener métricas agregadas (post-consensus) desde Autoppia
+        aggregated_metrics = {
+            "winner": winner_data,
+            "miners_evaluated": 0,
+            "tasks_evaluated": 0,
+        }
+        
+        # Contar miners únicos y tasks desde post_consensus (desde Autoppia)
+        if autoppia_validator_round_id:
+            stmt_counts = select(
+                func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid)).label("miners_count"),
+                func.sum(ValidatorRoundSummaryORM.post_consensus_tasks_received).label("tasks_received"),
+                func.sum(ValidatorRoundSummaryORM.post_consensus_tasks_success).label("tasks_success"),
+            ).where(
+                ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
+                ValidatorRoundSummaryORM.post_consensus_tasks_received.isnot(None),
+            )
+            result_counts = await self.session.execute(stmt_counts)
+            row_counts = result_counts.first()
+            if row_counts:
+                aggregated_metrics["miners_evaluated"] = int(row_counts.miners_count or 0)
+                aggregated_metrics["tasks_evaluated"] = int(row_counts.tasks_success or row_counts.tasks_received or 0)
+        
+        # Obtener métricas por validator (LOCAL)
+        validators_list = []
+        for validator_round_id in validator_round_ids:
+            # Obtener validator info
+            stmt_validator = select(ValidatorRoundValidatorORM).where(
+                ValidatorRoundValidatorORM.validator_round_id == validator_round_id,
+            ).limit(1)
+            result_validator = await self.session.execute(stmt_validator)
+            validator_info = result_validator.scalar_one_or_none()
+            
+            if not validator_info:
+                continue
+            
+            # Obtener top miner local (local_rank = 1)
+            stmt_top = select(ValidatorRoundSummaryORM).where(
+                ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                ValidatorRoundSummaryORM.local_rank == 1,
+            ).limit(1)
+            result_top = await self.session.execute(stmt_top)
+            top_summary = result_top.scalar_one_or_none()
+            
+            # Si no hay rank=1, buscar el mayor local_avg_reward
+            if not top_summary:
+                stmt_top = select(ValidatorRoundSummaryORM).where(
+                    ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                    ValidatorRoundSummaryORM.local_avg_reward.isnot(None),
+                ).order_by(ValidatorRoundSummaryORM.local_avg_reward.desc()).limit(1)
+                result_top = await self.session.execute(stmt_top)
+                top_summary = result_top.scalar_one_or_none()
+            
+            # Contar miners y tasks locales
+            stmt_local_counts = select(
+                func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid)).label("miners_count"),
+                func.sum(ValidatorRoundSummaryORM.local_tasks_received).label("tasks_received"),
+                func.sum(ValidatorRoundSummaryORM.local_tasks_success).label("tasks_success"),
+            ).where(
+                ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                ValidatorRoundSummaryORM.local_tasks_received.isnot(None),
+            )
+            result_local_counts = await self.session.execute(stmt_local_counts)
+            row_local_counts = result_local_counts.first()
+            
+            # ✅ Obtener TODOS los miners de este validator desde validator_round_summary_miners
+            stmt_all_miners = select(ValidatorRoundSummaryORM).where(
+                ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+            ).order_by(ValidatorRoundSummaryORM.local_rank.asc().nulls_last())
+            result_all_miners = await self.session.execute(stmt_all_miners)
+            all_miners_summaries = result_all_miners.scalars().all()
+            
+            # Construir lista de miners con sus datos
+            miners_list = []
+            for miner_summary in all_miners_summaries:
+                if miner_summary.miner_uid is None:
+                    continue
+                
+                # Buscar miner snapshot para obtener name e image
+                stmt_miner = select(ValidatorRoundMinerORM).where(
+                    ValidatorRoundMinerORM.validator_round_id == validator_round_id,
+                    ValidatorRoundMinerORM.miner_uid == miner_summary.miner_uid,
+                ).limit(1)
+                result_miner = await self.session.execute(stmt_miner)
+                miner_snapshot = result_miner.scalar_one_or_none()
+                
+                miner_data = {
+                    "uid": miner_summary.miner_uid,
+                    "name": miner_snapshot.name if miner_snapshot else f"Miner {miner_summary.miner_uid}",
+                    "hotkey": miner_summary.miner_hotkey or (miner_snapshot.miner_hotkey if miner_snapshot else None),
+                    "image": miner_snapshot.image_url if miner_snapshot else None,
+                    "local_rank": miner_summary.local_rank,
+                    "local_avg_reward": round(float(miner_summary.local_avg_reward or 0.0), 2),  # ✅ 2 decimales
+                    "local_avg_eval_score": round(float(miner_summary.local_avg_eval_score or 0.0), 3),
+                    "local_avg_eval_time": round(float(miner_summary.local_avg_eval_time or 0.0), 2),
+                }
+                miners_list.append(miner_data)
+            
+            validator_data = {
+                "validator_uid": validator_info.validator_uid,
+                "validator_name": validator_info.name or f"Validator {validator_info.validator_uid}",
+                "validator_hotkey": validator_info.validator_hotkey,
+                "local_avg_winner_score": round(float(top_summary.local_avg_reward or 0.0), 3) if top_summary else 0.0,
+                "topScore": round(float(top_summary.local_avg_reward or 0.0), 3) if top_summary else 0.0,  # ✅ Top score = local_avg_reward del top miner
+                "local_avg_eval_time": round(float(top_summary.local_avg_eval_time or 0.0), 2) if top_summary else 0.0,
+                "local_miners_evaluated": int(row_local_counts.miners_count or 0) if row_local_counts else 0,
+                "local_tasks_evaluated": int(row_local_counts.tasks_success or row_local_counts.tasks_received or 0) if row_local_counts else 0,
+                "miners": miners_list,  # ✅ Lista completa de miners
+            }
+            
+            # Agregar winner local si existe
+            if top_summary and top_summary.miner_uid is not None:
+                stmt_miner = select(ValidatorRoundMinerORM).where(
+                    ValidatorRoundMinerORM.validator_round_id == validator_round_id,
+                    ValidatorRoundMinerORM.miner_uid == top_summary.miner_uid,
+                ).limit(1)
+                result_miner = await self.session.execute(stmt_miner)
+                miner_snapshot = result_miner.scalar_one_or_none()
+                
+                validator_data["winner"] = {
+                    "uid": top_summary.miner_uid,
+                    "name": miner_snapshot.name if miner_snapshot else f"Miner {top_summary.miner_uid}",
+                    "image": miner_snapshot.image_url if miner_snapshot else None,
+                    "hotkey": top_summary.miner_hotkey or (miner_snapshot.miner_hotkey if miner_snapshot else None),
+                }
+            
+            validators_list.append(validator_data)
+        
+        return {
+            "round_number": round_number,
+            "post_consensus_summary": aggregated_metrics,
+            "validators": validators_list,
+        }
