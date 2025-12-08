@@ -617,19 +617,8 @@ class ValidatorRoundPersistenceService:
             run_row.total_reward = metrics["total_reward"]
             run_row.average_reward = metrics["average_reward"]
 
-            agent_run_id = run_row.agent_run_id
-            rank_value = rank_map.get(agent_run_id)
-            if rank_value is not None:
-                try:
-                    run_row.rank = int(rank_value)
-                except (TypeError, ValueError):
-                    run_row.rank = run_row.rank
-            weight_value = weight_map.get(agent_run_id)
-            if weight_value is not None:
-                try:
-                    run_row.weight = float(weight_value)
-                except (TypeError, ValueError):
-                    run_row.weight = run_row.weight
+            # rank and weight removed from agent_evaluation_runs
+            # They are now stored in validator_round_miners_score and updated there
 
     async def submit_round(
         self, payload: ValidatorRoundSubmissionRequest
@@ -1017,6 +1006,7 @@ class ValidatorRoundPersistenceService:
             "github_url": snapshot.github_url,
             "description": snapshot.description,
             "is_sota": snapshot.is_sota,
+            "version": snapshot.version if hasattr(snapshot, "version") else None,
             "first_seen_at": snapshot.first_seen_at,
             "last_seen_at": snapshot.last_seen_at,
         }
@@ -1056,12 +1046,10 @@ class ValidatorRoundPersistenceService:
         return {
             "agent_run_id": model.agent_run_id,
             "validator_round_id": model.validator_round_id,
-            "validator_uid": model.validator_uid,
-            "validator_hotkey": model.validator_hotkey,
+            # validator_uid and validator_hotkey removed - obtain via validator_round.validator_snapshot
             "miner_uid": model.miner_uid,
             "miner_hotkey": model.miner_hotkey,
-            "is_sota": model.is_sota,
-            "version": model.version,
+            # is_sota and version removed - obtain via validator_round.miner_snapshots
             "started_at": model.started_at,
             "ended_at": model.ended_at,
             "elapsed_sec": model.elapsed_sec,
@@ -1072,8 +1060,7 @@ class ValidatorRoundPersistenceService:
             "total_tasks": model.total_tasks,
             "completed_tasks": model.completed_tasks,
             "failed_tasks": model.failed_tasks,
-            "rank": model.rank,
-            "weight": model.weight,
+            # rank and weight removed - obtain via validator_round_miners_score
             "meta": _non_empty_dict(model.metadata),
         }
 

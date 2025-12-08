@@ -50,7 +50,12 @@ from app.models.ui.agents import (
     ScoreRoundDataPoint,
     AgentRoundMetrics,
 )
-from app.services.ui.rounds_service import AgentRunContext, RoundsService
+from app.services.ui.rounds_service import (
+    AgentRunContext,
+    RoundsService,
+    _get_validator_uid_from_context,
+    _get_validator_hotkey_from_context,
+)
 from app.services.ui.agent_runs_service import AgentRunsService
 from app.utils.images import resolve_agent_image
 from app.services.subnet_utils import get_price_cached as get_subnet_price
@@ -1195,8 +1200,8 @@ class AgentsService:
                 completed_tasks += context.run.completed_tasks or 0
                 failed_tasks += context.run.failed_tasks or 0
 
-                validator_uid = context.run.validator_uid
-                validator_hotkey = context.run.validator_hotkey
+                validator_uid = _get_validator_uid_from_context(context)
+                validator_hotkey = _get_validator_hotkey_from_context(context)
 
                 detail_key = validator_uid if validator_uid is not None else -1
                 entry = validator_details.get(detail_key)
@@ -1613,10 +1618,11 @@ class AgentsService:
             start_ts = context.run.started_at or context.round.started_at or _ts(None)
             start_dt = datetime.fromtimestamp(start_ts, tz=timezone.utc)
             score = self._compute_run_score(context)
+            validator_uid = _get_validator_uid_from_context(context)
             metadata = {
                 "runId": context.run.agent_run_id,
                 "roundId": _round_id_to_int(context.round.validator_round_id),
-                "validatorId": f"validator-{context.run.validator_uid}",
+                "validatorId": f"validator-{validator_uid or 'unknown'}",
                 "score": round(score, 3),
             }
             activities.append(

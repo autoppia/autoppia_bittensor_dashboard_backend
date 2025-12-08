@@ -60,7 +60,11 @@ from app.models.ui.tasks import (
     TaskValidatorSummary,
     WebsitePerformance,
 )
-from app.services.ui.rounds_service import AgentRunContext, RoundsService
+from app.services.ui.rounds_service import (
+    AgentRunContext,
+    RoundsService,
+    _get_validator_uid_from_context,
+)
 from app.utils.images import resolve_agent_image, resolve_validator_image
 from app.config import settings
 from app.services.round_calc import compute_boundaries_for_round
@@ -264,7 +268,8 @@ class TasksService:
 
             if validator_id:
                 validator_uid = _parse_identifier(validator_id)
-                if context.agent_run.validator_uid != validator_uid:
+                context_validator_uid = _get_validator_uid_from_context(context)
+                if context_validator_uid != validator_uid:
                     continue
 
             if website and context.task.url != website:
@@ -382,9 +387,13 @@ class TasksService:
         """Extract validator name from agent_run or round snapshots."""
         if not run:
             return None
+        if round_row and hasattr(round_row, "validator_snapshot") and round_row.validator_snapshot:
+            # Use validator_snapshot (1:1 relationship)
+            return round_row.validator_snapshot.name
         if round_row and hasattr(round_row, "validator_snapshots"):
+            # Legacy fallback for old code
             for snapshot in round_row.validator_snapshots:
-                if snapshot.validator_uid == run.validator_uid:
+                if snapshot.validator_uid == (getattr(run, "validator_uid", None) or (round_row.validator_snapshot.validator_uid if hasattr(round_row, "validator_snapshot") and round_row.validator_snapshot else None)):
                     return snapshot.name
         if hasattr(run, "validator") and run.validator:
             return getattr(run.validator, "name", None)
@@ -395,9 +404,13 @@ class TasksService:
         """Extract validator image from agent_run or round snapshots."""
         if not run:
             return None
+        if round_row and hasattr(round_row, "validator_snapshot") and round_row.validator_snapshot:
+            # Use validator_snapshot (1:1 relationship)
+            return round_row.validator_snapshot.image_url
         if round_row and hasattr(round_row, "validator_snapshots"):
+            # Legacy fallback for old code
             for snapshot in round_row.validator_snapshots:
-                if snapshot.validator_uid == run.validator_uid:
+                if snapshot.validator_uid == (getattr(run, "validator_uid", None) or (round_row.validator_snapshot.validator_uid if hasattr(round_row, "validator_snapshot") and round_row.validator_snapshot else None)):
                     return snapshot.image_url
         if hasattr(run, "validator") and run.validator:
             return getattr(run.validator, "image", None)
@@ -1061,12 +1074,13 @@ class TasksService:
         )
 
         validator_model: Optional[ValidatorInfo] = None
+        validator_uid = _get_validator_uid_from_context(context)
         if context.round.validators:
             validator_model = next(
                 (
                     val
                     for val in context.round.validators
-                    if val.uid == context.agent_run.validator_uid
+                    if val.uid == validator_uid
                 ),
                 context.round.validators[0],
             )
@@ -1075,8 +1089,8 @@ class TasksService:
 
         if validator_model is None:
             validator_model = ValidatorInfo(
-                uid=context.agent_run.validator_uid,
-                hotkey=_format_validator_id(context.agent_run.validator_uid),
+                uid=validator_uid or 0,
+                hotkey=_format_validator_id(validator_uid) if validator_uid else "unknown",
                 coldkey=None,
                 stake=0.0,
                 vtrust=0.0,
@@ -1145,9 +1159,10 @@ class TasksService:
         else:
             evaluation_status = TaskStatus.RUNNING
 
+        validator_uid = _get_validator_uid_from_context(context)
         agent_run_summary = TaskAgentRunSummary(
             agentRunId=context.agent_run.agent_run_id,
-            validatorUid=context.agent_run.validator_uid,
+            validatorUid=validator_uid,
             minerUid=context.agent_run.miner_uid,
             isSota=context.agent_run.is_sota,
             startedAt=started_at_dt,
@@ -1212,21 +1227,23 @@ class TasksService:
 
         validator = None
         if context.round.validators:
+            validator_uid = _get_validator_uid_from_context(context)
             validator = next(
                 (
                     val
                     for val in context.round.validators
-                    if val.uid == context.agent_run.validator_uid
+                    if val.uid == validator_uid
                 ),
                 context.round.validators[0],
             )
 
+        validator_uid = _get_validator_uid_from_context(context)
         validator_info = ValidatorInfo(
-            id=_format_validator_id(context.agent_run.validator_uid),
+            id=_format_validator_id(validator_uid) if validator_uid else "unknown",
             name=(
                 validator.name
                 if validator and validator.name
-                else _format_validator_id(context.agent_run.validator_uid)
+                else _format_validator_id(validator_uid) if validator_uid else "unknown"
             ),
             image="https://placehold.co/64x64?text=V",
             description="",
@@ -1790,7 +1807,7 @@ class TasksService:
                 (
                     v
                     for v in context.round.validators
-                    if v.uid == context.agent_run.validator_uid
+                    if v.uid == _get_validator_uid_from_context(context)
                 ),
                 context.round.validators[0] if context.round.validators else None,
             )

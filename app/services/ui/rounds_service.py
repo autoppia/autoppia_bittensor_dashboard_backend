@@ -18,6 +18,7 @@ from app.db.models import (
     RoundORM,
     TaskORM,
     TaskSolutionORM,
+    ValidatorRoundMinersScoreORM,
 )
 from app.models.core import (
     Action,
@@ -42,6 +43,24 @@ from app.services.metagraph_service import get_validator_data, MetagraphError
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)  # Reduce verbosity
+
+
+def _get_validator_uid_from_context(context: "AgentRunContext") -> Optional[int]:
+    """Get validator_uid from round's validator_snapshot or validator_info."""
+    if hasattr(context.round, "validator_info") and context.round.validator_info:
+        return context.round.validator_info.uid
+    if hasattr(context.round, "validators") and context.round.validators:
+        return context.round.validators[0].uid if context.round.validators else None
+    return None
+
+
+def _get_validator_hotkey_from_context(context: "AgentRunContext") -> Optional[str]:
+    """Get validator_hotkey from round's validator_snapshot or validator_info."""
+    if hasattr(context.round, "validator_info") and context.round.validator_info:
+        return context.round.validator_info.hotkey
+    if hasattr(context.round, "validators") and context.round.validators:
+        return context.round.validators[0].hotkey if context.round.validators else None
+    return None
 
 
 @dataclass
@@ -1831,7 +1850,9 @@ class RoundsService:
             weights = round_obj.weights or {}
             contexts_by_validator: Dict[int, List[AgentRunContext]] = {}
             for ctx in entry.contexts:
-                contexts_by_validator.setdefault(ctx.run.validator_uid, []).append(ctx)
+                validator_uid = _get_validator_uid_from_context(ctx)
+                if validator_uid is not None:
+                    contexts_by_validator.setdefault(validator_uid, []).append(ctx)
 
             last_seen = _iso_timestamp(round_obj.ended_at or round_obj.started_at)
 
@@ -2112,7 +2133,7 @@ class RoundsService:
                         "timestamp": run_start,
                         "metadata": {
                             "minerUid": ctx.run.miner_uid,
-                            "validatorId": f"validator-{ctx.run.validator_uid}",
+                            "validatorId": f"validator-{_get_validator_uid_from_context(ctx) or 'unknown'}",
                             "validatorRoundId": round_key,
                         },
                     }
@@ -2134,7 +2155,7 @@ class RoundsService:
                             ),
                             "metadata": {
                                 "minerUid": ctx.run.miner_uid,
-                                "validatorId": f"validator-{ctx.run.validator_uid}",
+                                "validatorId": f"validator-{_get_validator_uid_from_context(ctx) or 'unknown'}",
                                 "validatorRoundId": round_key,
                                 "taskId": evaluation.task_id,
                                 "score": getattr(evaluation, "final_score", None),
@@ -2150,7 +2171,7 @@ class RoundsService:
                             "timestamp": _iso_timestamp(ctx.run.ended_at),
                             "metadata": {
                                 "minerUid": ctx.run.miner_uid,
-                                "validatorId": f"validator-{ctx.run.validator_uid}",
+                                "validatorId": f"validator-{_get_validator_uid_from_context(ctx) or 'unknown'}",
                                 "validatorRoundId": round_key,
                             },
                         }
@@ -2665,7 +2686,7 @@ class RoundsService:
                     "miner_uid": ctx.run.miner_uid,
                     "rank": rank,
                     "score": round(score, 6),
-                    "validator_uid": ctx.run.validator_uid,
+                    "validator_uid": _get_validator_uid_from_context(ctx),
                     "validator_round_id": round_model.validator_round_id,
                     "agent_run_id": ctx.run.agent_run_id,
                 }
@@ -2750,8 +2771,9 @@ class RoundsService:
         
         # 2. Try validators list
         if validator_stake == 0 and round_obj.validators:
+            validator_uid = _get_validator_uid_from_context(context)
             validator = next(
-                (v for v in round_obj.validators if v.uid == context.run.validator_uid),
+                (v for v in round_obj.validators if v.uid == validator_uid),
                 None
             )
             if validator and validator.stake:
@@ -2775,7 +2797,7 @@ class RoundsService:
             "stake": validator_stake,  # VALIDATOR stake, not miner weight
             "emission": emission,
             "lastSeen": _iso_timestamp(context.run.ended_at or context.run.started_at),
-            "validatorId": f"validator-{context.run.validator_uid}",
+            "validatorId": f"validator-{_get_validator_uid_from_context(context) or 'unknown'}",
             "isSota": context.run.is_sota,
             "imageUrl": image_url,
         }
@@ -3006,15 +3028,45 @@ class RoundsService:
                     task_id_set.add(task_id)
         task_ids = sorted(task_id_set)
 
+        # Get validator_uid and validator_hotkey from validator_round.validator_snapshot
+        validator_uid = None
+        validator_hotkey = None
+        if hasattr(run_row, "validator_round") and run_row.validator_round:
+            if hasattr(run_row.validator_round, "validator_snapshot") and run_row.validator_round.validator_snapshot:
+                validator_uid = run_row.validator_round.validator_snapshot.validator_uid
+                validator_hotkey = run_row.validator_round.validator_snapshot.validator_hotkey
+
+        # Get rank and weight from validator_round_miners_score
+        rank = None
+        weight = None
+        if run_row.miner_uid is not None and hasattr(run_row, "validator_round") and run_row.validator_round:
+            # Try to get from validator_round.miner_scores relationship
+            if hasattr(run_row.validator_round, "miner_scores"):
+                for score_row in run_row.validator_round.miner_scores:
+                    if score_row.miner_uid == run_row.miner_uid:
+                        rank = score_row.rank_consensus or score_row.rank
+                        weight = score_row.weight
+                        break
+
+        # Get is_sota and version from validator_round_miners
+        is_sota = False
+        version = None
+        if run_row.miner_uid is not None and hasattr(run_row, "validator_round") and run_row.validator_round:
+            # Try to get from validator_round.miner_snapshots relationship
+            if hasattr(run_row.validator_round, "miner_snapshots"):
+                for miner_snapshot in run_row.validator_round.miner_snapshots:
+                    if miner_snapshot.miner_uid == run_row.miner_uid:
+                        is_sota = bool(miner_snapshot.is_sota)
+                        version = miner_snapshot.version
+                        break
+
         run_model = AgentEvaluationRun(
             agent_run_id=run_row.agent_run_id,
             validator_round_id=run_row.validator_round_id,
-            validator_uid=run_row.validator_uid,
-            validator_hotkey=run_row.validator_hotkey,
+            # validator_uid and validator_hotkey obtained from validator_round.validator_snapshot
             miner_uid=run_row.miner_uid,
             miner_hotkey=run_row.miner_hotkey,
-            is_sota=bool(run_row.is_sota),
-            version=run_row.version,
+            # is_sota and version obtained from validator_round.miner_snapshots
             started_at=run_row.started_at or datetime.now(timezone.utc).timestamp(),
             ended_at=run_row.ended_at,
             elapsed_sec=run_row.elapsed_sec,
@@ -3025,10 +3077,22 @@ class RoundsService:
             total_tasks=run_row.total_tasks or len(task_ids),
             completed_tasks=run_row.completed_tasks or 0,
             failed_tasks=run_row.failed_tasks or 0,
-            rank=run_row.rank,
-            weight=run_row.weight,
+            # rank and weight obtained from validator_round_miners_score
             metadata=metadata,
         )
+        
+        # Set validator_uid, validator_hotkey, is_sota, version, rank, weight as extra attributes for compatibility
+        if validator_uid is not None:
+            run_model.validator_uid = validator_uid
+        if validator_hotkey is not None:
+            run_model.validator_hotkey = validator_hotkey
+        run_model.is_sota = is_sota
+        if version is not None:
+            run_model.version = version
+        if rank is not None:
+            run_model.rank = rank
+        if weight is not None:
+            run_model.weight = weight
 
         # Compatibility attributes used throughout UI services
         run_model.task_ids = task_ids

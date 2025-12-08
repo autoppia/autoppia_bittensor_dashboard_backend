@@ -47,7 +47,11 @@ from app.models.ui.agent_runs import (
 )
 from app.services.redis_cache import REDIS_CACHE_TTL, redis_cache
 from app.services.service_utils import rollback_on_error
-from app.services.ui.rounds_service import AgentRunContext, RoundsService
+from app.services.ui.rounds_service import (
+    AgentRunContext,
+    RoundsService,
+    _get_validator_uid_from_context,
+)
 from app.data import get_validator_metadata
 from app.utils.images import resolve_agent_image, resolve_validator_image
 
@@ -764,7 +768,7 @@ class AgentRunsService:
             agentHotkey=agent_hotkey,
             agentName=agent_name,
             roundId=round_id_value or 0,
-            validatorId=_format_validator_id(context.run.validator_uid),
+            validatorId=_format_validator_id(_get_validator_uid_from_context(context) or 0),
             validatorName=validator_name,
             validatorImage=validator_image,
             startTime=_ts_to_iso(context.run.started_at) or "",
@@ -819,8 +823,9 @@ class AgentRunsService:
             endTime=_ts_to_iso(context.round.ended_at),
         )
 
+        validator_uid = _get_validator_uid_from_context(context)
         validator_info = ValidatorInfo(
-            id=_format_validator_id(context.run.validator_uid),
+            id=_format_validator_id(validator_uid) if validator_uid else "unknown",
             name=validator_name,
             image=validator_image,
             description="",
@@ -1080,7 +1085,7 @@ class AgentRunsService:
             agentHotkey=agent_hotkey,
             agentName=agent_name,
             roundId=round_id_value or 0,
-            validatorId=_format_validator_id(context.run.validator_uid),
+            validatorId=_format_validator_id(_get_validator_uid_from_context(context) or 0),
             startTime=_ts_to_iso(context.run.started_at) or "",
             endTime=_ts_to_iso(context.run.ended_at),
             status=self._run_status(context),
@@ -1470,11 +1475,12 @@ class AgentRunsService:
 
     @staticmethod
     def _find_validator(context: AgentRunContext):
+        validator_uid = _get_validator_uid_from_context(context)
         return next(
             (
                 validator
                 for validator in context.round.validators
-                if validator.uid == context.run.validator_uid
+                if validator.uid == validator_uid
             ),
             None,
         )
@@ -1532,7 +1538,7 @@ class AgentRunsService:
 
     def _resolve_validator_identity(self, context: AgentRunContext) -> Tuple[str, str]:
         validator = self._find_validator(context)
-        validator_uid = context.run.validator_uid
+        validator_uid = _get_validator_uid_from_context(context)
 
         validator_info = getattr(context.round, "validator_info", None)
         metadata = (
