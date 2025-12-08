@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentEvaluationRunORM,
-    EvaluationResultORM,
+    EvaluationORM,
     RoundORM,
     TaskORM,
     TaskSolutionORM,
@@ -22,7 +22,7 @@ from app.db.models import (
 )
 from app.models.core import (
     AgentEvaluationRun,
-    EvaluationResult,
+    Evaluation,
     ValidatorRound,
     Task,
     TaskSolution,
@@ -167,7 +167,7 @@ class TaskContext:
     agent_run: AgentEvaluationRun
     task: Task
     solution: Optional[TaskSolution]
-    evaluation: Optional[EvaluationResult]
+    evaluation: Optional[Evaluation]
 
 
 class TasksService:
@@ -223,10 +223,10 @@ class TasksService:
         # Only show tasks that have evaluations (i.e., completed tasks with agent_runs)
         stmt = (
             select(TaskORM)
-            .where(TaskORM.task_id.in_(select(EvaluationResultORM.task_id).distinct()))
+            .where(TaskORM.task_id.in_(select(EvaluationORM.task_id).distinct()))
             .options(
                 selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluation_results),
+                selectinload(TaskORM.evaluations),
             )
             .order_by(TaskORM.id.desc())
         )
@@ -469,8 +469,8 @@ class TasksService:
 
         # Start from EVALUATIONS (one row per task+miner) instead of tasks
         base_stmt = (
-            select(EvaluationResultORM)
-            .join(TaskORM, EvaluationResultORM.task_id == TaskORM.task_id)
+            select(EvaluationORM)
+            .join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
         )
         filters = []
 
@@ -506,9 +506,9 @@ class TasksService:
 
         # Add score filter if provided
         if min_score is not None:
-            filters.append(EvaluationResultORM.final_score >= min_score)
+            filters.append(EvaluationORM.final_score >= min_score)
         if max_score is not None:
-            filters.append(EvaluationResultORM.final_score <= max_score)
+            filters.append(EvaluationORM.final_score <= max_score)
         
         if use_case:
             # Filter by use_case name in JSON field
@@ -537,13 +537,13 @@ class TasksService:
             base_stmt = base_stmt.where(*filters)
 
         # Sorting: default to evaluation created_at
-        sort_column = EvaluationResultORM.created_at
+        sort_column = EvaluationORM.created_at
         if sort_by.lower() in {"starttime", "start_time"}:
-            sort_column = EvaluationResultORM.created_at
+            sort_column = EvaluationORM.created_at
         elif sort_by.lower() in {"endtime", "end_time"}:
-            sort_column = EvaluationResultORM.created_at
+            sort_column = EvaluationORM.created_at
         elif sort_by.lower() == "score":
-            sort_column = EvaluationResultORM.final_score
+            sort_column = EvaluationORM.final_score
 
         order_expr = (
             sort_column.desc()
@@ -786,7 +786,7 @@ class TasksService:
             select(TaskORM)
             .options(
                 selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluation_results),
+                selectinload(TaskORM.evaluations),
             )
             .where(TaskORM.task_id == task_id)
         )
@@ -799,8 +799,8 @@ class TasksService:
     async def get_task_by_evaluation_id(self, evaluation_id: str) -> TaskContext:
         """Get task context from an evaluation_id."""
         # Get the evaluation
-        eval_stmt = select(EvaluationResultORM).where(
-            EvaluationResultORM.evaluation_id == evaluation_id
+        eval_stmt = select(EvaluationORM).where(
+            EvaluationORM.evaluation_id == evaluation_id
         )
         eval_row = await self.session.scalar(eval_stmt)
         if not eval_row:
@@ -811,7 +811,7 @@ class TasksService:
             select(TaskORM)
             .options(
                 selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluation_results),
+                selectinload(TaskORM.evaluations),
             )
             .where(TaskORM.task_id == eval_row.task_id)
         )
@@ -837,7 +837,7 @@ class TasksService:
         )
         
         evaluation_model = next(
-            (e for e in context.evaluation_results if e.evaluation_id == evaluation_id),
+            (e for e in context.evaluations if e.evaluation_id == evaluation_id),
             None
         )
         
@@ -1180,12 +1180,11 @@ class TasksService:
             evaluation_summary = TaskEvaluationSummary(
                 evaluationId=context.evaluation.evaluation_id,
                 finalScore=context.evaluation.final_score,
-                rawScore=context.evaluation.raw_score or context.evaluation.final_score,
+                rawScore=context.evaluation.final_score,
                 evaluationTime=context.evaluation.evaluation_time,
                 status=evaluation_status,
                 validatorUid=context.evaluation.validator_uid,
                 minerUid=context.evaluation.miner_uid,
-                webAgentId=context.evaluation.web_agent_id,
                 hasFeedback=bool(context.evaluation.feedback),
                 hasRecording=bool(context.evaluation.gif_recording),
             )
@@ -1685,7 +1684,7 @@ class TasksService:
         return datetime.fromtimestamp(base_ts + offset, tz=timezone.utc)
 
     def _resolve_agent_run_id(self, task_row: TaskORM) -> Optional[str]:
-        for evaluation_row in task_row.evaluation_results or []:
+        for evaluation_row in task_row.evaluations or []:
             if evaluation_row.agent_run_id:
                 return evaluation_row.agent_run_id
         for solution_row in task_row.task_solutions or []:
@@ -1745,25 +1744,25 @@ class TasksService:
             solution_model = self._deserialize_task_solution(target_solution)
 
         evaluation_model = None
-        if context.evaluation_results:
+        if context.evaluations:
             evaluation_model = next(
                 (
                     evaluation
-                    for evaluation in context.evaluation_results
+                    for evaluation in context.evaluations
                     if evaluation.task_id == task_row.task_id
                 ),
                 None,
             )
-        if evaluation_model is None and task_row.evaluation_results:
+        if evaluation_model is None and task_row.evaluations:
             matching_evaluations = [
                 evaluation_row
-                for evaluation_row in task_row.evaluation_results
+                for evaluation_row in task_row.evaluations
                 if evaluation_row.agent_run_id == agent_run_id
             ]
             target_evaluation = (
                 matching_evaluations[0]
                 if matching_evaluations
-                else task_row.evaluation_results[0]
+                else task_row.evaluations[0]
             )
             evaluation_model = self._deserialize_evaluation(target_evaluation)
 
@@ -1886,8 +1885,8 @@ class TasksService:
 
     @staticmethod
     def _deserialize_evaluation(
-        evaluation_row: EvaluationResultORM,
-    ) -> EvaluationResult:
+        evaluation_row: EvaluationORM,
+    ) -> Evaluation:
         data = dict(evaluation_row.data or {})
         data.setdefault("evaluation_id", evaluation_row.evaluation_id)
         data.setdefault("task_id", evaluation_row.task_id)
@@ -1895,10 +1894,18 @@ class TasksService:
         data.setdefault("agent_run_id", evaluation_row.agent_run_id)
         data.setdefault("validator_round_id", evaluation_row.validator_round_id)
         data.setdefault("validator_uid", evaluation_row.validator_uid)
+        data.setdefault("validator_hotkey", evaluation_row.validator_hotkey)
         data.setdefault("miner_uid", evaluation_row.miner_uid)
-        result = EvaluationResult(**data)
-        if evaluation_row.gif_recording:
-            result.gif_recording = evaluation_row.gif_recording
+        data.setdefault("miner_hotkey", evaluation_row.miner_hotkey)
+        data.setdefault("final_score", evaluation_row.final_score)
+        data.setdefault("evaluation_time", evaluation_row.evaluation_time)
+        data.setdefault("execution_history", evaluation_row.execution_history)
+        data.setdefault("feedback", evaluation_row.feedback)
+        data.setdefault("web_agent_id", evaluation_row.web_agent_id)
+        data.setdefault("stats", evaluation_row.stats)
+        data.setdefault("gif_recording", evaluation_row.gif_recording)
+        data.setdefault("metadata", evaluation_row.meta)
+        result = Evaluation(**data)
         return result
 
     @staticmethod

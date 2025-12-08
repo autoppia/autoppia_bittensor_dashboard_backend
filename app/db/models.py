@@ -111,10 +111,6 @@ class ValidatorRoundORM(TimestampMixin, Base):
         back_populates="validator_round",
         cascade="all, delete-orphan",
     )
-    evaluation_results: Mapped[list["EvaluationResultORM"]] = relationship(
-        back_populates="validator_round",
-        cascade="all, delete-orphan",
-    )
 
     @property
     def data(self) -> dict[str, Any]:
@@ -288,9 +284,6 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     evaluations: Mapped[list["EvaluationORM"]] = relationship(
         back_populates="agent_run", cascade="all, delete-orphan"
     )
-    evaluation_results: Mapped[list["EvaluationResultORM"]] = relationship(
-        back_populates="agent_run", cascade="all, delete-orphan"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -334,9 +327,6 @@ class TaskORM(TimestampMixin, Base):
         back_populates="task", cascade="all, delete-orphan"
     )
     evaluations: Mapped[list["EvaluationORM"]] = relationship(
-        back_populates="task", cascade="all, delete-orphan"
-    )
-    evaluation_results: Mapped[list["EvaluationResultORM"]] = relationship(
         back_populates="task", cascade="all, delete-orphan"
     )
 
@@ -403,9 +393,6 @@ class TaskSolutionORM(TimestampMixin, Base):
     evaluations: Mapped[list["EvaluationORM"]] = relationship(
         back_populates="task_solution", cascade="all, delete-orphan"
     )
-    evaluation_results: Mapped[list["EvaluationResultORM"]] = relationship(
-        back_populates="task_solution", cascade="all, delete-orphan"
-    )
 
     @property
     def data(self) -> dict[str, Any]:
@@ -425,12 +412,12 @@ class TaskSolutionORM(TimestampMixin, Base):
 
 
 # ---------------------------------------------------------------------------
-# Evaluations and results
+# Evaluations
 # ---------------------------------------------------------------------------
 
 
 class EvaluationORM(TimestampMixin, Base):
-    """Evaluation record linking a task, solution, and agent run."""
+    """Evaluation of a task and its solution with detailed artefacts."""
 
     __tablename__ = "evaluations"
     __table_args__ = (
@@ -445,6 +432,11 @@ class EvaluationORM(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
+    agent_run_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_evaluation_runs.agent_run_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     task_id: Mapped[str] = mapped_column(
         ForeignKey("tasks.task_id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -453,25 +445,23 @@ class EvaluationORM(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    agent_run_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_evaluation_runs.agent_run_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
+    miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    miner_hotkey: Mapped[Optional[str]] = mapped_column(
+        String(128), nullable=True, index=True
     )
     validator_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     validator_hotkey: Mapped[str] = mapped_column(
         String(128), nullable=False, index=True
     )
 
-    miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    miner_hotkey: Mapped[Optional[str]] = mapped_column(
-        String(128), nullable=True, index=True
-    )
-
     final_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    raw_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     evaluation_time: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    execution_history: Mapped[list[Any]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    feedback: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    gif_recording: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="evaluations"
@@ -483,90 +473,16 @@ class EvaluationORM(TimestampMixin, Base):
     agent_run: Mapped["AgentEvaluationRunORM"] = relationship(
         back_populates="evaluations"
     )
-    results: Mapped[list["EvaluationResultORM"]] = relationship(
-        back_populates="evaluation", cascade="all, delete-orphan"
-    )
-
-
-class EvaluationResultORM(TimestampMixin, Base):
-    """Detailed artefact produced for an evaluation."""
-
-    __tablename__ = "evaluation_results"
-    __table_args__ = (
-        UniqueConstraint("result_id", name="uq_evaluation_result_id"),
-        Index("ix_eval_result_round", "validator_round_id", "result_id"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    result_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    evaluation_id: Mapped[str] = mapped_column(
-        ForeignKey("evaluations.evaluation_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    validator_round_id: Mapped[str] = mapped_column(
-        ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    agent_run_id: Mapped[str] = mapped_column(
-        ForeignKey("agent_evaluation_runs.agent_run_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    task_id: Mapped[str] = mapped_column(
-        ForeignKey("tasks.task_id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    task_solution_id: Mapped[str] = mapped_column(
-        ForeignKey("task_solutions.solution_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    miner_hotkey: Mapped[Optional[str]] = mapped_column(
-        String(128), nullable=True, index=True
-    )
-    validator_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-
-    final_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    test_results_matrix: Mapped[list[list[dict[str, Any]]]] = mapped_column(
-        JSON, nullable=False, default=list
-    )
-    execution_history: Mapped[list[Any]] = mapped_column(
-        JSON, nullable=False, default=list
-    )
-    feedback: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    web_agent_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    raw_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    evaluation_time: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    stats: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    gif_recording: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-
-    evaluation: Mapped["EvaluationORM"] = relationship(back_populates="results")
 
     @property
     def data(self) -> dict[str, Any]:
         """Backwards-compatible accessor for legacy JSON payloads."""
         return {
-            "result_id": self.result_id,
             "evaluation_id": self.evaluation_id,
             "final_score": self.final_score,
-            "raw_score": self.raw_score,
             "evaluation_time": self.evaluation_time,
             "meta": dict(self.meta or {}),
         }
-
-    validator_round: Mapped["ValidatorRoundORM"] = relationship(
-        back_populates="evaluation_results"
-    )
-    task: Mapped["TaskORM"] = relationship(back_populates="evaluation_results")
-    task_solution: Mapped["TaskSolutionORM"] = relationship(
-        back_populates="evaluation_results"
-    )
-    agent_run: Mapped["AgentEvaluationRunORM"] = relationship(
-        back_populates="evaluation_results"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -583,7 +499,6 @@ __all__ = [
     "TaskORM",
     "TaskSolutionORM",
     "EvaluationORM",
-    "EvaluationResultORM",
     "RoundORM",
 ]
 

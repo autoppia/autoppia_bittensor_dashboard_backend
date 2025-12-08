@@ -17,7 +17,6 @@ from app.db.session import get_session
 from app.models.core import (
     AgentEvaluationRun,
     Evaluation,
-    EvaluationResult,
     Miner,
     ValidatorRoundMiner,
     Task,
@@ -208,7 +207,6 @@ class AddEvaluationRequest(BaseModel):
     task: Task
     task_solution: TaskSolution
     evaluation: Evaluation
-    evaluation_result: EvaluationResult
 
 
 class LegacyStartAgentRunRequest(BaseModel):
@@ -347,40 +345,33 @@ async def _legacy_to_add_evaluation_request(
 
     task_solution = TaskSolution(**task_solution_data)
 
-    evaluation_result_data = dict(payload.evaluation_result)
-    evaluation_result_data.setdefault("validator_round_id", validator_round_id)
-    evaluation_result_data.setdefault("validator_uid", validator_uid)
-    evaluation_result_data.setdefault("validator_hotkey", validator_hotkey)
-    if miner_uid is not None:
-        evaluation_result_data.setdefault("miner_uid", miner_uid)
-        evaluation_result_data.setdefault("miner_hotkey", miner_hotkey)
-    evaluation_result = EvaluationResult(**evaluation_result_data)
-
-    evaluation_data = dict(payload.evaluation or {})
-    if not evaluation_data:
-        evaluation_data["evaluation_id"] = evaluation_result.evaluation_id
-        evaluation_data["task_id"] = task.task_id
-        evaluation_data["task_solution_id"] = task_solution.solution_id
-        evaluation_data["agent_run_id"] = agent_run_id
-        evaluation_data["final_score"] = evaluation_result.final_score
-        evaluation_data["raw_score"] = evaluation_result.raw_score
-        evaluation_data["evaluation_time"] = evaluation_result.evaluation_time
-        evaluation_data["summary"] = (
-            evaluation_result.meta if hasattr(evaluation_result, "meta") else {}
-        )
+    # Build evaluation from evaluation_result (consolidated model)
+    evaluation_data = dict(payload.evaluation_result)
+    # If evaluation is provided, merge it (evaluation_result takes precedence for detailed fields)
+    if payload.evaluation:
+        evaluation_data.update(payload.evaluation)
+    
     evaluation_data.setdefault("validator_round_id", validator_round_id)
     evaluation_data.setdefault("validator_uid", validator_uid)
     evaluation_data.setdefault("validator_hotkey", validator_hotkey)
     if miner_uid is not None:
         evaluation_data.setdefault("miner_uid", miner_uid)
         evaluation_data.setdefault("miner_hotkey", miner_hotkey)
+    
+    # Ensure evaluation_id exists (use from evaluation_result if present, or generate)
+    if "evaluation_id" not in evaluation_data:
+        evaluation_data["evaluation_id"] = evaluation_data.get("result_id") or f"{task_solution.solution_id}-evaluation"
+    
+    # Map metadata if present
+    if "metadata" not in evaluation_data and "meta" in evaluation_data:
+        evaluation_data["metadata"] = evaluation_data.pop("meta")
+    
     evaluation = Evaluation(**evaluation_data)
 
     return AddEvaluationRequest(
         task=task,
         task_solution=task_solution,
         evaluation=evaluation,
-        evaluation_result=evaluation_result,
     )
 
 
@@ -1009,7 +1000,7 @@ async def add_evaluation(
     ),
     session: AsyncSession = Depends(get_session),
 ):
-    """Persist evaluation data (task, solution, evaluation record, and artefact)."""
+    """Persist evaluation data (task, solution, and evaluation with artefacts)."""
     service = ValidatorRoundPersistenceService(session)
 
     try:
@@ -1075,7 +1066,6 @@ async def add_evaluation(
                                 }
                             ),
                             evaluation=request_payload.evaluation,
-                            evaluation_result=request_payload.evaluation_result,
                         )
         except Exception:
             # Non-fatal: fall back to original payload
@@ -1084,16 +1074,11 @@ async def add_evaluation(
         task = request_payload.task
         task_solution = request_payload.task_solution
         evaluation = request_payload.evaluation
-        evaluation_result = request_payload.evaluation_result
 
         expected_fields = [
             (task.validator_round_id, "task.validator_round_id"),
             (task_solution.validator_round_id, "task_solution.validator_round_id"),
             (evaluation.validator_round_id, "evaluation.validator_round_id"),
-            (
-                evaluation_result.validator_round_id,
-                "evaluation_result.validator_round_id",
-            ),
         ]
         for value, label in expected_fields:
             _require_round_match(value, validator_round_id, label)
@@ -1103,33 +1088,15 @@ async def add_evaluation(
         )
         _require_round_match(evaluation.task_id, task.task_id, "evaluation.task_id")
         _require_round_match(
-            evaluation_result.task_id, task.task_id, "evaluation_result.task_id"
-        )
-        _require_round_match(
             task_solution.agent_run_id, agent_run_id, "task_solution.agent_run_id"
         )
         _require_round_match(
             evaluation.agent_run_id, agent_run_id, "evaluation.agent_run_id"
         )
         _require_round_match(
-            evaluation_result.agent_run_id,
-            agent_run_id,
-            "evaluation_result.agent_run_id",
-        )
-        _require_round_match(
             evaluation.task_solution_id,
             task_solution.solution_id,
             "evaluation.task_solution_id",
-        )
-        _require_round_match(
-            evaluation_result.task_solution_id,
-            task_solution.solution_id,
-            "evaluation_result.task_solution_id",
-        )
-        _require_round_match(
-            evaluation_result.evaluation_id,
-            evaluation.evaluation_id,
-            "evaluation_result.evaluation_id",
         )
 
         # Cross-check validator identity on payloads matches the round
@@ -1142,7 +1109,6 @@ async def add_evaluation(
                 "task_solution",
             ),
             (evaluation.validator_uid, evaluation.validator_hotkey, "evaluation"),
-            (evaluation_result.validator_uid, None, "evaluation_result"),
         ]
         if not round_row.validator_snapshot:
             raise HTTPException(
@@ -1168,21 +1134,15 @@ async def add_evaluation(
                 task_solution.solution_id
             )
             existing_eval = await service.get_evaluation_row(evaluation.evaluation_id)
-            existing_result = await service.get_evaluation_result_row(
-                evaluation_result.result_id
-            )
         except Exception:
-            existing_solution = existing_eval = existing_result = None
+            existing_solution = existing_eval = None
         if (
             existing_solution
             and existing_eval
-            and existing_result
             and str(existing_solution.validator_round_id) == str(validator_round_id)
             and str(existing_eval.validator_round_id) == str(validator_round_id)
-            and str(existing_result.validator_round_id) == str(validator_round_id)
             and str(existing_solution.agent_run_id) == str(agent_run_id)
             and str(existing_eval.agent_run_id) == str(agent_run_id)
-            and str(existing_result.agent_run_id) == str(agent_run_id)
         ):
             logger.info(
                 "Evaluation %s already stored for round %s (agent_run_id=%s); treating as idempotent",
@@ -1239,7 +1199,6 @@ async def add_evaluation(
             task=task,
             task_solution=task_solution,
             evaluation=evaluation,
-            evaluation_result=evaluation_result,
         )
         await session.commit()
     except DuplicateIdentifierError as exc:

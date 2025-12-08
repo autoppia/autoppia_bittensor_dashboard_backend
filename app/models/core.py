@@ -530,60 +530,6 @@ class TaskSolution(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class Evaluation(BaseModel):
-    """Record that links a task, its solution, and evaluation metadata."""
-
-    evaluation_id: str = Field(
-        ..., description="Primary identifier for the evaluation record"
-    )
-    validator_round_id: str = Field(
-        ..., description="Validator round that owns the evaluation"
-    )
-    task_id: str = Field(..., description="Foreign key to the evaluated task")
-    task_solution_id: str = Field(
-        ..., description="Foreign key to the evaluated task solution"
-    )
-    agent_run_id: str = Field(..., description="Foreign key to the agent run")
-    validator_uid: int = Field(
-        ..., description="Validator UID performing the evaluation"
-    )
-    validator_hotkey: str = Field(
-        ..., description="Validator hotkey performing the evaluation"
-    )
-    miner_uid: Optional[int] = Field(
-        default=None, description="Miner UID associated with the evaluation"
-    )
-    miner_hotkey: Optional[str] = Field(
-        default=None, description="Miner hotkey associated with the evaluation"
-    )
-
-    final_score: float = Field(
-        default=0.0, description="Final score assigned to the task solution"
-    )
-    raw_score: float = Field(
-        default=0.0, description="Raw score prior to normalisation"
-    )
-    evaluation_time: float = Field(
-        default=0.0, description="Time taken to compute the evaluation (seconds)"
-    )
-    summary: Dict[str, Any] = Field(
-        default_factory=dict, description="Any additional summary metrics"
-    )
-
-    def validate_relationships(
-        self,
-        agent_run: AgentEvaluationRun,
-        task: Task,
-        task_solution: TaskSolution,
-    ) -> bool:
-        return (
-            self.task_id == task.task_id
-            and self.task_solution_id == task_solution.solution_id
-            and self.agent_run_id == agent_run.agent_run_id
-            and self.validator_round_id == agent_run.validator_round_id
-        )
-
-
 class TestResult(BaseModel):
     """Represents the evaluation result of a single test."""
 
@@ -671,15 +617,12 @@ class EvaluationStats(BaseModel):
         }
 
 
-class EvaluationResult(BaseModel):
-    """Detailed output artefact produced during evaluation."""
+class Evaluation(BaseModel):
+    """Evaluation of a task and its solution with detailed artefacts."""
 
-    result_id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        description="Primary identifier for the evaluation result artefact",
-    )
     evaluation_id: str = Field(
-        ..., description="Foreign key to the parent evaluation record"
+        default_factory=lambda: str(uuid.uuid4()),
+        description="Primary identifier for the evaluation",
     )
     validator_round_id: str = Field(
         ..., description="Validator round that owns the evaluation"
@@ -687,23 +630,28 @@ class EvaluationResult(BaseModel):
     agent_run_id: str = Field(
         ..., description="Agent run associated with the evaluation"
     )
-    task_id: str = Field(..., description="Task evaluated in this artefact")
+    task_id: str = Field(..., description="Task evaluated in this evaluation")
     task_solution_id: str = Field(
-        ..., description="Task solution evaluated in this artefact"
+        ..., description="Task solution evaluated in this evaluation"
     )
     miner_uid: Optional[int] = Field(
         default=None, description="Miner UID associated with the evaluation"
     )
+    miner_hotkey: Optional[str] = Field(
+        default=None, description="Miner hotkey associated with the evaluation"
+    )
     validator_uid: int = Field(
-        ..., description="Validator UID that produced the artefact"
+        ..., description="Validator UID that produced the evaluation"
+    )
+    validator_hotkey: str = Field(
+        ..., description="Validator hotkey that produced the evaluation"
     )
 
     final_score: float = Field(
         default=0.0, description="Final score recorded for the evaluation"
     )
-    test_results_matrix: List[List[TestResult]] = Field(
-        default_factory=list,
-        description="Detailed matrix of test results (grouped per stage/attempt)",
+    evaluation_time: float = Field(
+        default=0.0, description="Time taken to evaluate the solution (seconds)"
     )
     execution_history: List[Any] = Field(
         default_factory=list,
@@ -712,23 +660,26 @@ class EvaluationResult(BaseModel):
     feedback: Optional[Feedback] = Field(
         default=None, description="Optional human-readable feedback summary"
     )
-    web_agent_id: Optional[str] = Field(
-        default=None, description="Web agent identifier used during evaluation"
-    )
-    raw_score: float = Field(default=0.0, description="Raw score before normalisation")
-    evaluation_time: float = Field(
-        default=0.0, description="Time taken to evaluate the solution (seconds)"
-    )
-    stats: Optional[EvaluationStats] = Field(
-        default=None, description="Structured statistics collected during evaluation"
-    )
     gif_recording: Optional[str] = Field(
         default=None,
         description="Optional base64-encoded GIF recording of the browser state",
     )
     metadata: Dict[str, Any] = Field(
-        default_factory=dict, description="Extensible metadata for the artefact"
+        default_factory=dict, description="Extensible metadata for the evaluation"
     )
+
+    def validate_relationships(
+        self,
+        agent_run: AgentEvaluationRun,
+        task: Task,
+        task_solution: TaskSolution,
+    ) -> bool:
+        return (
+            self.task_id == task.task_id
+            and self.task_solution_id == task_solution.solution_id
+            and self.agent_run_id == agent_run.agent_run_id
+            and self.validator_round_id == agent_run.validator_round_id
+        )
 
     def model_dump(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         base_dump = super().model_dump(*args, **kwargs)
@@ -740,6 +691,10 @@ class EvaluationResult(BaseModel):
             _serialize_action(action) for action in self.execution_history
         ]
         return base_dump
+
+
+# Backwards compatibility alias
+EvaluationResult = Evaluation
 
 
 # ---------------------------------------------------------------------------
@@ -757,11 +712,8 @@ class AgentEvaluationRunWithDetails(AgentEvaluationRun):
         default_factory=list, description="Solutions submitted by the agent"
     )
     evaluations: List[Evaluation] = Field(
-        default_factory=list, description="Evaluations produced for the agent"
-    )
-    evaluation_results: List[EvaluationResult] = Field(
         default_factory=list,
-        description="Detailed evaluation artefacts produced for the agent",
+        description="Evaluations of tasks and solutions produced for the agent",
     )
 
 
@@ -793,7 +745,6 @@ class ValidatorRoundSubmissionRequest(BaseModel):
     tasks: List[Task]
     task_solutions: List[TaskSolution]
     evaluations: List[Evaluation]
-    evaluation_results: List[EvaluationResult]
 
 
 class ValidatorRoundSubmissionResponse(BaseModel):

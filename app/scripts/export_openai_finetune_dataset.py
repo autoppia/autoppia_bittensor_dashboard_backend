@@ -42,7 +42,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.db.session import AsyncSessionLocal
-from app.db.models import TaskORM, TaskSolutionORM, EvaluationResultORM
+from app.db.models import TaskORM, TaskSolutionORM, EvaluationORM
 
 
 SYSTEM_PROMPT_DEFAULT = (
@@ -200,8 +200,8 @@ def _extract_action_fields(action: Any) -> Tuple[str, Optional[str], Optional[st
     return act_type, selector, value
 
 
-def _select_best_evaluation(task_row: TaskORM) -> Optional[EvaluationResultORM]:
-    evaluations: List[EvaluationResultORM] = list(task_row.evaluation_results or [])
+def _select_best_evaluation(task_row: TaskORM) -> Optional[EvaluationORM]:
+    evaluations: List[EvaluationORM] = list(task_row.evaluations or [])
     if not evaluations:
         return None
     # Prefer the highest final_score; tie-breaker by earliest id ascending
@@ -228,7 +228,7 @@ async def _iter_task_batches(session: AsyncSession, batch_size: int) -> Iterable
             select(TaskORM)
             .options(
                 selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluation_results),
+                selectinload(TaskORM.evaluations),
             )
             .order_by(TaskORM.id.asc())
             .offset(offset)

@@ -273,7 +273,7 @@ class MinersService:
 
             filtered.total_tasks += len(context.tasks)
             filtered.completed_tasks += len(
-                [er for er in context.evaluation_results if er.final_score >= 0.5]
+                [er for er in context.evaluations if er.final_score >= 0.5]
             )
 
             if context.run.rank is not None:
