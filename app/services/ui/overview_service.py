@@ -1161,7 +1161,7 @@ class OverviewService:
         stmt = (
             select(RoundORM)
             .options(
-                selectinload(RoundORM.validator_snapshots),
+                selectinload(RoundORM.validator_snapshot),  # 1:1 relationship (singular)
                 selectinload(RoundORM.miner_snapshots),
             )
             .order_by(RoundORM.id.desc())

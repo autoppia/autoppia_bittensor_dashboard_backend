@@ -9,6 +9,7 @@ logger, log_level = init_logging(settings)
 # ───────────────────────────────────────────────────────────────────────────────
 
 import os
+import re
 import time
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -294,13 +295,30 @@ from fastapi import Request as _Request  # avoid shadowing
 @app.exception_handler(Exception)
 async def global_exception_handler(request: _Request, exc: Exception):
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    
+    # Get CORS origins from settings
+    from app.config import settings
+    origin = request.headers.get("origin")
+    allowed_origins = settings.CORS_ORIGINS
+    
+    # Check if origin is allowed
+    headers = {}
+    if origin and (origin in allowed_origins or any(
+        re.match(pattern, origin) 
+        for pattern in [settings.CORS_ALLOW_ORIGIN_REGEX] 
+        if settings.CORS_ALLOW_ORIGIN_REGEX
+    )):
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    
     return JSONResponse(
         status_code=500,
         content={
             "ok": False,
             "error": "Internal server error",
-            "detail": "An unexpected error occurred",
+            "detail": str(exc) if settings.DEBUG else "An unexpected error occurred",
         },
+        headers=headers,
     )
 
 

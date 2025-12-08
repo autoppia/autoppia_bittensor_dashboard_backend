@@ -644,7 +644,7 @@ class RoundsService:
                     RoundORM.miner_snapshots
                 ),
                 selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                    RoundORM.validator_snapshots
+                    RoundORM.validator_snapshot  # 1:1 relationship (singular)
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(AgentEvaluationRunORM.evaluations),
@@ -675,7 +675,10 @@ class RoundsService:
                     RoundORM.miner_snapshots
                 ),
                 selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                    RoundORM.validator_snapshots
+                    RoundORM.validator_snapshot  # 1:1 relationship (singular)
+                ),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(AgentEvaluationRunORM.evaluations),
@@ -705,7 +708,10 @@ class RoundsService:
                 RoundORM.miner_snapshots
             ),
             selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                RoundORM.validator_snapshots
+                RoundORM.validator_snapshot  # 1:1 relationship (singular)
+            ),
+            selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
             ),
         )
 
@@ -736,6 +742,17 @@ class RoundsService:
 
         result = await self.session.scalars(stmt)
         run_rows = list(result)
+        
+        # CRITICAL: Ensure all relationships are loaded before accessing them
+        # This prevents MissingGreenlet errors when accessing lazy-loaded relationships
+        # Convert to list to force eager loading of all relationships
+        for run_row in run_rows:
+            # Access relationships to ensure they're loaded (selectinload should have loaded them)
+            # But we need to ensure they're actually accessible
+            _ = run_row.validator_round  # Force access to ensure it's loaded
+            if include_details:
+                _ = list(run_row.task_solutions)  # Force load
+                _ = list(run_row.evaluations)  # Force load
 
         tasks_by_round: Dict[str, Dict[str, Task]] = {}
         if include_details:
@@ -771,7 +788,10 @@ class RoundsService:
                     RoundORM.miner_snapshots
                 ),
                 selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                    RoundORM.validator_snapshots
+                    RoundORM.validator_snapshot  # 1:1 relationship (singular)
+                ),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(AgentEvaluationRunORM.evaluations),
@@ -1090,6 +1110,10 @@ class RoundsService:
                 if completed > 0 and miner_uid is not None:
                     active_miner_ids.add(miner_uid)
 
+            # Calculate top score for this validator and add to validator_top_scores
+            if per_validator_scores:
+                validator_top_scores.append(max(per_validator_scores))
+
             for value in (round_obj.weights or {}).values():
                 try:
                     total_stake += float(value)
@@ -1103,6 +1127,7 @@ class RoundsService:
             "total_tasks": total_tasks,
             "tasks_per_validator": tasks_per_validator,
             "scores": scores,
+            "validator_top_scores": validator_top_scores,
             "durations": durations,
             "total_stake": total_stake,
         }
@@ -1872,7 +1897,7 @@ class RoundsService:
                             else len(
                         [
                             er
-                            for er in run.evaluation_results
+                            for er in run.evaluations
                             if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5
                         ]
                             )
@@ -1915,10 +1940,10 @@ class RoundsService:
                 scores: List[float] = []
                 for run in runs:
                     score = run.run.avg_eval_score
-                    if score is None and run.evaluation_results:
+                    if score is None and run.evaluations:
                         score = sum(
-                            getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in run.evaluation_results
-                        ) / len(run.evaluation_results)
+                            getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in run.evaluations
+                        ) / len(run.evaluations)
                     if score is not None:
                         scores.append(score)
                 average_score = sum(scores) / len(scores) if scores else 0.0
@@ -1985,10 +2010,10 @@ class RoundsService:
                         if run.run.is_sota or run.run.miner_uid is None:
                             continue
                         run_score = run.run.avg_eval_score
-                        if run_score is None and run.evaluation_results:
+                        if run_score is None and run.evaluations:
                             run_score = sum(
-                                getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in run.evaluation_results
-                            ) / len(run.evaluation_results)
+                                getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in run.evaluations
+                            ) / len(run.evaluations)
                         run_score = run_score or 0.0
                         if run_score > best_score:
                             best_score = run_score
@@ -2139,7 +2164,7 @@ class RoundsService:
                         },
                     }
                 )
-                for evaluation in ctx.evaluation_results:
+                for evaluation in ctx.evaluations:
                     eval_ts: Optional[float] = None
                     created_at = getattr(evaluation, "created_at", None)
                     if isinstance(created_at, datetime):
@@ -2390,7 +2415,7 @@ class RoundsService:
                 timestamps.append(ctx.run.started_at)
             if ctx.run.ended_at:
                 timestamps.append(ctx.run.ended_at)
-            for evaluation in ctx.evaluation_results:
+            for evaluation in ctx.evaluations:
                 created_at = getattr(evaluation, "created_at", None)
                 if isinstance(created_at, datetime):
                     timestamps.append(created_at.timestamp())
@@ -2528,7 +2553,7 @@ class RoundsService:
 
         tasks = context.tasks if include_details else []
         task_solutions = context.task_solutions if include_details else []
-        evaluation_results = context.evaluation_results if include_details else []
+        evaluation_results = context.evaluations if include_details else []
 
         return AgentEvaluationRunWithDetails(
             **context.run.model_dump(),
@@ -2544,11 +2569,20 @@ class RoundsService:
         include_details: bool = True,
         tasks_for_round: Optional[Dict[str, Task]] = None,
     ) -> AgentRunContext:
-        round_row = parent_round_row or run_row.validator_round
-        if round_row is None:
-            raise ValueError(
-                f"Agent run {run_row.agent_run_id} is missing round relationship"
-            )
+        # Prefer parent_round_row if provided, otherwise use run_row.validator_round
+        # IMPORTANT: run_row.validator_round must be loaded with selectinload before calling this method
+        # Accessing lazy-loaded relationships outside async context causes MissingGreenlet errors
+        if parent_round_row is not None:
+            round_row = parent_round_row
+        else:
+            # Access validator_round relationship - must be eager-loaded via selectinload
+            # Using getattr to safely access the relationship
+            round_row = getattr(run_row, "validator_round", None)
+            if round_row is None:
+                raise ValueError(
+                    f"Agent run {run_row.agent_run_id} is missing round relationship. "
+                    f"Ensure validator_round is loaded with selectinload before calling this method."
+                )
 
         round_model = self._deserialize_round(round_row)
         agent_run_model = self._deserialize_agent_run(
@@ -2591,23 +2625,28 @@ class RoundsService:
                 tasks = list(task_lookup.values())
         else:
             tasks = []
-        task_solutions = (
-            self._convert_task_solutions(run_row.task_solutions)
-            if include_details
-            else []
-        )
-        evaluation_results = (
-            self._convert_evaluations(run_row.evaluation_results)
-            if include_details
-            else []
-        )
+        # Access relationships - they must be eager-loaded via selectinload
+        # If not loaded, this will raise MissingGreenlet error
+        task_solutions = []
+        if include_details:
+            # Ensure task_solutions is loaded (should be via selectinload)
+            task_solutions_attr = getattr(run_row, "task_solutions", None)
+            if task_solutions_attr is not None:
+                task_solutions = self._convert_task_solutions(list(task_solutions_attr))
+        
+        evaluations = []
+        if include_details:
+            # Ensure evaluations is loaded (should be via selectinload)
+            evaluations_attr = getattr(run_row, "evaluations", None)
+            if evaluations_attr is not None:
+                evaluations = self._convert_evaluations(list(evaluations_attr))
 
         return AgentRunContext(
             round=round_model,
             run=agent_run_model,
             tasks=tasks,
             task_solutions=task_solutions,
-            evaluation_results=evaluation_results,
+            evaluations=evaluations,  # Campo correcto del dataclass: evaluations
         )
 
     @staticmethod
@@ -2615,9 +2654,9 @@ class RoundsService:
         score = getattr(context.run, "average_score", None)
         if score is None:
             score = getattr(context.run, "avg_eval_score", None)
-        if score is None and context.evaluation_results:
-            score = sum(getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in context.evaluation_results) / len(
-                context.evaluation_results
+        if score is None and context.evaluations:
+            score = sum(getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in context.evaluations) / len(
+                context.evaluations
             )
         # If still None and we have evaluations list, calculate from there
         if score is None and hasattr(context, "evaluations") and context.evaluations:
@@ -2731,9 +2770,9 @@ class RoundsService:
         image_url = resolve_agent_image(miner_info)
 
         score = context.run.avg_eval_score
-        if score is None and context.evaluation_results:
-            score = sum(getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in context.evaluation_results) / len(
-                context.evaluation_results
+        if score is None and context.evaluations:
+            score = sum(getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in context.evaluations) / len(
+                context.evaluations
             )
         score = score or 0.0
 
@@ -2746,7 +2785,7 @@ class RoundsService:
         completed_tasks = context.run.n_tasks_completed
         if completed_tasks is None:
             completed_tasks = len(
-                [er for er in context.evaluation_results if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5]
+                [er for er in context.evaluations if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5]
             )
 
         success = (context.run.n_tasks_failed or 0) == 0
@@ -2835,7 +2874,7 @@ class RoundsService:
                         AgentEvaluationRunORM.task_solutions
                     ),
                     selectinload(RoundORM.agent_runs).selectinload(
-                        AgentEvaluationRunORM.evaluation_results
+                        AgentEvaluationRunORM.evaluations  # Relación correcta: evaluations, no evaluation_results
                     ),
                     selectinload(RoundORM.validator_snapshot),  # 1:1 relationship
                     selectinload(RoundORM.miner_snapshots),
@@ -3018,7 +3057,7 @@ class RoundsService:
                 task_id = getattr(solution, "task_id", None)
                 if task_id:
                     task_id_set.add(task_id)
-            for evaluation in getattr(run_row, "evaluation_results", []) or []:
+            for evaluation in getattr(run_row, "evaluations", []) or []:
                 task_id = getattr(evaluation, "task_id", None)
                 if task_id:
                     task_id_set.add(task_id)
@@ -3040,26 +3079,36 @@ class RoundsService:
         # Get rank and weight from validator_round_summary_miners
         rank = None
         weight = None
-        if run_row.miner_uid is not None and hasattr(run_row, "validator_round") and run_row.validator_round:
-            # Try to get from validator_round.round_summaries relationship
-            if hasattr(run_row.validator_round, "round_summaries"):
-                for summary_row in run_row.validator_round.round_summaries:
-                    if summary_row.miner_uid == run_row.miner_uid:
-                        rank = summary_row.post_consensus_rank or summary_row.local_rank
-                        weight = summary_row.weight
-                        break
+        if run_row.miner_uid is not None:
+            # Safely access validator_round and round_summaries
+            validator_round = getattr(run_row, "validator_round", None)
+            if validator_round is not None:
+                # Use getattr to safely access round_summaries (must be loaded with selectinload)
+                round_summaries = getattr(validator_round, "round_summaries", None)
+                if round_summaries is not None:
+                    # Convert to list to avoid lazy loading
+                    for summary_row in list(round_summaries):
+                        if summary_row.miner_uid == run_row.miner_uid:
+                            rank = summary_row.post_consensus_rank or summary_row.local_rank
+                            weight = summary_row.weight
+                            break
 
         # Get is_sota and version from validator_round_miners
         is_sota = False
         version = None
-        if run_row.miner_uid is not None and hasattr(run_row, "validator_round") and run_row.validator_round:
-            # Try to get from validator_round.miner_snapshots relationship
-            if hasattr(run_row.validator_round, "miner_snapshots"):
-                for miner_snapshot in run_row.validator_round.miner_snapshots:
-                    if miner_snapshot.miner_uid == run_row.miner_uid:
-                        is_sota = bool(miner_snapshot.is_sota)
-                        version = miner_snapshot.version
-                        break
+        if run_row.miner_uid is not None:
+            # Safely access validator_round and miner_snapshots
+            validator_round = getattr(run_row, "validator_round", None)
+            if validator_round is not None:
+                # Use getattr to safely access miner_snapshots (must be loaded with selectinload)
+                miner_snapshots = getattr(validator_round, "miner_snapshots", None)
+                if miner_snapshots is not None:
+                    # Convert to list to avoid lazy loading
+                    for miner_snapshot in list(miner_snapshots):
+                        if miner_snapshot.miner_uid == run_row.miner_uid:
+                            is_sota = bool(miner_snapshot.is_sota)
+                            version = miner_snapshot.version
+                            break
 
         run_model = AgentEvaluationRun(
             agent_run_id=run_row.agent_run_id,

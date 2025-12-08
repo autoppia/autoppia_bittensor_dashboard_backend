@@ -827,7 +827,7 @@ class AgentsService:
                 completed_tasks += completed_from_run
             elif context.evaluations:
                 completed_tasks += len(
-                    [er for er in context.evaluation_results if er.final_score >= 0.5]
+                    [er for er in context.evaluations if er.final_score >= 0.5]
                 )
 
             if score >= 0.5:
@@ -1275,10 +1275,13 @@ class AgentsService:
                     RoundORM.miner_snapshots
                 ),
                 selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                    RoundORM.validator_snapshots
+                    RoundORM.validator_snapshot  # 1:1 relationship (singular)
+                ),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluation_results),
+                selectinload(AgentEvaluationRunORM.evaluations),  # Relación correcta: evaluations
         )
         result = await self.session.scalars(stmt)
         run_rows = list(result)
@@ -1381,9 +1384,9 @@ class AgentsService:
             completed_from_run = context.run.completed_tasks or None
             if completed_from_run is not None and completed_from_run > 0:
                 aggregate.completed_tasks += completed_from_run
-            elif context.evaluation_results:
+            elif context.evaluations:
                 aggregate.completed_tasks += len(
-                    [er for er in context.evaluation_results if er.final_score >= 0.5]
+                    [er for er in context.evaluations if er.final_score >= 0.5]
                 )
 
             rank_value: Optional[int] = None
@@ -1577,10 +1580,13 @@ class AgentsService:
                     RoundORM.miner_snapshots
                 ),
                 selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                    RoundORM.validator_snapshots
+                    RoundORM.validator_snapshot  # 1:1 relationship (singular)
+                ),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
+                    RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluation_results),
+                selectinload(AgentEvaluationRunORM.evaluations),  # Relación correcta: evaluations
         )
         if uid is not None:
             stmt = stmt.where(AgentEvaluationRunORM.miner_uid == uid)
@@ -1816,10 +1822,10 @@ class AgentsService:
             except (TypeError, ValueError):
                 pass
 
-        if context.evaluation_results:
+        if context.evaluations:
             return sum(
-                result.final_score for result in context.evaluation_results
-            ) / len(context.evaluation_results)
+                result.final_score for result in context.evaluations
+            ) / len(context.evaluations)
 
         fallback = getattr(context.run, "avg_eval_score", None)
         try:
