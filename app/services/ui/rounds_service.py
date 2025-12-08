@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -45,6 +46,17 @@ from app.services.metagraph_service import get_validator_data, MetagraphError
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)  # Reduce verbosity
+
+
+def _truncate_decimal(value: float, decimals: int = 4) -> float:
+    """
+    Trunca un número decimal a N decimales SIN redondear.
+    Ejemplo: 0.7458329167 → 0.7458 (4 decimales)
+    """
+    if value is None or value == 0.0:
+        return 0.0
+    multiplier = 10 ** decimals
+    return math.floor(float(value) * multiplier) / multiplier
 
 
 def _get_validator_uid_from_context(context: "AgentRunContext") -> Optional[int]:
@@ -3489,9 +3501,9 @@ class RoundsService:
                 "name": miner_snapshot.name if miner_snapshot else f"Miner {winner_summary.miner_uid}",
                 "image": miner_snapshot.image_url if miner_snapshot else None,
                 "hotkey": winner_summary.miner_hotkey or (miner_snapshot.miner_hotkey if miner_snapshot else None),
-                "avg_reward": round(float(winner_summary.post_consensus_avg_reward or 0.0), 3),
-                "avg_eval_score": round(float(winner_summary.post_consensus_avg_eval_score or 0.0), 3),
-                "avg_eval_time": round(float(winner_summary.post_consensus_avg_eval_time or 0.0), 2),
+                "avg_reward": _truncate_decimal(float(winner_summary.post_consensus_avg_reward or 0.0), 4),  # ✅ Truncar a 4 decimales
+                "avg_eval_score": _truncate_decimal(float(winner_summary.post_consensus_avg_eval_score or 0.0), 4),
+                "avg_eval_time": _truncate_decimal(float(winner_summary.post_consensus_avg_eval_time or 0.0), 2),
             }
         
         # Obtener métricas agregadas (post-consensus) desde Autoppia
@@ -3586,9 +3598,9 @@ class RoundsService:
                     "hotkey": miner_summary.miner_hotkey or (miner_snapshot.miner_hotkey if miner_snapshot else None),
                     "image": miner_snapshot.image_url if miner_snapshot else None,
                     "local_rank": miner_summary.local_rank,
-                    "local_avg_reward": round(float(miner_summary.local_avg_reward or 0.0), 2),  # ✅ 2 decimales
-                    "local_avg_eval_score": round(float(miner_summary.local_avg_eval_score or 0.0), 3),
-                    "local_avg_eval_time": round(float(miner_summary.local_avg_eval_time or 0.0), 2),
+                    "local_avg_reward": _truncate_decimal(float(miner_summary.local_avg_reward or 0.0), 4),  # ✅ Truncar a 4 decimales (0.7458)
+                    "local_avg_eval_score": _truncate_decimal(float(miner_summary.local_avg_eval_score or 0.0), 4),
+                    "local_avg_eval_time": _truncate_decimal(float(miner_summary.local_avg_eval_time or 0.0), 2),
                 }
                 miners_list.append(miner_data)
             
@@ -3596,9 +3608,9 @@ class RoundsService:
                 "validator_uid": validator_info.validator_uid,
                 "validator_name": validator_info.name or f"Validator {validator_info.validator_uid}",
                 "validator_hotkey": validator_info.validator_hotkey,
-                "local_avg_winner_score": round(float(top_summary.local_avg_reward or 0.0), 3) if top_summary else 0.0,
-                "topScore": round(float(top_summary.local_avg_reward or 0.0), 3) if top_summary else 0.0,  # ✅ Top score = local_avg_reward del top miner
-                "local_avg_eval_time": round(float(top_summary.local_avg_eval_time or 0.0), 2) if top_summary else 0.0,
+                "local_avg_winner_score": _truncate_decimal(float(top_summary.local_avg_reward or 0.0), 4) if top_summary else 0.0,  # ✅ Truncar a 4 decimales
+                "topScore": _truncate_decimal(float(top_summary.local_avg_reward or 0.0), 4) if top_summary else 0.0,  # ✅ Top score = local_avg_reward del top miner, truncar a 4 decimales
+                "local_avg_eval_time": _truncate_decimal(float(top_summary.local_avg_eval_time or 0.0), 2) if top_summary else 0.0,
                 "local_miners_evaluated": int(row_local_counts.miners_count or 0) if row_local_counts else 0,
                 "local_tasks_evaluated": int(row_local_counts.tasks_success or row_local_counts.tasks_received or 0) if row_local_counts else 0,
                 "miners": miners_list,  # ✅ Lista completa de miners
