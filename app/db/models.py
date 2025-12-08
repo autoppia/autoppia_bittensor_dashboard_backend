@@ -159,6 +159,11 @@ class ValidatorRoundValidatorORM(TimestampMixin, Base):
     vtrust: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    
+    # Validator configuration used during this round
+    config: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        JSON, nullable=True, default=None
+    )
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="validator_snapshot",

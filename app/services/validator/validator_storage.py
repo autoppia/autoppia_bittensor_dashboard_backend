@@ -918,6 +918,7 @@ class ValidatorRoundPersistenceService:
             "vtrust": snapshot.vtrust,
             "image_url": snapshot.image_url,
             "version": snapshot.version,
+            "config": snapshot.config,  # Include validator configuration
         }
         if existing:
             for key, value in kwargs.items():
