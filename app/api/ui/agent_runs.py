@@ -65,6 +65,22 @@ async def list_agent_runs(
     return AgentRunsListResponse(success=True, data=data)
 
 
+@router.get("/{run_id}/get-agent-run")
+async def get_agent_run_complete(
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Get all agent run data in a single call.
+    Returns: run, personas, statistics, summary, tasks, timeline, logs, metrics, info
+    """
+    service = await _service(session)
+    result = await service.get_agent_run_complete(run_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=NOT_FOUND_ERROR)
+    return {"success": True, "data": result}
+
+
 @router.get("/{run_id}", response_model=AgentRunDetailResponse)
 async def get_agent_run(
     run_id: str,
