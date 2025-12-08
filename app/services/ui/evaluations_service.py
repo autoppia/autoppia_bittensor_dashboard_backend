@@ -130,7 +130,7 @@ class EvaluationsService:
                 .selectinload(RoundORM.miner_snapshots),
                 selectinload(EvaluationORM.agent_run)
                 .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.validator_snapshots),
+                .selectinload(RoundORM.validator_snapshot),  # 1:1 relationship (singular)
                 selectinload(EvaluationORM.task),
                 selectinload(EvaluationORM.task_solution),
             )
@@ -182,7 +182,7 @@ class EvaluationsService:
                 .selectinload(RoundORM.miner_snapshots),
                 selectinload(EvaluationORM.agent_run)
                 .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.validator_snapshots),
+                .selectinload(RoundORM.validator_snapshot),  # 1:1 relationship (singular)
                 selectinload(EvaluationORM.task),
                 selectinload(EvaluationORM.task_solution),
             )

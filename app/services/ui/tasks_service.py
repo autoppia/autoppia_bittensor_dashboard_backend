@@ -390,11 +390,7 @@ class TasksService:
         if round_row and hasattr(round_row, "validator_snapshot") and round_row.validator_snapshot:
             # Use validator_snapshot (1:1 relationship)
             return round_row.validator_snapshot.name
-        if round_row and hasattr(round_row, "validator_snapshots"):
-            # Legacy fallback for old code
-            for snapshot in round_row.validator_snapshots:
-                if snapshot.validator_uid == (getattr(run, "validator_uid", None) or (round_row.validator_snapshot.validator_uid if hasattr(round_row, "validator_snapshot") and round_row.validator_snapshot else None)):
-                    return snapshot.name
+        # Legacy fallback removed - validator_snapshots doesn't exist (1:1 relationship)
         if hasattr(run, "validator") and run.validator:
             return getattr(run.validator, "name", None)
         return None
@@ -407,11 +403,7 @@ class TasksService:
         if round_row and hasattr(round_row, "validator_snapshot") and round_row.validator_snapshot:
             # Use validator_snapshot (1:1 relationship)
             return round_row.validator_snapshot.image_url
-        if round_row and hasattr(round_row, "validator_snapshots"):
-            # Legacy fallback for old code
-            for snapshot in round_row.validator_snapshots:
-                if snapshot.validator_uid == (getattr(run, "validator_uid", None) or (round_row.validator_snapshot.validator_uid if hasattr(round_row, "validator_snapshot") and round_row.validator_snapshot else None)):
-                    return snapshot.image_url
+        # Legacy fallback removed - validator_snapshots doesn't exist (1:1 relationship)
         if hasattr(run, "validator") and run.validator:
             return getattr(run.validator, "image", None)
         return None
@@ -610,7 +602,7 @@ class TasksService:
             round_rows = await self.session.scalars(
                 select(ValidatorRoundORM)
                 .options(
-                    selectinload(ValidatorRoundORM.validator_snapshots),
+                    selectinload(ValidatorRoundORM.validator_snapshot),  # 1:1 relationship (singular)
                     selectinload(ValidatorRoundORM.miner_snapshots),
                 )
                 .where(ValidatorRoundORM.validator_round_id.in_(round_ids))
@@ -852,7 +844,7 @@ class TasksService:
     async def analytics(self) -> TaskAnalytics:
         stmt = select(TaskORM).options(
             selectinload(TaskORM.task_solutions),
-            selectinload(TaskORM.evaluation_results),
+            selectinload(TaskORM.evaluations),  # Relación correcta: evaluations
         )
         rows = await self.session.scalars(stmt)
 

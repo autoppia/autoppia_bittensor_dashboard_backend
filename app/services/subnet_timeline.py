@@ -243,7 +243,7 @@ class SubnetTimelineService:
                 .selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(RoundORM.agent_runs)
                 .selectinload(AgentEvaluationRunORM.evaluations),
-                selectinload(RoundORM.validator_snapshots),
+                selectinload(RoundORM.validator_snapshot),  # 1:1 relationship (singular)
                 selectinload(RoundORM.miner_snapshots),
             )
             .where(RoundORM.validator_round_id.in_(identifiers))
