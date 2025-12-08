@@ -337,6 +337,7 @@ class TaskORM(TimestampMixin, Base):
     )
     is_web_real: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     web_project_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    web_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     specifications: Mapped[dict[str, Any]] = mapped_column(
@@ -366,6 +367,7 @@ class TaskORM(TimestampMixin, Base):
             "validator_round_id": self.validator_round_id,
             "is_web_real": self.is_web_real,
             "web_project_id": self.web_project_id,
+            "web_version": self.web_version,
             "url": self.url,
             "prompt": self.prompt,
             "specifications": dict(self.specifications or {}),

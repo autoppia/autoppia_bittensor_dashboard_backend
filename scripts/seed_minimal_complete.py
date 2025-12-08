@@ -64,15 +64,19 @@ MINERS = [
 TASKS = [
     {
         "task_id": "task_1",
-        "url": "https://autoppia.example/cinema",
+        "web_project_id": "autocinema",
+        "url": "http://localhost:8000/?seed=201",
+        "web_version": "0.1.0+6cbcca09",  # Versión con hash Git
         "prompt": "Find the next available showtime for 'Interstellar' and note the auditorium.",
-        "use_case": {"label": "Find Showtimes", "slug": "find-showtimes"},
+        "use_case": {"name": "Find Showtimes", "slug": "find-showtimes"},
     },
     {
         "task_id": "task_2",
-        "url": "https://autoppia.example/books",
+        "web_project_id": "autobooks",
+        "url": "http://localhost:8001/?seed=301",
+        "web_version": "0.1.0+6cbcca09",  # Versión con hash Git
         "prompt": "Search for 'Neural Horizons' and add it to the shopping cart.",
-        "use_case": {"label": "Add to Cart", "slug": "add-to-cart"},
+        "use_case": {"name": "Add to Cart", "slug": "add-to-cart"},
     },
 ]
 
@@ -181,7 +185,9 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
         task = TaskORM(
             task_id=f"{validator_round_id}_{task_data['task_id']}",
             validator_round_id=validator_round_id,
-            is_web_real=False,
+            is_web_real=True,  # Cambiado a True porque usamos webs reales
+            web_project_id=task_data.get("web_project_id"),
+            web_version=task_data.get("web_version"),  # ✅ Incluir web_version
             url=task_data["url"],
             prompt=task_data["prompt"],
             specifications={},
@@ -488,12 +494,19 @@ async def main():
             print("\n✅ ¡Proceso completado exitosamente!")
             print("\n💡 Puedes probar el frontend ahora con estos datos.")
             print("   - 2 validators con datos completos en meta")
-            print("   - 2 tareas")
+            print("   - 2 tareas (con web_version incluida)")
             print("   - 2 miners")
             print("   - 3 solutions por cada tarea (6 por miner, 12 total)")
             print("   - Evaluaciones para cada solution")
             print("   - Datos en validator_round_summary_miners")
             print("   - Meta con ipfs_uploaded, local_evaluation y post_consensus_evaluation")
+            
+            # Verificar que web_version está presente
+            result = await session.execute(
+                text("SELECT COUNT(*) FROM tasks WHERE web_version IS NOT NULL")
+            )
+            tasks_with_version = result.scalar()
+            print(f"\n   ✅ {tasks_with_version} tareas tienen web_version asignada")
             
     except Exception as e:
         print(f"\n❌ Error durante el proceso: {e}")

@@ -475,6 +475,9 @@ class Task(BaseModel):
     web_project_id: Optional[str] = Field(
         default=None, description="Web project identifier if applicable"
     )
+    web_version: Optional[str] = Field(
+        default=None, description="Version of the web project used for this task"
+    )
     url: str = Field(..., description="Target URL where the task must be executed")
     prompt: str = Field(
         ..., description="Natural language description of the task objectives"

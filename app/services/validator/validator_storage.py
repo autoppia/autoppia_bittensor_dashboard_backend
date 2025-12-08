@@ -1017,6 +1017,7 @@ class ValidatorRoundPersistenceService:
             "validator_round_id": model.validator_round_id,
             "is_web_real": model.is_web_real,
             "web_project_id": model.web_project_id,
+            "web_version": model.web_version,
             "url": model.url,
             "prompt": model.prompt,
             "specifications": _non_empty_dict(model.specifications),

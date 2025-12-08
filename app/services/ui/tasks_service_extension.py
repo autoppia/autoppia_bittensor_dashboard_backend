@@ -293,6 +293,7 @@ async def get_tasks_with_solutions(
             "intent": task_orm.prompt or "",
             "startUrl": task_orm.url or "",
             "requiredUrl": None,  # Not available in TaskORM
+            "webVersion": task_orm.web_version,
             "tests": _normalize_tests(task_orm.tests),
             "createdAt": (
                 task_orm.created_at.isoformat() if task_orm.created_at else None
