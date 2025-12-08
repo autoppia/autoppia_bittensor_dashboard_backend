@@ -242,6 +242,30 @@ class ValidatorRoundValidator(BaseModel):
     version: Optional[str] = Field(
         default=None, description="Validator software version during the round"
     )
+    config: Optional[Dict[str, Any]] = Field(
+        default=None, description="Validator configuration used during this round"
+    )
+    validator_config: Optional[Dict[str, Any]] = Field(
+        default=None, description="Validator configuration (from payload)"
+    )
+
+    @model_validator(mode="after")  # type: ignore[misc]
+    def _extract_config_from_validator_config(cls, values: "ValidatorRoundValidator") -> "ValidatorRoundValidator":  # type: ignore[override]
+        """Extract config from validator_config if config is not already set.
+        
+        Handles:
+        - validator_config contains the config directly (new format with keys like "round", "timing", etc.)
+        - Legacy: if validator_config has a "config" key, extract it
+        """
+        if values.config is None and values.validator_config:
+            # Check if validator_config has a "config" key (legacy format)
+            if "config" in values.validator_config:
+                values.config = values.validator_config.get("config")
+            # Otherwise, if validator_config has the expected config structure (has "round" key),
+            # use validator_config directly as config
+            elif isinstance(values.validator_config, dict) and "round" in values.validator_config:
+                values.config = values.validator_config
+        return values
 
 
 class ValidatorRoundMiner(BaseModel):
