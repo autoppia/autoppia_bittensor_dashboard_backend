@@ -18,7 +18,7 @@ from app.db.models import (
     RoundORM,
     TaskORM,
     TaskSolutionORM,
-    ValidatorRoundMinersScoreORM,
+    ValidatorRoundSummaryORM,
 )
 from app.models.core import (
     Action,
@@ -3041,12 +3041,12 @@ class RoundsService:
         rank = None
         weight = None
         if run_row.miner_uid is not None and hasattr(run_row, "validator_round") and run_row.validator_round:
-            # Try to get from validator_round.miner_scores relationship
-            if hasattr(run_row.validator_round, "miner_scores"):
-                for score_row in run_row.validator_round.miner_scores:
-                    if score_row.miner_uid == run_row.miner_uid:
-                        rank = score_row.rank_consensus or score_row.rank
-                        weight = score_row.weight
+            # Try to get from validator_round.round_summaries relationship
+            if hasattr(run_row.validator_round, "round_summaries"):
+                for summary_row in run_row.validator_round.round_summaries:
+                    if summary_row.miner_uid == run_row.miner_uid:
+                        rank = summary_row.post_consensus_rank or summary_row.local_rank
+                        weight = summary_row.weight
                         break
 
         # Get is_sota and version from validator_round_miners

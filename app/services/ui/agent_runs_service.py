@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.db.models import (
     AgentEvaluationRunORM,
     RoundORM,
-    ValidatorRoundMinersScoreORM,
+    ValidatorRoundSummaryORM,
 )
 
 from app.models.core import Evaluation, Task, TaskSolution
@@ -449,13 +449,13 @@ class AgentRunsService:
     async def _fetch_consensus_score_for_context(
         self, context: AgentRunContext
     ) -> Optional[float]:
-        """Fetch score_consensus from validator_round_miners_score for a context."""
+        """Fetch post_consensus_avg_reward from validator_round_summary_miners for a context."""
         if not context.run.miner_uid:
             return None
         
-        stmt = select(ValidatorRoundMinersScoreORM.score_consensus).where(
-            ValidatorRoundMinersScoreORM.validator_round_id == context.round.validator_round_id,
-            ValidatorRoundMinersScoreORM.miner_uid == context.run.miner_uid,
+        stmt = select(ValidatorRoundSummaryORM.post_consensus_avg_reward).where(
+            ValidatorRoundSummaryORM.validator_round_id == context.round.validator_round_id,
+            ValidatorRoundSummaryORM.miner_uid == context.run.miner_uid,
         )
         result = await self.session.scalar(stmt)
         return float(result) if result is not None else None
@@ -464,7 +464,7 @@ class AgentRunsService:
     async def _fetch_consensus_scores_for_contexts(
         self, contexts: List[AgentRunContext]
     ) -> Dict[str, Optional[float]]:
-        """Fetch score_consensus from validator_round_miners_score for multiple contexts."""
+        """Fetch post_consensus_avg_reward from validator_round_summary_miners for multiple contexts."""
         if not contexts:
             return {}
         
@@ -488,21 +488,22 @@ class AgentRunsService:
         miner_uids = list(set(q[2] for q in queries))
         
         stmt = select(
-            ValidatorRoundMinersScoreORM.validator_round_id,
-            ValidatorRoundMinersScoreORM.miner_uid,
-            ValidatorRoundMinersScoreORM.score_consensus,
+            ValidatorRoundSummaryORM.validator_round_id,
+            ValidatorRoundSummaryORM.miner_uid,
+            ValidatorRoundSummaryORM.post_consensus_avg_reward,
         ).where(
-            ValidatorRoundMinersScoreORM.validator_round_id.in_(validator_round_ids),
-            ValidatorRoundMinersScoreORM.miner_uid.in_(miner_uids),
+            ValidatorRoundSummaryORM.validator_round_id.in_(validator_round_ids),
+            ValidatorRoundSummaryORM.miner_uid.in_(miner_uids),
         )
         
         result = await self.session.execute(stmt)
         rows = result.all()
         
-        # Build a lookup map: (validator_round_id, miner_uid) -> score_consensus
+        # Build a lookup map: (validator_round_id, miner_uid) -> post_consensus_avg_reward
         score_lookup: Dict[Tuple[str, int], float] = {}
         for row in rows:
-            score_lookup[(row.validator_round_id, row.miner_uid)] = float(row.score_consensus)
+            if row.post_consensus_avg_reward is not None:
+                score_lookup[(row.validator_round_id, row.miner_uid)] = float(row.post_consensus_avg_reward)
         
         # Map back to agent_run_id
         for agent_run_id, validator_round_id, miner_uid in queries:
