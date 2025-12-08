@@ -2428,6 +2428,25 @@ class RoundsService:
                 display_block = current_block
 
             seconds_remaining = blocks_remaining * 12
+            
+            # ✅ Obtener nextRound y previousRound
+            from sqlalchemy import select, func
+            from app.db.models import RoundORM
+            
+            # Buscar round anterior (round_number < current, más cercano)
+            stmt_prev = select(func.max(RoundORM.round_number)).where(
+                RoundORM.round_number < round_number
+            )
+            result_prev = await self.session.execute(stmt_prev)
+            previous_round = result_prev.scalar_one_or_none()
+            
+            # Buscar round siguiente (round_number > current, más cercano)
+            stmt_next = select(func.min(RoundORM.round_number)).where(
+                RoundORM.round_number > round_number
+            )
+            result_next = await self.session.execute(stmt_next)
+            next_round = result_next.scalar_one_or_none()
+            
             return {
                 "roundId": round_number,
                 "currentBlock": display_block,
@@ -2440,6 +2459,9 @@ class RoundsService:
                 "currentEpoch": block_to_epoch(current_block),
                 "estimatedTimeRemaining": _time_remaining(seconds_remaining),
                 "lastUpdated": datetime.now(timezone.utc).isoformat(),
+                "status": aggregated_status,  # ✅ Agregar status
+                "nextRound": int(next_round) if next_round is not None else None,  # ✅ Agregar nextRound
+                "previousRound": int(previous_round) if previous_round is not None else None,  # ✅ Agregar previousRound
             }
 
         aggregated = await self._fetch_aggregated_round(
@@ -2455,6 +2477,29 @@ class RoundsService:
         progress = self._compute_aggregated_progress(
             records, completed_tasks, total_tasks
         )
+        
+        # ✅ Obtener status y nextRound/previousRound
+        statuses = [record.model.status or "finished" for record in records]
+        aggregated_status = _aggregate_status(statuses)
+        
+        round_number = aggregated.round_number
+        from sqlalchemy import select, func
+        from app.db.models import RoundORM
+        
+        # Buscar round anterior (round_number < current, más cercano)
+        stmt_prev = select(func.max(RoundORM.round_number)).where(
+            RoundORM.round_number < round_number
+        )
+        result_prev = await self.session.execute(stmt_prev)
+        previous_round = result_prev.scalar_one_or_none()
+        
+        # Buscar round siguiente (round_number > current, más cercano)
+        stmt_next = select(func.min(RoundORM.round_number)).where(
+            RoundORM.round_number > round_number
+        )
+        result_next = await self.session.execute(stmt_next)
+        next_round = result_next.scalar_one_or_none()
+        
         return {
             "roundId": aggregated.round_number,
             "currentBlock": progress.get("currentBlock", 0),
@@ -2468,6 +2513,9 @@ class RoundsService:
             "lastUpdated": progress.get(
                 "lastUpdated", datetime.now(timezone.utc).isoformat()
             ),
+            "status": aggregated_status,  # ✅ Agregar status
+            "nextRound": int(next_round) if next_round is not None else None,  # ✅ Agregar nextRound
+            "previousRound": int(previous_round) if previous_round is not None else None,  # ✅ Agregar previousRound
         }
 
     async def get_top_miners(
