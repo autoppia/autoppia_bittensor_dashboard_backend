@@ -149,6 +149,29 @@ async def get_current_round(
     return RoundDetailResponse(success=True, data={"round": current})
 
 
+@router.get("/get-round")
+async def get_round_aggregated(
+    round_number: int = Query(..., description="Round number (e.g., 2)"),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Endpoint simplificado que devuelve métricas agregadas (post-consensus) y por validator (local)
+    desde validator_round_summary_miners.
+    
+    - aggregated: winner, avg_winner_score, avg_eval_time, miners_evaluated, tasks_evaluated (post-consensus, desde Autoppia UID 83)
+    - validators: lista de validators con sus métricas locales (prefijo local_)
+    """
+    service = await _service(session)
+    try:
+        data = await service.get_aggregated_metrics(round_number)
+        return {"success": True, "data": data}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Error in get_round_aggregated: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/{round_id}/basic")
 @cache("round_basic", ttl=300)  # Cache 5 minutes
 async def get_round_basic(

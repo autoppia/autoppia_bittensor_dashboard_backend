@@ -14,6 +14,7 @@ import random
 import time
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Dict, List
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -319,16 +320,17 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
         local_tasks_success = len([e for e in miner_evaluations if e.eval_score > 0.5])
         local_rank = rank_map.get(miner["uid"], 1)
         
-        # Post-consensus (simulamos igual a local)
-        post_consensus_rank = local_rank
-        post_consensus_avg_reward = local_avg_reward
-        post_consensus_avg_eval_score = local_avg_eval_score
-        post_consensus_avg_eval_time = local_avg_eval_time
-        post_consensus_tasks_received = local_tasks_received
-        post_consensus_tasks_success = local_tasks_success
+        # Post-consensus se calculará después agregando datos de todos los validators
+        # Por ahora, inicializamos con valores temporales (se actualizarán en calculate_post_consensus_scores)
+        post_consensus_rank = local_rank  # Temporal, se actualizará
+        post_consensus_avg_reward = 0.0  # ✅ Se calculará después con consensus
+        post_consensus_avg_eval_score = local_avg_eval_score  # Promedio de todos los validators
+        post_consensus_avg_eval_time = local_avg_eval_time  # Promedio de todos los validators
+        post_consensus_tasks_received = local_tasks_received  # Suma de todos los validators
+        post_consensus_tasks_success = local_tasks_success  # Suma de todos los validators
         
         total_reward = sum(all_miner_rewards.values())
-        weight = local_avg_reward / max(total_reward, 1.0) if total_reward > 0 else 0.0
+        weight = 0.0  # ✅ Se calculará después con consensus_reward
         
         summary = ValidatorRoundSummaryORM(
             validator_round_id=validator_round_id,
@@ -446,14 +448,110 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
         },
     }
     
-    await session.commit()
+    # No hacer commit aquí, se hará después de calcular post-consensus
+    await session.flush()
     
-    print(f"  ✅ Round {round_number} creado:")
+    print(f"  ✅ Round {round_number} creado para validator {validator['name']}:")
     print(f"     - Tasks: {len(task_objs)}")
     print(f"     - Agent runs: {len(agent_runs)}")
     print(f"     - Solutions: {len(all_solutions)}")
     print(f"     - Evaluations: {len(all_evaluations)}")
     print(f"     - Summary records: {len(MINERS)}")
+
+
+async def calculate_post_consensus_scores(session: AsyncSession, round_number: int):
+    """Calcula los scores post-consensus agregando datos de todos los validators del round."""
+    print(f"\n📊 Calculando post-consensus scores para round {round_number}...")
+    
+    # Obtener todos los validator_round_ids para este round
+    validator_round_ids = [
+        f"round_{round_number}_validator_{v['uid']}" for v in VALIDATORS
+    ]
+    
+    # Obtener todos los summaries para este round
+    summaries_by_miner: Dict[int, List[ValidatorRoundSummaryORM]] = {}
+    total_stake = 0.0
+    
+    for validator_round_id in validator_round_ids:
+        result = await session.execute(
+            select(ValidatorRoundSummaryORM).where(
+                ValidatorRoundSummaryORM.validator_round_id == validator_round_id
+            )
+        )
+        summaries = list(result.scalars().all())
+        
+        # Obtener stake del validator
+        validator_result = await session.execute(
+            select(ValidatorRoundValidatorORM).where(
+                ValidatorRoundValidatorORM.validator_round_id == validator_round_id
+            )
+        )
+        validator_snapshot = validator_result.scalar_one_or_none()
+        if validator_snapshot:
+            stake = float(validator_snapshot.stake or 0.0)
+            total_stake += stake
+        
+        for summary in summaries:
+            miner_uid = summary.miner_uid
+            if miner_uid is not None:
+                if miner_uid not in summaries_by_miner:
+                    summaries_by_miner[miner_uid] = []
+                summaries_by_miner[miner_uid].append(summary)
+    
+    # Calcular consensus scores (stake-weighted average)
+    consensus_scores: Dict[int, float] = {}
+    for miner_uid, summaries in summaries_by_miner.items():
+        weighted_sum = 0.0
+        total_weight = 0.0
+        
+        for summary in summaries:
+            # Obtener stake del validator para este summary
+            validator_round_id = summary.validator_round_id
+            validator_result = await session.execute(
+                select(ValidatorRoundValidatorORM).where(
+                    ValidatorRoundValidatorORM.validator_round_id == validator_round_id
+                )
+            )
+            validator_snapshot = validator_result.scalar_one_or_none()
+            if validator_snapshot:
+                stake = float(validator_snapshot.stake or 0.0)
+                weight = stake / total_stake if total_stake > 0 else 1.0 / len(summaries)
+                weighted_sum += summary.local_avg_reward * weight
+                total_weight += weight
+        
+        consensus_scores[miner_uid] = weighted_sum / total_weight if total_weight > 0 else 0.0
+    
+    # Calcular ranks post-consensus
+    sorted_miners = sorted(consensus_scores.items(), key=lambda x: x[1], reverse=True)
+    consensus_rank_map = {uid: i + 1 for i, (uid, _) in enumerate(sorted_miners)}
+    print(f"  📊 Consensus ranks: {consensus_rank_map}")
+    
+    # Actualizar todos los summaries con datos post-consensus
+    for miner_uid, summaries in summaries_by_miner.items():
+        consensus_reward = consensus_scores.get(miner_uid, 0.0)
+        consensus_rank = consensus_rank_map.get(miner_uid, 1)
+        
+        # Agregar promedios de todos los validators
+        total_eval_score = sum(s.local_avg_eval_score for s in summaries)
+        total_eval_time = sum(s.local_avg_eval_time for s in summaries)
+        total_tasks_received = sum(s.local_tasks_received for s in summaries)
+        total_tasks_success = sum(s.local_tasks_success for s in summaries)
+        count = len(summaries)
+        
+        for summary in summaries:
+            summary.post_consensus_rank = consensus_rank
+            summary.post_consensus_avg_reward = consensus_reward
+            summary.post_consensus_avg_eval_score = total_eval_score / count if count > 0 else 0.0
+            summary.post_consensus_avg_eval_time = total_eval_time / count if count > 0 else 0.0
+            summary.post_consensus_tasks_received = total_tasks_received
+            summary.post_consensus_tasks_success = total_tasks_success
+            
+            # Calcular weight basado en consensus_reward
+            total_consensus = sum(consensus_scores.values())
+            summary.weight = consensus_reward / total_consensus if total_consensus > 0 else 0.0
+    
+    await session.commit()  # ✅ Commit para guardar los cambios
+    print(f"  ✅ Post-consensus scores calculados y guardados para {len(summaries_by_miner)} miners")
 
 
 async def main():
@@ -467,10 +565,23 @@ async def main():
         # 1. Limpiar todas las tablas
         await clear_all_tables()
         
-        # 2. Crear rounds para cada validator
+        # 2. Crear 2 rounds, cada uno con ambos validators
         async with AsyncSessionLocal() as session:
-            for round_num, validator in enumerate(VALIDATORS, start=1):
-                await create_validator_round(session, validator, round_num)
+            for round_num in [1, 2]:
+                print(f"\n{'='*70}")
+                print(f"🔄 CREANDO ROUND {round_num} (con {len(VALIDATORS)} validators)")
+                print(f"{'='*70}")
+                
+                # Crear round para cada validator
+                for validator in VALIDATORS:
+                    await create_validator_round(session, validator, round_num)
+                
+                # IMPORTANTE: Flush para que los datos estén disponibles para la consulta
+                await session.flush()
+                
+                # Calcular post-consensus scores agregando datos de ambos validators
+                # (calculate_post_consensus_scores hace su propio commit)
+                await calculate_post_consensus_scores(session, round_num)
         
         # 3. Verificar datos creados
         async with AsyncSessionLocal() as session:
@@ -492,14 +603,16 @@ async def main():
                 print(f"  - {table}: {count} registros")
             
             print("\n✅ ¡Proceso completado exitosamente!")
-            print("\n💡 Puedes probar el frontend ahora con estos datos.")
-            print("   - 2 validators con datos completos en meta")
-            print("   - 2 tareas (con web_version incluida)")
-            print("   - 2 miners")
-            print("   - 3 solutions por cada tarea (6 por miner, 12 total)")
-            print("   - Evaluaciones para cada solution")
-            print("   - Datos en validator_round_summary_miners")
-            print("   - Meta con ipfs_uploaded, local_evaluation y post_consensus_evaluation")
+            print("\n💡 Estructura de datos creada:")
+            print("   📦 2 rounds (round_1 y round_2)")
+            print("   👥 2 validators por round (4 validator_rounds total)")
+            print("   📋 2 tareas por validator (8 tasks total)")
+            print("   ⛏️  2 miners evaluados por cada validator")
+            print("   💾 3 solutions por cada tarea (6 por miner, 12 por validator)")
+            print("   ✅ Evaluaciones para cada solution (48 total)")
+            print("   📊 validator_round_summary_miners: 8 registros (2 miners × 2 validators × 2 rounds)")
+            print("   🔄 Post-consensus scores calculados agregando datos de ambos validators")
+            print("   📤 Meta con ipfs_uploaded, local_evaluation y post_consensus_evaluation")
             
             # Verificar que web_version está presente
             result = await session.execute(
