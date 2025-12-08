@@ -137,6 +137,9 @@ class RoundProgress(BaseModel):
     progress: float
     estimatedTimeRemaining: TimeRemaining
     lastUpdated: str  # ISO timestamp
+    status: str  # active, finished, pending, evaluating_finished
+    nextRound: int | None = None  # Número del siguiente round
+    previousRound: int | None = None  # Número del round anterior
 
 
 class RoundSummary(BaseModel):
