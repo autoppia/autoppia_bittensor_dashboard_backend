@@ -337,7 +337,8 @@ class AgentRunsService:
             # Calculate metrics for all runs
             run_metrics = []
             for run in all_runs:
-                if run.is_sota or run.miner_uid is None:
+                # is_sota removed from schema; skip runs without miner_uid
+                if run.miner_uid is None:
                     continue
                 
                 eval_results = getattr(run, 'evaluations', []) or []
