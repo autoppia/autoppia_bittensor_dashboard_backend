@@ -519,7 +519,7 @@ class OverviewService:
         top_miner_name = None
         top_score = 0.0
 
-        # Query directly from validator_round_miners_score for the metrics round
+        # Query directly from validator_round_summary_miners for the metrics round
         if metrics_round_number and metrics_round_number > 0:
             try:
                 # Get the best post_consensus_avg_reward for this round

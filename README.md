@@ -22,7 +22,7 @@ FastAPI service that ingests validator rounds from Subnet 36 (Bittensor) and ser
 
 ## Datos y esquema
 - Base de datos: **solo PostgreSQL** (no SQLite).  
-- Tablas principales: `validator_rounds`, `validator_round_validators`, `validator_round_miners`, `validator_round_miners_score`, `miner_evaluation_runs`, `tasks`, `task_solutions`, `evaluations`, `validator_round_summary_miners`.  
+- Tablas principales: `validator_rounds`, `validator_round_validators`, `validator_round_miners`, `miner_evaluation_runs`, `tasks`, `task_solutions`, `evaluations`, `validator_round_summary_miners`.  
 - El campo `meta` en `validator_rounds` guarda el payload completo de una ronda (local_evaluation, post_consensus_evaluation, ipfs_uploaded/ipfs_downloaded, etc.).
 
 ## Entorno

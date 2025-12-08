@@ -300,7 +300,7 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     total_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     completed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    # rank and weight removed - obtain via validator_round_miners_score
+    # rank and weight removed - obtain via validator_round_summary_miners
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(

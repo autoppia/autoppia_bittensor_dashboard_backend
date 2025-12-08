@@ -390,7 +390,7 @@ class AgentEvaluationRun(BaseModel):
     total_tasks: int = Field(default=0, description="Total tasks attempted")
     completed_tasks: int = Field(default=0, description="Tasks completed successfully")
     failed_tasks: int = Field(default=0, description="Tasks that failed")
-    # rank and weight removed - obtain via validator_round_miners_score
+    # rank and weight removed - obtain via validator_round_summary_miners
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Extensible metadata for the run"
     )
