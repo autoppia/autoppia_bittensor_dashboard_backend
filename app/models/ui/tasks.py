@@ -139,6 +139,9 @@ class Task(BaseModel):
     seed: Optional[str] = Field(
         None, description="Seed parameter extracted from website URL"
     )
+    webVersion: Optional[str] = Field(
+        None, description="Version of the web application used for this task"
+    )
     useCase: str = Field(..., description="Use case or scenario")
     prompt: str = Field(..., description="Task prompt or description")
     status: TaskStatus = Field(..., description="Current task status")

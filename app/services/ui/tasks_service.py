@@ -1830,6 +1830,7 @@ class TasksService:
             agentRunId=context.agent_run.agent_run_id,
             website=context.task.url,
             seed=seed_val,
+            webVersion=context.task.web_version,
             useCase=self._extract_use_case(context.task) or "unknown",
             prompt=context.task.prompt,
             status=status,
