@@ -684,6 +684,213 @@ class AgentRunsService:
             totalNetworkTraffic=len(metrics_time) * 100,
         )
 
+    async def get_agent_run_complete(self, agent_run_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get all agent run data in a single call, similar to get-evaluation.
+        Returns: run, personas, statistics, summary, tasks, timeline, logs, metrics, info
+        """
+        try:
+            context = await self.rounds_service.get_agent_run_context(agent_run_id)
+        except ValueError:
+            return None
+        
+        # Calculate rank and fetch consensus score
+        await self._calculate_rank_for_context(context)
+        consensus_score = await self._fetch_consensus_score_for_context(context)
+        
+        # Build all data
+        run = self._build_agent_run(context, consensus_score)
+        personas = self._build_personas(context)
+        statistics = self._build_statistics(context)
+        summary = self._build_summary(context)
+        _, _, task_map = self._index_results(context)
+        tasks = list(task_map.values())
+        timeline = self._build_timeline_events(context)
+        logs = self._build_logs_from_context(context)
+        metrics = self._build_metrics_from_context(context)
+        
+        # Build info object
+        info = self._build_agent_run_info(context)
+        
+        return {
+            "run": run.model_dump(),
+            "personas": personas.model_dump(),
+            "statistics": statistics.model_dump() if statistics else None,
+            "summary": summary.model_dump(),
+            "tasks": [task.model_dump() for task in tasks],
+            "timeline": [event.model_dump() for event in timeline],
+            "logs": [log.model_dump() for log in logs],
+            "metrics": metrics.model_dump() if metrics else None,
+            "info": info,
+        }
+    
+    def _build_timeline_events(self, context: AgentRunContext) -> List[Event]:
+        """Build timeline events from context."""
+        events: List[Event] = []
+        start_time = (
+            _ts_to_iso(context.run.started_at) or datetime.now(timezone.utc).isoformat()
+        )
+        events.append(
+            Event(
+                timestamp=start_time,
+                type=EventType.RUN_STARTED,
+                message="Agent run started",
+            )
+        )
+
+        for evaluation in context.evaluations:
+            task_event_time = start_time
+            events.append(
+                Event(
+                    timestamp=task_event_time,
+                    type=EventType.TASK_COMPLETED,
+                    message=f"Task {evaluation.task_id} evaluated",
+                    taskId=evaluation.task_id,
+                )
+            )
+
+        if context.run.ended_at:
+            end_time = _ts_to_iso(context.run.ended_at) or datetime.now(timezone.utc).isoformat()
+            events.append(
+                Event(
+                    timestamp=end_time,
+                    type=EventType.RUN_COMPLETED,
+                    message="Agent run completed",
+                )
+            )
+
+        return sorted(events, key=lambda e: e.timestamp)
+
+    def _build_logs_from_context(self, context: AgentRunContext) -> List[Log]:
+        """Build logs from context."""
+        logs: List[Log] = []
+        for evaluation in context.evaluations:
+            if evaluation.feedback:
+                feedback_data = evaluation.feedback
+                if isinstance(feedback_data, dict):
+                    log_entries = feedback_data.get("logs", [])
+                    for entry in log_entries:
+                        if isinstance(entry, dict):
+                            level_str = entry.get("level", "info").upper()
+                            try:
+                                level = LogLevel(level_str)
+                            except ValueError:
+                                level = LogLevel.INFO
+                            logs.append(
+                                Log(
+                                    timestamp=entry.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                                    level=level,
+                                    message=entry.get("message", ""),
+                                    taskId=evaluation.task_id,
+                                )
+                            )
+        return sorted(logs, key=lambda l: l.timestamp)
+
+    def _build_metrics_from_context(self, context: AgentRunContext) -> Optional[Metrics]:
+        """Build metrics from context."""
+        timestamps = []
+        if context.run.started_at:
+            timestamps.append(context.run.started_at)
+        if context.run.ended_at:
+            timestamps.append(context.run.ended_at)
+        if not timestamps:
+            timestamps.append(datetime.now(timezone.utc).timestamp())
+
+        metrics_time = [
+            Metric(timestamp=_ts_to_iso(ts) or "", value=float(index + 1))
+            for index, ts in enumerate(sorted(timestamps))
+        ]
+
+        duration = int(
+            (context.run.ended_at or context.run.started_at or 0)
+            - (context.run.started_at or 0)
+        )
+
+        return Metrics(
+            cpu=metrics_time,
+            memory=metrics_time,
+            network=metrics_time,
+            duration=duration,
+            peakCpu=max((metric.value for metric in metrics_time), default=0.0),
+            peakMemory=max((metric.value for metric in metrics_time), default=0.0),
+            totalNetworkTraffic=len(metrics_time) * 100,
+        )
+
+    def _build_agent_run_info(self, context: AgentRunContext) -> Dict[str, Any]:
+        """Build info object with agent run metadata."""
+        from app.utils.images import resolve_validator_image, resolve_agent_image
+        
+        validator_uid = _get_validator_uid_from_context(context)
+        validator_model: Optional[ValidatorInfo] = None
+        if context.round.validators:
+            validator_model = next(
+                (val for val in context.round.validators if val.uid == validator_uid),
+                context.round.validators[0] if context.round.validators else None
+            )
+
+        if validator_model is None:
+            validator_model = ValidatorInfo(
+                uid=validator_uid or 0,
+                hotkey=_format_validator_id(validator_uid) if validator_uid else "unknown",
+                coldkey=None,
+                stake=0.0,
+                vtrust=0.0,
+                name=None,
+                version=None
+            )
+
+        validator_info = {
+            "uid": abs(int(validator_model.uid)) if validator_model.uid is not None else 0,
+            "hotkey": validator_model.hotkey,
+            "coldkey": validator_model.coldkey,
+            "name": validator_model.name,
+            "stake": float(getattr(validator_model, "stake", 0.0) or 0.0),
+            "vtrust": float(getattr(validator_model, "vtrust", 0.0) or 0.0),
+            "version": getattr(validator_model, "version", None),
+            "image": resolve_validator_image(name=validator_model.name, existing=getattr(validator_model, "image_url", None)),
+        }
+
+        miner_model = context.run.miner_info
+        miner_info = {
+            "uid": abs(int(miner_model.uid)) if (miner_model and miner_model.uid is not None) else abs(int(context.run.miner_uid)),
+            "hotkey": miner_model.hotkey if miner_model else None,
+            "name": (miner_model.agent_name if miner_model and miner_model.agent_name else _format_agent_id(context.run.miner_uid)),
+            "github": getattr(miner_model, "github", None) if miner_model else None,
+            "image": resolve_agent_image(miner_model),
+            "isSota": context.run.is_sota,
+        }
+
+        start_epoch_val = getattr(context.round, "start_epoch", None)
+        end_epoch_val = getattr(context.round, "end_epoch", None)
+        if end_epoch_val is None:
+            try:
+                status_lower = str(context.round.status or "").lower()
+                if status_lower in {"completed", "finished", "complete"}:
+                    from app.services.ui.rounds_service import compute_boundaries_for_round
+                    bounds = compute_boundaries_for_round(int(context.round.round_number or 0))
+                    end_epoch_val = int(bounds.end_epoch)
+                    if start_epoch_val is None:
+                        start_epoch_val = int(bounds.start_epoch)
+            except Exception:
+                pass
+
+        round_info = {
+            "validatorRoundId": context.round.validator_round_id,
+            "roundNumber": context.round.round_number,
+            "status": context.round.status,
+            "startedAt": _ts_to_iso(context.round.started_at) if context.round.started_at else None,
+            "endedAt": _ts_to_iso(context.round.ended_at) if context.round.ended_at else None,
+            "startEpoch": start_epoch_val,
+            "endEpoch": end_epoch_val,
+        }
+
+        return {
+            "agentRunId": context.run.agent_run_id,
+            "round": round_info,
+            "validator": validator_info,
+            "miner": miner_info,
+        }
+
     async def compare_runs(self, run_ids: List[str]) -> Dict[str, Any]:
         contexts: List[AgentRunContext] = []
         for run_id in run_ids:
