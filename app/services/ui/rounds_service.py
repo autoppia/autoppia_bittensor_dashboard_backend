@@ -3037,7 +3037,7 @@ class RoundsService:
                 validator_uid = run_row.validator_round.validator_snapshot.validator_uid
                 validator_hotkey = run_row.validator_round.validator_snapshot.validator_hotkey
 
-        # Get rank and weight from validator_round_miners_score
+        # Get rank and weight from validator_round_summary_miners
         rank = None
         weight = None
         if run_row.miner_uid is not None and hasattr(run_row, "validator_round") and run_row.validator_round:
@@ -3078,7 +3078,7 @@ class RoundsService:
             total_tasks=run_row.total_tasks or len(task_ids),
             completed_tasks=run_row.completed_tasks or 0,
             failed_tasks=run_row.failed_tasks or 0,
-            # rank and weight obtained from validator_round_miners_score
+            # rank and weight obtained from validator_round_summary_miners
             metadata=metadata,
         )
         

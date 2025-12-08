@@ -594,7 +594,7 @@ class ValidatorRoundPersistenceService:
             run_row.average_reward = metrics["average_reward"]
 
             # rank and weight removed from agent_evaluation_runs
-            # They are now stored in validator_round_miners_score and updated there
+            # They are now stored in validator_round_summary_miners and updated there
 
         # Populate validator_round_summary_miners table
         await self._populate_round_summary(
@@ -1007,7 +1007,7 @@ class ValidatorRoundPersistenceService:
             "total_tasks": model.total_tasks,
             "completed_tasks": model.completed_tasks,
             "failed_tasks": model.failed_tasks,
-            # rank and weight removed - obtain via validator_round_miners_score
+            # rank and weight removed - obtain via validator_round_summary_miners
             "meta": _non_empty_dict(model.metadata),
         }
 
