@@ -1057,6 +1057,7 @@ class AgentRunsService:
     def _summarize_ui_tasks(
         self,
         ui_tasks: List[UITask],
+        task_id_to_reward: Optional[Dict[str, float]] = None,
     ) -> Tuple[
         Dict[str, Dict[str, float]],
         Dict[str, Dict[str, float]],
@@ -1068,6 +1069,7 @@ class AgentRunsService:
                 "tasks": 0.0,
                 "successful": 0.0,
                 "score_sum": 0.0,
+                "reward_sum": 0.0,  # Added for averageReward calculation
                 "duration_sum": 0.0,
             }
         )
@@ -1076,6 +1078,7 @@ class AgentRunsService:
                 "tasks": 0.0,
                 "successful": 0.0,
                 "score_sum": 0.0,
+                "reward_sum": 0.0,  # Added for averageReward calculation
                 "duration_sum": 0.0,
             }
         )
@@ -1086,6 +1089,7 @@ class AgentRunsService:
                     "tasks": 0.0,
                     "successful": 0.0,
                     "score_sum": 0.0,
+                    "reward_sum": 0.0,  # Added for averageReward calculation
                     "duration_sum": 0.0,
                 }
             )
@@ -1096,6 +1100,8 @@ class AgentRunsService:
             duration = float(getattr(task, "duration", 0) or 0)
             score = float(getattr(task, "score", 0.0) or 0.0)
             success = task.status == TaskStatus.COMPLETED
+            # Get reward from mapping if available, otherwise use score as fallback
+            reward = task_id_to_reward.get(task.taskId, score) if task_id_to_reward else score
 
             total_duration += duration
 
@@ -1103,6 +1109,7 @@ class AgentRunsService:
             host_stats = website_stats[host]
             host_stats["tasks"] += 1
             host_stats["score_sum"] += score
+            host_stats["reward_sum"] += reward
             host_stats["duration_sum"] += duration
             if success:
                 host_stats["successful"] += 1
@@ -1111,6 +1118,7 @@ class AgentRunsService:
             use_case_entry = use_case_stats[use_case]
             use_case_entry["tasks"] += 1
             use_case_entry["score_sum"] += score
+            use_case_entry["reward_sum"] += reward
             use_case_entry["duration_sum"] += duration
             if success:
                 use_case_entry["successful"] += 1
@@ -1119,6 +1127,7 @@ class AgentRunsService:
             website_uc_entry = website_usecase_stats[host][use_case]
             website_uc_entry["tasks"] += 1
             website_uc_entry["score_sum"] += score
+            website_uc_entry["reward_sum"] += reward
             website_uc_entry["duration_sum"] += duration
             if success:
                 website_uc_entry["successful"] += 1
@@ -1249,8 +1258,16 @@ class AgentRunsService:
         ]
         avg_time = sum(times) / len(times) if times else 0.0
         
+        # Create mapping from task_id to reward for _summarize_ui_tasks
+        task_id_to_reward: Dict[str, float] = {}
+        for evaluation in context.evaluations:
+            task_id = getattr(evaluation, "task_id", None)
+            reward = getattr(evaluation, "reward", None)
+            if task_id and reward is not None:
+                task_id_to_reward[str(task_id)] = float(reward)
+        
         website_stats_map, use_case_stats_map, website_usecase_stats, total_duration = (
-            self._summarize_ui_tasks(ui_tasks)
+            self._summarize_ui_tasks(ui_tasks, task_id_to_reward)
         )
         
         # Build simplified performance by website (without useCases)
@@ -1261,12 +1278,15 @@ class AgentRunsService:
             successful_count = int(values["successful"])
             # averageScore is success rate (0-1): successful tasks / total tasks
             success_rate = (successful_count / tasks_count) if tasks_count > 0 else 0.0
+            # averageReward is average of reward values (0-1)
+            average_reward = (values["reward_sum"] / tasks_count) if tasks_count > 0 else 0.0
             performance_by_website.append({
                 "website": website_key,
                 "tasks": tasks_count,
                 "successful": successful_count,
                 "failed": int(max(tasks_count - successful_count, 0)),
                 "averageScore": success_rate,  # Success rate (0-1), not average of scores
+                "averageReward": average_reward,  # Average reward (0-1)
                 "averageDuration": (
                     (values["duration_sum"] / tasks_count)
                     if tasks_count > 0
