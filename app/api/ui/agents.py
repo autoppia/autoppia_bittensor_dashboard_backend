@@ -181,6 +181,31 @@ async def get_miner_round_details(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/{miner_uid}/historical")
+async def get_miner_historical(
+    miner_uid: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Get historical statistics for a miner across all rounds.
+    
+    Returns:
+        - Summary statistics (rounds won/lost, total tasks, etc.)
+        - Performance by website with use cases breakdown
+        - Rounds history
+        - Alpha earned calculation (148 * 4 * weight * subnet_price for winners)
+    """
+    rounds_service = await _rounds_service(session)
+    try:
+        data = await rounds_service.get_miner_historical(miner_uid)
+        return {"success": True, "data": data}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Error getting miner historical data: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/{agent_id}")
 async def get_agent(
     agent_id: str,

@@ -4233,3 +4233,309 @@ class RoundsService:
             result["post_consensus_summary"] = post_consensus_summary_data
         
         return result
+
+    async def get_miner_historical(self, miner_uid: int) -> Dict[str, Any]:
+        """
+        Get historical statistics for a miner across all rounds.
+        
+        Returns:
+            - Summary statistics (rounds won/lost, total tasks, etc.)
+            - Performance by website with use cases breakdown
+            - Rounds history
+            - Alpha earned calculation (148 * 4 * weight * subnet_price for winners)
+        """
+        # Get all summaries for this miner
+        stmt_summaries = (
+            select(ValidatorRoundSummaryORM, RoundORM.round_number)
+            .join(
+                RoundORM,
+                ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
+            )
+            .where(ValidatorRoundSummaryORM.miner_uid == miner_uid)
+            .order_by(RoundORM.round_number.desc())
+        )
+        result_summaries = await self.session.execute(stmt_summaries)
+        summaries_with_rounds = result_summaries.all()
+        
+        if not summaries_with_rounds:
+            raise ValueError(f"Miner {miner_uid} not found in any round")
+        
+        # Get miner info from first summary
+        first_summary = summaries_with_rounds[0][0]
+        miner_hotkey = first_summary.miner_hotkey or ""
+        
+        # Get miner snapshot for name and image
+        stmt_miner = (
+            select(ValidatorRoundMinerORM)
+            .where(
+                ValidatorRoundMinerORM.validator_round_id == first_summary.validator_round_id,
+                ValidatorRoundMinerORM.miner_uid == miner_uid,
+            )
+            .limit(1)
+        )
+        result_miner = await self.session.execute(stmt_miner)
+        miner_snapshot = result_miner.scalar_one_or_none()
+        
+        miner_name = miner_snapshot.name if miner_snapshot else f"Miner {miner_uid}"
+        miner_image = ""
+        if miner_snapshot:
+            miner_info = MinerInfo(
+                uid=miner_uid,
+                hotkey=miner_snapshot.miner_hotkey or "",
+                name=miner_snapshot.name or f"Miner {miner_uid}",
+                agent_image=miner_snapshot.image_url or "",
+            )
+            miner_image = resolve_agent_image(miner_info, existing=miner_snapshot.image_url)
+        
+        # Aggregate statistics
+        rounds_participated = set()
+        rounds_won = 0
+        rounds_lost = 0
+        total_tasks = 0
+        total_tasks_successful = 0
+        total_tasks_failed = 0
+        total_duration = 0.0
+        duration_count = 0
+        scores = []
+        ranks = []
+        best_score = 0.0
+        best_score_round = None
+        best_rank = None
+        best_rank_round = None
+        total_alpha_earned = 0.0
+        total_tao_earned = 0.0
+        
+        # Performance by website
+        website_stats: Dict[str, Dict[str, Any]] = defaultdict(
+            lambda: {
+                "tasks": 0,
+                "successful": 0,
+                "failed": 0,
+                "total_duration": 0.0,
+                "duration_count": 0,
+                "use_cases": defaultdict(lambda: {
+                    "tasks": 0,
+                    "successful": 0,
+                    "failed": 0,
+                    "total_duration": 0.0,
+                    "duration_count": 0,
+                })
+            }
+        )
+        
+        # Rounds history
+        rounds_history = []
+        
+        # Process each summary (one per validator per round)
+        # Group by round_number to get unique rounds
+        rounds_data: Dict[int, Dict[str, Any]] = {}
+        
+        for summary, round_number in summaries_with_rounds:
+            if round_number is None:
+                continue
+                
+            rounds_participated.add(round_number)
+            
+            # Get post-consensus data (should be same for all summaries in same round)
+            if round_number not in rounds_data:
+                rounds_data[round_number] = {
+                    "round": round_number,
+                    "post_consensus_rank": summary.post_consensus_rank,
+                    "post_consensus_avg_reward": summary.post_consensus_avg_reward or 0.0,
+                    "post_consensus_avg_eval_score": summary.post_consensus_avg_eval_score or 0.0,
+                    "post_consensus_avg_eval_time": summary.post_consensus_avg_eval_time or 0.0,
+                    "tasks_received": summary.post_consensus_tasks_received or 0,
+                    "tasks_success": summary.post_consensus_tasks_success or 0,
+                    "tasks_failed": 0,
+                    "is_winner": (summary.post_consensus_rank or 0) == 1,
+                    "validators_count": 0,
+                    "subnet_price": summary.subnet_price,
+                    "weight": summary.weight or 0.0,
+                }
+            
+            # Update validators count
+            rounds_data[round_number]["validators_count"] += 1
+            
+            # Calculate tasks failed
+            tasks_received = summary.post_consensus_tasks_received or 0
+            tasks_success = summary.post_consensus_tasks_success or 0
+            tasks_failed = tasks_received - tasks_success
+            rounds_data[round_number]["tasks_failed"] = max(
+                rounds_data[round_number]["tasks_failed"],
+                tasks_failed
+            )
+            
+            # Track best score and rank (only process once per round, when first creating the entry)
+            if "_processed" not in rounds_data[round_number]:
+                score = summary.post_consensus_avg_reward or 0.0
+                rank = summary.post_consensus_rank or 0
+                
+                if score > best_score:
+                    best_score = score
+                    best_score_round = round_number
+                
+                if rank > 0 and (best_rank is None or rank < best_rank):
+                    best_rank = rank
+                    best_rank_round = round_number
+                
+                scores.append(score)
+                if rank > 0:
+                    ranks.append(rank)
+                
+                # Calculate alpha earned for winners (148 * 4 * weight * subnet_price)
+                # Winner takes all: only rank 1 gets the reward
+                if (summary.post_consensus_rank or 0) == 1 and summary.subnet_price:
+                    # For winner: 148 * 4 (epochs) * weight * subnet_price
+                    # In winner-takes-all, weight should be 1.0, but we use actual weight from DB
+                    weight = summary.weight or 1.0
+                    alpha_earned = 148.0 * 4.0 * weight * float(summary.subnet_price)
+                    total_alpha_earned += alpha_earned
+                    # Convert alpha to TAO (1 alpha = subnet_price TAO)
+                    total_tao_earned += alpha_earned * float(summary.subnet_price)
+                
+                rounds_data[round_number]["_processed"] = True
+        
+        # Count rounds won/lost and build rounds history
+        for round_data in rounds_data.values():
+            # Remove internal flag
+            round_data.pop("_processed", None)
+            
+            if round_data["is_winner"]:
+                rounds_won += 1
+            else:
+                rounds_lost += 1
+            
+            total_tasks += round_data["tasks_received"]
+            total_tasks_successful += round_data["tasks_success"]
+            total_tasks_failed += round_data["tasks_failed"]
+            
+            if round_data["post_consensus_avg_eval_time"]:
+                total_duration += round_data["post_consensus_avg_eval_time"]
+                duration_count += 1
+            
+            rounds_history.append(round_data)
+        
+        # Get task-level data for website/use case breakdown
+        # Get all evaluations for this miner
+        stmt_evaluations = (
+            select(EvaluationORM, TaskORM.web_project_id, TaskORM.use_case)
+            .join(
+                TaskORM,
+                EvaluationORM.task_id == TaskORM.task_id
+            )
+            .where(EvaluationORM.miner_uid == miner_uid)
+        )
+        result_evaluations = await self.session.execute(stmt_evaluations)
+        evaluations_with_tasks = result_evaluations.all()
+        
+        # Process evaluations to build website/use case stats
+        for evaluation, web_project_id, use_case in evaluations_with_tasks:
+            website = web_project_id or "unknown"
+            use_case_name = "Unknown"
+            if use_case and isinstance(use_case, dict):
+                use_case_name = use_case.get("name") or use_case.get("slug") or "Unknown"
+            elif isinstance(use_case, str):
+                use_case_name = use_case
+            
+            # Website stats
+            website_stats[website]["tasks"] += 1
+            eval_score = evaluation.eval_score or 0.0
+            if eval_score >= 0.5:
+                website_stats[website]["successful"] += 1
+            else:
+                website_stats[website]["failed"] += 1
+            
+            if evaluation.evaluation_time:
+                website_stats[website]["total_duration"] += evaluation.evaluation_time
+                website_stats[website]["duration_count"] += 1
+            
+            # Use case stats
+            use_case_key = f"{website}::{use_case_name}"
+            website_stats[website]["use_cases"][use_case_name]["tasks"] += 1
+            if eval_score >= 0.5:
+                website_stats[website]["use_cases"][use_case_name]["successful"] += 1
+            else:
+                website_stats[website]["use_cases"][use_case_name]["failed"] += 1
+            
+            if evaluation.evaluation_time:
+                website_stats[website]["use_cases"][use_case_name]["total_duration"] += evaluation.evaluation_time
+                website_stats[website]["use_cases"][use_case_name]["duration_count"] += 1
+        
+        # Build performance by website
+        performance_by_website = []
+        for website, stats in website_stats.items():
+            avg_duration = (
+                stats["total_duration"] / stats["duration_count"]
+                if stats["duration_count"] > 0
+                else 0.0
+            )
+            
+            use_cases_list = []
+            for use_case_name, uc_stats in stats["use_cases"].items():
+                uc_avg_duration = (
+                    uc_stats["total_duration"] / uc_stats["duration_count"]
+                    if uc_stats["duration_count"] > 0
+                    else 0.0
+                )
+                use_cases_list.append({
+                    "useCase": use_case_name,
+                    "tasks": uc_stats["tasks"],
+                    "successful": uc_stats["successful"],
+                    "failed": uc_stats["failed"],
+                    "averageDuration": _truncate_decimal(uc_avg_duration, 2),
+                })
+            
+            performance_by_website.append({
+                "website": website,
+                "tasks": stats["tasks"],
+                "successful": stats["successful"],
+                "failed": stats["failed"],
+                "averageDuration": _truncate_decimal(avg_duration, 2),
+                "useCases": use_cases_list,
+            })
+        
+        # Sort by tasks descending
+        performance_by_website.sort(key=lambda x: x["tasks"], reverse=True)
+        
+        # Calculate averages
+        average_duration = (
+            total_duration / duration_count if duration_count > 0 else 0.0
+        )
+        average_score = (
+            sum(scores) / len(scores) if scores else 0.0
+        )
+        overall_success_rate = (
+            total_tasks_successful / total_tasks if total_tasks > 0 else 0.0
+        )
+        
+        # Build result
+        result = {
+            "miner": {
+                "uid": miner_uid,
+                "name": miner_name,
+                "hotkey": miner_hotkey,
+                "image": miner_image,
+            },
+            "summary": {
+                "totalRounds": len(rounds_participated),
+                "roundsWon": rounds_won,
+                "roundsLost": rounds_lost,
+                "roundsParticipated": len(rounds_participated),
+                "totalTasks": total_tasks,
+                "totalTasksSuccessful": total_tasks_successful,
+                "totalTasksFailed": total_tasks_failed,
+                "overallSuccessRate": _truncate_decimal(overall_success_rate, 4),
+                "averageDuration": _truncate_decimal(average_duration, 2),
+                "bestScore": _truncate_decimal(best_score, 4),
+                "bestScoreRound": best_score_round,
+                "bestRank": best_rank,
+                "bestRankRound": best_rank_round,
+                "averageScore": _truncate_decimal(average_score, 4),
+                "totalAlphaEarned": _truncate_decimal(total_alpha_earned, 6),
+                "totalTaoEarned": _truncate_decimal(total_tao_earned, 6),
+            },
+            "performanceByWebsite": performance_by_website,
+            "roundsHistory": sorted(rounds_history, key=lambda x: x["round"], reverse=True),
+        }
+        
+        return result

@@ -335,6 +335,16 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
         total_reward = sum(all_miner_rewards.values())
         weight = 0.0  # ✅ Se calculará después con consensus_reward
         
+        # Get subnet price (alpha to TAO rate) - use a default value for seed data
+        from app.services.subnet_utils import get_price
+        from app.config import settings
+        try:
+            subnet_price = get_price(netuid=settings.VALIDATOR_NETUID if hasattr(settings, 'VALIDATOR_NETUID') else 36)
+            if subnet_price <= 0:
+                subnet_price = 0.0043  # Default fallback price
+        except Exception:
+            subnet_price = 0.0043  # Default fallback price
+        
         summary = ValidatorRoundSummaryORM(
             validator_round_id=validator_round_id,
             miner_uid=miner["uid"],
@@ -352,6 +362,7 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
             post_consensus_tasks_received=post_consensus_tasks_received,
             post_consensus_tasks_success=post_consensus_tasks_success,
             weight=weight,
+            subnet_price=subnet_price,
         )
         session.add(summary)
     
@@ -541,6 +552,16 @@ async def calculate_post_consensus_scores(session: AsyncSession, round_number: i
         total_tasks_success = sum(s.local_tasks_success for s in summaries)
         count = len(summaries)
         
+        # Get subnet price for this round (should be the same for all summaries in the round)
+        from app.services.subnet_utils import get_price
+        from app.config import settings
+        try:
+            subnet_price = get_price(netuid=settings.VALIDATOR_NETUID if hasattr(settings, 'VALIDATOR_NETUID') else 36)
+            if subnet_price <= 0:
+                subnet_price = 0.0043  # Default fallback price
+        except Exception:
+            subnet_price = 0.0043  # Default fallback price
+        
         for summary in summaries:
             summary.post_consensus_rank = consensus_rank
             summary.post_consensus_avg_reward = consensus_reward
@@ -552,6 +573,10 @@ async def calculate_post_consensus_scores(session: AsyncSession, round_number: i
             # Calcular weight basado en consensus_reward
             total_consensus = sum(consensus_scores.values())
             summary.weight = consensus_reward / total_consensus if total_consensus > 0 else 0.0
+            
+            # Ensure subnet_price is set (use existing if already set, otherwise use current price)
+            if summary.subnet_price is None:
+                summary.subnet_price = subnet_price
     
     await session.commit()  # ✅ Commit para guardar los cambios
     print(f"  ✅ Post-consensus scores calculados y guardados para {len(summaries_by_miner)} miners")

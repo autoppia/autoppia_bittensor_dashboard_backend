@@ -601,6 +601,7 @@ class ValidatorRoundPersistenceService:
             validator_round_id=validator_round_id,
             local_evaluation=local_evaluation,
             post_consensus_evaluation=post_consensus_evaluation,
+            subnet_price=alpha_price,
         )
 
     async def submit_round(
@@ -1107,6 +1108,7 @@ class ValidatorRoundPersistenceService:
         validator_round_id: str,
         local_evaluation: Optional[Dict[str, Any]] = None,
         post_consensus_evaluation: Optional[Dict[str, Any]] = None,
+        subnet_price: Optional[float] = None,
     ) -> None:
         """Populate validator_round_summary_miners table from local_evaluation and post_consensus_evaluation."""
         # Build a map of miner_uid -> summary data
@@ -1153,6 +1155,9 @@ class ValidatorRoundPersistenceService:
                 summary_map[miner_uid]["post_consensus_tasks_received"] = miner_data.get("tasks_sent")
                 summary_map[miner_uid]["post_consensus_tasks_success"] = miner_data.get("tasks_success")
                 summary_map[miner_uid]["weight"] = miner_data.get("weight")
+                # Add subnet_price to all miners in this round
+                if subnet_price is not None:
+                    summary_map[miner_uid]["subnet_price"] = float(subnet_price)
 
         # Upsert summary records
         for miner_uid, summary_data in summary_map.items():
@@ -1162,11 +1167,18 @@ class ValidatorRoundPersistenceService:
             )
             existing = await self.session.scalar(stmt)
             
+            # Ensure subnet_price is set for all records (use provided value or keep existing)
+            if subnet_price is not None and "subnet_price" not in summary_data:
+                summary_data["subnet_price"] = float(subnet_price)
+            
             if existing:
                 # Update existing record
                 for key, value in summary_data.items():
                     if key != "miner_uid":  # Don't update the primary key
                         setattr(existing, key, value)
+                # Update subnet_price if not in summary_data but provided
+                if subnet_price is not None and existing.subnet_price is None:
+                    existing.subnet_price = float(subnet_price)
             else:
                 # Create new record
                 new_summary = ValidatorRoundSummaryORM(
