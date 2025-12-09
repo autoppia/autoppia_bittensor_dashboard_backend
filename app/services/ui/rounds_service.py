@@ -3823,7 +3823,20 @@ class RoundsService:
             miner_snapshot = miner_snapshots.get(summary.miner_uid)
             miner_image = None
             if miner_snapshot:
-                miner_image = resolve_agent_image(miner_snapshot)
+                # Use image_url directly from ValidatorRoundMinerORM
+                miner_image = miner_snapshot.image_url
+                # If image_url is None, use resolve_agent_image with a MinerInfo-like object
+                if not miner_image:
+                    from app.models.core import MinerInfo
+                    # Create MinerInfo with empty string for agent_image if it's required
+                    miner_info = MinerInfo(
+                        uid=summary.miner_uid,
+                        hotkey=miner_snapshot.miner_hotkey or "",
+                        agent_name=miner_snapshot.name or f"Miner {summary.miner_uid}",
+                        agent_image="",  # Empty string instead of None
+                        is_sota=miner_snapshot.is_sota or False,
+                    )
+                    miner_image = resolve_agent_image(miner_info, existing=None)
             
             # Get miner name from snapshot
             miner_name = None
@@ -3843,4 +3856,225 @@ class RoundsService:
         return {
             "round": round_number,
             "miners": miners_list,
+        }
+    
+    async def get_miner_round_details(
+        self, round_number: int, miner_uid: int
+    ) -> Dict[str, Any]:
+        """
+        Get detailed information about a specific miner in a specific round.
+        
+        Returns:
+        {
+            "miner": {
+                "uid": int,
+                "name": str,
+                "hotkey": str | None,
+                "image": str | None,
+            },
+            "round": int,
+            "post_consensus_rank": int,
+            "post_consensus_avg_reward": float,
+            "post_consensus_avg_eval_score": float,
+            "post_consensus_avg_eval_time": float,
+            "tasks_received": int,  # Sum of all validators
+            "tasks_success": int,  # Sum of all validators
+            "validators_count": int,
+            "avg_tasks_per_validator": float,
+            "performanceByWebsite": [
+                {
+                    "website": str,
+                    "tasks_received": int,
+                    "tasks_success": int,
+                    "success_rate": float,  # tasks_success / tasks_received
+                },
+                ...
+            ],
+        }
+        """
+        # Get all validator_round_ids for this round
+        stmt_rounds = (
+            select(RoundORM.validator_round_id)
+            .where(RoundORM.round_number == round_number)
+        )
+        result_rounds = await self.session.execute(stmt_rounds)
+        validator_round_ids = [row[0] for row in result_rounds.all()]
+        
+        if not validator_round_ids:
+            raise ValueError(f"No validators found for round {round_number}")
+        
+        # Get post-consensus summary for this miner from any validator (they should be the same)
+        # Prioritize Autopia (UID 83) if available
+        AUTOPPIA_UID = 83
+        stmt_summary_autoppia = (
+            select(ValidatorRoundSummaryORM)
+            .join(
+                RoundORM,
+                ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
+            )
+            .join(
+                ValidatorRoundValidatorORM,
+                RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
+            )
+            .where(
+                RoundORM.round_number == round_number,
+                ValidatorRoundValidatorORM.validator_uid == AUTOPPIA_UID,
+                ValidatorRoundSummaryORM.miner_uid == miner_uid,
+            )
+            .limit(1)
+        )
+        result_summary = await self.session.execute(stmt_summary_autoppia)
+        summary = result_summary.scalar_one_or_none()
+        
+        # If Autopia not found, get from any validator
+        if not summary:
+            stmt_summary = (
+                select(ValidatorRoundSummaryORM)
+                .where(
+                    ValidatorRoundSummaryORM.validator_round_id.in_(validator_round_ids),
+                    ValidatorRoundSummaryORM.miner_uid == miner_uid,
+                )
+                .limit(1)
+            )
+            result_summary = await self.session.execute(stmt_summary)
+            summary = result_summary.scalar_one_or_none()
+        
+        if not summary:
+            raise ValueError(f"Miner {miner_uid} not found in round {round_number}")
+        
+        # Get miner snapshot for name, hotkey, image
+        stmt_miner = (
+            select(ValidatorRoundMinerORM)
+            .where(
+                ValidatorRoundMinerORM.validator_round_id == summary.validator_round_id,
+                ValidatorRoundMinerORM.miner_uid == miner_uid,
+            )
+            .limit(1)
+        )
+        result_miner = await self.session.execute(stmt_miner)
+        miner_snapshot = result_miner.scalar_one_or_none()
+        
+        miner_name = f"Miner {miner_uid}"
+        miner_hotkey = None
+        miner_image = None
+        
+        if miner_snapshot:
+            miner_name = miner_snapshot.name or miner_name
+            miner_hotkey = miner_snapshot.miner_hotkey
+            miner_image = miner_snapshot.image_url
+            if not miner_image:
+                from app.models.core import MinerInfo
+                miner_info = MinerInfo(
+                    uid=miner_uid,
+                    hotkey=miner_snapshot.miner_hotkey or "",
+                    agent_name=miner_snapshot.name or miner_name,
+                    agent_image="",
+                    is_sota=miner_snapshot.is_sota or False,
+                )
+                miner_image = resolve_agent_image(miner_info, existing=None)
+        
+        # Get all summaries for this miner across all validators to get validator count
+        stmt_all_summaries = (
+            select(ValidatorRoundSummaryORM)
+            .where(
+                ValidatorRoundSummaryORM.validator_round_id.in_(validator_round_ids),
+                ValidatorRoundSummaryORM.miner_uid == miner_uid,
+            )
+        )
+        result_all_summaries = await self.session.execute(stmt_all_summaries)
+        all_summaries = result_all_summaries.scalars().all()
+        validators_count = len(all_summaries)
+        
+        # Get evaluations for this miner in this round to calculate totals and performance by website
+        from app.db.models import EvaluationORM, TaskORM
+        
+        stmt_evaluations = (
+            select(EvaluationORM, TaskORM)
+            .join(
+                TaskORM,
+                EvaluationORM.task_id == TaskORM.task_id
+            )
+            .where(
+                EvaluationORM.validator_round_id.in_(validator_round_ids),
+                EvaluationORM.miner_uid == miner_uid,
+            )
+        )
+        result_evaluations = await self.session.execute(stmt_evaluations)
+        evaluations_with_tasks = result_evaluations.all()
+        
+        # Calculate totals from actual evaluations
+        total_tasks_received = len(evaluations_with_tasks)
+        total_tasks_success = sum(
+            1 for eval_orm, _ in evaluations_with_tasks
+            if (getattr(eval_orm, "eval_score", getattr(eval_orm, "final_score", 0.0)) or 0.0) >= 0.5
+        )
+        avg_tasks_per_validator = (
+            total_tasks_received / validators_count if validators_count > 0 else 0.0
+        )
+        
+        # Group by website
+        website_stats: Dict[str, Dict[str, int]] = defaultdict(
+            lambda: {"tasks_received": 0, "tasks_success": 0}
+        )
+        
+        for evaluation, task in evaluations_with_tasks:
+            # Get website from task
+            website = None
+            if task.web_project_id:
+                website = task.web_project_id
+            elif task.url:
+                # Extract website from URL if needed
+                from urllib.parse import urlparse
+                parsed = urlparse(task.url)
+                website = parsed.netloc or parsed.path.split("/")[0] if parsed.path else "unknown"
+            else:
+                website = "unknown"
+            
+            website_stats[website]["tasks_received"] += 1
+            eval_score = getattr(evaluation, "eval_score", getattr(evaluation, "final_score", 0.0)) or 0.0
+            if eval_score >= 0.5:
+                website_stats[website]["tasks_success"] += 1
+        
+        # Build performance by website
+        performance_by_website = []
+        for website, stats in website_stats.items():
+            tasks_received = stats["tasks_received"]
+            tasks_success = stats["tasks_success"]
+            success_rate = (
+                (tasks_success / tasks_received) if tasks_received > 0 else 0.0
+            )
+            
+            performance_by_website.append({
+                "website": website,
+                "tasks_received": tasks_received,
+                "tasks_success": tasks_success,
+                "success_rate": _truncate_decimal(success_rate, 4),
+            })
+        
+        # Sort by tasks_received descending
+        performance_by_website.sort(key=lambda x: x["tasks_received"], reverse=True)
+        
+        return {
+            "miner": {
+                "uid": miner_uid,
+                "name": miner_name,
+                "hotkey": miner_hotkey,
+                "image": miner_image,
+            },
+            "round": round_number,
+            "post_consensus_rank": summary.post_consensus_rank or 0,
+            "post_consensus_avg_reward": _truncate_decimal(
+                float(summary.post_consensus_avg_reward or 0.0), 4
+            ),
+            "post_consensus_avg_eval_score": _truncate_decimal(
+                float(summary.post_consensus_avg_eval_score or 0.0), 4
+            ),
+            "post_consensus_avg_eval_time": _truncate_decimal(
+                float(summary.post_consensus_avg_eval_time or 0.0), 2
+            ),
+            "tasks_received": total_tasks_received,
+            "tasks_success": total_tasks_success,
+            "validators_count": validators_count,
+            "avg_tasks_per_validator": _truncate_decimal(avg_tasks_per_validator, 2),
+            "performanceByWebsite": performance_by_website,
         }
