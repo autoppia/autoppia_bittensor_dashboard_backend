@@ -1254,21 +1254,22 @@ class AgentRunsService:
         )
         
         # Build simplified performance by website (without useCases)
+        # averageScore should be success rate (successful/tasks), not average of scores
         performance_by_website = []
         for website_key, values in website_stats_map.items():
+            tasks_count = int(values["tasks"])
+            successful_count = int(values["successful"])
+            # averageScore is success rate (0-1): successful tasks / total tasks
+            success_rate = (successful_count / tasks_count) if tasks_count > 0 else 0.0
             performance_by_website.append({
                 "website": website_key,
-                "tasks": int(values["tasks"]),
-                "successful": int(values["successful"]),
-                "failed": int(max(values["tasks"] - values["successful"], 0)),
-                "averageScore": (
-                    (values["score_sum"] / values["tasks"])
-                    if values["tasks"]
-                    else 0.0
-                ),
+                "tasks": tasks_count,
+                "successful": successful_count,
+                "failed": int(max(tasks_count - successful_count, 0)),
+                "averageScore": success_rate,  # Success rate (0-1), not average of scores
                 "averageDuration": (
-                    (values["duration_sum"] / values["tasks"])
-                    if values["tasks"]
+                    (values["duration_sum"] / tasks_count)
+                    if tasks_count > 0
                     else 0.0
                 ),
             })
