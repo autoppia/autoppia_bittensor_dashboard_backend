@@ -3690,3 +3690,157 @@ class RoundsService:
             "post_consensus_summary": aggregated_metrics,
             "validators": validators_list,
         }
+    
+    async def get_available_rounds(self) -> List[int]:
+        """
+        Get list of available round numbers from validator_rounds table.
+        Returns sorted list of round numbers in descending order.
+        """
+        stmt = (
+            select(RoundORM.round_number)
+            .where(RoundORM.round_number.isnot(None))
+            .distinct()
+            .order_by(RoundORM.round_number.desc())
+        )
+        result = await self.session.execute(stmt)
+        rounds = [row[0] for row in result.all() if row[0] is not None]
+        return sorted(rounds, reverse=True)
+    
+    async def get_round_miners_for_autoppia(self, round_number: int) -> Dict[str, Any]:
+        """
+        Get miners for a specific round from validator_round_summary_miners,
+        filtered by Autoppia validator (UID 83) and using post_consensus data.
+        
+        Returns:
+        {
+            "round": round_number,
+            "miners": [
+                {
+                    "uid": int,
+                    "name": str,
+                    "image": str | None,
+                    "post_consensus_avg_reward": float,
+                    "post_consensus_rank": int,
+                },
+                ...
+            ]
+        }
+        """
+        AUTOPPIA_UID = 83
+        
+        # Find validator_round_id for Autoppia (UID 83) in this round
+        # Need to join with ValidatorRoundValidatorORM to get validator_uid
+        stmt_validator_round = (
+            select(RoundORM.validator_round_id)
+            .join(
+                ValidatorRoundValidatorORM,
+                RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
+            )
+            .where(
+                RoundORM.round_number == round_number,
+                ValidatorRoundValidatorORM.validator_uid == AUTOPPIA_UID,
+            )
+            .limit(1)
+        )
+        result_validator_round = await self.session.execute(stmt_validator_round)
+        validator_round_id = result_validator_round.scalar_one_or_none()
+        
+        if not validator_round_id:
+            # If Autoppia not found, try to find any validator_round_id for this round that has summaries
+            logger.warning(
+                f"Autopia validator (UID {AUTOPPIA_UID}) not found for round {round_number}. "
+                f"Trying to find any validator with summaries..."
+            )
+            
+            # Find any validator_round_id for this round that has summaries
+            stmt_fallback = (
+                select(ValidatorRoundSummaryORM.validator_round_id)
+                .join(
+                    RoundORM,
+                    ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
+                )
+                .where(RoundORM.round_number == round_number)
+                .limit(1)
+            )
+            result_fallback = await self.session.execute(stmt_fallback)
+            validator_round_id = result_fallback.scalar_one_or_none()
+            
+            if not validator_round_id:
+                # No validator found with summaries for this round
+                logger.warning(
+                    f"No validator rounds with summaries found for round {round_number}"
+                )
+                return {
+                    "round": round_number,
+                    "miners": [],
+                }
+            else:
+                logger.info(
+                    f"Using fallback validator_round_id {validator_round_id} for round {round_number}"
+                )
+        
+        # Get all miners from validator_round_summary_miners for this validator_round_id
+        stmt_summary = (
+            select(ValidatorRoundSummaryORM)
+            .where(
+                ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+            )
+            .order_by(
+                ValidatorRoundSummaryORM.post_consensus_rank.asc().nulls_last(),
+                ValidatorRoundSummaryORM.post_consensus_avg_reward.desc().nulls_last(),
+            )
+        )
+        result_summary = await self.session.execute(stmt_summary)
+        summaries = result_summary.scalars().all()
+        
+        if not summaries:
+            logger.warning(
+                f"No miner summaries found for validator_round_id {validator_round_id} (round {round_number}, Autopia UID {AUTOPPIA_UID})"
+            )
+        
+        # Get miner snapshots for image URLs
+        miner_uids = [s.miner_uid for s in summaries if s.miner_uid is not None]
+        miner_snapshots = {}
+        if miner_uids:
+            stmt_miners = (
+                select(ValidatorRoundMinerORM)
+                .where(
+                    ValidatorRoundMinerORM.validator_round_id == validator_round_id,
+                    ValidatorRoundMinerORM.miner_uid.in_(miner_uids),
+                )
+            )
+            result_miners = await self.session.execute(stmt_miners)
+            for miner_snapshot in result_miners.scalars().all():
+                if miner_snapshot.miner_uid is not None:
+                    miner_snapshots[miner_snapshot.miner_uid] = miner_snapshot
+        
+        # Build miners list
+        miners_list = []
+        for summary in summaries:
+            if summary.miner_uid is None:
+                continue
+            
+            miner_snapshot = miner_snapshots.get(summary.miner_uid)
+            miner_image = None
+            if miner_snapshot:
+                miner_image = resolve_agent_image(miner_snapshot)
+            
+            # Get miner name from snapshot
+            miner_name = None
+            if miner_snapshot:
+                miner_name = miner_snapshot.name or f"Miner {summary.miner_uid}"
+            else:
+                miner_name = f"Miner {summary.miner_uid}"
+            
+            miners_list.append({
+                "uid": summary.miner_uid,
+                "name": miner_name,
+                "image": miner_image,
+                "post_consensus_avg_reward": _truncate_decimal(float(summary.post_consensus_avg_reward or 0.0), 4),
+                "post_consensus_rank": summary.post_consensus_rank or 0,
+            })
+        
+        return {
+            "round": round_number,
+            "miners": miners_list,
+        }
