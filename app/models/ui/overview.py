@@ -136,13 +136,19 @@ class LeaderboardEntry(BaseModel):
     """Leaderboard entry for performance comparison."""
 
     round: int
-    subnet36: float
+    subnet36: float  # post_consensus_avg_reward (mantener por compatibilidad)
+    post_consensus_reward: float  # post_consensus_avg_reward
     winnerUid: Optional[int] = None
     winnerName: Optional[str] = None
     openai_cua: Optional[float] = None
     anthropic_cua: Optional[float] = None
     browser_use: Optional[float] = None
     timestamp: str  # ISO timestamp
+    post_consensus_eval_score: Optional[float] = None  # post_consensus_avg_eval_score
+    post_consensus_eval_time: Optional[float] = None  # post_consensus_avg_eval_time
+    # Campos legacy (mantener por compatibilidad)
+    score: Optional[float] = None  # post_consensus_avg_eval_score (alias)
+    time: Optional[float] = None  # post_consensus_avg_eval_time (alias)
 
 
 class LeaderboardResponse(BaseResponse):
