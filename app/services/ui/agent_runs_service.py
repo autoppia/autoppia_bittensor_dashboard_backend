@@ -1143,7 +1143,7 @@ class AgentRunsService:
         )
 
         website_stats_map, use_case_stats_map, website_usecase_stats, total_duration = (
-            self._summarize_ui_tasks(ui_tasks)
+            self._summarize_ui_tasks(ui_tasks, None)  # No reward mapping needed for this method
         )
 
         performance_by_website = []
