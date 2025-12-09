@@ -154,7 +154,7 @@ class SnapshotService:
                     
                     # Tasks
                     round_tasks_total += (run.total_tasks or 0)
-                    round_tasks_completed += (run.completed_tasks or 0)
+                    round_tasks_completed += (run.success_tasks or 0)
 
                 if not round_scores:
                     continue

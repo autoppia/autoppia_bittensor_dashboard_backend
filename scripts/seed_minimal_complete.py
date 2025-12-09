@@ -226,9 +226,8 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
             average_score=base_score,
             average_execution_time=random.uniform(8, 15),
             average_reward=avg_reward,
-            total_reward=avg_reward * len(TASKS),
             total_tasks=len(TASKS),
-            completed_tasks=len(TASKS),
+            success_tasks=len(TASKS),
             failed_tasks=0,
             meta={},
         )

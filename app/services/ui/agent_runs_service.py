@@ -168,12 +168,12 @@ class AgentRunsService:
             "score": AgentEvaluationRunORM.average_score,
             "overallScore": AgentEvaluationRunORM.average_score,
             "totalTasks": AgentEvaluationRunORM.total_tasks,
-            "completedTasks": AgentEvaluationRunORM.completed_tasks,
+            "completedTasks": AgentEvaluationRunORM.success_tasks,
         }
 
         if sort_by in {"successRate"}:
             sort_columns["successRate"] = func.coalesce(
-                AgentEvaluationRunORM.completed_tasks
+                AgentEvaluationRunORM.success_tasks
                 * 100.0
                 / func.nullif(AgentEvaluationRunORM.total_tasks, 0),
                 0.0,
@@ -1558,17 +1558,17 @@ class AgentRunsService:
             or len(context.tasks)
         )
 
-        completed_tasks = (
+        success_tasks = (
             getattr(run_model, "n_tasks_completed", None)
-            or run_model.completed_tasks
+            or run_model.success_tasks
             or 0
         )
         failed_tasks = (
             getattr(run_model, "n_tasks_failed", None) or run_model.failed_tasks or 0
         )
 
-        if completed_tasks == 0 and context.evaluations:
-            completed_tasks = sum(
+        if success_tasks == 0 and context.evaluations:
+            success_tasks = sum(
                 1
                 for evaluation in context.evaluations
                 if getattr(evaluation, 'eval_score', getattr(evaluation, 'final_score', 0.0)) >= 0.5

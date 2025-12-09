@@ -586,11 +586,10 @@ class ValidatorRoundPersistenceService:
 
             metrics = self._compute_agent_run_stats(run_row)
             run_row.total_tasks = metrics["total_tasks"]
-            run_row.completed_tasks = metrics["completed_tasks"]
+            run_row.success_tasks = metrics["success_tasks"]
             run_row.failed_tasks = metrics["failed_tasks"]
             run_row.average_score = metrics["average_score"]
             run_row.average_execution_time = metrics["average_execution_time"]
-            run_row.total_reward = metrics["total_reward"]
             run_row.average_reward = metrics["average_reward"]
 
             # rank and weight removed from agent_evaluation_runs
@@ -751,10 +750,10 @@ class ValidatorRoundPersistenceService:
                 scores.append(value)
         average_score = sum(scores) / len(scores) if scores else None
 
-        completed_tasks = sum(1 for score in scores if score >= 0.5)
-        if completed_tasks > total_tasks:
-            completed_tasks = total_tasks
-        failed_tasks = max(total_tasks - completed_tasks, 0)
+        success_tasks = sum(1 for score in scores if score >= 0.5)
+        if success_tasks > total_tasks:
+            success_tasks = total_tasks
+        failed_tasks = max(total_tasks - success_tasks, 0)
 
         evaluation_times: List[float] = []
         for eval_obj in evaluations:
@@ -780,20 +779,18 @@ class ValidatorRoundPersistenceService:
             if value is not None:
                 reward_values.append(value)
 
-        total_reward = sum(reward_values) if reward_values else None
         average_reward = (
-            (total_reward / len(reward_values))
-            if reward_values and total_reward is not None
+            (sum(reward_values) / len(reward_values))
+            if reward_values and len(reward_values) > 0
             else None
         )
 
         return {
             "total_tasks": total_tasks,
-            "completed_tasks": completed_tasks,
+            "success_tasks": success_tasks,
             "failed_tasks": failed_tasks,
             "average_score": average_score,
             "average_execution_time": average_execution_time,
-            "total_reward": total_reward,
             "average_reward": average_reward,
         }
 
@@ -1006,7 +1003,7 @@ class ValidatorRoundPersistenceService:
             "average_reward": model.average_reward,
             "total_reward": model.total_reward,
             "total_tasks": model.total_tasks,
-            "completed_tasks": model.completed_tasks,
+            "success_tasks": model.success_tasks,
             "failed_tasks": model.failed_tasks,
             # rank and weight removed - obtain via validator_round_summary_miners
             "meta": _non_empty_dict(model.metadata),

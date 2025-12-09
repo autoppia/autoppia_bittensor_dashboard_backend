@@ -1023,7 +1023,7 @@ class RoundsService:
         best_by_validator: Dict[str, Dict[str, Any]] = {}
         miner_ids: set[int] = set()
         active_miner_ids: set[int] = set()
-        completed_tasks = 0
+        success_tasks = 0
         total_tasks = 0
         tasks_per_validator: List[float] = []
         scores: List[float] = []
@@ -1106,7 +1106,7 @@ class RoundsService:
                             if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5
                         ]
                     )
-                completed_tasks += completed
+                success_tasks += completed
 
                 total = ctx.run.n_tasks_total
                 if total is None:
@@ -1137,7 +1137,7 @@ class RoundsService:
         metrics = {
             "miner_ids": miner_ids,
             "active_miner_ids": active_miner_ids,
-            "completed_tasks": completed_tasks,
+            "success_tasks": success_tasks,
             "total_tasks": total_tasks,
             "tasks_per_validator": tasks_per_validator,
             "scores": scores,
@@ -1203,7 +1203,7 @@ class RoundsService:
                 _iso_timestamp(round_obj.ended_at) if round_obj.ended_at else None
             ),
             "totalTasks": round_obj.n_tasks,
-            "completedTasks": completed_tasks,
+            "completedTasks": success_tasks,
             "icon": icon,
         }
 
@@ -1304,7 +1304,7 @@ class RoundsService:
             "endTime": _iso_timestamp(ended_at) if ended_at else None,
             "status": status,
             "totalTasks": total_tasks,
-            "completedTasks": completed_tasks,
+            "completedTasks": success_tasks,
             "currentBlock": current_block,
             "blocksRemaining": blocks_remaining,
             "progress": round(progress_ratio, 3),
@@ -1703,7 +1703,7 @@ class RoundsService:
 
         total_validators = len(aggregated.validator_rounds) or 0
         total_tasks = metrics["total_tasks"]
-        completed_tasks = metrics["completed_tasks"]
+        success_tasks = metrics["success_tasks"]
         total_stake = metrics["total_stake"]
         tasks_per_validator = metrics["tasks_per_validator"]
         scores = metrics["scores"]
@@ -1802,7 +1802,7 @@ class RoundsService:
             if validator_top_scores
             else (sum(scores) / len(scores) if scores else 0.0)
         )
-        success_rate = (completed_tasks / total_tasks * 100.0) if total_tasks else 0.0
+        success_rate = (success_tasks / total_tasks * 100.0) if total_tasks else 0.0
         average_duration = sum(durations) / len(durations) if durations else 0.0
         total_emission = int(total_stake * 0.05) if total_stake else 0
         average_tasks_per_validator_per_miner = (
@@ -1816,7 +1816,7 @@ class RoundsService:
             "totalMiners": len(metrics["miner_ids"]),
             "activeMiners": len(metrics["active_miner_ids"]),
             "totalTasks": total_tasks,
-            "completedTasks": completed_tasks,
+            "completedTasks": success_tasks,
             "totalValidators": total_validators,
             "averageTasksPerValidator": round(average_tasks_per_validator_per_miner, 2),
             "winnerAverageScore": round(winner_average, 3),  # ✅ De post_consensus_avg_reward (rank 1), prioriza Autoppia (UID 83)
@@ -2199,7 +2199,7 @@ class RoundsService:
                     "icon": icon,
                     "status": status,
                     "totalTasks": total_tasks,
-                    "completedTasks": completed_tasks,
+                    "completedTasks": success_tasks,
                     "totalMiners": total_miners,
                     "activeMiners": active_miners,
                     "weight": int(weight),
@@ -2682,7 +2682,7 @@ class RoundsService:
                 {
                     "timestamp": _iso_timestamp(ts),
                     "block": block,
-                    "completedTasks": completed_tasks,
+                    "completedTasks": success_tasks,
                     "averageScore": round(average_score, 3),
                     "activeMiners": active_miners,
                 }
@@ -3000,15 +3000,15 @@ class RoundsService:
         duration = duration or 0.0
 
         tasks_total = context.run.n_tasks_total or len(context.tasks)
-        completed_tasks = context.run.n_tasks_completed
-        if completed_tasks is None:
-            completed_tasks = len(
+        success_tasks = context.run.n_tasks_completed
+        if success_tasks is None:
+            success_tasks = len(
                 [er for er in context.evaluations if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5]
             )
 
         success = (context.run.n_tasks_failed or 0) == 0
         if tasks_total:
-            success = success and completed_tasks >= tasks_total
+            success = success and success_tasks >= tasks_total
         
         # Get miner weight (for emission calculation)
         miner_weight = 0.0
@@ -3050,7 +3050,7 @@ class RoundsService:
             "score": round(score, 3),
             "duration": round(duration, 2),
             "ranking": context.run.rank or 0,
-            "tasksCompleted": completed_tasks,
+            "tasksCompleted": success_tasks,
             "tasksTotal": tasks_total,
             "stake": validator_stake,  # VALIDATOR stake, not miner weight
             "emission": emission,
@@ -3341,9 +3341,8 @@ class RoundsService:
             average_score=run_row.average_score,
             average_execution_time=run_row.average_execution_time,
             average_reward=run_row.average_reward,
-            total_reward=run_row.total_reward,
             total_tasks=run_row.total_tasks or len(task_ids),
-            completed_tasks=run_row.completed_tasks or 0,
+            success_tasks=run_row.success_tasks or 0,
             failed_tasks=run_row.failed_tasks or 0,
             # rank and weight obtained from validator_round_summary_miners
             metadata=metadata,
@@ -3368,7 +3367,7 @@ class RoundsService:
         run_model.avg_execution_time = run_row.average_execution_time
         run_model.avg_reward = run_row.average_reward
         run_model.n_tasks_total = run_model.total_tasks
-        run_model.n_tasks_completed = run_model.completed_tasks
+        run_model.n_tasks_completed = run_model.success_tasks
         run_model.n_tasks_failed = run_model.failed_tasks
         run_model.miner_info = None
 
