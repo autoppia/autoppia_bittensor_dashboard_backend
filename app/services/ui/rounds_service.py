@@ -1203,7 +1203,7 @@ class RoundsService:
                 _iso_timestamp(round_obj.ended_at) if round_obj.ended_at else None
             ),
             "totalTasks": round_obj.n_tasks,
-            "completedTasks": success_tasks,
+            "completedTasks": completed_tasks,
             "icon": icon,
         }
 
@@ -1304,7 +1304,7 @@ class RoundsService:
             "endTime": _iso_timestamp(ended_at) if ended_at else None,
             "status": status,
             "totalTasks": total_tasks,
-            "completedTasks": success_tasks,
+            "completedTasks": completed_tasks,
             "currentBlock": current_block,
             "blocksRemaining": blocks_remaining,
             "progress": round(progress_ratio, 3),
@@ -2199,7 +2199,7 @@ class RoundsService:
                     "icon": icon,
                     "status": status,
                     "totalTasks": total_tasks,
-                    "completedTasks": success_tasks,
+                    "completedTasks": completed_tasks,
                     "totalMiners": total_miners,
                     "activeMiners": active_miners,
                     "weight": int(weight),
@@ -2682,7 +2682,7 @@ class RoundsService:
                 {
                     "timestamp": _iso_timestamp(ts),
                     "block": block,
-                    "completedTasks": success_tasks,
+                    "completedTasks": completed_tasks,
                     "averageScore": round(average_score, 3),
                     "activeMiners": active_miners,
                 }
@@ -4386,6 +4386,7 @@ class RoundsService:
                 if (summary.post_consensus_rank or 0) == 1 and summary.subnet_price:
                     # For winner: 148 * 4 (epochs) * weight * subnet_price
                     # In winner-takes-all, weight should be 1.0, but we use actual weight from DB
+                    # TODO ese 4 esta hardcodeado es el numero de epoc de  la rondauna vez que tengamos el numero de epoc de la ronda, debemos cambiar este valor
                     weight = summary.weight or 1.0
                     alpha_earned = 148.0 * 4.0 * weight * float(summary.subnet_price)
                     total_alpha_earned += alpha_earned
@@ -4553,3 +4554,57 @@ class RoundsService:
         }
         
         return result
+
+    async def get_latest_round_and_top_miner(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the latest round number and the top miner (post_consensus_rank = 1) for that round.
+        Returns None if no rounds exist.
+        
+        This is a lightweight query optimized for the initial redirect.
+        """
+        # Get the latest round number
+        stmt_round = (
+            select(func.max(RoundORM.round_number))
+            .where(RoundORM.round_number.is_not(None))
+        )
+        result_round = await self.session.scalar(stmt_round)
+        
+        if result_round is None:
+            return None
+        
+        latest_round = int(result_round)
+        
+        # Get the top miner (post_consensus_rank = 1) for the latest round
+        # Join directly with ValidatorRoundORM (which has round_number) via validator_round_id
+        stmt_miner = (
+            select(
+                ValidatorRoundSummaryORM.miner_uid,
+                ValidatorRoundSummaryORM.miner_hotkey,
+                RoundORM.round_number,
+            )
+            .join(
+                RoundORM,
+                ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id,
+            )
+            .where(
+                RoundORM.round_number == latest_round,
+                ValidatorRoundSummaryORM.post_consensus_rank == 1,
+            )
+            .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc().nulls_last())
+            .limit(1)
+        )
+        
+        result_miner = await self.session.execute(stmt_miner)
+        row = result_miner.first()
+        
+        if row is None:
+            return None
+        
+        miner_uid = row.miner_uid
+        miner_hotkey = row.miner_hotkey
+        
+        return {
+            "round": latest_round,
+            "miner_uid": miner_uid,
+            "miner_hotkey": miner_hotkey,
+        }

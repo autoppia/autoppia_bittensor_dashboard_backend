@@ -168,7 +168,7 @@ class MinersService:
             successRate=success_rate,
             averageResponseTime=average_duration,
             totalTasks=aggregate.total_tasks,
-            completedTasks=aggregate.completed_tasks,
+            completedTasks=aggregate.success_tasks,
             lastSeen=last_seen_iso,
             createdAt=created_iso,
             updatedAt=last_seen_iso,
@@ -272,7 +272,7 @@ class MinersService:
                 filtered.durations.append(duration)
 
             filtered.total_tasks += len(context.tasks)
-            filtered.completed_tasks += len(
+            filtered.success_tasks += len(
                 [er for er in context.evaluations if er.final_score >= 0.5]
             )
 

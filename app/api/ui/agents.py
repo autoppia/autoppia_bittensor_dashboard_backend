@@ -112,6 +112,27 @@ async def compare_agents(payload: dict, session: AsyncSession = Depends(get_sess
     return {"success": True, "data": response.model_dump()}
 
 
+@router.get("/latest-round-top-miner")
+async def get_latest_round_top_miner(
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Get the latest round number and the top miner (post_consensus_rank = 1) for that round.
+    Used for initial redirect when accessing /subnet36/agents without parameters.
+    """
+    rounds_service = await _rounds_service(session)
+    try:
+        data = await rounds_service.get_latest_round_and_top_miner()
+        if data is None:
+            raise HTTPException(status_code=404, detail="No rounds available")
+        return {"success": True, "data": data}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Error getting latest round and top miner: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/rounds")
 async def get_rounds_data(
     round_number: Optional[int] = Query(None, description="Round number to get miners for"),
