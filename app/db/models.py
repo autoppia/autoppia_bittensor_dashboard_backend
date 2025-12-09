@@ -252,6 +252,7 @@ class ValidatorRoundSummaryORM(TimestampMixin, Base):
     post_consensus_tasks_received: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     post_consensus_tasks_success: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    subnet_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True, comment="Subnet price (alpha to TAO rate) at the time of this round")
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="round_summaries"
