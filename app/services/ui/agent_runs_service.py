@@ -1307,7 +1307,7 @@ class AgentRunsService:
         ]
         avg_time = sum(times) / len(times) if times else 0.0
         
-        # Group evaluations by website
+        # Group evaluations by website and useCase
         from collections import defaultdict
         website_stats: Dict[str, Dict[str, float]] = defaultdict(
             lambda: {
@@ -1316,6 +1316,20 @@ class AgentRunsService:
                 "reward_sum": 0.0,
                 "duration_sum": 0.0,
             }
+        )
+        
+        # Group by website + useCase for statsByUsecase
+        website_usecase_stats: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(
+            lambda: defaultdict(
+                lambda: {
+                    "evaluations": 0.0,
+                    "successful": 0.0,
+                    "failed": 0.0,
+                    "reward_sum": 0.0,
+                    "duration_sum": 0.0,
+                    "score_sum": 0.0,
+                }
+            )
         )
         
         websites_set = set()
@@ -1327,14 +1341,16 @@ class AgentRunsService:
             if not task:
                 continue
             
-            # Get website from task
+            # Get website and useCase from task
             website = getattr(task, "website", None) or "unknown"
+            use_case = getattr(task, "useCase", None) or "unknown"
             websites_set.add(website)
             
             # Get evaluation metrics
             eval_score = getattr(evaluation, 'eval_score', getattr(evaluation, 'final_score', 0.0)) or 0.0
+            eval_score_float = float(eval_score)
             # Consider successful if eval_score >= 0.5 (same logic as in get_agent_run_complete)
-            is_successful = float(eval_score) >= 0.5
+            is_successful = eval_score_float >= 0.5
             reward = getattr(evaluation, 'reward', None) or 0.0
             eval_time = getattr(evaluation, 'evaluation_time', 0.0) or 0.0
             
@@ -1344,6 +1360,16 @@ class AgentRunsService:
                 website_stats[website]["successful"] += 1
             website_stats[website]["reward_sum"] += float(reward)
             website_stats[website]["duration_sum"] += float(eval_time)
+            
+            # Update website + useCase stats
+            website_usecase_stats[website][use_case]["evaluations"] += 1
+            if is_successful:
+                website_usecase_stats[website][use_case]["successful"] += 1
+            else:
+                website_usecase_stats[website][use_case]["failed"] += 1
+            website_usecase_stats[website][use_case]["reward_sum"] += float(reward)
+            website_usecase_stats[website][use_case]["duration_sum"] += float(eval_time)
+            website_usecase_stats[website][use_case]["score_sum"] += eval_score_float
         
         # Build simplified performance by website
         performance_by_website = []
@@ -1357,6 +1383,31 @@ class AgentRunsService:
             # averageDuration is average of eval_time
             average_duration = (values["duration_sum"] / evaluations_count) if evaluations_count > 0 else 0.0
             
+            # Build statsByUsecase for this website
+            stats_by_usecase = []
+            if website_key in website_usecase_stats:
+                for use_case_key, use_case_values in website_usecase_stats[website_key].items():
+                    use_case_evaluations = int(use_case_values["evaluations"])
+                    use_case_successful = int(use_case_values["successful"])
+                    use_case_failed = int(use_case_values["failed"])
+                    
+                    # avgScore is success rate (0-1): successful / total (same as website level)
+                    avg_score = (use_case_successful / use_case_evaluations) if use_case_evaluations > 0 else 0.0
+                    # avg_reward is average of reward (0-1)
+                    avg_reward = (use_case_values["reward_sum"] / use_case_evaluations) if use_case_evaluations > 0 else 0.0
+                    # avg_time is average of eval_time
+                    avg_time = (use_case_values["duration_sum"] / use_case_evaluations) if use_case_evaluations > 0 else 0.0
+                    
+                    stats_by_usecase.append({
+                        "useCase": use_case_key,
+                        "total": use_case_evaluations,
+                        "successful": use_case_successful,
+                        "failed": use_case_failed,
+                        "avgScore": avg_score,  # Success rate (0-1): successful/total
+                        "avgReward": avg_reward,  # Average reward (0-1)
+                        "avgTime": avg_time,  # Average eval_time
+                    })
+            
             performance_by_website.append({
                 "website": website_key,
                 "tasks": evaluations_count,  # Keep "tasks" key for backward compatibility, but it's actually evaluations
@@ -1365,6 +1416,7 @@ class AgentRunsService:
                 "averageScore": success_rate,  # Success rate (0-1)
                 "averageReward": average_reward,  # Average reward (0-1)
                 "averageDuration": average_duration,
+                "statsByUsecase": stats_by_usecase,  # Added stats by use case
             })
         
         return {
