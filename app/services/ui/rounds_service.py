@@ -4057,19 +4057,29 @@ class RoundsService:
         # Build validators data with only the miner's information for each validator
         validators_data = []
         try:
-            # Get all validator_round_ids for this round
-            stmt_validator_rounds = (
-                select(ValidatorRoundValidatorORM, RoundORM.validator_round_id)
-                .join(
-                    RoundORM,
-                    ValidatorRoundValidatorORM.validator_round_id == RoundORM.validator_round_id
-                )
-                .where(RoundORM.round_number == round_number)
-            )
-            result_validator_rounds = await self.session.execute(stmt_validator_rounds)
-            validator_rounds_data = result_validator_rounds.all()
+            # Use the same validator_round_ids we already found earlier in the method
+            # (validator_round_ids is already calculated above)
+            logger.warning(f"[DEBUG] Using {len(validator_round_ids)} validator_round_ids for round {round_number}, miner {miner_uid}")
             
-            for validator_snapshot, validator_round_id in validator_rounds_data:
+            if not validator_round_ids:
+                logger.warning(f"[DEBUG] No validator_round_ids found for round {round_number}")
+            
+            for validator_round_id in validator_round_ids:
+                # Get validator snapshot for this validator_round_id
+                stmt_validator = (
+                    select(ValidatorRoundValidatorORM)
+                    .where(ValidatorRoundValidatorORM.validator_round_id == validator_round_id)
+                    .limit(1)
+                )
+                result_validator = await self.session.execute(stmt_validator)
+                validator_snapshot = result_validator.scalar_one_or_none()
+                
+                if not validator_snapshot:
+                    logger.warning(f"[DEBUG] No validator snapshot found for validator_round_id {validator_round_id}")
+                    continue
+                
+                logger.warning(f"[DEBUG] Processing validator {validator_snapshot.validator_uid}, validator_round_id: {validator_round_id}")
+                
                 # Get summary for this miner in this validator's round
                 stmt_miner_summary = (
                     select(ValidatorRoundSummaryORM)
@@ -4084,7 +4094,10 @@ class RoundsService:
                 
                 if not miner_summary:
                     # Miner not evaluated by this validator, skip
+                    logger.warning(f"[DEBUG] Miner {miner_uid} not found in validator_round_summary_miners for validator_round_id {validator_round_id} (validator {validator_snapshot.validator_uid})")
                     continue
+                
+                logger.warning(f"[DEBUG] Found miner summary for miner {miner_uid} in validator {validator_snapshot.validator_uid}: rank={miner_summary.local_rank}, tasks_received={miner_summary.local_tasks_received}, tasks_success={miner_summary.local_tasks_success}")
                 
                 # Get total miners evaluated by this validator
                 stmt_miners_count = (
@@ -4147,12 +4160,16 @@ class RoundsService:
                     validator_data["agent_run_id"] = agent_run_id
                 
                 validators_data.append(validator_data)
+                logger.warning(f"[DEBUG] Added validator {validator_snapshot.validator_uid} to validators_data. Total: {len(validators_data)}")
             
             # Sort: Autoppia (UID 83 or 124) first
             validators_data.sort(key=lambda v: (v["validator_uid"] not in (83, 124), v["validator_uid"]))
+            logger.warning(f"[DEBUG] Final validators_data count: {len(validators_data)}")
             
         except Exception as e:
-            logger.warning(f"Failed to fetch validators data for round {round_number}: {e}")
+            logger.error(f"[DEBUG] Failed to fetch validators data for round {round_number}, miner {miner_uid}: {e}", exc_info=True)
+            import traceback
+            logger.error(f"[DEBUG] Traceback: {traceback.format_exc()}")
             # Continue without validators data if there's an error
         
         # Get post_consensus_summary if needed
