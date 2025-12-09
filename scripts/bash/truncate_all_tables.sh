@@ -12,12 +12,46 @@ else
   echo "⚠️  No .env file found in current directory. Make sure env vars are set manually."
 fi
 
+# --- Determine environment and set variable names ---
+ENVIRONMENT="${ENVIRONMENT:-local}"
+ENVIRONMENT=$(echo "$ENVIRONMENT" | tr '[:upper:]' '[:lower:]')  # Normalize to lowercase
+ENV_SUFFIX=$(echo "$ENVIRONMENT" | tr '[:lower:]' '[:upper:]')  # Convert to uppercase for suffix
+
+echo "🔧 Using environment: $ENVIRONMENT"
+
+# --- Get environment-specific variables with fallback to generic ---
+_get_var() {
+  local base_name=$1
+  local specific_var="${base_name}_${ENV_SUFFIX}"
+  
+  # Try specific var first (e.g., POSTGRES_USER_LOCAL)
+  if [[ -n "${!specific_var:-}" ]]; then
+    echo "${!specific_var}"
+    return 0
+  fi
+  
+  # Fallback to generic var (e.g., POSTGRES_USER)
+  if [[ -n "${!base_name:-}" ]]; then
+    echo "${!base_name}"
+    return 0
+  fi
+  
+  return 1
+}
+
+# --- Resolve database variables ---
+POSTGRES_USER=$(_get_var "POSTGRES_USER") || POSTGRES_USER=""
+POSTGRES_PASSWORD=$(_get_var "POSTGRES_PASSWORD") || POSTGRES_PASSWORD=""
+POSTGRES_HOST=$(_get_var "POSTGRES_HOST") || POSTGRES_HOST="127.0.0.1"
+POSTGRES_PORT=$(_get_var "POSTGRES_PORT") || POSTGRES_PORT="5432"
+POSTGRES_DB=$(_get_var "POSTGRES_DB") || POSTGRES_DB=""
+
 # --- Validate required vars ---
-: "${POSTGRES_USER:?POSTGRES_USER is missing}"
-: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is missing}"
-: "${POSTGRES_HOST:?POSTGRES_HOST is missing}"
-: "${POSTGRES_PORT:?POSTGRES_PORT is missing}"
-: "${POSTGRES_DB:?POSTGRES_DB is missing}"
+: "${POSTGRES_USER:?POSTGRES_USER or POSTGRES_USER_${ENV_SUFFIX} is missing}"
+: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD or POSTGRES_PASSWORD_${ENV_SUFFIX} is missing}"
+: "${POSTGRES_HOST:?POSTGRES_HOST or POSTGRES_HOST_${ENV_SUFFIX} is missing}"
+: "${POSTGRES_PORT:?POSTGRES_PORT or POSTGRES_PORT_${ENV_SUFFIX} is missing}"
+: "${POSTGRES_DB:?POSTGRES_DB or POSTGRES_DB_${ENV_SUFFIX} is missing}"
 
 export PGPASSWORD="${POSTGRES_PASSWORD}"
 
