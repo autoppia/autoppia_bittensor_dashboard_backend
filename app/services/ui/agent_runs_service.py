@@ -716,9 +716,11 @@ class AgentRunsService:
             task_dict.pop("logs", None)
             tasks_simplified.append(task_dict)
         
-        # Remove tasks from run
+        # Remove tasks, websites, and metadata from run (to avoid duplication)
         run_dict = run.model_dump()
         run_dict.pop("tasks", None)
+        run_dict.pop("websites", None)
+        run_dict.pop("metadata", None)
         
         # Build info object
         info = self._build_agent_run_info(context)
