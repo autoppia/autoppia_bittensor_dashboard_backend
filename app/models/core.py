@@ -384,12 +384,9 @@ class AgentEvaluationRun(BaseModel):
     average_reward: Optional[float] = Field(
         default=None, description="Average reward produced across tasks"
     )
-    total_reward: Optional[float] = Field(
-        default=None, description="Total reward accumulated in the run"
-    )
     total_tasks: int = Field(default=0, description="Total tasks attempted")
-    completed_tasks: int = Field(default=0, description="Tasks completed successfully")
-    failed_tasks: int = Field(default=0, description="Tasks that failed")
+    success_tasks: int = Field(default=0, description="Tasks completed successfully (eval_score >= 0.5)")
+    failed_tasks: int = Field(default=0, description="Tasks that failed (eval_score < 0.5)")
     # rank and weight removed - obtain via validator_round_summary_miners
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Extensible metadata for the run"

@@ -297,9 +297,8 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
         Float, nullable=True
     )
     average_reward: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    total_reward: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     total_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    completed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # rank and weight removed - obtain via validator_round_summary_miners
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)

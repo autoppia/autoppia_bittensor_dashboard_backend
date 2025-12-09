@@ -278,9 +278,8 @@ async def create_validator_round(
             average_score=base_score,
             average_execution_time=random.uniform(8, 15),
             average_reward=avg_reward,
-            total_reward=avg_reward * len(tasks),
             total_tasks=len(tasks),
-            completed_tasks=len(tasks),
+            success_tasks=len(tasks),
             failed_tasks=0,
             meta={},
         )

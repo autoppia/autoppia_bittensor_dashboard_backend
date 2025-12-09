@@ -1197,7 +1197,7 @@ class AgentsService:
                     durations.append(duration)
 
                 total_tasks += context.run.total_tasks or len(context.tasks)
-                completed_tasks += context.run.completed_tasks or 0
+                completed_tasks += context.run.success_tasks or 0
                 failed_tasks += context.run.failed_tasks or 0
 
                 validator_uid = _get_validator_uid_from_context(context)
@@ -1381,7 +1381,7 @@ class AgentsService:
             task_total = context.run.total_tasks or len(context.tasks)
             aggregate.total_tasks += task_total
 
-            completed_from_run = context.run.completed_tasks or None
+            completed_from_run = context.run.success_tasks or None
             if completed_from_run is not None and completed_from_run > 0:
                 aggregate.completed_tasks += completed_from_run
             elif context.evaluations:

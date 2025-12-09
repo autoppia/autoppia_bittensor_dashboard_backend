@@ -636,9 +636,8 @@ def _build_agent_run_bundle(
         average_score=average_score,
         average_execution_time=random.uniform(5, 20),
         average_reward=total_reward / task_count,
-        total_reward=total_reward,
         total_tasks=task_count,
-        completed_tasks=task_count,
+        success_tasks=task_count,
         failed_tasks=0,
         rank=None,
         weight=None,
@@ -669,7 +668,6 @@ def _build_agent_run_bundle(
             miner_uid=miner_identity.uid,
             miner_hotkey=miner_identity.hotkey,
             actions=actions,
-            web_agent_id=f"web-agent-{agent_run_id}",
         )
         task_solutions.append(task_solution)
 
@@ -691,7 +689,6 @@ def _build_agent_run_bundle(
             evaluation_time=random.uniform(1.0, 6.0),
             execution_history=[action.attributes for action in actions],
             feedback=None,
-            web_agent_id=task_solution.web_agent_id,
             stats=None,
             gif_recording=SEED_GIF_URL,
             metadata={"seed_index": task_index, "seed_gif": True, "tests_passed": 1, "tests_total": 1, "template": template.website_slug},
