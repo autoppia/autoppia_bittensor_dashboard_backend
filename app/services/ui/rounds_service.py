@@ -4054,7 +4054,18 @@ class RoundsService:
         # Sort by tasks_received descending
         performance_by_website.sort(key=lambda x: x["tasks_received"], reverse=True)
         
-        return {
+        # Get validators data with local and post-consensus metrics
+        validators_data = None
+        post_consensus_summary_data = None
+        try:
+            aggregated_metrics = await self.get_aggregated_metrics(round_number)
+            validators_data = aggregated_metrics.get("validators", [])
+            post_consensus_summary_data = aggregated_metrics.get("post_consensus_summary", {})
+        except Exception as e:
+            logger.warning(f"Failed to fetch validators data for round {round_number}: {e}")
+            # Continue without validators data if there's an error
+        
+        result = {
             "miner": {
                 "uid": miner_uid,
                 "name": miner_name,
@@ -4078,3 +4089,11 @@ class RoundsService:
             "avg_tasks_per_validator": _truncate_decimal(avg_tasks_per_validator, 2),
             "performanceByWebsite": performance_by_website,
         }
+        
+        # Add validators and post_consensus_summary if available
+        if validators_data is not None:
+            result["validators"] = validators_data
+        if post_consensus_summary_data is not None:
+            result["post_consensus_summary"] = post_consensus_summary_data
+        
+        return result
