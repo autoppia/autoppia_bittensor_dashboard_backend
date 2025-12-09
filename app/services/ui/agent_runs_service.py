@@ -704,58 +704,54 @@ class AgentRunsService:
         statistics = self._build_statistics_simplified(context)
         _, _, task_map = self._index_results(context)
         
-        # Build simplified tasks without actions, screenshots, logs
-        # Map task_id to evaluation for getting eval_score, eval_time, and reward
-        task_id_to_evaluation: Dict[str, Any] = {}
+        # Build evaluations list (not tasks) - each evaluation represents a task+miner combination
+        evaluations_list = []
         for evaluation in context.evaluations:
+            # Find corresponding task for this evaluation
             task_id = getattr(evaluation, "task_id", None)
-            if task_id:
-                task_id_to_evaluation[str(task_id)] = evaluation
-        
-        tasks_simplified = []
-        for task in task_map.values():
+            task = task_map.get(task_id) if task_id else None
+            
+            if not task:
+                continue
+            
+            # Get task info
             task_dict = task.model_dump()
             # Remove actions, screenshots, logs
             task_dict.pop("actions", None)
             task_dict.pop("screenshots", None)
             task_dict.pop("logs", None)
             
-            # Get evaluation for this task
-            evaluation = task_id_to_evaluation.get(task.taskId)
-            if evaluation:
-                # eval_score is 0 or 1 (passed or failed)
-                eval_score = getattr(evaluation, 'eval_score', getattr(evaluation, 'final_score', 0.0))
-                eval_score_binary = 1.0 if eval_score >= 0.5 else 0.0
-                # eval_time from evaluation
-                eval_time = getattr(evaluation, 'evaluation_time', 0.0) or 0.0
-                # reward from evaluation
-                reward = getattr(evaluation, 'reward', None) or eval_score  # Fallback to eval_score if no reward
-                
-                # Replace score with eval_score (binary), duration with eval_time, add reward
-                task_dict["eval_score"] = eval_score_binary
-                task_dict["eval_time"] = eval_time
-                task_dict["reward"] = reward
-                # Remove old fields
-                task_dict.pop("score", None)
-                task_dict.pop("duration", None)
-            else:
-                # Fallback if no evaluation found
-                old_score = task_dict.get("score", 0.0)
-                old_duration = task_dict.get("duration", 0.0)
-                task_dict["eval_score"] = 1.0 if old_score >= 0.5 else 0.0
-                task_dict["eval_time"] = old_duration
-                task_dict["reward"] = old_score  # Use score as reward fallback
-                task_dict.pop("score", None)
-                task_dict.pop("duration", None)
+            # eval_score is 0 or 1 (passed or failed)
+            eval_score = getattr(evaluation, 'eval_score', getattr(evaluation, 'final_score', 0.0))
+            eval_score_binary = 1.0 if eval_score >= 0.5 else 0.0
+            # eval_time from evaluation
+            eval_time = getattr(evaluation, 'evaluation_time', 0.0) or 0.0
+            # reward from evaluation
+            reward = getattr(evaluation, 'reward', None) or eval_score  # Fallback to eval_score if no reward
             
-            tasks_simplified.append(task_dict)
+            # Build evaluation object with evaluationId instead of taskId
+            evaluation_dict = {
+                "evaluationId": evaluation.evaluation_id,
+                "taskId": task_id,  # Keep taskId for reference
+                "prompt": task_dict.get("prompt"),
+                "website": task_dict.get("website"),
+                "useCase": task_dict.get("useCase"),
+                "status": task_dict.get("status"),
+                "eval_score": eval_score_binary,  # 0 or 1
+                "eval_time": eval_time,
+                "reward": reward,
+                "startTime": task_dict.get("startTime"),
+                "endTime": task_dict.get("endTime"),
+            }
+            
+            evaluations_list.append(evaluation_dict)
         
         # Build info object
         info = self._build_agent_run_info(context)
         
         return {
             "statistics": statistics if statistics else None,
-            "tasks": tasks_simplified,
+            "evaluations": evaluations_list,  # Changed from "tasks" to "evaluations"
             "info": info,
         }
     
@@ -1265,10 +1261,27 @@ class AgentRunsService:
         Build simplified statistics with only essential info:
         totalTasks, websites, avg_score, avg_reward, avg_time,
         successfulTasks, failedTasks, performanceByWebsite
+        
+        NOTE: totalTasks now counts EVALUATIONS, not unique tasks.
+        Each evaluation represents a task+miner combination.
         """
-        websites, ui_tasks, success_count = self._build_websites_and_tasks(context)
-        total_tasks = len(ui_tasks)
-        failed_tasks = max(total_tasks - success_count, 0)
+        # Get task_map to map task_id to website/useCase
+        _, _, task_map = self._index_results(context)
+        
+        # Count EVALUATIONS, not unique tasks
+        total_evaluations = len(context.evaluations)
+        
+        # Count successful evaluations
+        # eval_score can be decimal (0.0-1.0) or binary (0 or 1)
+        # Consider successful if eval_score >= 0.5 (same logic as in get_agent_run_complete)
+        successful_evaluations = 0
+        for er in context.evaluations:
+            eval_score_val = getattr(er, 'eval_score', getattr(er, 'final_score', None))
+            if eval_score_val is not None:
+                eval_score_float = float(eval_score_val)
+                if eval_score_float >= 0.5:
+                    successful_evaluations += 1
+        failed_evaluations = max(total_evaluations - successful_evaluations, 0)
         
         # Calculate avg_score (average of eval_score from evaluations)
         eval_scores = [
@@ -1294,50 +1307,74 @@ class AgentRunsService:
         ]
         avg_time = sum(times) / len(times) if times else 0.0
         
-        # Create mapping from task_id to reward for _summarize_ui_tasks
-        task_id_to_reward: Dict[str, float] = {}
-        for evaluation in context.evaluations:
-            task_id = getattr(evaluation, "task_id", None)
-            reward = getattr(evaluation, "reward", None)
-            if task_id and reward is not None:
-                task_id_to_reward[str(task_id)] = float(reward)
-        
-        website_stats_map, use_case_stats_map, website_usecase_stats, total_duration = (
-            self._summarize_ui_tasks(ui_tasks, task_id_to_reward)
+        # Group evaluations by website
+        from collections import defaultdict
+        website_stats: Dict[str, Dict[str, float]] = defaultdict(
+            lambda: {
+                "evaluations": 0.0,
+                "successful": 0.0,
+                "reward_sum": 0.0,
+                "duration_sum": 0.0,
+            }
         )
         
-        # Build simplified performance by website (without useCases)
-        # averageScore should be success rate (successful/tasks), not average of scores
+        websites_set = set()
+        
+        for evaluation in context.evaluations:
+            task_id = getattr(evaluation, "task_id", None)
+            task = task_map.get(task_id) if task_id else None
+            
+            if not task:
+                continue
+            
+            # Get website from task
+            website = getattr(task, "website", None) or "unknown"
+            websites_set.add(website)
+            
+            # Get evaluation metrics
+            eval_score = getattr(evaluation, 'eval_score', getattr(evaluation, 'final_score', 0.0)) or 0.0
+            # Consider successful if eval_score >= 0.5 (same logic as in get_agent_run_complete)
+            is_successful = float(eval_score) >= 0.5
+            reward = getattr(evaluation, 'reward', None) or 0.0
+            eval_time = getattr(evaluation, 'evaluation_time', 0.0) or 0.0
+            
+            # Update website stats
+            website_stats[website]["evaluations"] += 1
+            if is_successful:
+                website_stats[website]["successful"] += 1
+            website_stats[website]["reward_sum"] += float(reward)
+            website_stats[website]["duration_sum"] += float(eval_time)
+        
+        # Build simplified performance by website
         performance_by_website = []
-        for website_key, values in website_stats_map.items():
-            tasks_count = int(values["tasks"])
+        for website_key, values in website_stats.items():
+            evaluations_count = int(values["evaluations"])
             successful_count = int(values["successful"])
-            # averageScore is success rate (0-1): successful tasks / total tasks
-            success_rate = (successful_count / tasks_count) if tasks_count > 0 else 0.0
+            # averageScore is success rate (0-1): successful evaluations / total evaluations
+            success_rate = (successful_count / evaluations_count) if evaluations_count > 0 else 0.0
             # averageReward is average of reward values (0-1)
-            average_reward = (values["reward_sum"] / tasks_count) if tasks_count > 0 else 0.0
+            average_reward = (values["reward_sum"] / evaluations_count) if evaluations_count > 0 else 0.0
+            # averageDuration is average of eval_time
+            average_duration = (values["duration_sum"] / evaluations_count) if evaluations_count > 0 else 0.0
+            
             performance_by_website.append({
                 "website": website_key,
-                "tasks": tasks_count,
+                "tasks": evaluations_count,  # Keep "tasks" key for backward compatibility, but it's actually evaluations
                 "successful": successful_count,
-                "failed": int(max(tasks_count - successful_count, 0)),
-                "averageScore": success_rate,  # Success rate (0-1), not average of scores
+                "failed": int(max(evaluations_count - successful_count, 0)),
+                "averageScore": success_rate,  # Success rate (0-1)
                 "averageReward": average_reward,  # Average reward (0-1)
-                "averageDuration": (
-                    (values["duration_sum"] / tasks_count)
-                    if tasks_count > 0
-                    else 0.0
-                ),
+                "averageDuration": average_duration,
             })
         
         return {
-            "totalTasks": total_tasks,
-            "websites": len(website_stats_map) or len(websites),
+            "totalTasks": total_evaluations,  # Actually total evaluations
+            "websites": len(websites_set),
             "avg_score": avg_score,
             "avg_reward": avg_reward,
             "avg_time": avg_time,
-            "successfulTasks": success_count,
-            "failedTasks": failed_tasks,
+            "successfulTasks": successful_evaluations,  # Actually successful evaluations
+            "failedTasks": failed_evaluations,  # Actually failed evaluations
             "performanceByWebsite": performance_by_website,
         }
 
