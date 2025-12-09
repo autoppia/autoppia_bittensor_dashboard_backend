@@ -1222,6 +1222,60 @@ class AgentRunsService:
             scoreDistribution=score_distribution,
             performanceByWebsite=performance_by_website,
         )
+    
+    def _build_statistics_simplified(self, context: AgentRunContext) -> Dict[str, Any]:
+        """
+        Build simplified statistics with only essential info:
+        totalTasks, websites, reward (score), duration, avgTaskDuration, 
+        successfulTasks, failedTasks, performanceByWebsite
+        """
+        websites, ui_tasks, success_count = self._build_websites_and_tasks(context)
+        total_tasks = len(ui_tasks)
+        failed_tasks = max(total_tasks - success_count, 0)
+        
+        # Calculate average score (reward)
+        average_score = self._compute_average_score(context.evaluations)
+        
+        # Calculate total duration
+        duration = _safe_int(
+            (context.run.ended_at or context.run.started_at or 0)
+            - (context.run.started_at or 0)
+        )
+        
+        website_stats_map, use_case_stats_map, website_usecase_stats, total_duration = (
+            self._summarize_ui_tasks(ui_tasks)
+        )
+        
+        # Build simplified performance by website (without useCases)
+        performance_by_website = []
+        for website_key, values in website_stats_map.items():
+            performance_by_website.append({
+                "website": website_key,
+                "tasks": int(values["tasks"]),
+                "successful": int(values["successful"]),
+                "failed": int(max(values["tasks"] - values["successful"], 0)),
+                "averageScore": (
+                    (values["score_sum"] / values["tasks"])
+                    if values["tasks"]
+                    else 0.0
+                ),
+                "averageDuration": (
+                    (values["duration_sum"] / values["tasks"])
+                    if values["tasks"]
+                    else 0.0
+                ),
+            })
+        
+        return {
+            "totalTasks": total_tasks,
+            "websites": len(website_stats_map) or len(websites),
+            "reward": average_score,  # This is the score/reward
+            "duration": duration,
+            "avgTaskDuration": (total_duration / total_tasks) if total_tasks else 0.0,
+            "successfulTasks": success_count,
+            "failedTasks": failed_tasks,
+            "performanceByWebsite": performance_by_website,
+        }
 
     def _build_summary(self, context: AgentRunContext) -> Summary:
         websites, ui_tasks, success_count = self._build_websites_and_tasks(context)
