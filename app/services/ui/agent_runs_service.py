@@ -702,19 +702,32 @@ class AgentRunsService:
         
         # Build all data
         run = self._build_agent_run(context, consensus_score)
-        statistics = self._build_statistics(context)
+        statistics = self._build_statistics_simplified(context)
         summary = self._build_summary(context)
         _, _, task_map = self._index_results(context)
-        tasks = list(task_map.values())
+        
+        # Build simplified tasks without actions, screenshots, logs
+        tasks_simplified = []
+        for task in task_map.values():
+            task_dict = task.model_dump()
+            # Remove actions, screenshots, logs
+            task_dict.pop("actions", None)
+            task_dict.pop("screenshots", None)
+            task_dict.pop("logs", None)
+            tasks_simplified.append(task_dict)
+        
+        # Remove tasks from run
+        run_dict = run.model_dump()
+        run_dict.pop("tasks", None)
         
         # Build info object
         info = self._build_agent_run_info(context)
         
         return {
-            "run": run.model_dump(),
-            "statistics": statistics.model_dump() if statistics else None,
+            "run": run_dict,
+            "statistics": statistics if statistics else None,
             "summary": summary.model_dump(),
-            "tasks": [task.model_dump() for task in tasks],
+            "tasks": tasks_simplified,
             "info": info,
         }
     
