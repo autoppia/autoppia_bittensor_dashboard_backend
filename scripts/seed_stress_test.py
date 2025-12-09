@@ -128,6 +128,7 @@ async def clear_all_tables():
         try:
             print("🗑️  Limpiando todas las tablas...")
             
+            # Orden importante: eliminar primero las tablas con foreign keys
             tables = [
                 "validator_round_summary_miners",
                 "evaluations",
@@ -145,6 +146,17 @@ async def clear_all_tables():
                 print(f"  ✓ {table}: {count} registros eliminados")
             
             await session.commit()
+            
+            # Verificar que todas las tablas estén vacías
+            print("\n🔍 Verificando que todas las tablas estén vacías...")
+            for table in tables:
+                result = await session.execute(text(f"SELECT COUNT(*) FROM {table}"))
+                count = result.scalar()
+                if count > 0:
+                    print(f"  ⚠️  {table} todavía tiene {count} registros, limpiando de nuevo...")
+                    await session.execute(text(f"TRUNCATE TABLE {table} CASCADE"))
+                    await session.commit()
+            
             print("✅ Todas las tablas limpiadas\n")
             
         except Exception as e:
@@ -246,7 +258,8 @@ async def create_validator_round(
     all_evaluations = []
     
     for miner_idx, miner in enumerate(miners):
-        agent_run_id = f"{validator_round_id}_run_{miner['uid']}"
+        # Asegurar que el agent_run_id sea único incluyendo el índice del miner
+        agent_run_id = f"{validator_round_id}_run_{miner['uid']}_{miner_idx}"
         run_start = started_at + miner_idx * 30
         run_end = run_start + random.uniform(120, 180)
         
@@ -351,39 +364,71 @@ async def create_validator_round(
     except Exception:
         subnet_price = 0.0043
     
-    # Crear summary records
+    # Crear summary records - verificar si ya existe antes de crear
     for miner in miners:
         miner_evaluations = [e for e in all_evaluations if e.miner_uid == miner["uid"]]
         if not miner_evaluations:
             continue
         
-        local_avg_reward = sum(e.reward for e in miner_evaluations) / len(miner_evaluations)
-        local_avg_eval_score = sum(e.eval_score for e in miner_evaluations) / len(miner_evaluations)
-        local_avg_eval_time = sum(e.evaluation_time for e in miner_evaluations) / len(miner_evaluations)
-        local_tasks_received = len(set(e.task_id for e in miner_evaluations))
-        local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.eval_score >= 0.5))
-        local_rank = rank_map.get(miner["uid"], 1)
-        
-        summary = ValidatorRoundSummaryORM(
-            validator_round_id=validator_round_id,
-            miner_uid=miner["uid"],
-            miner_hotkey=miner["hotkey"],
-            local_rank=local_rank,
-            local_avg_reward=local_avg_reward,
-            local_avg_eval_score=local_avg_eval_score,
-            local_avg_eval_time=local_avg_eval_time,
-            local_tasks_received=local_tasks_received,
-            local_tasks_success=local_tasks_success,
-            post_consensus_rank=local_rank,  # Temporal, se actualizará
-            post_consensus_avg_reward=0.0,  # Se calculará después
-            post_consensus_avg_eval_score=local_avg_eval_score,
-            post_consensus_avg_eval_time=local_avg_eval_time,
-            post_consensus_tasks_received=local_tasks_received,
-            post_consensus_tasks_success=local_tasks_success,
-            weight=0.0,  # Se calculará después
-            subnet_price=subnet_price,
+        # Verificar si ya existe un summary para este validator_round_id y miner_uid
+        existing_summary = await session.scalar(
+            select(ValidatorRoundSummaryORM).where(
+                ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                ValidatorRoundSummaryORM.miner_uid == miner["uid"],
+            )
         )
-        session.add(summary)
+        
+        if existing_summary:
+            # Ya existe, actualizar en lugar de crear
+            local_avg_reward = sum(e.reward for e in miner_evaluations) / len(miner_evaluations)
+            local_avg_eval_score = sum(e.eval_score for e in miner_evaluations) / len(miner_evaluations)
+            local_avg_eval_time = sum(e.evaluation_time for e in miner_evaluations) / len(miner_evaluations)
+            local_tasks_received = len(set(e.task_id for e in miner_evaluations))
+            local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.eval_score >= 0.5))
+            local_rank = rank_map.get(miner["uid"], 1)
+            
+            existing_summary.local_rank = local_rank
+            existing_summary.local_avg_reward = local_avg_reward
+            existing_summary.local_avg_eval_score = local_avg_eval_score
+            existing_summary.local_avg_eval_time = local_avg_eval_time
+            existing_summary.local_tasks_received = local_tasks_received
+            existing_summary.local_tasks_success = local_tasks_success
+            existing_summary.post_consensus_rank = local_rank
+            existing_summary.post_consensus_avg_eval_score = local_avg_eval_score
+            existing_summary.post_consensus_avg_eval_time = local_avg_eval_time
+            existing_summary.post_consensus_tasks_received = local_tasks_received
+            existing_summary.post_consensus_tasks_success = local_tasks_success
+            if existing_summary.subnet_price is None:
+                existing_summary.subnet_price = subnet_price
+        else:
+            # No existe, crear nuevo
+            local_avg_reward = sum(e.reward for e in miner_evaluations) / len(miner_evaluations)
+            local_avg_eval_score = sum(e.eval_score for e in miner_evaluations) / len(miner_evaluations)
+            local_avg_eval_time = sum(e.evaluation_time for e in miner_evaluations) / len(miner_evaluations)
+            local_tasks_received = len(set(e.task_id for e in miner_evaluations))
+            local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.eval_score >= 0.5))
+            local_rank = rank_map.get(miner["uid"], 1)
+            
+            summary = ValidatorRoundSummaryORM(
+                validator_round_id=validator_round_id,
+                miner_uid=miner["uid"],
+                miner_hotkey=miner["hotkey"],
+                local_rank=local_rank,
+                local_avg_reward=local_avg_reward,
+                local_avg_eval_score=local_avg_eval_score,
+                local_avg_eval_time=local_avg_eval_time,
+                local_tasks_received=local_tasks_received,
+                local_tasks_success=local_tasks_success,
+                post_consensus_rank=local_rank,  # Temporal, se actualizará
+                post_consensus_avg_reward=0.0,  # Se calculará después
+                post_consensus_avg_eval_score=local_avg_eval_score,
+                post_consensus_avg_eval_time=local_avg_eval_time,
+                post_consensus_tasks_received=local_tasks_received,
+                post_consensus_tasks_success=local_tasks_success,
+                weight=0.0,  # Se calculará después
+                subnet_price=subnet_price,
+            )
+            session.add(summary)
     
     await session.flush()
     
@@ -519,16 +564,26 @@ async def main():
                 
                 # Crear round para cada validator
                 for validator in validators:
-                    evaluations_count = await create_validator_round(
-                        session, validator, round_num, tasks, miners
-                    )
-                    total_evaluations += evaluations_count
+                    try:
+                        evaluations_count = await create_validator_round(
+                            session, validator, round_num, tasks, miners
+                        )
+                        total_evaluations += evaluations_count
+                    except Exception as e:
+                        print(f"  ⚠️  Error creando round {round_num} para validator {validator['name']}: {e}")
+                        await session.rollback()
+                        # Continuar con el siguiente validator
+                        continue
                 
-                # Flush periódico para mejor rendimiento
-                if round_num % 5 == 0:
-                    await session.flush()
+                # Commit después de crear todos los validator rounds para este round
+                try:
+                    await session.commit()
+                except Exception as e:
+                    print(f"  ⚠️  Error en commit del round {round_num}: {e}")
+                    await session.rollback()
+                    continue
                 
-                # Calcular post-consensus scores
+                # Calcular post-consensus scores (hace su propio commit)
                 await calculate_post_consensus_scores(session, round_num, validators)
         
         # 4. Verificar datos creados

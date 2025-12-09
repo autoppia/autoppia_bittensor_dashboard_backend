@@ -806,9 +806,9 @@ class OverviewService:
             derived_limit = min(limit, derived_limit) if derived_limit else limit
 
         if unlimited:
-            fetch_limit = 365
+            fetch_limit = 10000  # Para "all", obtener muchos rounds (ajustar según necesidad)
         else:
-            fetch_limit = derived_limit or 30
+            fetch_limit = derived_limit or 7  # Default a 7 rounds si no se especifica
 
         # Query SQL simplificada usando las nuevas tablas
         # Para cada round_number, obtenemos el miner_uid con el máximo post_consensus_avg_reward
@@ -842,19 +842,10 @@ class OverviewService:
             .subquery()
         )
 
-        # Subquery para obtener los round_numbers más recientes (limitados)
-        recent_rounds_subq = (
-            select(RoundORM.round_number)
-            .where(RoundORM.round_number.isnot(None))
-            .where(RoundORM.status == "finished")
-            .order_by(RoundORM.round_number.desc())
-            .limit(fetch_limit)
-            .subquery()
-        )
-
         # Query principal: obtener el ganador (miner_uid con max post_consensus_avg_reward) por round
         # Solo del validador Autoppia (UID 124)
         # Incluye reward, score y time del post_consensus
+        # Primero obtenemos todos los rounds con datos del validador Autoppia, luego limitamos
         stmt = (
             select(
                 RoundORM.round_number,
@@ -883,10 +874,6 @@ class OverviewService:
                         == max_scores_subq.c.max_post_consensus_reward
                     ),
                 )
-                .join(
-                    recent_rounds_subq,
-                    RoundORM.round_number == recent_rounds_subq.c.round_number,
-                )
             )
             .outerjoin(
                 ValidatorRoundMinerORM,
@@ -901,11 +888,15 @@ class OverviewService:
             .where(ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None))
             .where(ValidatorRoundValidatorORM.validator_uid == 124)  # Solo Autoppia
             .order_by(
-                RoundORM.round_number.desc(),
+                RoundORM.round_number.desc(),  # Ordenar por round_number descendente (más reciente primero)
                 ValidatorRoundSummaryORM.post_consensus_avg_reward.desc(),
                 ValidatorRoundSummaryORM.miner_uid.asc(),
             )
         )
+        
+        # Si no es "all", limitar los rounds en la query
+        if not unlimited:
+            stmt = stmt.limit(fetch_limit * 2)  # Multiplicar por 2 para asegurar que tenemos suficientes después de agrupar
 
         result = await self.session.execute(stmt)
         rows = result.all()
@@ -956,9 +947,11 @@ class OverviewService:
                 )
             )
 
-        # Ordenar por timestamp descendente (más reciente primero)
-        entries.sort(key=lambda e: e.timestamp, reverse=True)
+        # Ordenar por round_number descendente (más reciente primero)
+        # Esto asegura que los rounds más altos (más recientes) aparezcan primero
+        entries.sort(key=lambda e: e.round, reverse=True)
 
+        # Aplicar límite después de ordenar
         if not unlimited and derived_limit:
             entries = entries[:derived_limit]
 
