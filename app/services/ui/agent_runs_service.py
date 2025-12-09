@@ -401,8 +401,10 @@ class AgentRunsService:
         # Calculate scores and times for all runs
         run_metrics = []
         for run in all_runs:
-            if run.is_sota or run.miner_uid is None:
-                continue  # Skip SOTA runs
+            # is_sota is not directly on AgentEvaluationRunORM, it's in miner_snapshots
+            # For now, skip if miner_uid is None (SOTA runs typically don't have miner_uid)
+            if run.miner_uid is None:
+                continue  # Skip runs without miner_uid (likely SOTA or invalid)
             
             # Calculate average score from evaluations
             eval_results = getattr(run, 'evaluations', []) or []
