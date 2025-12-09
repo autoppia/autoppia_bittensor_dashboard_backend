@@ -689,7 +689,7 @@ class AgentRunsService:
     async def get_agent_run_complete(self, agent_run_id: str) -> Optional[Dict[str, Any]]:
         """
         Get all agent run data in a single call, similar to get-evaluation.
-        Returns: run, statistics, summary, tasks, info
+        Returns: statistics, tasks, info
         """
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
@@ -700,10 +700,8 @@ class AgentRunsService:
         await self._calculate_rank_for_context(context)
         consensus_score = await self._fetch_consensus_score_for_context(context)
         
-        # Build all data
-        run = self._build_agent_run(context, consensus_score)
+        # Build all data - only statistics, tasks, and info (no run, no summary)
         statistics = self._build_statistics_simplified(context)
-        summary = self._build_summary(context)
         _, _, task_map = self._index_results(context)
         
         # Build simplified tasks without actions, screenshots, logs
@@ -716,19 +714,11 @@ class AgentRunsService:
             task_dict.pop("logs", None)
             tasks_simplified.append(task_dict)
         
-        # Remove tasks, websites, and metadata from run (to avoid duplication)
-        run_dict = run.model_dump()
-        run_dict.pop("tasks", None)
-        run_dict.pop("websites", None)
-        run_dict.pop("metadata", None)
-        
         # Build info object
         info = self._build_agent_run_info(context)
         
         return {
-            "run": run_dict,
             "statistics": statistics if statistics else None,
-            "summary": summary.model_dump(),
             "tasks": tasks_simplified,
             "info": info,
         }
@@ -1228,21 +1218,36 @@ class AgentRunsService:
     def _build_statistics_simplified(self, context: AgentRunContext) -> Dict[str, Any]:
         """
         Build simplified statistics with only essential info:
-        totalTasks, websites, reward (score), duration, avgTaskDuration, 
+        totalTasks, websites, avg_score, avg_reward, avg_time,
         successfulTasks, failedTasks, performanceByWebsite
         """
         websites, ui_tasks, success_count = self._build_websites_and_tasks(context)
         total_tasks = len(ui_tasks)
         failed_tasks = max(total_tasks - success_count, 0)
         
-        # Calculate average score (reward)
-        average_score = self._compute_average_score(context.evaluations)
+        # Calculate avg_score (average of eval_score from evaluations)
+        eval_scores = [
+            getattr(er, 'eval_score', getattr(er, 'final_score', None))
+            for er in context.evaluations
+            if getattr(er, 'eval_score', getattr(er, 'final_score', None)) is not None
+        ]
+        avg_score = sum(eval_scores) / len(eval_scores) if eval_scores else 0.0
         
-        # Calculate total duration
-        duration = _safe_int(
-            (context.run.ended_at or context.run.started_at or 0)
-            - (context.run.started_at or 0)
-        )
+        # Calculate avg_reward (average of reward from evaluations)
+        rewards = [
+            getattr(er, 'reward', None)
+            for er in context.evaluations
+            if getattr(er, 'reward', None) is not None
+        ]
+        avg_reward = sum(rewards) / len(rewards) if rewards else avg_score  # Fallback to avg_score if no reward
+        
+        # Calculate avg_time (average of evaluation_time from evaluations)
+        times = [
+            er.evaluation_time
+            for er in context.evaluations
+            if er.evaluation_time is not None and er.evaluation_time > 0
+        ]
+        avg_time = sum(times) / len(times) if times else 0.0
         
         website_stats_map, use_case_stats_map, website_usecase_stats, total_duration = (
             self._summarize_ui_tasks(ui_tasks)
@@ -1271,9 +1276,9 @@ class AgentRunsService:
         return {
             "totalTasks": total_tasks,
             "websites": len(website_stats_map) or len(websites),
-            "reward": average_score,  # This is the score/reward
-            "duration": duration,
-            "avgTaskDuration": (total_duration / total_tasks) if total_tasks else 0.0,
+            "avg_score": avg_score,
+            "avg_reward": avg_reward,
+            "avg_time": avg_time,
             "successfulTasks": success_count,
             "failedTasks": failed_tasks,
             "performanceByWebsite": performance_by_website,
