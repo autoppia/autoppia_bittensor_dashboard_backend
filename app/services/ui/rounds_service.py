@@ -4097,18 +4097,7 @@ class RoundsService:
                     logger.warning(f"[DEBUG] Miner {miner_uid} not found in validator_round_summary_miners for validator_round_id {validator_round_id} (validator {validator_snapshot.validator_uid})")
                     continue
                 
-                logger.warning(f"[DEBUG] Found miner summary for miner {miner_uid} in validator {validator_snapshot.validator_uid}: rank={miner_summary.local_rank}, tasks_received={miner_summary.local_tasks_received}, tasks_success={miner_summary.local_tasks_success}")
-                
-                # Get total miners evaluated by this validator
-                stmt_miners_count = (
-                    select(func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid)))
-                    .where(
-                        ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
-                        ValidatorRoundSummaryORM.miner_uid.isnot(None),
-                    )
-                )
-                result_miners_count = await self.session.execute(stmt_miners_count)
-                local_miners_evaluated = result_miners_count.scalar_one_or_none() or 0
+                logger.warning(f"[DEBUG] Found miner summary for miner {miner_uid} in validator {validator_snapshot.validator_uid}: rank={miner_summary.local_rank}")
                 
                 # Get agent_run_id for this miner in this validator's round
                 stmt_agent_run = (
@@ -4122,17 +4111,34 @@ class RoundsService:
                 result_agent_run = await self.session.execute(stmt_agent_run)
                 agent_run_id = result_agent_run.scalar_one_or_none()
                 
-                # Get validator image
-                validator_info = ValidatorInfo(
-                    uid=validator_snapshot.validator_uid,
-                    hotkey=validator_snapshot.validator_hotkey or "",
-                    name=validator_snapshot.name or f"Validator {validator_snapshot.validator_uid}",
+                # Count unique tasks evaluated for this miner in this validator's round
+                # Each task should have one evaluation (1-1 relationship)
+                # So we count distinct task_ids to get the number of tasks received
+                from app.db.models import EvaluationORM
+                stmt_unique_tasks = (
+                    select(func.count(func.distinct(EvaluationORM.task_id)))
+                    .where(
+                        EvaluationORM.validator_round_id == validator_round_id,
+                        EvaluationORM.miner_uid == miner_uid,
+                    )
                 )
-                validator_image = resolve_validator_image(validator_info, existing=None)
+                result_unique_tasks = await self.session.execute(stmt_unique_tasks)
+                local_tasks_received = result_unique_tasks.scalar_one_or_none() or 0
                 
-                # Ensure tasks_received >= tasks_success (sanity check)
-                local_tasks_received = miner_summary.local_tasks_received or 0
-                local_tasks_success = miner_summary.local_tasks_success or 0
+                # Count successful evaluations (eval_score >= 0.5) for unique tasks
+                # We need to count distinct task_ids where at least one evaluation is successful
+                stmt_successful_tasks = (
+                    select(func.count(func.distinct(EvaluationORM.task_id)))
+                    .where(
+                        EvaluationORM.validator_round_id == validator_round_id,
+                        EvaluationORM.miner_uid == miner_uid,
+                        EvaluationORM.eval_score >= 0.5,
+                    )
+                )
+                result_successful_tasks = await self.session.execute(stmt_successful_tasks)
+                local_tasks_success = result_successful_tasks.scalar_one_or_none() or 0
+                
+                # Ensure tasks_success does not exceed tasks_received
                 if local_tasks_success > local_tasks_received:
                     logger.warning(
                         f"Inconsistent data for miner {miner_uid} in validator {validator_snapshot.validator_uid}: "
@@ -4140,6 +4146,21 @@ class RoundsService:
                         f"Setting tasks_success to tasks_received."
                     )
                     local_tasks_success = local_tasks_received
+                
+                # Get total miners evaluated by this validator
+                stmt_miners_count = (
+                    select(func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid)))
+                    .where(
+                        ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                        ValidatorRoundSummaryORM.miner_uid.isnot(None),
+                    )
+                )
+                result_miners_count = await self.session.execute(stmt_miners_count)
+                local_miners_evaluated = result_miners_count.scalar_one_or_none() or 0
+                
+                # Get validator image
+                validator_name = validator_snapshot.name or f"Validator {validator_snapshot.validator_uid}"
+                validator_image = resolve_validator_image(validator_name, existing=validator_snapshot.image_url)
                 
                 validator_data = {
                     "validator_uid": validator_snapshot.validator_uid,
