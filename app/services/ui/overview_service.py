@@ -20,6 +20,7 @@ from app.db.models import (
     TaskORM,
     ValidatorRoundSummaryORM,
     ValidatorRoundMinerORM,
+    ValidatorRoundValidatorORM,
 )
 from app.models.core import ValidatorRound
 from app.models.ui.overview import (
@@ -811,8 +812,10 @@ class OverviewService:
 
         # Query SQL simplificada usando las nuevas tablas
         # Para cada round_number, obtenemos el miner_uid con el máximo post_consensus_avg_reward
+        # FILTRADO POR VALIDADOR AUTOPPIA (UID 124)
         
         # Subquery para obtener el máximo post_consensus_avg_reward por round_number
+        # Solo del validador Autoppia (UID 124)
         max_scores_subq = (
             select(
                 RoundORM.round_number,
@@ -826,10 +829,15 @@ class OverviewService:
                     RoundORM.validator_round_id
                     == ValidatorRoundSummaryORM.validator_round_id,
                 )
+                .join(
+                    ValidatorRoundValidatorORM.__table__,
+                    RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+                )
             )
             .where(RoundORM.round_number.isnot(None))
             .where(RoundORM.status == "finished")
             .where(ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None))
+            .where(ValidatorRoundValidatorORM.validator_uid == 124)  # Solo Autoppia
             .group_by(RoundORM.round_number)
             .subquery()
         )
@@ -845,11 +853,14 @@ class OverviewService:
         )
 
         # Query principal: obtener el ganador (miner_uid con max post_consensus_avg_reward) por round
-        # Usamos DISTINCT ON de PostgreSQL para obtener solo el primer registro por round_number
+        # Solo del validador Autoppia (UID 124)
+        # Incluye reward, score y time del post_consensus
         stmt = (
             select(
                 RoundORM.round_number,
                 ValidatorRoundSummaryORM.post_consensus_avg_reward,
+                ValidatorRoundSummaryORM.post_consensus_avg_eval_score,
+                ValidatorRoundSummaryORM.post_consensus_avg_eval_time,
                 ValidatorRoundSummaryORM.miner_uid,
                 ValidatorRoundMinerORM.name,
                 RoundORM.ended_at,
@@ -859,6 +870,10 @@ class OverviewService:
                     ValidatorRoundSummaryORM.__table__,
                     RoundORM.validator_round_id
                     == ValidatorRoundSummaryORM.validator_round_id,
+                )
+                .join(
+                    ValidatorRoundValidatorORM.__table__,
+                    RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
                 )
                 .join(
                     max_scores_subq,
@@ -884,6 +899,7 @@ class OverviewService:
             .where(RoundORM.round_number.isnot(None))
             .where(RoundORM.status == "finished")
             .where(ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None))
+            .where(ValidatorRoundValidatorORM.validator_uid == 124)  # Solo Autoppia
             .order_by(
                 RoundORM.round_number.desc(),
                 ValidatorRoundSummaryORM.post_consensus_avg_reward.desc(),
@@ -904,7 +920,7 @@ class OverviewService:
         entries: List[LeaderboardEntry] = []
         
         for row in rows:
-            round_number, post_consensus_reward, miner_uid, miner_name, ended_at = row
+            round_number, post_consensus_reward, post_consensus_score, post_consensus_time, miner_uid, miner_name, ended_at = row
 
             if round_number is None or post_consensus_reward is None:
                 continue
@@ -924,13 +940,19 @@ class OverviewService:
             entries.append(
                 LeaderboardEntry(
                     round=round_num,
-                    subnet36=round(float(post_consensus_reward), 3),
+                    subnet36=round(float(post_consensus_reward), 3),  # Mantener por compatibilidad
+                    post_consensus_reward=round(float(post_consensus_reward), 3),
                     winnerUid=int(miner_uid) if miner_uid is not None else None,
                     winnerName=str(miner_name) if miner_name else None,
                     openai_cua=None,
                     anthropic_cua=None,
                     browser_use=None,
                     timestamp=timestamp,
+                    post_consensus_eval_score=round(float(post_consensus_score), 3) if post_consensus_score is not None else None,
+                    post_consensus_eval_time=round(float(post_consensus_time), 2) if post_consensus_time is not None else None,
+                    # Campos legacy (mantener por compatibilidad)
+                    score=round(float(post_consensus_score), 3) if post_consensus_score is not None else None,
+                    time=round(float(post_consensus_time), 2) if post_consensus_time is not None else None,
                 )
             )
 
