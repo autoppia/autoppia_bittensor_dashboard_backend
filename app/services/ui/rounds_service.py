@@ -9,7 +9,7 @@ import re
 import json
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, case, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -4416,50 +4416,65 @@ class RoundsService:
             rounds_history.append(round_data)
         
         # Get task-level data for website/use case breakdown
-        # Get all evaluations for this miner
-        stmt_evaluations = (
-            select(EvaluationORM, TaskORM.web_project_id, TaskORM.use_case)
+        # OPTIMIZED: Use SQL aggregations instead of fetching all rows
+        # Extract use_case name from JSONB field using PostgreSQL JSONB operators
+        # Use .astext to extract text from JSONB (equivalent to ->> operator in PostgreSQL)
+        use_case_name_expr = func.coalesce(
+            func.nullif(TaskORM.use_case['name'].astext, ''),
+            func.nullif(TaskORM.use_case['slug'].astext, ''),
+            'Unknown'
+        ).label('use_case_name')
+        
+        # Aggregate by website and use_case in SQL
+        stmt_aggregated = (
+            select(
+                func.coalesce(TaskORM.web_project_id, 'unknown').label('website'),
+                use_case_name_expr,
+                func.count(EvaluationORM.evaluation_id).label('tasks'),
+                func.sum(
+                    case((EvaluationORM.eval_score >= 0.5, 1), else_=0)
+                ).label('successful'),
+                func.avg(EvaluationORM.evaluation_time).label('avg_duration'),
+                func.sum(EvaluationORM.evaluation_time).label('total_duration'),
+            )
             .join(
                 TaskORM,
                 EvaluationORM.task_id == TaskORM.task_id
             )
             .where(EvaluationORM.miner_uid == miner_uid)
+            .group_by(TaskORM.web_project_id, use_case_name_expr)
         )
-        result_evaluations = await self.session.execute(stmt_evaluations)
-        evaluations_with_tasks = result_evaluations.all()
         
-        # Process evaluations to build website/use case stats
-        for evaluation, web_project_id, use_case in evaluations_with_tasks:
-            website = web_project_id or "unknown"
-            use_case_name = "Unknown"
-            if use_case and isinstance(use_case, dict):
-                use_case_name = use_case.get("name") or use_case.get("slug") or "Unknown"
-            elif isinstance(use_case, str):
-                use_case_name = use_case
+        result_aggregated = await self.session.execute(stmt_aggregated)
+        aggregated_rows = result_aggregated.all()
+        
+        # Process aggregated results (much fewer rows than individual evaluations)
+        for row in aggregated_rows:
+            website = row.website or "unknown"
+            use_case_name = row.use_case_name or "Unknown"
+            tasks_count = row.tasks or 0
+            successful_count = int(row.successful or 0)
+            failed_count = tasks_count - successful_count
+            avg_duration = float(row.avg_duration or 0.0)
+            total_duration = float(row.total_duration or 0.0)
             
-            # Website stats
-            website_stats[website]["tasks"] += 1
-            eval_score = evaluation.eval_score or 0.0
-            if eval_score >= 0.5:
-                website_stats[website]["successful"] += 1
-            else:
-                website_stats[website]["failed"] += 1
+            # Website-level stats (aggregate across all use cases)
+            website_stats[website]["tasks"] += tasks_count
+            website_stats[website]["successful"] += successful_count
+            website_stats[website]["failed"] += failed_count
+            if total_duration > 0:
+                # total_duration already comes summed from SQL, so we can use it directly
+                website_stats[website]["total_duration"] += total_duration
+                website_stats[website]["duration_count"] += tasks_count
             
-            if evaluation.evaluation_time:
-                website_stats[website]["total_duration"] += evaluation.evaluation_time
-                website_stats[website]["duration_count"] += 1
-            
-            # Use case stats
-            use_case_key = f"{website}::{use_case_name}"
-            website_stats[website]["use_cases"][use_case_name]["tasks"] += 1
-            if eval_score >= 0.5:
-                website_stats[website]["use_cases"][use_case_name]["successful"] += 1
-            else:
-                website_stats[website]["use_cases"][use_case_name]["failed"] += 1
-            
-            if evaluation.evaluation_time:
-                website_stats[website]["use_cases"][use_case_name]["total_duration"] += evaluation.evaluation_time
-                website_stats[website]["use_cases"][use_case_name]["duration_count"] += 1
+            # Use case-level stats
+            website_stats[website]["use_cases"][use_case_name]["tasks"] += tasks_count
+            website_stats[website]["use_cases"][use_case_name]["successful"] += successful_count
+            website_stats[website]["use_cases"][use_case_name]["failed"] += failed_count
+            if total_duration > 0:
+                # total_duration already comes summed from SQL, so we can use it directly
+                website_stats[website]["use_cases"][use_case_name]["total_duration"] += total_duration
+                website_stats[website]["use_cases"][use_case_name]["duration_count"] += tasks_count
         
         # Build performance by website
         performance_by_website = []
