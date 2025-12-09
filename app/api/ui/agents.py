@@ -159,6 +159,28 @@ async def get_rounds_data(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/round-details")
+async def get_miner_round_details(
+    round: int = Query(..., description="Round number"),
+    miner_uid: int = Query(..., description="Miner UID"),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Get detailed information about a specific miner in a specific round.
+    
+    Returns miner info, post-consensus metrics, tasks statistics, and performance by website.
+    """
+    rounds_service = await _rounds_service(session)
+    try:
+        data = await rounds_service.get_miner_round_details(round, miner_uid)
+        return {"success": True, "data": data}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Error getting miner round details: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/{agent_id}")
 async def get_agent(
     agent_id: str,
