@@ -291,7 +291,7 @@ class AgentRunsService:
 
         available_rounds = await self._list_available_round_numbers()
 
-        return {
+        result = {
             "runs": runs,
             "total": total,
             "page": page,
@@ -299,6 +299,18 @@ class AgentRunsService:
             "availableRounds": available_rounds,
             "selectedRound": round_number,
         }
+
+        # If round_number and agent_id are provided, include validators data with local and post-consensus
+        if round_number is not None and miner_uid is not None:
+            try:
+                validators_data = await self.rounds_service.get_aggregated_metrics(round_number)
+                result["validators"] = validators_data.get("validators", [])
+                result["post_consensus_summary"] = validators_data.get("post_consensus_summary", {})
+            except Exception as e:
+                logger.warning(f"Failed to fetch validators data for round {round_number}: {e}")
+                # Continue without validators data if there's an error
+
+        return result
 
     async def _list_available_round_numbers(self) -> List[int]:
         stmt = (
