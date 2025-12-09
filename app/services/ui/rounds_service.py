@@ -4054,16 +4054,114 @@ class RoundsService:
         # Sort by tasks_received descending
         performance_by_website.sort(key=lambda x: x["tasks_received"], reverse=True)
         
-        # Get validators data with local and post-consensus metrics
-        validators_data = None
-        post_consensus_summary_data = None
+        # Build validators data with only the miner's information for each validator
+        validators_data = []
         try:
-            aggregated_metrics = await self.get_aggregated_metrics(round_number)
-            validators_data = aggregated_metrics.get("validators", [])
-            post_consensus_summary_data = aggregated_metrics.get("post_consensus_summary", {})
+            # Get all validator_round_ids for this round
+            stmt_validator_rounds = (
+                select(ValidatorRoundValidatorORM, RoundORM.validator_round_id)
+                .join(
+                    RoundORM,
+                    ValidatorRoundValidatorORM.validator_round_id == RoundORM.validator_round_id
+                )
+                .where(RoundORM.round_number == round_number)
+            )
+            result_validator_rounds = await self.session.execute(stmt_validator_rounds)
+            validator_rounds_data = result_validator_rounds.all()
+            
+            for validator_snapshot, validator_round_id in validator_rounds_data:
+                # Get summary for this miner in this validator's round
+                stmt_miner_summary = (
+                    select(ValidatorRoundSummaryORM)
+                    .where(
+                        ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                        ValidatorRoundSummaryORM.miner_uid == miner_uid,
+                    )
+                    .limit(1)
+                )
+                result_miner_summary = await self.session.execute(stmt_miner_summary)
+                miner_summary = result_miner_summary.scalar_one_or_none()
+                
+                if not miner_summary:
+                    # Miner not evaluated by this validator, skip
+                    continue
+                
+                # Get total miners evaluated by this validator
+                stmt_miners_count = (
+                    select(func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid)))
+                    .where(
+                        ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                        ValidatorRoundSummaryORM.miner_uid.isnot(None),
+                    )
+                )
+                result_miners_count = await self.session.execute(stmt_miners_count)
+                local_miners_evaluated = result_miners_count.scalar_one_or_none() or 0
+                
+                # Get agent_run_id for this miner in this validator's round
+                stmt_agent_run = (
+                    select(AgentEvaluationRunORM.agent_run_id)
+                    .where(
+                        AgentEvaluationRunORM.validator_round_id == validator_round_id,
+                        AgentEvaluationRunORM.miner_uid == miner_uid,
+                    )
+                    .limit(1)
+                )
+                result_agent_run = await self.session.execute(stmt_agent_run)
+                agent_run_id = result_agent_run.scalar_one_or_none()
+                
+                # Get validator image
+                validator_info = ValidatorInfo(
+                    uid=validator_snapshot.validator_uid,
+                    hotkey=validator_snapshot.validator_hotkey or "",
+                    name=validator_snapshot.name or f"Validator {validator_snapshot.validator_uid}",
+                )
+                validator_image = resolve_validator_image(validator_info, existing=None)
+                
+                # Ensure tasks_received >= tasks_success (sanity check)
+                local_tasks_received = miner_summary.local_tasks_received or 0
+                local_tasks_success = miner_summary.local_tasks_success or 0
+                if local_tasks_success > local_tasks_received:
+                    logger.warning(
+                        f"Inconsistent data for miner {miner_uid} in validator {validator_snapshot.validator_uid}: "
+                        f"tasks_success ({local_tasks_success}) > tasks_received ({local_tasks_received}). "
+                        f"Setting tasks_success to tasks_received."
+                    )
+                    local_tasks_success = local_tasks_received
+                
+                validator_data = {
+                    "validator_uid": validator_snapshot.validator_uid,
+                    "validator_name": validator_snapshot.name or f"Validator {validator_snapshot.validator_uid}",
+                    "validator_hotkey": validator_snapshot.validator_hotkey,
+                    "validator_image": validator_image,
+                    "local_rank": miner_summary.local_rank,
+                    "local_avg_reward": _truncate_decimal(float(miner_summary.local_avg_reward or 0.0), 4),
+                    "local_avg_eval_score": _truncate_decimal(float(miner_summary.local_avg_eval_score or 0.0), 4),
+                    "local_avg_eval_time": _truncate_decimal(float(miner_summary.local_avg_eval_time or 0.0), 2),
+                    "local_tasks_received": local_tasks_received,
+                    "local_tasks_success": local_tasks_success,
+                    "local_miners_evaluated": int(local_miners_evaluated),
+                }
+                
+                # Add agent_run_id if available
+                if agent_run_id:
+                    validator_data["agent_run_id"] = agent_run_id
+                
+                validators_data.append(validator_data)
+            
+            # Sort: Autoppia (UID 83 or 124) first
+            validators_data.sort(key=lambda v: (v["validator_uid"] not in (83, 124), v["validator_uid"]))
+            
         except Exception as e:
             logger.warning(f"Failed to fetch validators data for round {round_number}: {e}")
             # Continue without validators data if there's an error
+        
+        # Get post_consensus_summary if needed
+        post_consensus_summary_data = None
+        try:
+            aggregated_metrics = await self.get_aggregated_metrics(round_number)
+            post_consensus_summary_data = aggregated_metrics.get("post_consensus_summary", {})
+        except Exception as e:
+            logger.warning(f"Failed to fetch post_consensus_summary for round {round_number}: {e}")
         
         result = {
             "miner": {
