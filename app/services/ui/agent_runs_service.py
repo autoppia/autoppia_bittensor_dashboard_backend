@@ -705,6 +705,13 @@ class AgentRunsService:
         _, _, task_map = self._index_results(context)
         
         # Build simplified tasks without actions, screenshots, logs
+        # Map task_id to evaluation for getting eval_score, eval_time, and reward
+        task_id_to_evaluation: Dict[str, Any] = {}
+        for evaluation in context.evaluations:
+            task_id = getattr(evaluation, "task_id", None)
+            if task_id:
+                task_id_to_evaluation[str(task_id)] = evaluation
+        
         tasks_simplified = []
         for task in task_map.values():
             task_dict = task.model_dump()
@@ -712,6 +719,35 @@ class AgentRunsService:
             task_dict.pop("actions", None)
             task_dict.pop("screenshots", None)
             task_dict.pop("logs", None)
+            
+            # Get evaluation for this task
+            evaluation = task_id_to_evaluation.get(task.taskId)
+            if evaluation:
+                # eval_score is 0 or 1 (passed or failed)
+                eval_score = getattr(evaluation, 'eval_score', getattr(evaluation, 'final_score', 0.0))
+                eval_score_binary = 1.0 if eval_score >= 0.5 else 0.0
+                # eval_time from evaluation
+                eval_time = getattr(evaluation, 'evaluation_time', 0.0) or 0.0
+                # reward from evaluation
+                reward = getattr(evaluation, 'reward', None) or eval_score  # Fallback to eval_score if no reward
+                
+                # Replace score with eval_score (binary), duration with eval_time, add reward
+                task_dict["eval_score"] = eval_score_binary
+                task_dict["eval_time"] = eval_time
+                task_dict["reward"] = reward
+                # Remove old fields
+                task_dict.pop("score", None)
+                task_dict.pop("duration", None)
+            else:
+                # Fallback if no evaluation found
+                old_score = task_dict.get("score", 0.0)
+                old_duration = task_dict.get("duration", 0.0)
+                task_dict["eval_score"] = 1.0 if old_score >= 0.5 else 0.0
+                task_dict["eval_time"] = old_duration
+                task_dict["reward"] = old_score  # Use score as reward fallback
+                task_dict.pop("score", None)
+                task_dict.pop("duration", None)
+            
             tasks_simplified.append(task_dict)
         
         # Build info object
