@@ -127,7 +127,7 @@ class AgentAggregate:
     best_score: float = 0.0
     durations: List[float] = field(default_factory=list)
     total_tasks: int = 0
-    completed_tasks: int = 0
+    success_tasks: int = 0
     ranks: List[int] = field(default_factory=list)
     round_scores: Dict[int, List[float]] = field(default_factory=dict)
     round_ranks: Dict[int, List[int]] = field(default_factory=dict)
@@ -160,7 +160,7 @@ class RoundAgentSnapshot:
     best_score: float
     total_runs: int
     total_tasks: int
-    completed_tasks: int
+    success_tasks: int
     failed_tasks: int
     validator_details: List[Dict[str, Any]] = field(default_factory=list)
     durations: List[float] = field(default_factory=list)
@@ -176,7 +176,7 @@ class RoundAgentSnapshot:
     def success_rate(self) -> float:
         if self.total_tasks <= 0:
             return 0.0
-        return self.completed_tasks / self.total_tasks
+        return self.success_tasks / self.total_tasks
 
     @property
     def validator_uids(self) -> List[int]:
@@ -425,7 +425,7 @@ class AgentsService:
                     validatorUids=snapshot.validator_uids,
                     validators=snapshot.validator_details,
                     totalTasks=snapshot.total_tasks,
-                    completedTasks=snapshot.completed_tasks,
+                    completedTasks=snapshot.success_tasks,
                     failedTasks=snapshot.failed_tasks,
                     successRate=snapshot.success_rate,
                     averageResponseTime=snapshot.average_duration,
@@ -806,7 +806,7 @@ class AgentsService:
         scores: List[float] = []
         durations: List[float] = []
         total_tasks = 0
-        completed_tasks = 0
+        success_tasks = 0
         successes = 0
         trend_map: Dict[int, Dict[str, Any]] = {}
 
@@ -822,11 +822,11 @@ class AgentsService:
             task_total = context.run.total_tasks or len(context.tasks)
             total_tasks += task_total
 
-            completed_from_run = context.run.completed_tasks
+            completed_from_run = context.run.success_tasks
             if completed_from_run is not None:
-                completed_tasks += completed_from_run
+                success_tasks += completed_from_run
             elif context.evaluations:
-                completed_tasks += len(
+                success_tasks += len(
                     [er for er in context.evaluations if er.final_score >= 0.5]
                 )
 
@@ -948,7 +948,7 @@ class AgentsService:
             worstScore=round(worst_score, 3),
             averageResponseTime=round(average_duration, 2),
             totalTasks=total_tasks,
-            completedTasks=completed_tasks,
+            completedTasks=success_tasks,
             taskCompletionRate=round(task_completion_rate, 2),
             scoreDistribution=score_distribution,
             performanceTrend=trend,
@@ -1187,7 +1187,7 @@ class AgentsService:
 
             durations: List[float] = []
             total_tasks = 0
-            completed_tasks = 0
+            success_tasks = 0
             failed_tasks = 0
             validator_details: Dict[int, Dict[str, Any]] = {}
 
@@ -1197,7 +1197,7 @@ class AgentsService:
                     durations.append(duration)
 
                 total_tasks += context.run.total_tasks or len(context.tasks)
-                completed_tasks += context.run.success_tasks or 0
+                success_tasks += context.run.success_tasks or 0
                 failed_tasks += context.run.failed_tasks or 0
 
                 validator_uid = _get_validator_uid_from_context(context)
@@ -1224,7 +1224,7 @@ class AgentsService:
                 best_score=average_score,  # Use same score as best for now
                 total_runs=len(round_contexts),
                 total_tasks=total_tasks,
-                completed_tasks=completed_tasks,
+                success_tasks=success_tasks,
                 failed_tasks=failed_tasks,
                 validator_details=list(validator_details.values()),
                 durations=durations,
@@ -1383,9 +1383,9 @@ class AgentsService:
 
             completed_from_run = context.run.success_tasks or None
             if completed_from_run is not None and completed_from_run > 0:
-                aggregate.completed_tasks += completed_from_run
+                aggregate.success_tasks += completed_from_run
             elif context.evaluations:
-                aggregate.completed_tasks += len(
+                aggregate.success_tasks += len(
                     [er for er in context.evaluations if er.final_score >= 0.5]
                 )
 
@@ -1797,7 +1797,7 @@ class AgentsService:
             bestRoundId=int(aggregate.best_round_number or 0),
             averageResponseTime=average_duration,
             totalTasks=aggregate.total_tasks,
-            completedTasks=aggregate.completed_tasks,
+            completedTasks=aggregate.success_tasks,
             lastSeen=last_seen_dt,
             createdAt=first_seen_dt,
             updatedAt=last_seen_dt,
