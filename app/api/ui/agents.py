@@ -17,6 +17,7 @@ from app.services.ui.agents_service import (
     AgentsService,
     AgentAggregateCacheWarmupRequired,
 )
+from app.services.ui.rounds_service import RoundsService
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,10 @@ router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
 async def _service(session: AsyncSession) -> AgentsService:
     return AgentsService(session)
+
+
+async def _rounds_service(session: AsyncSession) -> RoundsService:
+    return RoundsService(session)
 
 
 @router.get("")
@@ -105,6 +110,53 @@ async def compare_agents(payload: dict, session: AsyncSession = Depends(get_sess
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"success": True, "data": response.model_dump()}
+
+
+@router.get("/rounds")
+async def get_rounds_data(
+    round_number: Optional[int] = Query(None, description="Round number to get miners for"),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Get available rounds and miners for a selected round (or first round if none selected).
+    
+    Returns: 
+    {
+        "rounds": [round_number, ...],
+        "round_selected": {
+            "round": round_number,
+            "miners": [...]
+        } | null
+    }
+    """
+    rounds_service = await _rounds_service(session)
+    try:
+        # Get all available rounds
+        rounds = await rounds_service.get_available_rounds()
+        
+        # Determine which round to get miners for
+        target_round = round_number
+        if target_round is None and rounds:
+            # If no round specified, use the first (latest) round
+            target_round = rounds[0]
+        
+        # Get miners for target round if available
+        round_selected = None
+        if target_round is not None:
+            round_selected = await rounds_service.get_round_miners_for_autoppia(target_round)
+        
+        return {
+            "success": True,
+            "data": {
+                "rounds": rounds,
+                "round_selected": round_selected,
+            }
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Error getting rounds data: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/{agent_id}")

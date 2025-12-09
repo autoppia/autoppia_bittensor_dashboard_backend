@@ -1926,7 +1926,7 @@ class TasksService:
             "actions": [action.model_dump() for action in actions],
             "screenshots": [shot.model_dump() for shot in screenshots],
             "task_details": task_details,
-            "results": results,
+            "result": results,
             "info": info,
         }
     
@@ -1970,17 +1970,22 @@ class TasksService:
         return task_dict
     
     def _build_results_clean(self, context: TaskContext, actions: List[TaskAction]) -> Dict[str, Any]:
-        """Build results without actions, screenshots, logs."""
-        results = self.build_task_results(context)
-        results_dict = results.model_dump()
+        """Build result (singular) without actions, screenshots, logs, summary, taskId."""
+        # Get evaluation score and convert to binary (0 or 1)
+        eval_score_raw = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
+        eval_score = 1.0 if eval_score_raw >= 0.5 else 0.0
         
-        # Remove actions, screenshots, logs from results
-        results_dict.pop("actions", None)
-        results_dict.pop("screenshots", None)
-        results_dict.pop("logs", None)
-        results_dict.pop("timeline", None)
+        # Get evaluation time
+        eval_time = _safe_int(getattr(context.evaluation, "evaluation_time", 0.0)) if context.evaluation else 0
         
-        return results_dict
+        # Determine status
+        status = "completed" if eval_score >= 0.5 else "failed"
+        
+        return {
+            "status": status,
+            "eval_score": eval_score,
+            "eval_time": eval_time,
+        }
     
     def _build_info(self, context: TaskContext) -> Dict[str, Any]:
         """Build info object with evaluationId, taskId, miner_run_id, round, validator, miner."""
