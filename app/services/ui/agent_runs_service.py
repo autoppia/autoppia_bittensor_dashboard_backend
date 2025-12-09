@@ -689,7 +689,7 @@ class AgentRunsService:
     async def get_agent_run_complete(self, agent_run_id: str) -> Optional[Dict[str, Any]]:
         """
         Get all agent run data in a single call, similar to get-evaluation.
-        Returns: run, personas, statistics, summary, tasks, timeline, logs, metrics, info
+        Returns: run, statistics, summary, tasks, info
         """
         try:
             context = await self.rounds_service.get_agent_run_context(agent_run_id)
@@ -702,27 +702,19 @@ class AgentRunsService:
         
         # Build all data
         run = self._build_agent_run(context, consensus_score)
-        personas = self._build_personas(context)
         statistics = self._build_statistics(context)
         summary = self._build_summary(context)
         _, _, task_map = self._index_results(context)
         tasks = list(task_map.values())
-        timeline = self._build_timeline_events(context)
-        logs = self._build_logs_from_context(context)
-        metrics = self._build_metrics_from_context(context)
         
         # Build info object
         info = self._build_agent_run_info(context)
         
         return {
             "run": run.model_dump(),
-            "personas": personas.model_dump(),
             "statistics": statistics.model_dump() if statistics else None,
             "summary": summary.model_dump(),
             "tasks": [task.model_dump() for task in tasks],
-            "timeline": [event.model_dump() for event in timeline],
-            "logs": [log.model_dump() for log in logs],
-            "metrics": metrics.model_dump() if metrics else None,
             "info": info,
         }
     
