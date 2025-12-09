@@ -2,10 +2,10 @@
 """
 Script para limpiar todas las tablas y crear datos mínimos pero completos:
 - 2 validators con datos del meta (lo que se subiría a IPFS)
-- 2 tareas
+- 2 tareas por validator
 - 2 miners
-- 3 solutions por cada tarea (6 solutions total)
-- Evaluaciones para cada solution
+- 1 solution por cada tarea (relación 1-1: 1 tarea = 1 solution = 1 evaluation)
+- 1 evaluation por cada solution (relación 1-1)
 - Datos en validator_round_summary_miners
 """
 import asyncio
@@ -236,56 +236,55 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
         agent_runs.append(agent_run)
         await session.flush()
         
-        # Crear 3 solutions por cada tarea (6 solutions total por miner)
+        # Crear 1 solution por cada tarea (relación 1-1: 1 tarea = 1 solution = 1 evaluation)
         for task_idx, task in enumerate(task_objs):
-            for solution_idx in range(3):  # 3 solutions por tarea
-                solution_id = f"{agent_run_id}_solution_{task_idx}_{solution_idx}"
-                
-                solution = TaskSolutionORM(
-                    solution_id=solution_id,
-                    task_id=task.task_id,
-                    agent_run_id=agent_run_id,
-                    validator_round_id=validator_round_id,
-                    validator_uid=validator["uid"],
-                    validator_hotkey=validator["hotkey"],
-                    miner_uid=miner["uid"],
-                    miner_hotkey=miner["hotkey"],
-                    actions=[
-                        {"type": "navigate", "url": task.url},
-                        {"type": "click", "selector": f"#element-{solution_idx}"},
-                        {"type": "extract", "target": "#result"},
-                    ],
-                )
-                session.add(solution)
-                all_solutions.append(solution)
-                await session.flush()
-                
-                # Crear evaluation para cada solution
-                eval_score = base_score + random.uniform(-0.1, 0.1)
-                eval_score = max(0.0, min(1.0, eval_score))
-                eval_time = random.uniform(5, 12)
-                reward = eval_score * random.uniform(0.9, 1.0)
-                
-                evaluation = EvaluationORM(
-                    evaluation_id=f"{solution_id}_eval",
-                    validator_round_id=validator_round_id,
-                    agent_run_id=agent_run_id,
-                    task_id=task.task_id,
-                    task_solution_id=solution_id,
-                    miner_uid=miner["uid"],
-                    miner_hotkey=miner["hotkey"],
-                    validator_uid=validator["uid"],
-                    validator_hotkey=validator["hotkey"],
-                    eval_score=eval_score,  # ✅ Usa eval_score (existe en BD)
-                    reward=reward,  # ✅ Usa reward (existe en BD)
-                    evaluation_time=eval_time,
-                    execution_history=[],
-                    feedback=None,
-                    meta={},
-                )
-                session.add(evaluation)
-                all_evaluations.append(evaluation)
-                await session.flush()
+            solution_id = f"{agent_run_id}_solution_{task_idx}"
+            
+            solution = TaskSolutionORM(
+                solution_id=solution_id,
+                task_id=task.task_id,
+                agent_run_id=agent_run_id,
+                validator_round_id=validator_round_id,
+                validator_uid=validator["uid"],
+                validator_hotkey=validator["hotkey"],
+                miner_uid=miner["uid"],
+                miner_hotkey=miner["hotkey"],
+                actions=[
+                    {"type": "navigate", "url": task.url},
+                    {"type": "click", "selector": f"#element-{task_idx}"},
+                    {"type": "extract", "target": "#result"},
+                ],
+            )
+            session.add(solution)
+            all_solutions.append(solution)
+            await session.flush()
+            
+            # Crear 1 evaluation para cada solution (relación 1-1)
+            eval_score = base_score + random.uniform(-0.1, 0.1)
+            eval_score = max(0.0, min(1.0, eval_score))
+            eval_time = random.uniform(5, 12)
+            reward = eval_score * random.uniform(0.9, 1.0)
+            
+            evaluation = EvaluationORM(
+                evaluation_id=f"{solution_id}_eval",
+                validator_round_id=validator_round_id,
+                agent_run_id=agent_run_id,
+                task_id=task.task_id,
+                task_solution_id=solution_id,
+                miner_uid=miner["uid"],
+                miner_hotkey=miner["hotkey"],
+                validator_uid=validator["uid"],
+                validator_hotkey=validator["hotkey"],
+                eval_score=eval_score,  # ✅ Usa eval_score (existe en BD)
+                reward=reward,  # ✅ Usa reward (existe en BD)
+                evaluation_time=eval_time,
+                execution_history=[],
+                feedback=None,
+                meta={},
+            )
+            session.add(evaluation)
+            all_evaluations.append(evaluation)
+            await session.flush()
     
     # 6. Crear datos en validator_round_summary_miners
     print(f"  📊 Creando datos en validator_round_summary_miners...")
@@ -298,8 +297,10 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
             local_avg_reward = sum(e.reward for e in miner_evaluations) / len(miner_evaluations)
             local_avg_eval_score = sum(e.eval_score for e in miner_evaluations) / len(miner_evaluations)
             local_avg_eval_time = sum(e.evaluation_time for e in miner_evaluations) / len(miner_evaluations)
+            # Contar tareas únicas recibidas (cada tarea tiene 1 evaluation)
             local_tasks_received = len(set(e.task_id for e in miner_evaluations))
-            local_tasks_success = len([e for e in miner_evaluations if e.eval_score > 0.5])
+            # Contar tareas únicas exitosas (cada tarea tiene 1 evaluation, relación 1-1)
+            local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.eval_score >= 0.5))
             
             all_miner_rewards[miner["uid"]] = local_avg_reward
     
@@ -316,8 +317,10 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
         local_avg_reward = sum(e.reward for e in miner_evaluations) / len(miner_evaluations)
         local_avg_eval_score = sum(e.eval_score for e in miner_evaluations) / len(miner_evaluations)
         local_avg_eval_time = sum(e.evaluation_time for e in miner_evaluations) / len(miner_evaluations)
+        # Contar tareas únicas recibidas (cada tarea tiene 1 evaluation)
         local_tasks_received = len(set(e.task_id for e in miner_evaluations))
-        local_tasks_success = len([e for e in miner_evaluations if e.eval_score > 0.5])
+        # Contar tareas únicas exitosas (cada tarea tiene 1 evaluation, relación 1-1)
+        local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.eval_score >= 0.5))
         local_rank = rank_map.get(miner["uid"], 1)
         
         # Post-consensus se calculará después agregando datos de todos los validators
@@ -454,8 +457,8 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
     print(f"  ✅ Round {round_number} creado para validator {validator['name']}:")
     print(f"     - Tasks: {len(task_objs)}")
     print(f"     - Agent runs: {len(agent_runs)}")
-    print(f"     - Solutions: {len(all_solutions)}")
-    print(f"     - Evaluations: {len(all_evaluations)}")
+    print(f"     - Solutions: {len(all_solutions)} (1 por tarea por miner)")
+    print(f"     - Evaluations: {len(all_evaluations)} (1 por solution, relación 1-1)")
     print(f"     - Summary records: {len(MINERS)}")
 
 
@@ -608,8 +611,8 @@ async def main():
             print("   👥 2 validators por round (4 validator_rounds total)")
             print("   📋 2 tareas por validator (8 tasks total)")
             print("   ⛏️  2 miners evaluados por cada validator")
-            print("   💾 3 solutions por cada tarea (6 por miner, 12 por validator)")
-            print("   ✅ Evaluaciones para cada solution (48 total)")
+            print("   💾 1 solution por cada tarea (2 por miner, 4 por validator) - relación 1-1")
+            print("   ✅ 1 evaluation por cada solution (2 por miner, 4 por validator) - relación 1-1")
             print("   📊 validator_round_summary_miners: 8 registros (2 miners × 2 validators × 2 rounds)")
             print("   🔄 Post-consensus scores calculados agregando datos de ambos validators")
             print("   📤 Meta con ipfs_uploaded, local_evaluation y post_consensus_evaluation")
