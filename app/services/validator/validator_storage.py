@@ -1001,7 +1001,7 @@ class ValidatorRoundPersistenceService:
             "average_score": model.average_score,
             "average_execution_time": model.average_execution_time,
             "average_reward": model.average_reward,
-            "total_reward": model.total_reward,
+            # total_reward removed - no longer stored in agent_evaluation_runs
             "total_tasks": model.total_tasks,
             "success_tasks": model.success_tasks,
             "failed_tasks": model.failed_tasks,
