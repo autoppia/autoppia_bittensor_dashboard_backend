@@ -26,7 +26,7 @@ module.exports = {
     },
     {
       name: "background-updater.autoppia.com",
-      script: "background_updater.py",
+      script: "scripts/background_updater.py",
       interpreter: "venv/bin/python3",
       cwd: projectRoot,
       instances: 1,

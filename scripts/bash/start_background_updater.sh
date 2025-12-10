@@ -56,8 +56,8 @@ if [ "$BACKGROUND_RUNNING" = true ] && [ -n "$BACKGROUND_NAME" ]; then
 fi
 
 # Verificar que existe el archivo background_updater.py
-if [ ! -f "background_updater.py" ]; then
-    echo "❌ Error: background_updater.py no encontrado en $PROJECT_ROOT"
+if [ ! -f "scripts/background_updater.py" ]; then
+    echo "❌ Error: scripts/background_updater.py no encontrado en $PROJECT_ROOT"
     exit 1
 fi
 
@@ -78,7 +78,7 @@ cd "$PROJECT_ROOT"
 
 # Iniciar usando el comando básico de PM2 que funciona en todas las versiones
 # El formato es: pm2 start <interpreter> --name <name> -- <script>
-pm2 start venv/bin/python3 --name "background-updater" -- background_updater.py 2>&1
+pm2 start venv/bin/python3 --name "background-updater" -- scripts/background_updater.py 2>&1
 
 # Verificar que se inició correctamente
 sleep 1

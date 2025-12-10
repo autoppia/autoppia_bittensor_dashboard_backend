@@ -36,6 +36,8 @@ pytest -q
 Las pruebas que consultan red Bittensor se omiten salvo que definas `RUN_LIVE_TESTS=1`.
 
 ## Utilidades
-- Redis rápido: `scripts/redis_compose.sh -f docker-compose.yml up -d redis`
-- Arranque simple: `start_backend.sh` (si tienes la venv y .env listos)
+- Redis rápido: `docker compose -f docker-compose.yml up -d redis`
+- Arranque simple: `bash scripts/bash/start_backend.sh` (si tienes la venv y .env listos)
+- Probar Redis: `bash scripts/bash/test_redis.sh`
+- Background updater: `bash scripts/bash/start_background_updater.sh`
 
