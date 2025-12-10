@@ -8,13 +8,26 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    # FastAPI and ASGI server
     "fastapi>=0.110.1,<0.111",
     "uvicorn[standard]>=0.30.0",
-    "pydantic>=2.8.0",
+    # Data validation and settings
+    "pydantic==2.8.0",
     "pydantic-settings>=2.4.0",
+    # SQL database support
+    "SQLAlchemy>=2.0.30",
+    "asyncpg>=0.29.0",
+    # Redis cache support
+    "redis>=5.0.0",
+    # Environment management
     "python-dotenv>=1.0.0",
+    # AWS integration
     "boto3>=1.35.0",
-    "bittensor>=6.9.0,<10.0.0"
+    "botocore>=1.35.0",
+    # Validator auth dependency
+    "bittensor>=6.9.0,<10.0.0",
+    # Form data support
+    "python-multipart>=0.0.6",
 ]
 
 # [project.scripts] removed - using bash scripts instead
