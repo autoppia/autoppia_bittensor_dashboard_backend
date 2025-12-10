@@ -16,8 +16,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-# Add the project root to Python path
-project_root = Path(__file__).parent
+# Add the project root to Python path (scripts/ is one level down from root)
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from app.config import settings
