@@ -30,11 +30,32 @@ from app.services.metagraph_service import (
 from app.services.redis_cache import redis_cache
 from app.services.chain_state import refresh_block_now
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Configure logging - send INFO to stdout, WARNING/ERROR to stderr
+# This ensures PM2 routes logs correctly (stdout -> out.log, stderr -> error.log)
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+
+# Remove default handlers
+root_logger.handlers.clear()
+
+# Handler for INFO and below -> stdout (out.log)
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.INFO)
+stdout_handler.addFilter(lambda record: record.levelno <= logging.INFO)
+
+# Handler for WARNING and above -> stderr (error.log)
+stderr_handler = logging.StreamHandler(sys.stderr)
+stderr_handler.setLevel(logging.WARNING)
+
+# Format for both handlers
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+stdout_handler.setFormatter(formatter)
+stderr_handler.setFormatter(formatter)
+
+# Add handlers
+root_logger.addHandler(stdout_handler)
+root_logger.addHandler(stderr_handler)
+
 logger = logging.getLogger(__name__)
 
 # Update intervals
