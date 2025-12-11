@@ -1575,7 +1575,7 @@ class AgentRunsService:
             )
 
         if failed_tasks == 0 and total_tasks:
-            failed_tasks = max(total_tasks - completed_tasks, 0)
+            failed_tasks = max(total_tasks - success_tasks, 0)
 
         # Prefer consensus_score if available, otherwise fall back to average_score or computed score
         if consensus_score is not None:
@@ -1594,7 +1594,7 @@ class AgentRunsService:
         agent_name, _, agent_uid, agent_hotkey, agent_identifier, _ = (
             self._resolve_agent_identity(context)
         )
-        success_count = completed_tasks
+        success_count = success_tasks
         success_rate = (success_count / total_tasks * 100.0) if total_tasks else 0.0
         overall_score = _safe_int(average_score * 100)
 
@@ -1661,7 +1661,7 @@ class AgentRunsService:
             "startTime": _ts_to_iso(run_model.started_at),
             "endTime": _ts_to_iso(run_model.ended_at),
             "totalTasks": int(total_tasks),
-            "completedTasks": int(completed_tasks),
+            "completedTasks": int(success_tasks),
             "successfulTasks": int(success_count),
             "failedTasks": int(failed_tasks),
             "averageScore": average_score,
