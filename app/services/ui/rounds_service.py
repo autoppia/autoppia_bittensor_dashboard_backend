@@ -4562,49 +4562,33 @@ class RoundsService:
         
         This is a lightweight query optimized for the initial redirect.
         """
-        # Get the latest round number
-        stmt_round = (
-            select(func.max(RoundORM.round_number))
-            .where(RoundORM.round_number.is_not(None))
-        )
-        result_round = await self.session.scalar(stmt_round)
-        
-        if result_round is None:
-            return None
-        
-        latest_round = int(result_round)
-        
-        # Get the top miner (post_consensus_rank = 1) for the latest round
-        # Join directly with ValidatorRoundORM (which has round_number) via validator_round_id
-        stmt_miner = (
+        # Get latest round that already has post-consensus rankings (post_consensus_rank = 1)
+        stmt = (
             select(
+                RoundORM.round_number,
                 ValidatorRoundSummaryORM.miner_uid,
                 ValidatorRoundSummaryORM.miner_hotkey,
-                RoundORM.round_number,
             )
             .join(
-                RoundORM,
+                ValidatorRoundSummaryORM,
                 ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id,
             )
             .where(
-                RoundORM.round_number == latest_round,
+                RoundORM.round_number.is_not(None),
                 ValidatorRoundSummaryORM.post_consensus_rank == 1,
             )
-            .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc().nulls_last())
+            .order_by(RoundORM.round_number.desc())
             .limit(1)
         )
-        
-        result_miner = await self.session.execute(stmt_miner)
-        row = result_miner.first()
-        
+
+        result = await self.session.execute(stmt)
+        row = result.first()
+
         if row is None:
             return None
-        
-        miner_uid = row.miner_uid
-        miner_hotkey = row.miner_hotkey
-        
+
         return {
-            "round": latest_round,
-            "miner_uid": miner_uid,
-            "miner_hotkey": miner_hotkey,
+            "round": int(row.round_number),
+            "miner_uid": row.miner_uid,
+            "miner_hotkey": row.miner_hotkey,
         }
