@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app.services.round_calc import compute_boundaries_for_round
@@ -731,15 +731,16 @@ class ValidatorRoundPersistenceService:
         task_solutions = list(getattr(run_row, "task_solutions", []) or [])
         evaluations = list(getattr(run_row, "evaluations", []) or [])
 
-        task_ids = {solution.task_id for solution in task_solutions if solution.task_id}
-        if not task_ids:
-            task_ids = {
-                eval_obj.task_id for eval_obj in evaluations if eval_obj.task_id
-            }
-
-        total_tasks = len(task_ids)
+        # CRITICAL: total_tasks should be the number of evaluations, because each task has one evaluation
+        # (even if the miner didn't respond, we create an evaluation with score 0.0)
+        # So total_tasks = len(evaluations) is correct
+        total_tasks = len(evaluations)
+        
+        # If no evaluations yet, fall back to counting unique task_ids from solutions
         if total_tasks == 0:
-            total_tasks = run_row.total_tasks or len(evaluations)
+            task_ids = {solution.task_id for solution in task_solutions if solution.task_id}
+            total_tasks = len(task_ids) if task_ids else (run_row.total_tasks or 0)
+        
         total_tasks = int(total_tasks or 0)
 
         scores: List[float] = []
@@ -750,7 +751,9 @@ class ValidatorRoundPersistenceService:
                 scores.append(value)
         average_score = sum(scores) / len(scores) if scores else None
 
-        success_tasks = sum(1 for score in scores if score >= 0.5)
+        # Binary scoring: eval_score is 1.0 if at least one test passed, 0.0 otherwise
+        # success_tasks counts evaluations with eval_score > 0.0 (i.e., == 1.0)
+        success_tasks = sum(1 for score in scores if score > 0.0)
         if success_tasks > total_tasks:
             success_tasks = total_tasks
         failed_tasks = max(total_tasks - success_tasks, 0)
