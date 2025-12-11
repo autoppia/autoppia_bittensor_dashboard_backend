@@ -262,6 +262,17 @@ async def on_startup():
     try:
         await init_db()
         logger.info("SQL schema ready")
+        
+        # Log round configuration (matches validator config)
+        logger.info("=" * 80)
+        logger.info("🔧 BACKEND ROUND CONFIGURATION")
+        logger.info("=" * 80)
+        logger.info(f"📊 Mode: {'TESTING' if settings.TESTING else 'PRODUCTION'}")
+        logger.info(f"🔢 DZ_STARTING_BLOCK: {settings.DZ_STARTING_BLOCK:,}")
+        logger.info(f"⏱️  Round Size: {settings.ROUND_SIZE_EPOCHS} epochs")
+        logger.info(f"📦 Blocks per Round: {int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)}")
+        logger.info("=" * 80)
+        
         logger.info(f"API server ready on {settings.HOST}:{settings.PORT}")
         logger.info("API documentation available at /docs")
         # NOTE: Background updaters (metagraph, price, block) are now run as a separate PM2 process

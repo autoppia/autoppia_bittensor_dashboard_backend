@@ -31,11 +31,16 @@ if ENVIRONMENT not in ("local", "development", "production"):
 # Backward compatibility: If TESTING is set, map it to environment
 # TESTING=true → development, TESTING=false → production
 _legacy_testing = os.getenv("TESTING")
+TESTING_MODE = False
 if _legacy_testing is not None:
-    if _str_to_bool(_legacy_testing):
+    TESTING_MODE = _str_to_bool(_legacy_testing)
+    if TESTING_MODE:
         ENVIRONMENT = "development"
     else:
         ENVIRONMENT = "production"
+else:
+    # If TESTING not set, determine from ENVIRONMENT
+    TESTING_MODE = ENVIRONMENT in ("local", "development")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -98,7 +103,17 @@ class Settings(BaseSettings):
     # ═══════════════════════════════════════════════════════════════════════════
     # Reads from .env with environment suffix:
     # ROUND_SIZE_EPOCHS_LOCAL, ROUND_SIZE_EPOCHS_DEVELOPMENT, etc.
-    ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "3.0"))
+    # 
+    # TESTING mode: Use same ROUND_SIZE_EPOCHS as validator (0.208 for testing, 3.0 for production)
+    # This ensures round_number calculation matches between backend and validator
+    # When TESTING=true: ROUND_SIZE_EPOCHS=0.208 (matches validator testing mode)
+    # When TESTING=false: ROUND_SIZE_EPOCHS=3.0 (matches validator production mode)
+    if TESTING_MODE:
+        # Testing mode: Short rounds (~15 minutes) - matches validator TESTING=true
+        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.208"))
+    else:
+        # Production mode: Long rounds (~4.8 hours) - matches validator TESTING=false
+        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "3.0"))
     BLOCKS_PER_EPOCH: int = int(_env_var("BLOCKS_PER_EPOCH", "360"))
     DZ_STARTING_BLOCK: int = int(_env_var("DZ_STARTING_BLOCK", "6949035"))
 
