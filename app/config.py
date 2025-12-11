@@ -28,18 +28,15 @@ if ENVIRONMENT not in ("local", "development", "production"):
         f"Invalid ENVIRONMENT: {ENVIRONMENT}. Must be 'local', 'development', or 'production'"
     )
 
-# Backward compatibility: If TESTING is set, map it to environment
-# TESTING=true → development, TESTING=false → production
+# TESTING mode: Independent of ENVIRONMENT
+# TESTING=true → use testing round config (ROUND_SIZE_EPOCHS=0.208)
+# TESTING=false → use production round config (ROUND_SIZE_EPOCHS=3.0)
+# This allows running in production environment but with testing round sizes
 _legacy_testing = os.getenv("TESTING")
-TESTING_MODE = False
 if _legacy_testing is not None:
     TESTING_MODE = _str_to_bool(_legacy_testing)
-    if TESTING_MODE:
-        ENVIRONMENT = "development"
-    else:
-        ENVIRONMENT = "production"
 else:
-    # If TESTING not set, determine from ENVIRONMENT
+    # If TESTING not set, default based on ENVIRONMENT (backward compatibility)
     TESTING_MODE = ENVIRONMENT in ("local", "development")
 
 
