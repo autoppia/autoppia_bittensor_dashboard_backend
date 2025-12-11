@@ -1296,38 +1296,13 @@ class AgentRunsService:
         failed_evaluations = max(total_evaluations - successful_evaluations, 0)
         
         # Calculate avg_score (average of eval_score from evaluations)
+        # This is the success rate: sum of all eval_scores / total evaluations
         eval_scores = [
             getattr(er, 'eval_score', getattr(er, 'final_score', None))
             for er in context.evaluations
             if getattr(er, 'eval_score', getattr(er, 'final_score', None)) is not None
         ]
         avg_score = sum(eval_scores) / len(eval_scores) if eval_scores else 0.0
-        
-        # Calculate avg_reward (average of reward from evaluations)
-        # Filter out None values, but keep 0.0 values (they are valid)
-        rewards = [
-            getattr(er, 'reward', None)
-            for er in context.evaluations
-            if getattr(er, 'reward', None) is not None
-        ]
-        if rewards:
-            avg_reward = sum(rewards) / len(rewards)
-            # 🔍 CRITICAL FIX: If avg_reward is 0.0 but avg_score > 0, it means rewards weren't calculated properly
-            # If avg_score = 1.0, reward must be at least 0.995 (EVAL_SCORE_WEIGHT), never 0.0
-            # Use a minimum reward based on avg_score to ensure consistency
-            if avg_reward == 0.0 and avg_score > 0.0:
-                # If score is 1.0, reward should be at least 0.995 (EVAL_SCORE_WEIGHT)
-                # If score is between 0 and 1, use score as minimum (shouldn't happen with binary scores)
-                if avg_score >= 1.0:
-                    avg_reward = 0.995  # Minimum reward for completed tasks (EVAL_SCORE_WEIGHT)
-                else:
-                    avg_reward = avg_score  # Fallback to eval_score for partial scores
-        else:
-            # No rewards available - use avg_score as fallback, but ensure minimum for completed tasks
-            if avg_score >= 1.0:
-                avg_reward = 0.995  # Minimum reward for completed tasks
-            else:
-                avg_reward = avg_score  # Fallback to avg_score if no reward
         
         # Calculate avg_time (average of evaluation_time from evaluations)
         times = [
@@ -1336,6 +1311,119 @@ class AgentRunsService:
             if er.evaluation_time is not None and er.evaluation_time > 0
         ]
         avg_time = sum(times) / len(times) if times else 0.0
+        
+        # Calculate avg_reward (average of reward from evaluations)
+        # First, try to get rewards from evaluations, using eval_score as fallback
+        rewards = []
+        for er in context.evaluations:
+            reward_val = getattr(er, 'reward', None)
+            if reward_val is None:
+                # Use eval_score as fallback (same as get_agent_run_complete)
+                eval_score_val = getattr(er, 'eval_score', getattr(er, 'final_score', 0.0)) or 0.0
+                reward_val = eval_score_val
+            rewards.append(float(reward_val))
+        
+        # 🔍 CRITICAL FIX: Recalculate rewards if they are 0.0 but there are successful tasks
+        # Reward formula: reward = EVAL_SCORE_WEIGHT * eval_score + TIME_WEIGHT * time_score
+        # Time score is normalized: (max_time - time) / (max_time - min_time)
+        if rewards:
+            avg_reward = sum(rewards) / len(rewards)
+            # If avg_reward is 0.0 but avg_score > 0, recalculate rewards with time factor
+            # This happens when rewards in DB are 0.0 or None (fallback to eval_score gave 0.0)
+            if avg_reward == 0.0 and avg_score > 0.0:
+                # Recalculate rewards for each evaluation using eval_score and evaluation_time
+                EVAL_SCORE_WEIGHT = 0.995  # From validator config
+                TIME_WEIGHT = 0.005  # From validator config
+                
+                recalculated_rewards = []
+                # Get all execution times for successful tasks (for normalization)
+                successful_times = [
+                    er.evaluation_time
+                    for er in context.evaluations
+                    if er.evaluation_time is not None
+                    and er.evaluation_time > 0
+                    and (getattr(er, 'eval_score', getattr(er, 'final_score', 0.0)) or 0.0) > 0.0
+                ]
+                
+                if successful_times:
+                    min_time = min(successful_times)
+                    max_time = max(successful_times)
+                    time_span = max(max_time - min_time, 1e-8)  # Avoid division by zero
+                else:
+                    min_time = max_time = 0.0
+                    time_span = 1.0
+                
+                for er in context.evaluations:
+                    eval_score_val = getattr(er, 'eval_score', getattr(er, 'final_score', 0.0)) or 0.0
+                    eval_time = er.evaluation_time if er.evaluation_time is not None else 0.0
+                    
+                    if eval_score_val > 0.0 and eval_time > 0.0:
+                        # Calculate time score: (max_time - time) / (max_time - min_time)
+                        # Faster = higher score (0-1)
+                        time_score = (max_time - eval_time) / time_span
+                        time_score = max(0.0, min(1.0, time_score))  # Clamp to [0, 1]
+                        
+                        # Calculate reward: EVAL_SCORE_WEIGHT * eval_score + TIME_WEIGHT * time_score
+                        reward = (EVAL_SCORE_WEIGHT * eval_score_val) + (TIME_WEIGHT * time_score)
+                        recalculated_rewards.append(reward)
+                    elif eval_score_val > 0.0:
+                        # Task completed but no time data - use minimum reward
+                        reward = EVAL_SCORE_WEIGHT * eval_score_val
+                        recalculated_rewards.append(reward)
+                    else:
+                        # Task failed - reward is 0.0
+                        recalculated_rewards.append(0.0)
+                
+                if recalculated_rewards:
+                    avg_reward = sum(recalculated_rewards) / len(recalculated_rewards)
+                else:
+                    # Fallback: if avg_score > 0, use minimum reward
+                    avg_reward = EVAL_SCORE_WEIGHT * avg_score if avg_score > 0.0 else 0.0
+        else:
+            # No rewards available - recalculate from eval_score and evaluation_time
+            if avg_score > 0.0:
+                EVAL_SCORE_WEIGHT = 0.995
+                TIME_WEIGHT = 0.005
+                
+                # Get all execution times for successful tasks (for normalization)
+                successful_times = [
+                    er.evaluation_time
+                    for er in context.evaluations
+                    if er.evaluation_time is not None
+                    and er.evaluation_time > 0
+                    and (getattr(er, 'eval_score', getattr(er, 'final_score', 0.0)) or 0.0) > 0.0
+                ]
+                
+                if successful_times:
+                    min_time = min(successful_times)
+                    max_time = max(successful_times)
+                    time_span = max(max_time - min_time, 1e-8)
+                else:
+                    min_time = max_time = 0.0
+                    time_span = 1.0
+                
+                recalculated_rewards = []
+                for er in context.evaluations:
+                    eval_score_val = getattr(er, 'eval_score', getattr(er, 'final_score', 0.0)) or 0.0
+                    eval_time = er.evaluation_time if er.evaluation_time is not None else 0.0
+                    
+                    if eval_score_val > 0.0 and eval_time > 0.0:
+                        time_score = (max_time - eval_time) / time_span
+                        time_score = max(0.0, min(1.0, time_score))
+                        reward = (EVAL_SCORE_WEIGHT * eval_score_val) + (TIME_WEIGHT * time_score)
+                        recalculated_rewards.append(reward)
+                    elif eval_score_val > 0.0:
+                        reward = EVAL_SCORE_WEIGHT * eval_score_val
+                        recalculated_rewards.append(reward)
+                    else:
+                        recalculated_rewards.append(0.0)
+                
+                if recalculated_rewards:
+                    avg_reward = sum(recalculated_rewards) / len(recalculated_rewards)
+                else:
+                    avg_reward = EVAL_SCORE_WEIGHT * avg_score if avg_score > 0.0 else 0.0
+            else:
+                avg_reward = 0.0
         
         # Group evaluations by website and useCase
         from collections import defaultdict
@@ -1381,7 +1469,8 @@ class AgentRunsService:
             eval_score_float = float(eval_score)
             # Consider successful if eval_score >= 0.5 (same logic as in get_agent_run_complete)
             is_successful = eval_score_float >= 0.5
-            reward = getattr(evaluation, 'reward', None) or 0.0
+            # Use eval_score as fallback if reward is None (same as get_agent_run_complete)
+            reward = getattr(evaluation, 'reward', None) or eval_score_float
             eval_time = getattr(evaluation, 'evaluation_time', 0.0) or 0.0
             
             # Update website stats

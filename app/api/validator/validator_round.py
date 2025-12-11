@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, Union
+from typing import Any, Dict
 from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -97,11 +97,6 @@ class StartRoundRequest(BaseModel):
         return round_model
 
 
-class LegacyStartRoundRequest(BaseModel):
-    validator_round_id: str
-    round: Dict[str, Any]
-
-
 def _resolve_miner_snapshot_image(snapshot: ValidatorRoundMiner) -> None:
     """
     Normalize miner snapshot images so we persist full URLs and apply fallbacks.
@@ -120,79 +115,6 @@ def _resolve_miner_snapshot_image(snapshot: ValidatorRoundMiner) -> None:
     snapshot.image_url = resolved
 
 
-def _legacy_to_start_request(payload: LegacyStartRoundRequest) -> StartRoundRequest:
-    round_data = dict(payload.round)
-    validators = round_data.pop("validators", []) or []
-    if not validators:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="validators list is required in legacy payloads",
-        )
-    primary_validator = dict(validators[0])
-    uid = primary_validator.get("uid")
-    hotkey = primary_validator.get("hotkey")
-    if uid is None or hotkey is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="validator uid and hotkey are required in legacy payloads",
-        )
-
-    if "round_number" not in round_data and "round" in round_data:
-        round_data["round_number"] = round_data.pop("round")
-
-    status_value = round_data.get("status")
-    if status_value is not None:
-        normalized = str(status_value).lower()
-        if normalized in {"in_progress", "in-progress"}:
-            round_data["status"] = "active"
-        elif normalized in {"finished", "complete", "completed"}:
-            round_data["status"] = "finished"
-        elif normalized == "pending":
-            round_data["status"] = "pending"
-
-    round_data.setdefault("validator_round_id", payload.validator_round_id)
-    round_data.setdefault("validator_uid", uid)
-    round_data.setdefault("validator_hotkey", hotkey)
-    round_data.setdefault("validator_coldkey", primary_validator.get("coldkey"))
-
-    validator_identity = Validator(
-        uid=uid,
-        hotkey=hotkey,
-        coldkey=primary_validator.get("coldkey"),
-    )
-    validator_round = ValidatorRound(**round_data)
-    validator_snapshot = ValidatorRoundValidator(
-        validator_round_id=payload.validator_round_id,
-        validator_uid=uid,
-        validator_hotkey=hotkey,
-        validator_coldkey=primary_validator.get("coldkey"),  # Copy coldkey from validator
-        name=primary_validator.get("name"),
-        stake=primary_validator.get("stake"),
-        vtrust=primary_validator.get("vtrust"),
-        image_url=primary_validator.get("image") or primary_validator.get("image_url"),
-        version=primary_validator.get("version"),
-    )
-    # Use canonical directory as FALLBACK only (don't override validator-provided values)
-    metadata = get_validator_metadata(uid)
-    # Only use directory name if validator didn't provide one
-    if not validator_snapshot.name:
-        validator_snapshot.name = metadata.get("name")
-    # Only use directory image as fallback
-    if not validator_snapshot.image_url:
-        validator_snapshot.image_url = metadata.get("image")
-    # Resolve/validate the final image URL
-    validator_snapshot.image_url = resolve_validator_image(
-        validator_snapshot.name,
-        existing=validator_snapshot.image_url,
-    )
-
-    return StartRoundRequest(
-        validator_identity=validator_identity,
-        validator_round=validator_round,
-        validator_snapshot=validator_snapshot,
-    )
-
-
 class SetTasksRequest(BaseModel):
     tasks: list[Task] = Field(default_factory=list)
 
@@ -207,180 +129,7 @@ class AddEvaluationRequest(BaseModel):
     task: Task
     task_solution: TaskSolution
     evaluation: Evaluation
-
-
-class LegacyStartAgentRunRequest(BaseModel):
-    agent_run: Dict[str, Any]
-
-
-async def _legacy_to_start_agent_run_request(
-    validator_round_id: str,
-    payload: LegacyStartAgentRunRequest,
-    service: ValidatorRoundPersistenceService,
-) -> StartAgentRunRequest:
-    round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
-    if not round_row.validator_snapshot:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Validator snapshot not found for round",
-        )
-    validator_hotkey = round_row.validator_snapshot.validator_hotkey
-    validator_uid = round_row.validator_snapshot.validator_uid
-
-    agent_run_data = dict(payload.agent_run)
-    agent_run_data.setdefault("validator_round_id", validator_round_id)
-    # validator_uid and validator_hotkey removed - no longer needed in agent_run_data
-
-    miner_info = dict(agent_run_data.get("miner_info") or {})
-    # is_sota and version removed from agent_run_data - they come from miner_snapshot
-    is_sota = bool(miner_info.get("is_sota") or agent_run_data.get("is_sota", False))
-    if not is_sota:
-        agent_run_data.setdefault("miner_uid", miner_info.get("uid"))
-        agent_run_data.setdefault("miner_hotkey", miner_info.get("hotkey"))
-
-    agent_run = AgentEvaluationRun(**agent_run_data)
-
-    miner_identity = Miner(
-        uid=miner_info.get("uid"),
-        hotkey=miner_info.get("hotkey"),
-        coldkey=miner_info.get("coldkey"),
-    )
-
-    miner_snapshot = ValidatorRoundMiner(
-        validator_round_id=validator_round_id,
-        miner_uid=miner_info.get("uid"),
-        miner_hotkey=miner_info.get("hotkey"),
-        miner_coldkey=miner_info.get("coldkey"),
-        agent_name=miner_info.get("agent_name")
-        or miner_info.get("name")
-        or agent_run.agent_run_id,
-        image_url=miner_info.get("agent_image") or miner_info.get("image"),
-        github_url=miner_info.get("github"),
-        description=miner_info.get("description"),
-        is_sota=is_sota,
-        version=miner_info.get("version") or agent_run_data.get("version"),
-    )
-    # Canonicalize miner image asset (allowlist + fallback)
-    _resolve_miner_snapshot_image(miner_snapshot)
-
-    return StartAgentRunRequest(
-        agent_run=agent_run,
-        miner_identity=miner_identity,
-        miner_snapshot=miner_snapshot,
-    )
-
-
-class LegacyAddEvaluationRequest(BaseModel):
-    task: Dict[str, Any]
-    task_solution: Dict[str, Any]
-    evaluation: Dict[str, Any] = Field(default_factory=dict)
-    evaluation_result: Dict[str, Any]
-
-
-async def _legacy_to_add_evaluation_request(
-    validator_round_id: str,
-    agent_run_id: str,
-    payload: LegacyAddEvaluationRequest,
-    service: ValidatorRoundPersistenceService,
-) -> AddEvaluationRequest:
-    round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
-    agent_run_row = await service._get_agent_run_row(agent_run_id)  # type: ignore[attr-defined]
-    if agent_run_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Agent run {agent_run_id} not found",
-        )
-
-    if not round_row.validator_snapshot:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Validator snapshot not found for round",
-        )
-    validator_uid = round_row.validator_snapshot.validator_uid
-    validator_hotkey = round_row.validator_snapshot.validator_hotkey
-    miner_uid = agent_run_row.miner_uid
-    miner_hotkey = agent_run_row.miner_hotkey
-
-    task_data = dict(payload.task)
-    task_data.setdefault("validator_round_id", validator_round_id)
-    task = Task(**task_data)
-
-    task_solution_data = dict(payload.task_solution)
-    task_solution_data.setdefault("validator_round_id", validator_round_id)
-    task_solution_data.setdefault("validator_uid", validator_uid)
-    task_solution_data.setdefault("validator_hotkey", validator_hotkey)
-    if miner_uid is not None:
-        task_solution_data.setdefault("miner_uid", miner_uid)
-        task_solution_data.setdefault("miner_hotkey", miner_hotkey)
-
-    # Normalize IWAP raw actions into core {type, attributes} shape
-    try:
-        raw_actions = task_solution_data.get("actions")
-        if isinstance(raw_actions, list):
-            normalized_actions = []
-            for a in raw_actions:
-                if not isinstance(a, dict):
-                    normalized_actions.append({"type": str(a), "attributes": {}})
-                    continue
-                raw_type = str(a.get("type", "other") or "other")
-                normalized_type = (
-                    raw_type.lower().replace("action", "").replace("-", "_").strip()
-                    or "other"
-                )
-                # Prefer semantic name for text entry over ambiguous "type"
-                alias_map = {
-                    "type": "input",
-                    "type_text": "input",
-                    "sendkeysiwa": "input",
-                }
-                normalized_type = alias_map.get(normalized_type, normalized_type)
-                attrs = {k: v for k, v in a.items() if k != "type"}
-                normalized_actions.append(
-                    {"type": normalized_type, "attributes": attrs}
-                )
-            task_solution_data["actions"] = normalized_actions
-    except Exception:
-        # Leave original shape on failure
-        pass
-
-    task_solution = TaskSolution(**task_solution_data)
-
-    # Build evaluation from evaluation_result (consolidated model)
-    evaluation_data = dict(payload.evaluation_result)
-    # If evaluation is provided, merge it (evaluation_result takes precedence for detailed fields)
-    if payload.evaluation:
-        evaluation_data.update(payload.evaluation)
-    
-    evaluation_data.setdefault("validator_round_id", validator_round_id)
-    evaluation_data.setdefault("validator_uid", validator_uid)
-    evaluation_data.setdefault("validator_hotkey", validator_hotkey)
-    if miner_uid is not None:
-        evaluation_data.setdefault("miner_uid", miner_uid)
-        evaluation_data.setdefault("miner_hotkey", miner_hotkey)
-    
-    # Ensure evaluation_id exists (use from evaluation_result if present, or generate)
-    if "evaluation_id" not in evaluation_data:
-        evaluation_data["evaluation_id"] = evaluation_data.get("result_id") or f"{task_solution.solution_id}-evaluation"
-    
-    # Map metadata if present
-    if "metadata" not in evaluation_data and "meta" in evaluation_data:
-        evaluation_data["metadata"] = evaluation_data.pop("meta")
-    
-    # Handle legacy final_score → eval_score mapping
-    if "final_score" in evaluation_data and "eval_score" not in evaluation_data:
-        evaluation_data["eval_score"] = evaluation_data["final_score"]
-    
-    # Handle reward: if not present, use eval_score as fallback (legacy compatibility)
-    if "reward" not in evaluation_data:
-        evaluation_data["reward"] = evaluation_data.get("eval_score") or evaluation_data.get("final_score", 0.0)
-    
-    evaluation = Evaluation(**evaluation_data)
-
-    return AddEvaluationRequest(
-        task=task,
-        task_solution=task_solution,
-        evaluation=evaluation,
-    )
+    evaluation_result: Dict[str, Any] | None = None
 
 
 class FinishRoundAgentRun(BaseModel):
@@ -434,7 +183,7 @@ async def validator_auth_check() -> dict[str, Any]:
 
 @router.post("/start", dependencies=[Depends(require_validator_auth)])
 async def start_round(
-    payload: Union[StartRoundRequest, LegacyStartRoundRequest],
+    payload: StartRoundRequest,
     request: Request,
     force: bool = Query(
         False, description="TESTING-only override to skip chain round/window checks"
@@ -442,9 +191,6 @@ async def start_round(
     session: AsyncSession = Depends(get_session),
 ):
     """Register a new validator round along with validator identity and snapshot."""
-
-    if isinstance(payload, LegacyStartRoundRequest):
-        payload = _legacy_to_start_request(payload)
 
     validator_round = payload.validator_round
     validator_identity = payload.validator_identity
@@ -781,7 +527,7 @@ async def set_tasks(
 )
 async def start_agent_run(
     validator_round_id: str,
-    payload: Union[StartAgentRunRequest, LegacyStartAgentRunRequest],
+    payload: StartAgentRunRequest,
     request: Request,
     force: bool = Query(
         False, description="TESTING-only override to skip chain round/window checks"
@@ -793,10 +539,6 @@ async def start_agent_run(
 
     try:
         request_payload = payload
-        if isinstance(request_payload, LegacyStartAgentRunRequest):
-            request_payload = await _legacy_to_start_agent_run_request(
-                validator_round_id, request_payload, service
-            )
 
         agent_run = request_payload.agent_run
         _require_round_match(
@@ -1001,7 +743,7 @@ async def start_agent_run(
 async def add_evaluation(
     validator_round_id: str,
     agent_run_id: str,
-    payload: Union[AddEvaluationRequest, LegacyAddEvaluationRequest],
+    payload: AddEvaluationRequest,
     request: Request,
     force: bool = Query(
         False, description="TESTING-only override to skip chain round/window checks"
@@ -1010,71 +752,84 @@ async def add_evaluation(
 ):
     """Persist evaluation data (task, solution, and evaluation with artefacts)."""
     service = ValidatorRoundPersistenceService(session)
+    raw_json: Dict[str, Any] | None = None
+    try:
+        raw_json = await request.json()
+    except Exception:
+        raw_json = None
 
     try:
         request_payload = payload
-        if isinstance(request_payload, LegacyAddEvaluationRequest):
-            request_payload = await _legacy_to_add_evaluation_request(
-                validator_round_id,
-                agent_run_id,
-                request_payload,
-                service,
+        # Merge evaluation_result (if provided) into evaluation so reward/time fields are not dropped
+        eval_result_payload: Dict[str, Any] | None = None
+        if isinstance(getattr(request_payload, "evaluation_result", None), dict):
+            eval_result_payload = request_payload.evaluation_result  # type: ignore[assignment]
+        elif isinstance(raw_json, dict):
+            maybe_eval_result = raw_json.get("evaluation_result")
+            if isinstance(maybe_eval_result, dict):
+                eval_result_payload = maybe_eval_result
+
+        if eval_result_payload:
+            merged_eval_data = request_payload.evaluation.model_dump(
+                mode="json", exclude_none=True
+            )
+            # evaluation_result values (e.g., reward, stats) take precedence
+            merged_eval_data.update(eval_result_payload)
+            request_payload = AddEvaluationRequest(
+                task=request_payload.task,
+                task_solution=request_payload.task_solution,
+                evaluation=Evaluation(**merged_eval_data),
+                evaluation_result=eval_result_payload,
             )
 
         # Heuristic: if actions reached here as AddEvaluationRequest but lost fields
         # (attributes empty), rebuild attributes from raw JSON body before persisting.
         try:
-            if not isinstance(payload, LegacyAddEvaluationRequest):
-                raw_json = await request.json()
-                raw_ts = (raw_json or {}).get("task_solution") or {}
-                raw_actions = (
-                    raw_ts.get("actions") if isinstance(raw_ts, dict) else None
+            raw_ts = (raw_json or {}).get("task_solution") or {}
+            raw_actions = raw_ts.get("actions") if isinstance(raw_ts, dict) else None
+            ts = getattr(request_payload, "task_solution", None)
+            if raw_actions and ts and isinstance(ts.actions, list):
+                from app.models.core import (
+                    Action as CoreAction,
+                    TaskSolution as CoreTaskSolution,
                 )
-                ts = getattr(request_payload, "task_solution", None)
-                if raw_actions and ts and isinstance(ts.actions, list):
-                    from app.models.core import (
-                        Action as CoreAction,
-                        TaskSolution as CoreTaskSolution,
+
+                def _norm_type(t: str) -> str:
+                    key = (t or "other").lower().replace("action", "").replace(
+                        "-", "_"
+                    ).strip() or "other"
+                    if key in {"type", "type_text", "sendkeysiwa"}:
+                        return "input"
+                    return key
+
+                new_actions = []
+                for idx, ra in enumerate(raw_actions):
+                    if isinstance(ra, dict):
+                        rtype = _norm_type(str(ra.get("type", "other") or "other"))
+                        attrs = {k: v for k, v in ra.items() if k != "type"}
+                        new_actions.append(CoreAction(type=rtype, attributes=attrs))
+                    else:
+                        new_actions.append(CoreAction(type=str(ra), attributes={}))
+
+                # Replace only if current attrs look empty
+                if all(
+                    (getattr(a, "attributes", None) in (None, {}, []) for a in ts.actions)
+                ):
+                    request_payload = AddEvaluationRequest(
+                        task=request_payload.task,
+                        task_solution=CoreTaskSolution(
+                            **{
+                                **request_payload.task_solution.model_dump(mode="json"),
+                                "actions": [
+                                    a.model_dump(mode="json") for a in new_actions
+                                ],
+                            }
+                        ),
+                        evaluation=request_payload.evaluation,
+                        evaluation_result=getattr(
+                            request_payload, "evaluation_result", None
+                        ),
                     )
-
-                    def _norm_type(t: str) -> str:
-                        key = (t or "other").lower().replace("action", "").replace(
-                            "-", "_"
-                        ).strip() or "other"
-                        if key in {"type", "type_text", "sendkeysiwa"}:
-                            return "input"
-                        return key
-
-                    new_actions = []
-                    for idx, ra in enumerate(raw_actions):
-                        if isinstance(ra, dict):
-                            rtype = _norm_type(str(ra.get("type", "other") or "other"))
-                            attrs = {k: v for k, v in ra.items() if k != "type"}
-                            new_actions.append(CoreAction(type=rtype, attributes=attrs))
-                        else:
-                            new_actions.append(CoreAction(type=str(ra), attributes={}))
-
-                    # Replace only if current attrs look empty
-                    if all(
-                        (
-                            getattr(a, "attributes", None) in (None, {}, [])
-                            for a in ts.actions
-                        )
-                    ):
-                        request_payload = AddEvaluationRequest(
-                            task=request_payload.task,
-                            task_solution=CoreTaskSolution(
-                                **{
-                                    **request_payload.task_solution.model_dump(
-                                        mode="json"
-                                    ),
-                                    "actions": [
-                                        a.model_dump(mode="json") for a in new_actions
-                                    ],
-                                }
-                            ),
-                            evaluation=request_payload.evaluation,
-                        )
         except Exception:
             # Non-fatal: fall back to original payload
             pass
