@@ -310,8 +310,8 @@ class ValidatorRoundPersistenceService:
         # be called before all evaluations were created, leaving average_score as NULL
         await self.session.flush()  # Ensure evaluation is persisted before recalculating
         
-        # Reload agent_run with evaluations to recalculate stats
-        await self.session.refresh(agent_run_row, ["evaluations"])
+        # Reload agent_run with evaluations and task_solutions to recalc stats without lazy loads
+        await self.session.refresh(agent_run_row, ["evaluations", "task_solutions"])
         metrics = self._compute_agent_run_stats(agent_run_row)
         agent_run_row.total_tasks = metrics["total_tasks"]
         agent_run_row.success_tasks = metrics["success_tasks"]
@@ -443,7 +443,7 @@ class ValidatorRoundPersistenceService:
             # 🔍 CRITICAL: Update agent_run stats immediately after adding new evaluation
             # This ensures average_score is NEVER NULL if there are evaluations
             # Only update if this was a new evaluation (not existing)
-            await self.session.refresh(agent_run_row, ["evaluations"])
+            await self.session.refresh(agent_run_row, ["evaluations", "task_solutions"])
             metrics = self._compute_agent_run_stats(agent_run_row)
             agent_run_row.total_tasks = metrics["total_tasks"]
             agent_run_row.success_tasks = metrics["success_tasks"]
