@@ -7,6 +7,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app.services.round_calc import compute_boundaries_for_round
+from app.config import settings
 
 from app.db.models import (
     AgentEvaluationRunORM,
@@ -302,6 +303,23 @@ class ValidatorRoundPersistenceService:
             )
         evaluation_row = EvaluationORM(**evaluation_kwargs)
         self.session.add(evaluation_row)
+        
+        # 🔍 CRITICAL: Update agent_run stats immediately after adding evaluation
+        # This ensures average_score is NEVER NULL if there are evaluations
+        # Previously, average_score was only updated in finish_round, which could
+        # be called before all evaluations were created, leaving average_score as NULL
+        await self.session.flush()  # Ensure evaluation is persisted before recalculating
+        
+        # Reload agent_run with evaluations to recalculate stats
+        await self.session.refresh(agent_run_row, ["evaluations"])
+        metrics = self._compute_agent_run_stats(agent_run_row)
+        agent_run_row.total_tasks = metrics["total_tasks"]
+        agent_run_row.success_tasks = metrics["success_tasks"]
+        agent_run_row.failed_tasks = metrics["failed_tasks"]
+        agent_run_row.average_score = metrics["average_score"]
+        agent_run_row.average_execution_time = metrics["average_execution_time"]
+        agent_run_row.average_reward = metrics["average_reward"]
+        
         # Reaching here means fresh insert path; idempotency is handled at endpoint by
         # detecting duplicates before writes. This method intentionally raises
         # DuplicateIdentifierError when any of the IDs already exist.
@@ -421,6 +439,18 @@ class ValidatorRoundPersistenceService:
                         raise
                 else:
                     raise
+            
+            # 🔍 CRITICAL: Update agent_run stats immediately after adding new evaluation
+            # This ensures average_score is NEVER NULL if there are evaluations
+            # Only update if this was a new evaluation (not existing)
+            await self.session.refresh(agent_run_row, ["evaluations"])
+            metrics = self._compute_agent_run_stats(agent_run_row)
+            agent_run_row.total_tasks = metrics["total_tasks"]
+            agent_run_row.success_tasks = metrics["success_tasks"]
+            agent_run_row.failed_tasks = metrics["failed_tasks"]
+            agent_run_row.average_score = metrics["average_score"]
+            agent_run_row.average_execution_time = metrics["average_execution_time"]
+            agent_run_row.average_reward = metrics["average_reward"]
 
 
     # ──────────────────────────────────────────────────────────────────────
@@ -698,6 +728,28 @@ class ValidatorRoundPersistenceService:
 
         await self.session.flush()
 
+        # 🔍 CRITICAL: Update agent_run stats after adding all evaluations in batch
+        # This ensures average_score is NEVER NULL if there are evaluations
+        # This is especially important for submit_round which adds multiple evaluations at once
+        if agent_run_ids:
+            from sqlalchemy.orm import selectinload
+            stmt_runs = (
+                select(AgentEvaluationRunORM)
+                .options(selectinload(AgentEvaluationRunORM.evaluations))
+                .where(AgentEvaluationRunORM.agent_run_id.in_(agent_run_ids))
+            )
+            run_rows_result = await self.session.scalars(stmt_runs)
+            run_rows = list(run_rows_result)
+            
+            for run_row in run_rows:
+                metrics = self._compute_agent_run_stats(run_row)
+                run_row.total_tasks = metrics["total_tasks"]
+                run_row.success_tasks = metrics["success_tasks"]
+                run_row.failed_tasks = metrics["failed_tasks"]
+                run_row.average_score = metrics["average_score"]
+                run_row.average_execution_time = metrics["average_execution_time"]
+                run_row.average_reward = metrics["average_reward"]
+
         saved = {
             "validator_round": round_row.validator_round_id,
             "validator_snapshots": validator_snapshot_ids,
@@ -747,9 +799,26 @@ class ValidatorRoundPersistenceService:
         for eval_obj in evaluations:
             # Try eval_score first, fallback to final_score for legacy compatibility
             value = self._to_float(getattr(eval_obj, "eval_score", None)) or self._to_float(getattr(eval_obj, "final_score", None))
+            # 🔍 CRITICAL: If no eval_score found, default to 0.0 (task failed)
+            # This ensures average_score is NEVER None if there are evaluations
+            # Each task should have an evaluation with eval_score (0.0 or 1.0)
             if value is not None:
                 scores.append(value)
-        average_score = sum(scores) / len(scores) if scores else None
+            else:
+                # Evaluation exists but no score - treat as failed (0.0)
+                # This should never happen if task_flow.py is working correctly,
+                # but we handle it defensively
+                scores.append(0.0)
+        
+        # 🔍 CRITICAL: average_score should NEVER be None if there are evaluations
+        # If there are evaluations, we should always have scores (even if all are 0.0)
+        # If there are no evaluations, average_score can be None (round not finished yet)
+        if total_tasks > 0:
+            # We have tasks (evaluations), so we must have scores
+            average_score = sum(scores) / len(scores) if scores else 0.0
+        else:
+            # No tasks yet - average_score is None (round not finished)
+            average_score = None
 
         # Binary scoring: eval_score is 1.0 if at least one test passed, 0.0 otherwise
         # success_tasks counts evaluations with eval_score > 0.0 (i.e., == 1.0)
@@ -1053,6 +1122,26 @@ class ValidatorRoundPersistenceService:
         self,
         model: Evaluation,
     ) -> Dict[str, Any]:
+        # Normalize eval_score and reward
+        eval_score_val = getattr(model, "eval_score", getattr(model, "final_score", 0.0))
+        try:
+            eval_score_val = float(eval_score_val)
+        except Exception:
+            eval_score_val = 0.0
+
+        reward_val = getattr(model, "reward", 0.0)
+        try:
+            reward_val = float(reward_val)
+        except Exception:
+            reward_val = 0.0
+
+        # Enforce minimum reward when eval_score > 0: at least EVAL_SCORE_WEIGHT
+        # If eval_score == 0, reward must be 0
+        if eval_score_val > 0.0:
+            reward_val = max(reward_val, float(settings.EVAL_SCORE_WEIGHT))
+        else:
+            reward_val = 0.0
+
         return {
             "evaluation_id": model.evaluation_id,
             "validator_round_id": model.validator_round_id,
@@ -1063,8 +1152,8 @@ class ValidatorRoundPersistenceService:
             "validator_hotkey": model.validator_hotkey,
             "miner_uid": model.miner_uid,
             "miner_hotkey": model.miner_hotkey,
-            "eval_score": getattr(model, "eval_score", getattr(model, "final_score", 0.0)),  # Support both new and legacy field names
-            "reward": getattr(model, "reward", 0.0),
+            "eval_score": eval_score_val,  # Support both new and legacy field names
+            "reward": reward_val,
             "evaluation_time": model.evaluation_time,
             "execution_history": list(model.execution_history),
             "feedback": _optional_dump(model.feedback),
