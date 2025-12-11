@@ -1138,7 +1138,9 @@ class ValidatorRoundPersistenceService:
         # Enforce minimum reward when eval_score > 0: at least EVAL_SCORE_WEIGHT
         # If eval_score == 0, reward must be 0
         if eval_score_val > 0.0:
-            reward_val = max(reward_val, float(settings.EVAL_SCORE_WEIGHT))
+            eval_score_weight = float(settings.EVAL_SCORE_WEIGHT)
+
+            reward_val = max(reward_val, eval_score_weight)
         else:
             reward_val = 0.0
 

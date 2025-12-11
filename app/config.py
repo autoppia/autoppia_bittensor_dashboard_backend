@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     CHAIN_BLOCK_CACHE_TTL_SECONDS: int = 15 * 60
     CHAIN_BLOCK_TIME_SECONDS: int = 12
 
+    # Scoring weights (must stay in sync with validator defaults)
+    # If env vars are not set, fallback to validator defaults: 0.995 and 0.005
+    EVAL_SCORE_WEIGHT: float = float(_env_var("EVAL_SCORE_WEIGHT", "0.995"))
+    TIME_WEIGHT: float = float(_env_var("TIME_WEIGHT", "0.005"))
+
     # Miner image host allowlist and blocked asset
     MINER_IMAGE_ALLOWED_HOSTS: list[str] = [
         "infinitewebarena.autoppia.com",
