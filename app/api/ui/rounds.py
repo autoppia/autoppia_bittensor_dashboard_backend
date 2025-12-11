@@ -303,7 +303,6 @@ async def get_round(
                 # Snapshot functionality removed - no longer using agent_stats table
                 # logger.info("📊 Updating agent stats for round %s...", round_number)
                 # snapshot_service = SnapshotService(snapshot_session)
-                # await snapshot_service.update_agent_stats(round_number)
                 
                 await snapshot_session.commit()
                 logger.info("✅ Round %s data saved", round_number)

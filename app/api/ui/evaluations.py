@@ -313,8 +313,16 @@ async def upload_evaluation_gif(
         )
 
     service = await _service(session)
+    # Only verify evaluation exists (simple query) before resetting transaction
+    # Don't build full context here as it accesses lazy-loaded relationships
+    # that will be invalidated after rollback
     try:
-        await service.get_evaluation(evaluation_id)
+        from app.db.models import EvaluationORM
+        from sqlalchemy import select
+        stmt = select(EvaluationORM).where(EvaluationORM.evaluation_id == evaluation_id)
+        evaluation_row = await session.scalar(stmt)
+        if not evaluation_row:
+            raise ValueError(f"Evaluation {evaluation_id} not found")
     except ValueError as exc:
         logger.warning("GIF upload requested for unknown evaluation %s", evaluation_id)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
