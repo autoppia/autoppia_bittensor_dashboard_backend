@@ -101,13 +101,13 @@ class Settings(BaseSettings):
     # Reads from .env with environment suffix:
     # ROUND_SIZE_EPOCHS_LOCAL, ROUND_SIZE_EPOCHS_DEVELOPMENT, etc.
     # 
-    # TESTING mode: Use same ROUND_SIZE_EPOCHS as validator (0.278 for testing, 3.0 for production)
+    # TESTING mode: Use same ROUND_SIZE_EPOCHS as validator (0.347 for testing, 3.0 for production)
     # This ensures round_number calculation matches between backend and validator
-    # When TESTING=true: ROUND_SIZE_EPOCHS=0.278 (matches validator testing mode)
+    # When TESTING=true: ROUND_SIZE_EPOCHS=0.347 (matches validator testing mode)
     # When TESTING=false: ROUND_SIZE_EPOCHS=3.0 (matches validator production mode)
     if TESTING_MODE:
-        # Testing mode: Short rounds (~20 minutes) - matches validator TESTING=true
-        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.278"))
+        # Testing mode: Short rounds (~25 minutes) - matches validator TESTING=true
+        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.347"))
     else:
         # Production mode: Long rounds (~4.8 hours) - matches validator TESTING=false
         ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "3.0"))
