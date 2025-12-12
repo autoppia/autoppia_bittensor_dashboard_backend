@@ -4241,16 +4241,29 @@ class RoundsService:
             - Summary statistics (rounds won/lost, total tasks, etc.)
             - Performance by website with use cases breakdown
             - Rounds history
-            - Alpha earned calculation (148 * 4 * weight * subnet_price for winners)
+            - Alpha earned calculation (ALPHA_EMISSION_PER_EPOCH * round_epochs * weight, then convert to TAO)
         """
-        # Get all summaries for this miner
+        # Get all summaries for this miner, including round epochs for alpha calculation
+        # FILTRADO POR VALIDADOR AUTOPPIA (UID 83 o 124 - solo estos validators marcan el alpha)
+        autoppia_uids = [83, 124]
+        
         stmt_summaries = (
-            select(ValidatorRoundSummaryORM, RoundORM.round_number)
+            select(
+                ValidatorRoundSummaryORM,
+                RoundORM.round_number,
+                RoundORM.start_epoch,
+                RoundORM.end_epoch,
+            )
             .join(
                 RoundORM,
                 ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
             )
+            .join(
+                ValidatorRoundValidatorORM,
+                RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
+            )
             .where(ValidatorRoundSummaryORM.miner_uid == miner_uid)
+            .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))  # Solo Autoppia (83 o 124)
             .order_by(RoundORM.round_number.desc())
         )
         result_summaries = await self.session.execute(stmt_summaries)
@@ -4304,6 +4317,26 @@ class RoundsService:
         total_alpha_earned = 0.0
         total_tao_earned = 0.0
         
+        # Get current subnet_price from the most recent round of validator 83 or 124
+        # This will be used to convert total alpha to TAO at the end
+        stmt_latest_subnet_price = (
+            select(ValidatorRoundSummaryORM.subnet_price)
+            .join(
+                RoundORM,
+                ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
+            )
+            .join(
+                ValidatorRoundValidatorORM,
+                RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
+            )
+            .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))
+            .where(ValidatorRoundSummaryORM.subnet_price.isnot(None))
+            .order_by(RoundORM.round_number.desc())
+            .limit(1)
+        )
+        result_latest_price = await self.session.execute(stmt_latest_subnet_price)
+        latest_subnet_price = result_latest_price.scalar_one_or_none()
+        
         # Performance by website
         website_stats: Dict[str, Dict[str, Any]] = defaultdict(
             lambda: {
@@ -4329,7 +4362,11 @@ class RoundsService:
         # Group by round_number to get unique rounds
         rounds_data: Dict[int, Dict[str, Any]] = {}
         
-        for summary, round_number in summaries_with_rounds:
+        for summary_row in summaries_with_rounds:
+            summary = summary_row[0]
+            round_number = summary_row[1]
+            start_epoch = summary_row[2] if len(summary_row) > 2 else None
+            end_epoch = summary_row[3] if len(summary_row) > 3 else None
             if round_number is None:
                 continue
                 
@@ -4381,19 +4418,31 @@ class RoundsService:
                 if rank > 0:
                     ranks.append(rank)
                 
-                # Calculate alpha earned for winners (148 * 4 * weight * subnet_price)
-                # Winner takes all: only rank 1 gets the reward
-                if (summary.post_consensus_rank or 0) == 1 and summary.subnet_price:
-                    # For winner: 148 * 4 (epochs) * weight * subnet_price
-                    # In winner-takes-all, weight should be 1.0, but we use actual weight from DB
-                    # TODO ese 4 esta hardcodeado es el numero de epoc de  la rondauna vez que tengamos el numero de epoc de la ronda, debemos cambiar este valor
-                    weight = summary.weight or 1.0
-                    alpha_earned = 148.0 * 4.0 * weight * float(summary.subnet_price)
+                # Calculate alpha earned for ALL rounds where miner has weight (not just winners)
+                # Formula: alpha = ALPHA_EMISSION_PER_EPOCH * round_epochs * weight
+                # We calculate alpha for every round where weight > 0
+                weight = summary.weight or 0.0
+                if weight > 0:
+                    # Calculate round epochs: use actual epochs if available, otherwise fallback to settings
+                    if start_epoch is not None and end_epoch is not None:
+                        round_epochs = max(1.0, float(end_epoch) - float(start_epoch))
+                    else:
+                        # Fallback to configured round size if epochs not available
+                        round_epochs = settings.ROUND_SIZE_EPOCHS
+                    
+                    # Calculate alpha earned for this round (weight * 148 * round_epochs)
+                    alpha_earned = settings.ALPHA_EMISSION_PER_EPOCH * round_epochs * weight
                     total_alpha_earned += alpha_earned
-                    # Convert alpha to TAO (1 alpha = subnet_price TAO)
-                    total_tao_earned += alpha_earned * float(summary.subnet_price)
                 
                 rounds_data[round_number]["_processed"] = True
+        
+        # Convert total alpha to TAO using current subnet_price
+        # Use the most recent subnet_price from validator 83 or 124
+        if latest_subnet_price and total_alpha_earned > 0:
+            total_tao_earned = total_alpha_earned * float(latest_subnet_price)
+        else:
+            # If no subnet_price available, set to 0
+            total_tao_earned = 0.0
         
         # Count rounds won/lost and build rounds history
         for round_data in rounds_data.values():

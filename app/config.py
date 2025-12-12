@@ -123,6 +123,14 @@ class Settings(BaseSettings):
     EVAL_SCORE_WEIGHT: float = float(_env_var("EVAL_SCORE_WEIGHT", "0.995"))
     TIME_WEIGHT: float = float(_env_var("TIME_WEIGHT", "0.005"))
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ALPHA EMISSION CONFIGURATION
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Alpha emission per epoch (148.0 is the standard emission rate)
+    # Alpha earned per round = ALPHA_EMISSION_PER_EPOCH * round_epochs * weight
+    # To convert to TAO: tao = alpha * subnet_price
+    ALPHA_EMISSION_PER_EPOCH: float = float(_env_var("ALPHA_EMISSION_PER_EPOCH", "148.0"))
+
     # Miner image host allowlist and blocked asset
     MINER_IMAGE_ALLOWED_HOSTS: list[str] = [
         "infinitewebarena.autoppia.com",
