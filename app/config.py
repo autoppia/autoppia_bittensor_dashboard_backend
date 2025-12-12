@@ -218,7 +218,7 @@ class Settings(BaseSettings):
 
     # Server Configuration
     HOST: str = os.getenv("HOST", "0.0.0.0")
-    PORT: int = int(os.getenv("PORT", "8080"))
+    PORT: int = int(os.getenv("PORT", "8000"))
 
     # UI caching toggles
     ENABLE_FINAL_ROUND_CACHE: bool = _str_to_bool(
