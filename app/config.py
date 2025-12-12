@@ -131,6 +131,13 @@ class Settings(BaseSettings):
     # To convert to TAO: tao = alpha * subnet_price
     ALPHA_EMISSION_PER_EPOCH: float = float(_env_var("ALPHA_EMISSION_PER_EPOCH", "148.0"))
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BITTENSOR CONFIGURATION
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Burn UID: The UID used for burning tokens/rewards in Bittensor
+    # This UID should never have agent_runs and should be excluded from all listings
+    BURN_UID: int = int(_env_var("BURN_UID", "5"))
+
     # Miner image host allowlist and blocked asset
     MINER_IMAGE_ALLOWED_HOSTS: list[str] = [
         "infinitewebarena.autoppia.com",

@@ -9,7 +9,7 @@ import re
 import json
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
-from sqlalchemy import func, select, case, String
+from sqlalchemy import func, select, case, String, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -3779,15 +3779,26 @@ class RoundsService:
                 )
         
         # Get all miners from validator_round_summary_miners for this validator_round_id
+        # BUT only include miners that have an agent_run (to be consistent with /agent-runs endpoint)
+        # Also exclude burn UID which should never have agent_runs
         stmt_summary = (
             select(ValidatorRoundSummaryORM)
+            .join(
+                AgentEvaluationRunORM,
+                and_(
+                    ValidatorRoundSummaryORM.validator_round_id == AgentEvaluationRunORM.validator_round_id,
+                    ValidatorRoundSummaryORM.miner_uid == AgentEvaluationRunORM.miner_uid,
+                )
+            )
             .where(
                 ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,  # Exclude burn UID
             )
             .order_by(
                 ValidatorRoundSummaryORM.post_consensus_rank.asc().nulls_last(),
                 ValidatorRoundSummaryORM.post_consensus_avg_reward.desc().nulls_last(),
             )
+            .distinct()
         )
         result_summary = await self.session.execute(stmt_summary)
         summaries = result_summary.scalars().all()
