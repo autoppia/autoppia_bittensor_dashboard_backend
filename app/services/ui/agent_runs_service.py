@@ -355,8 +355,19 @@ class AgentRunsService:
                 
                 eval_results = getattr(run, 'evaluations', []) or []
                 if eval_results:
-                    scores = [getattr(er, 'eval_score', getattr(er, 'final_score', None)) for er in eval_results if getattr(er, 'eval_score', getattr(er, 'final_score', None)) is not None]
-                    avg_score = sum(scores) / len(scores) if scores else 0.0
+                    total_eval_count = len(eval_results)
+                    # Include all evaluations, treating None as 0.0 for consistency
+                    scores = []
+                    for er in eval_results:
+                        score_val = getattr(er, 'eval_score', getattr(er, 'final_score', None))
+                        if score_val is not None:
+                            try:
+                                scores.append(float(score_val))
+                            except (ValueError, TypeError):
+                                scores.append(0.0)
+                        else:
+                            scores.append(0.0)
+                    avg_score = sum(scores) / total_eval_count if total_eval_count else 0.0
                     times = [er.evaluation_time for er in eval_results if er.evaluation_time is not None and er.evaluation_time > 0]
                     avg_time = sum(times) / len(times) if times else float('inf')
                 else:
@@ -421,8 +432,19 @@ class AgentRunsService:
             # Calculate average score from evaluations
             eval_results = getattr(run, 'evaluations', []) or []
             if eval_results:
-                scores = [getattr(er, 'eval_score', getattr(er, 'final_score', None)) for er in eval_results if getattr(er, 'eval_score', getattr(er, 'final_score', None)) is not None]
-                avg_score = sum(scores) / len(scores) if scores else 0.0
+                total_eval_count = len(eval_results)
+                # Include all evaluations, treating None as 0.0 for consistency
+                scores = []
+                for er in eval_results:
+                    score_val = getattr(er, 'eval_score', getattr(er, 'final_score', None))
+                    if score_val is not None:
+                        try:
+                            scores.append(float(score_val))
+                        except (ValueError, TypeError):
+                            scores.append(0.0)
+                    else:
+                        scores.append(0.0)
+                avg_score = sum(scores) / total_eval_count if total_eval_count else 0.0
                 
                 # Calculate average evaluation time
                 times = [er.evaluation_time for er in eval_results if er.evaluation_time is not None and er.evaluation_time > 0]
@@ -1297,12 +1319,19 @@ class AgentRunsService:
         
         # Calculate avg_score (average of eval_score from evaluations)
         # This is the success rate: sum of all eval_scores / total evaluations
-        eval_scores = [
-            getattr(er, 'eval_score', getattr(er, 'final_score', None))
-            for er in context.evaluations
-            if getattr(er, 'eval_score', getattr(er, 'final_score', None)) is not None
-        ]
-        avg_score = sum(eval_scores) / len(eval_scores) if eval_scores else 0.0
+        eval_scores = []
+        for er in context.evaluations:
+            eval_score_val = getattr(er, 'eval_score', getattr(er, 'final_score', None))
+            if eval_score_val is not None:
+                try:
+                    eval_scores.append(float(eval_score_val))
+                except (ValueError, TypeError):
+                    # If conversion fails, treat as 0.0
+                    eval_scores.append(0.0)
+            else:
+                # If eval_score is None, treat as 0.0 for failed task
+                eval_scores.append(0.0)
+        avg_score = sum(eval_scores) / total_evaluations if total_evaluations else 0.0
         
         # Calculate avg_time (average of evaluation_time from evaluations)
         times = [
@@ -1326,8 +1355,8 @@ class AgentRunsService:
         # 🔍 CRITICAL FIX: Recalculate rewards if they are 0.0 but there are successful tasks
         # Reward formula: reward = EVAL_SCORE_WEIGHT * eval_score + TIME_WEIGHT * time_score
         # Time score is normalized: (max_time - time) / (max_time - min_time)
-        if rewards:
-            avg_reward = sum(rewards) / len(rewards)
+        if rewards and total_evaluations:
+            avg_reward = sum(rewards) / total_evaluations
             # If avg_reward is 0.0 but avg_score > 0, recalculate rewards with time factor
             # This happens when rewards in DB are 0.0 or None (fallback to eval_score gave 0.0)
             if avg_reward == 0.0 and avg_score > 0.0:
@@ -1374,8 +1403,9 @@ class AgentRunsService:
                         # Task failed - reward is 0.0
                         recalculated_rewards.append(0.0)
                 
-                if recalculated_rewards:
-                    avg_reward = sum(recalculated_rewards) / len(recalculated_rewards)
+                if recalculated_rewards and total_evaluations:
+                    # Use total_evaluations as denominator to include all tasks (successful and failed)
+                    avg_reward = sum(recalculated_rewards) / total_evaluations
                 else:
                     # Fallback: if avg_score > 0, use minimum reward
                     avg_reward = EVAL_SCORE_WEIGHT * avg_score if avg_score > 0.0 else 0.0
@@ -1418,8 +1448,9 @@ class AgentRunsService:
                     else:
                         recalculated_rewards.append(0.0)
                 
-                if recalculated_rewards:
-                    avg_reward = sum(recalculated_rewards) / len(recalculated_rewards)
+                if recalculated_rewards and total_evaluations:
+                    # Use total_evaluations as denominator to include all tasks (successful and failed)
+                    avg_reward = sum(recalculated_rewards) / total_evaluations
                 else:
                     avg_reward = EVAL_SCORE_WEIGHT * avg_score if avg_score > 0.0 else 0.0
             else:
