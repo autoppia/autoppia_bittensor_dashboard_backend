@@ -580,13 +580,36 @@ class OverviewService:
         if display_metrics_round_number < 0:
             display_metrics_round_number = 0
 
+        # Count all unique miners from the metrics round by querying validator_round_summary_miners
+        # This ensures we get all miners from the round, not just those in loaded contexts
+        total_miners_count = len(miners)  # Fallback to context-based count
+        if display_metrics_round_number > 0:
+            try:
+                from app.db.models import RoundORM
+                stmt_total_miners = (
+                    select(func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid)))
+                    .join(
+                        RoundORM,
+                        ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id,
+                    )
+                    .where(
+                        RoundORM.round_number == display_metrics_round_number,
+                        ValidatorRoundSummaryORM.miner_uid.is_not(None),
+                    )
+                )
+                result_total_miners = await self.session.execute(stmt_total_miners)
+                total_miners_count = result_total_miners.scalar() or len(miners)
+            except Exception as e:
+                logger.debug(f"Could not fetch total miners count for round {display_metrics_round_number}: {e}")
+                # Fallback to context-based count
+
         metrics = OverviewMetrics(
             topScore=round(top_score, 3),
             topMinerUid=top_miner_uid,
             topMinerName=top_miner_name,
             totalWebsites=total_websites,
             totalValidators=len(validators),
-            totalMiners=len(miners),
+            totalMiners=total_miners_count,
             currentRound=current_round_value,
             metricsRound=display_metrics_round_number,
             subnetVersion=subnet_version,
