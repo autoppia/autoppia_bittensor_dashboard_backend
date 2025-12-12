@@ -3565,19 +3565,30 @@ class RoundsService:
         
         # Contar miners únicos y tasks desde post_consensus (desde Autoppia)
         if autoppia_validator_round_id:
-            stmt_counts = select(
+            # Contar TODOS los mineros únicos (sin filtrar por tareas recibidas)
+            stmt_miners_count = select(
                 func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid)).label("miners_count"),
+            ).where(
+                ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
+                ValidatorRoundSummaryORM.miner_uid.isnot(None),
+            )
+            result_miners_count = await self.session.execute(stmt_miners_count)
+            miners_count_row = result_miners_count.first()
+            if miners_count_row:
+                aggregated_metrics["miners_evaluated"] = int(miners_count_row.miners_count or 0)
+            
+            # Contar tasks (solo de mineros que tienen tareas recibidas)
+            stmt_tasks_count = select(
                 func.sum(ValidatorRoundSummaryORM.post_consensus_tasks_received).label("tasks_received"),
                 func.sum(ValidatorRoundSummaryORM.post_consensus_tasks_success).label("tasks_success"),
             ).where(
                 ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
                 ValidatorRoundSummaryORM.post_consensus_tasks_received.isnot(None),
             )
-            result_counts = await self.session.execute(stmt_counts)
-            row_counts = result_counts.first()
-            if row_counts:
-                aggregated_metrics["miners_evaluated"] = int(row_counts.miners_count or 0)
-                aggregated_metrics["tasks_evaluated"] = int(row_counts.tasks_success or row_counts.tasks_received or 0)
+            result_tasks_count = await self.session.execute(stmt_tasks_count)
+            tasks_count_row = result_tasks_count.first()
+            if tasks_count_row:
+                aggregated_metrics["tasks_evaluated"] = int(tasks_count_row.tasks_success or tasks_count_row.tasks_received or 0)
         
         # Obtener métricas por validator (LOCAL)
         validators_list = []
@@ -3610,16 +3621,26 @@ class RoundsService:
                 top_summary = result_top.scalar_one_or_none()
             
             # Contar miners y tasks locales
-            stmt_local_counts = select(
+            # Contar TODOS los mineros únicos (sin filtrar por tareas recibidas)
+            stmt_local_miners_count = select(
                 func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid)).label("miners_count"),
+            ).where(
+                ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                ValidatorRoundSummaryORM.miner_uid.isnot(None),
+            )
+            result_local_miners_count = await self.session.execute(stmt_local_miners_count)
+            local_miners_count_row = result_local_miners_count.first()
+            
+            # Contar tasks (solo de mineros que tienen tareas recibidas)
+            stmt_local_tasks_count = select(
                 func.sum(ValidatorRoundSummaryORM.local_tasks_received).label("tasks_received"),
                 func.sum(ValidatorRoundSummaryORM.local_tasks_success).label("tasks_success"),
             ).where(
                 ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
                 ValidatorRoundSummaryORM.local_tasks_received.isnot(None),
             )
-            result_local_counts = await self.session.execute(stmt_local_counts)
-            row_local_counts = result_local_counts.first()
+            result_local_tasks_count = await self.session.execute(stmt_local_tasks_count)
+            local_tasks_count_row = result_local_tasks_count.first()
             
             # ✅ Obtener TODOS los miners de este validator desde validator_round_summary_miners
             stmt_all_miners = select(ValidatorRoundSummaryORM).where(
@@ -3661,8 +3682,8 @@ class RoundsService:
                 "local_avg_winner_score": _truncate_decimal(float(top_summary.local_avg_reward or 0.0), 4) if top_summary else 0.0,  # ✅ Truncar a 4 decimales
                 "topScore": _truncate_decimal(float(top_summary.local_avg_reward or 0.0), 4) if top_summary else 0.0,  # ✅ Top score = local_avg_reward del top miner, truncar a 4 decimales
                 "local_avg_eval_time": _truncate_decimal(float(top_summary.local_avg_eval_time or 0.0), 2) if top_summary else 0.0,
-                "local_miners_evaluated": int(row_local_counts.miners_count or 0) if row_local_counts else 0,
-                "local_tasks_evaluated": int(row_local_counts.tasks_success or row_local_counts.tasks_received or 0) if row_local_counts else 0,
+                "local_miners_evaluated": int(local_miners_count_row.miners_count or 0) if local_miners_count_row else 0,
+                "local_tasks_evaluated": int(local_tasks_count_row.tasks_success or local_tasks_count_row.tasks_received or 0) if local_tasks_count_row else 0,
                 "miners": miners_list,  # ✅ Lista completa de miners
             }
             
