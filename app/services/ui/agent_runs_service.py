@@ -5,7 +5,7 @@ import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from sqlalchemy import String, and_, cast, func, or_, select
@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.db.models import (
     AgentEvaluationRunORM,
     RoundORM,
+    ValidatorRoundMinerORM,
     ValidatorRoundSummaryORM,
 )
 
@@ -197,12 +198,6 @@ class AgentRunsService:
             filters.append(AgentEvaluationRunORM.validator_uid == validator_uid)
         if miner_uid is not None:
             filters.append(AgentEvaluationRunORM.miner_uid == miner_uid)
-        if round_number is not None:
-            filters.append(
-                AgentEvaluationRunORM.validator_round.has(
-                    RoundORM.round_number == round_number
-                )
-            )
         if start_ts is not None:
             filters.append(AgentEvaluationRunORM.started_at >= start_ts)
         if end_ts is not None:
@@ -246,53 +241,136 @@ class AgentRunsService:
                 )
             )
 
-        base_stmt = (
-            select(
-                AgentEvaluationRunORM.agent_run_id,
-                func.count().over().label("full_count"),
+        # Add join with RoundORM if filtering by round_number
+        validator_round_ids: List[str] = []
+        if round_number is not None:
+            # Get all validator_round_ids for this round first
+            stmt_round_ids = select(RoundORM.validator_round_id).where(
+                RoundORM.round_number == round_number
             )
-            .where(*filters)
-            .order_by(
-                order_clause,
-                AgentEvaluationRunORM.agent_run_id.desc(),
+            result_round_ids = await self.session.execute(stmt_round_ids)
+            validator_round_ids = [row[0] for row in result_round_ids.all()]
+            
+            if validator_round_ids:
+                filters.append(AgentEvaluationRunORM.validator_round_id.in_(validator_round_ids))
+        
+        # When filtering by round_number, we need to get all runs (not paginated) to combine with miners without runs
+        if round_number is not None and validator_round_ids:
+            # Get total count of all miners in the round (with and without runs)
+            stmt_total_miners = select(
+                func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid))
+            ).where(
+                ValidatorRoundSummaryORM.validator_round_id.in_(validator_round_ids),
+                ValidatorRoundSummaryORM.miner_uid.isnot(None),
             )
-            .offset(skip)
-            .limit(limit)
-        )
+            result_total_miners = await self.session.scalar(stmt_total_miners)
+            total = int(result_total_miners or 0)
+            
+            # Get all agent runs for this round (without pagination)
+            base_stmt_all = (
+                select(AgentEvaluationRunORM.agent_run_id)
+                .where(*filters)
+            )
+            result_all = await self.session.execute(base_stmt_all)
+            all_agent_run_ids = [row[0] for row in result_all.all()]
+            
+            # Get all miners without runs for this round
+            miners_without_runs = await self._get_miners_without_runs_for_round(
+                validator_round_ids, all_agent_run_ids
+            )
+            
+            # Get contexts for all runs
+            contexts: List[AgentRunContext] = []
+            if all_agent_run_ids:
+                contexts = await self.rounds_service.list_agent_run_contexts(
+                    include_details=True,
+                    agent_run_ids=all_agent_run_ids,
+                )
+            
+            # Calculate ranks for all contexts
+            if contexts:
+                await self._calculate_ranks_for_contexts(contexts)
+            
+            # Fetch consensus scores and miner images
+            consensus_scores = await self._fetch_consensus_scores_for_contexts(contexts) if contexts else {}
+            miner_images = await self._fetch_miner_images_for_contexts(contexts) if contexts else {}
+            
+            # Build all run summaries
+            all_runs = [
+                self._build_run_summary(
+                    context, 
+                    consensus_scores.get(context.run.agent_run_id),
+                    miner_images.get((context.round.validator_round_id, context.run.miner_uid))
+                )
+                for context in contexts
+            ]
+            
+            # Add miners without runs
+            all_runs.extend(miners_without_runs)
+            
+            # Sort all runs according to sort_by and sort_order
+            all_runs = self._sort_runs(all_runs, sort_by, sort_order)
+            
+            # Apply pagination
+            runs = all_runs[skip:skip + limit]
+        else:
+            # Normal pagination for non-round_number filters
+            # First, get the total count using a subquery
+            count_stmt = (
+                select(func.count(func.distinct(AgentEvaluationRunORM.agent_run_id)))
+                .where(*filters)
+            )
+            total = int(await self.session.scalar(count_stmt) or 0)
+            
+            # Then get the paginated results
+            base_stmt = (
+                select(AgentEvaluationRunORM.agent_run_id)
+                .where(*filters)
+                .order_by(
+                    order_clause,
+                    AgentEvaluationRunORM.agent_run_id.desc(),
+                )
+                .offset(skip)
+                .limit(limit)
+            )
 
-        result = await self.session.execute(base_stmt)
-        rows = result.all()
+            result = await self.session.execute(base_stmt)
+            rows = result.all()
 
-        agent_run_ids: List[str] = [row.agent_run_id for row in rows]
-        total: int = int(rows[0].full_count) if rows else 0
+            agent_run_ids: List[str] = [row[0] for row in rows]
 
-        if not agent_run_ids:
-            available_rounds = await self._list_available_round_numbers()
-            return {
-                "runs": [],
-                "total": total,
-                "page": page,
-                "limit": limit,
-                "availableRounds": available_rounds,
-                "selectedRound": round_number,
-            }
+            if not agent_run_ids:
+                available_rounds = await self._list_available_round_numbers()
+                return {
+                    "runs": [],
+                    "total": total,
+                    "page": page,
+                    "limit": limit,
+                    "availableRounds": available_rounds,
+                    "selectedRound": round_number,
+                }
 
-        contexts: List[AgentRunContext] = await self.rounds_service.list_agent_run_contexts(
-            include_details=True,
-            agent_run_ids=agent_run_ids,
-        )
+            contexts = await self.rounds_service.list_agent_run_contexts(
+                include_details=True,
+                agent_run_ids=agent_run_ids,
+            )
 
-        # Calculate ranks for all contexts (with score + time tiebreaker)
-        await self._calculate_ranks_for_contexts(contexts)
+            # Calculate ranks for all contexts
+            await self._calculate_ranks_for_contexts(contexts)
 
-        # Fetch consensus scores for all contexts
-        consensus_scores = await self._fetch_consensus_scores_for_contexts(contexts)
+            # Fetch consensus scores and miner images
+            consensus_scores = await self._fetch_consensus_scores_for_contexts(contexts)
+            miner_images = await self._fetch_miner_images_for_contexts(contexts)
 
-        runs = [
-            self._build_run_summary(context, consensus_scores.get(context.run.agent_run_id))
-            for context in contexts
-        ]
-
+            runs = [
+                self._build_run_summary(
+                    context, 
+                    consensus_scores.get(context.run.agent_run_id),
+                    miner_images.get((context.round.validator_round_id, context.run.miner_uid))
+                )
+                for context in contexts
+            ]
+        
         available_rounds = await self._list_available_round_numbers()
 
         result = {
@@ -552,6 +630,223 @@ class AgentRunsService:
             score_map[agent_run_id] = score_lookup.get(key)
         
         return score_map
+
+    @rollback_on_error
+    async def _fetch_miner_images_for_contexts(
+        self, contexts: List[AgentRunContext]
+    ) -> Dict[Tuple[str, int], Optional[str]]:
+        """Fetch miner images from ValidatorRoundMinerORM for multiple contexts."""
+        if not contexts:
+            return {}
+        
+        # Build a list of (validator_round_id, miner_uid) tuples
+        queries: List[Tuple[str, int]] = []
+        for context in contexts:
+            if context.run.miner_uid and context.round.validator_round_id:
+                queries.append((
+                    context.round.validator_round_id,
+                    context.run.miner_uid,
+                ))
+        
+        if not queries:
+            return {}
+        
+        # Get unique validator_round_ids and miner_uids
+        validator_round_ids = list(set(q[0] for q in queries))
+        miner_uids = list(set(q[1] for q in queries))
+        
+        # Query all miner snapshots at once
+        stmt = select(
+            ValidatorRoundMinerORM.validator_round_id,
+            ValidatorRoundMinerORM.miner_uid,
+            ValidatorRoundMinerORM.image_url,
+            ValidatorRoundMinerORM.name,
+            ValidatorRoundMinerORM.miner_hotkey,
+            ValidatorRoundMinerORM.is_sota,
+        ).where(
+            ValidatorRoundMinerORM.validator_round_id.in_(validator_round_ids),
+            ValidatorRoundMinerORM.miner_uid.in_(miner_uids),
+        )
+        
+        result = await self.session.execute(stmt)
+        rows = result.all()
+        
+        # Build a lookup map: (validator_round_id, miner_uid) -> image_url
+        # Use resolve_agent_image when image_url is None
+        from app.models.core import MinerInfo
+        image_lookup: Dict[Tuple[str, int], Optional[str]] = {}
+        for row in rows:
+            image_url = row.image_url
+            # If image_url is None, use resolve_agent_image
+            if not image_url:
+                miner_info = MinerInfo(
+                    uid=row.miner_uid,
+                    hotkey=row.miner_hotkey or "",
+                    agent_name=row.name or f"Miner {row.miner_uid}",
+                    agent_image="",
+                    is_sota=row.is_sota or False,
+                )
+                image_url = resolve_agent_image(miner_info, existing=None)
+            image_lookup[(row.validator_round_id, row.miner_uid)] = image_url
+        
+        return image_lookup
+
+    @rollback_on_error
+    async def _get_miners_without_runs_for_round(
+        self, validator_round_ids: List[str], existing_agent_run_ids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Get miners from ValidatorRoundSummaryORM that don't have agent runs."""
+        if not validator_round_ids:
+            return []
+        
+        # Get all miners from ValidatorRoundSummaryORM for these rounds
+        stmt_miners = select(
+            ValidatorRoundSummaryORM.validator_round_id,
+            ValidatorRoundSummaryORM.miner_uid,
+            ValidatorRoundSummaryORM.post_consensus_avg_reward,
+            ValidatorRoundSummaryORM.post_consensus_tasks_received,
+            ValidatorRoundSummaryORM.post_consensus_tasks_success,
+        ).where(
+            ValidatorRoundSummaryORM.validator_round_id.in_(validator_round_ids),
+            ValidatorRoundSummaryORM.miner_uid.isnot(None),
+        )
+        
+        result_miners = await self.session.execute(stmt_miners)
+        all_miners = result_miners.all()
+        
+        # Get all miner_uids that have agent runs for these rounds
+        stmt_runs = select(AgentEvaluationRunORM.miner_uid).where(
+            AgentEvaluationRunORM.validator_round_id.in_(validator_round_ids),
+            AgentEvaluationRunORM.miner_uid.isnot(None),
+        ).distinct()
+        
+        result_runs = await self.session.execute(stmt_runs)
+        miners_with_runs = {row[0] for row in result_runs.all()}
+        
+        # Filter out miners that already have runs
+        miners_without_runs = [
+            row for row in all_miners
+            if row.miner_uid not in miners_with_runs
+        ]
+        
+        if not miners_without_runs:
+            return []
+        
+        # Get round info
+        stmt_rounds = select(
+            RoundORM.validator_round_id,
+            RoundORM.round_number,
+        ).where(
+            RoundORM.validator_round_id.in_(validator_round_ids)
+        )
+        result_rounds = await self.session.execute(stmt_rounds)
+        rounds_map = {row.validator_round_id: row for row in result_rounds.all()}
+        
+        # Get validator info
+        from app.db.models import ValidatorRoundValidatorORM
+        validator_round_ids_list = list(set(row.validator_round_id for row in miners_without_runs))
+        stmt_validators = select(
+            ValidatorRoundValidatorORM.validator_round_id,
+            ValidatorRoundValidatorORM.validator_uid,
+            ValidatorRoundValidatorORM.validator_hotkey,
+            ValidatorRoundValidatorORM.name,
+        ).where(
+            ValidatorRoundValidatorORM.validator_round_id.in_(validator_round_ids_list)
+        )
+        result_validators = await self.session.execute(stmt_validators)
+        validators_map = {
+            row.validator_round_id: row
+            for row in result_validators.all()
+        }
+        
+        # Get miner info from ValidatorRoundMinerORM
+        miner_uids = list(set(row.miner_uid for row in miners_without_runs))
+        stmt_miner_info = select(
+            ValidatorRoundMinerORM.validator_round_id,
+            ValidatorRoundMinerORM.miner_uid,
+            ValidatorRoundMinerORM.name,
+            ValidatorRoundMinerORM.miner_hotkey,
+            ValidatorRoundMinerORM.image_url,
+        ).where(
+            ValidatorRoundMinerORM.validator_round_id.in_(validator_round_ids_list),
+            ValidatorRoundMinerORM.miner_uid.in_(miner_uids),
+        )
+        result_miner_info = await self.session.execute(stmt_miner_info)
+        miner_info_map = {
+            (row.validator_round_id, row.miner_uid): row
+            for row in result_miner_info.all()
+        }
+        
+        # Build synthetic run summaries
+        synthetic_runs = []
+        for miner_row in miners_without_runs:
+            validator_round_id = miner_row.validator_round_id
+            miner_uid = miner_row.miner_uid
+            
+            round_info = rounds_map.get(validator_round_id)
+            validator_info = validators_map.get(validator_round_id)
+            miner_info = miner_info_map.get((validator_round_id, miner_uid))
+            
+            if not round_info:
+                continue
+            
+            # Get miner image
+            agent_image = None
+            if miner_info:
+                from app.models.core import MinerInfo
+                from app.utils.images import resolve_agent_image
+                miner_info_obj = MinerInfo(
+                    uid=miner_info.miner_uid,
+                    hotkey=miner_info.miner_hotkey or "",
+                    agent_name=miner_info.name or f"Miner {miner_info.miner_uid}",
+                    agent_image=miner_info.image_url or "",
+                )
+                agent_image = resolve_agent_image(miner_info_obj, existing=miner_info.image_url)
+            
+            # Get validator image
+            validator_image = None
+            if validator_info:
+                from app.utils.images import resolve_validator_image
+                validator_name = validator_info.name or f"Validator {validator_info.validator_uid}"
+                validator_image = resolve_validator_image(validator_name)
+            
+            # Calculate metrics
+            tasks_received = int(miner_row.post_consensus_tasks_received or 0)
+            tasks_success = int(miner_row.post_consensus_tasks_success or 0)
+            tasks_failed = tasks_received - tasks_success
+            avg_score = float(miner_row.post_consensus_avg_reward or 0.0)
+            success_rate = (tasks_success / tasks_received * 100.0) if tasks_received > 0 else 0.0
+            
+            synthetic_runs.append({
+                "runId": f"synthetic_{validator_round_id}_{miner_uid}",
+                "agentId": miner_info.miner_hotkey if miner_info else f"miner_{miner_uid}",
+                "agentUid": miner_uid,
+                "agentHotkey": miner_info.miner_hotkey if miner_info else "",
+                "agentName": miner_info.name if miner_info else f"Miner {miner_uid}",
+                "agentImage": agent_image,
+                "roundId": round_info.round_number or 0,
+                "validatorId": _format_validator_id(validator_info.validator_uid) if validator_info else None,
+                "validatorName": validator_info.name if validator_info else None,
+                "validatorImage": validator_image,
+                "status": "completed" if tasks_received > 0 else "pending",
+                "startTime": None,
+                "endTime": None,
+                "totalTasks": tasks_received,
+                "completedTasks": tasks_success,
+                "successfulTasks": tasks_success,
+                "failedTasks": tasks_failed,
+                "averageScore": avg_score,
+                "score": avg_score,
+                "successRate": success_rate,
+                "overallScore": _safe_int(avg_score * 100),
+                "ranking": 0,  # Will be calculated later if needed
+                "duration": 0,
+                "websitesCount": 0,
+                "totalWebsites": 0,
+                "averageEvaluationTime": None,
+            })
+        
+        return synthetic_runs
 
     @rollback_on_error
     async def get_agent_run(self, agent_run_id: str) -> Optional[AgentRun]:
@@ -1606,7 +1901,7 @@ class AgentRunsService:
         )
 
     def _build_run_summary(
-        self, context: AgentRunContext, consensus_score: Optional[float] = None
+        self, context: AgentRunContext, consensus_score: Optional[float] = None, miner_image: Optional[str] = None
     ) -> Dict[str, object]:
         run_model = context.run
 
@@ -1649,9 +1944,11 @@ class AgentRunsService:
         average_evaluation_time = self._average_evaluation_time(context)
 
         validator_name, validator_image = self._resolve_validator_identity(context)
-        agent_name, _, agent_uid, agent_hotkey, agent_identifier, _ = (
+        agent_name, agent_image_resolved, agent_uid, agent_hotkey, agent_identifier, _ = (
             self._resolve_agent_identity(context)
         )
+        # Use miner_image from DB if available and not empty, otherwise fall back to resolved image
+        agent_image = miner_image if miner_image else agent_image_resolved
         success_count = success_tasks
         success_rate = (success_count / total_tasks * 100.0) if total_tasks else 0.0
         overall_score = _safe_int(average_score * 100)
@@ -1711,6 +2008,7 @@ class AgentRunsService:
             "agentUid": agent_uid,
             "agentHotkey": agent_hotkey,
             "agentName": agent_name,
+            "agentImage": agent_image or None,
             "roundId": round_id_value or 0,
             "validatorId": _format_validator_id(run_model.validator_uid),
             "validatorName": validator_name,
