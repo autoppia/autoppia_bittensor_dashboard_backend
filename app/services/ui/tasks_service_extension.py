@@ -88,6 +88,7 @@ async def get_tasks_with_solutions(
     task_id: Optional[str] = None,
     website: Optional[str] = None,
     use_case: Optional[str] = None,
+    web_version: Optional[str] = None,
     miner_uid: Optional[int] = None,
     agent_id: Optional[str] = None,
     validator_id: Optional[str] = None,
@@ -114,6 +115,8 @@ async def get_tasks_with_solutions(
         selectinload(EvaluationORM.task_solution),
         selectinload(EvaluationORM.agent_run).selectinload(
             AgentEvaluationRunORM.validator_round
+        ).selectinload(
+            RoundORM.validator_snapshot
         ),
     )
 
@@ -124,6 +127,21 @@ async def get_tasks_with_solutions(
     # Filter by task_id
     if task_id:
         filters.append(EvaluationORM.task_id == task_id)
+
+    # Filter by web_version (can be done in SQL since it's a column)
+    if web_version:
+        # Join with TaskORM to filter by web_version
+        # Check if TaskORM is already in the query to avoid duplicate joins
+        if TaskORM not in [t for t in base_stmt.froms]:
+            base_stmt = base_stmt.join(
+                TaskORM,
+                EvaluationORM.task_id == TaskORM.task_id,
+            )
+            count_stmt = count_stmt.join(
+                TaskORM,
+                EvaluationORM.task_id == TaskORM.task_id,
+            )
+        filters.append(TaskORM.web_version == web_version)
 
     # Filter by website/project
     # Note: This filter will be applied in Python after fetching results
@@ -200,26 +218,26 @@ async def get_tasks_with_solutions(
 
     # Filter by score range
     if min_score is not None:
-        filters.append(EvaluationORM.final_score >= (min_score / 100.0))
+        filters.append(EvaluationORM.eval_score >= (min_score / 100.0))
     if max_score is not None:
-        filters.append(EvaluationORM.final_score <= (max_score / 100.0))
+        filters.append(EvaluationORM.eval_score <= (max_score / 100.0))
 
     # Filter by status
     if status:
         status_lower = status.lower()
         if status_lower == "completed":
-            filters.append(EvaluationORM.final_score >= 0.7)
+            filters.append(EvaluationORM.eval_score >= 0.7)
         elif status_lower == "failed":
-            filters.append(EvaluationORM.final_score < 0.7)
+            filters.append(EvaluationORM.eval_score < 0.7)
         elif status_lower == "pending":
-            filters.append(EvaluationORM.final_score.is_(None))
+            filters.append(EvaluationORM.eval_score.is_(None))
 
     # Filter by success (true = score = 1.0, false = score < 1.0)
     if success is not None:
         if success:
-            filters.append(EvaluationORM.final_score == 1.0)
+            filters.append(EvaluationORM.eval_score == 1.0)
         else:
-            filters.append(EvaluationORM.final_score < 1.0)
+            filters.append(EvaluationORM.eval_score < 1.0)
 
     # Apply all filters
     for flt in filters:
@@ -229,7 +247,7 @@ async def get_tasks_with_solutions(
     # Sorting
     sort_columns = {
         "created_at": EvaluationORM.created_at,
-        "score": EvaluationORM.final_score,
+        "score": EvaluationORM.eval_score,
         "duration": EvaluationORM.created_at,  # Fallback to created_at
     }
 
@@ -250,6 +268,7 @@ async def get_tasks_with_solutions(
         base_stmt = base_stmt.offset(fetch_offset).limit(fetch_limit)
     else:
         # Direct SQL pagination - simple: offset and limit
+        # Note: If web_version filter is applied, we already joined TaskORM, so SQL pagination works
         base_stmt = base_stmt.offset(skip).limit(limit)
 
     # Execute queries
@@ -314,21 +333,28 @@ async def get_tasks_with_solutions(
             }
 
         # Score is binary: 0 or 1 (stored as 0.0 or 1.0 in DB)
-        final_score = eval_orm.final_score or 0.0
+        eval_score = eval_orm.eval_score or 0.0
         evaluation_data = {
             "evaluationResultId": eval_orm.evaluation_id,  # Use evaluation_id instead of result_id
-            "score": int(final_score),  # Convert to 0 or 1
-            "passed": final_score >= 1.0,  # True if score = 1, False if score = 0
+            "score": int(eval_score),  # Convert to 0 or 1
+            "passed": eval_score >= 1.0,  # True if score = 1, False if score = 0
         }
 
         agent_data = None
         if agent_run_orm:
+            # Get validator info from validator_round.validator_snapshot
+            validator_uid = None
+            validator_hotkey = None
+            if agent_run_orm.validator_round and agent_run_orm.validator_round.validator_snapshot:
+                validator_uid = agent_run_orm.validator_round.validator_snapshot.validator_uid
+                validator_hotkey = agent_run_orm.validator_round.validator_snapshot.validator_hotkey
+            
             agent_data = {
                 "agentRunId": agent_run_orm.agent_run_id,
                 "minerUid": agent_run_orm.miner_uid,
                 "minerHotkey": agent_run_orm.miner_hotkey,
-                "validatorUid": agent_run_orm.validator_uid,
-                "validatorHotkey": agent_run_orm.validator_hotkey,
+                "validatorUid": validator_uid,
+                "validatorHotkey": validator_hotkey,
             }
 
         tasks_with_solutions.append(
