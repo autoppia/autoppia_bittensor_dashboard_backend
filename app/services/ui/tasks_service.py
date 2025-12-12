@@ -822,6 +822,10 @@ class TasksService:
         )
         if not task_model:
             task_model = self._deserialize_task(task_row)
+        else:
+            # Ensure web_version is set from database if missing in context task
+            if not task_model.web_version and task_row.web_version:
+                task_model.web_version = task_row.web_version
         
         solution_model = next(
             (s for s in context.task_solutions if s.task_id == eval_row.task_id),

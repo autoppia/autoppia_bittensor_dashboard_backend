@@ -3167,6 +3167,10 @@ class RoundsService:
         validator_uid = round_row.validator_snapshot.validator_uid if round_row.validator_snapshot else None
         validator_hotkey = round_row.validator_snapshot.validator_hotkey if round_row.validator_snapshot else None
         validator_coldkey = round_row.validator_snapshot.validator_coldkey if round_row.validator_snapshot else None
+        # Use round_number from validator_snapshot as fallback if not in round_row
+        round_number = round_row.round_number
+        if round_number is None and round_row.validator_snapshot:
+            round_number = round_row.validator_snapshot.round_number
         
         profile = self._build_validator_profile(
             round_row=round_row,
@@ -3235,7 +3239,7 @@ class RoundsService:
 
         return ValidatorRound(
             validator_round_id=round_row.validator_round_id,
-            round_number=round_row.round_number,
+            round_number=round_number,
             validator_uid=validator_info.uid,
             validator_hotkey=validator_info.hotkey,
             validators=validators,
@@ -3384,6 +3388,7 @@ class RoundsService:
                         validator_round_id=task_row.validator_round_id,
                         is_web_real=bool(task_row.is_web_real),
                         web_project_id=task_row.web_project_id,
+                        web_version=task_row.web_version,
                         url=task_row.url or "",
                         prompt=task_row.prompt or "",
                         specifications=task_row.specifications or {},
