@@ -390,6 +390,9 @@ class EvaluationsService:
         data = dict(task_row.data or {})
         data.setdefault("task_id", task_row.task_id)
         data.setdefault("validator_round_id", task_row.validator_round_id)
+        # Include web_version from the database column if not already in data
+        if "web_version" not in data or data.get("web_version") is None:
+            data["web_version"] = task_row.web_version
         return Task(**data)
 
     @staticmethod
