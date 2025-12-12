@@ -812,10 +812,14 @@ class OverviewService:
 
         # Query SQL simplificada usando las nuevas tablas
         # Para cada round_number, obtenemos el miner_uid con el máximo post_consensus_avg_reward
-        # FILTRADO POR VALIDADOR AUTOPPIA (UID 124)
+        # FILTRADO POR VALIDADOR AUTOPPIA (UID 83 o 124 - usa el que tenga datos)
+        
+        # Primero intentar detectar qué validador tiene datos disponibles
+        # Preferir UID 83 (producción) sobre 124 (desarrollo)
+        autoppia_uids = [83, 124]
         
         # Subquery para obtener el máximo post_consensus_avg_reward por round_number
-        # Solo del validador Autoppia (UID 124)
+        # Solo del validador Autoppia (UID 83 o 124)
         max_scores_subq = (
             select(
                 RoundORM.round_number,
@@ -837,13 +841,13 @@ class OverviewService:
             .where(RoundORM.round_number.isnot(None))
             .where(RoundORM.status == "finished")
             .where(ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None))
-            .where(ValidatorRoundValidatorORM.validator_uid == 124)  # Solo Autoppia
+            .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))  # Autoppia (83 o 124)
             .group_by(RoundORM.round_number)
             .subquery()
         )
 
         # Query principal: obtener el ganador (miner_uid con max post_consensus_avg_reward) por round
-        # Solo del validador Autoppia (UID 124)
+        # Solo del validador Autoppia (UID 83 o 124)
         # Incluye reward, score y time del post_consensus
         # Primero obtenemos todos los rounds con datos del validador Autoppia, luego limitamos
         stmt = (
@@ -886,7 +890,7 @@ class OverviewService:
             .where(RoundORM.round_number.isnot(None))
             .where(RoundORM.status == "finished")
             .where(ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None))
-            .where(ValidatorRoundValidatorORM.validator_uid == 124)  # Solo Autoppia
+            .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))  # Autoppia (83 o 124)
             .order_by(
                 RoundORM.round_number.desc(),  # Ordenar por round_number descendente (más reciente primero)
                 ValidatorRoundSummaryORM.post_consensus_avg_reward.desc(),
