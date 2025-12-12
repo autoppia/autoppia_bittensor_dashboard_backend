@@ -36,7 +36,9 @@ module.exports = {
       exec_mode: "fork",
       autorestart: true,
       watch: false,
-      max_memory_restart: "500M",
+      // Increased from 500M to 1G temporarily while debugging memory leaks
+      // TODO: Reduce back to 500M after fixing subtensor resource cleanup
+      max_memory_restart: "1G",
       env: {
         NODE_ENV: "development",
         ENVIRONMENT: "development",
@@ -75,7 +77,9 @@ module.exports = {
       exec_mode: "fork",
       autorestart: true,
       watch: false,
-      max_memory_restart: "500M",
+      // Increased from 500M to 1G temporarily while debugging memory leaks
+      // TODO: Reduce back to 500M after fixing subtensor resource cleanup
+      max_memory_restart: "1G",
       env: {
         NODE_ENV: "production",
         ENVIRONMENT: "production",
