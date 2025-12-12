@@ -72,7 +72,10 @@ class AgentAggregateCacheWarmupRequired(Exception):
     pass
 
 
-ALPHA_EMISSION_PER_EPOCH = 148.0
+# ALPHA_EMISSION_PER_EPOCH moved to settings (app/config.py)
+# Import from settings instead of hardcoding
+from app.config import settings
+
 _EPSILON = 1e-6
 
 
@@ -1478,7 +1481,7 @@ class AgentsService:
             epochs = round_epoch_lengths.get(round_number)
             if epochs is None or epochs <= 0:
                 epochs = self._fallback_round_epochs()
-            reward = ALPHA_EMISSION_PER_EPOCH * epochs
+            reward = settings.ALPHA_EMISSION_PER_EPOCH * epochs
             winner_aggregate = aggregates.get(winner_id)
             if winner_aggregate is not None:
                 winner_aggregate.round_rewards[round_number] = reward

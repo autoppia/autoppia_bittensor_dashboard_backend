@@ -214,7 +214,7 @@ async def get_miner_historical(
         - Summary statistics (rounds won/lost, total tasks, etc.)
         - Performance by website with use cases breakdown
         - Rounds history
-        - Alpha earned calculation (148 * 4 * weight * subnet_price for winners)
+        - Alpha earned calculation (ALPHA_EMISSION_PER_EPOCH * round_epochs * weight, then convert to TAO)
     """
     rounds_service = await _rounds_service(session)
     try:
