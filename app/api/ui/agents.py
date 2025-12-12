@@ -119,12 +119,28 @@ async def get_latest_round_top_miner(
     """
     Get the latest round number and the top miner (post_consensus_rank = 1) for that round.
     Used for initial redirect when accessing /subnet36/agents without parameters.
+    
+    This endpoint uses Redis cache (30s TTL) for ultra-fast responses.
+    Only considers Autoppia validators (83 or 124) for consistency.
     """
+    from app.services.redis_cache import redis_cache
+    
+    # Try Redis cache first
+    cache_key = "latest_round_top_miner"
+    cached_data = redis_cache.get(cache_key)
+    if cached_data is not None:
+        return {"success": True, "data": cached_data}
+    
+    # Cache miss - fetch from database
     rounds_service = await _rounds_service(session)
     try:
         data = await rounds_service.get_latest_round_and_top_miner()
         if data is None:
             raise HTTPException(status_code=404, detail="No rounds available")
+        
+        # Cache in Redis for 30 seconds
+        redis_cache.set(cache_key, data, ttl=30)
+        
         return {"success": True, "data": data}
     except HTTPException:
         raise
