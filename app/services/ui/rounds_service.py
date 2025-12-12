@@ -4476,6 +4476,47 @@ class RoundsService:
                 website_stats[website]["use_cases"][use_case_name]["total_duration"] += total_duration
                 website_stats[website]["use_cases"][use_case_name]["duration_count"] += tasks_count
         
+        # Collect task details grouped by website/use case
+        score_expr = func.coalesce(EvaluationORM.eval_score, 0.0).label("score")
+        task_details_stmt = (
+            select(
+                EvaluationORM.evaluation_id,
+                EvaluationORM.task_id,
+                EvaluationORM.agent_run_id,
+                score_expr,
+                func.coalesce(EvaluationORM.evaluation_time, 0.0).label("evaluation_time"),
+                func.coalesce(TaskORM.url, "").label("url"),
+                func.coalesce(TaskORM.web_project_id, "unknown").label("website"),
+                func.coalesce(TaskORM.prompt, "").label("prompt"),
+                use_case_name_expr,
+                RoundORM.round_number.label("round_number"),
+            )
+            .join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
+            .join(RoundORM, TaskORM.validator_round_id == RoundORM.validator_round_id)
+            .where(EvaluationORM.miner_uid == miner_uid)
+        )
+        task_details_result = await self.session.execute(task_details_stmt)
+        tasks_by_use_case: Dict[tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+        for row in task_details_result.all():
+            website = row.website or "unknown"
+            use_case_name = row.use_case_name or "Unknown"
+            score_value = float(row.score or 0.0)
+            tasks_by_use_case[(website, use_case_name)].append(
+                {
+                    "taskId": row.task_id,
+                    "evaluationId": row.evaluation_id,
+                    "agentRunId": row.agent_run_id,
+                    "round": row.round_number,
+                    "score": _truncate_decimal(score_value, 4),
+                    "status": "successful" if score_value >= 0.5 else "failed",
+                    "evaluationTime": _truncate_decimal(
+                        float(row.evaluation_time or 0.0), 2
+                    ),
+                    "url": row.url,
+                    "prompt": row.prompt or "",
+                }
+            )
+        
         # Build performance by website
         performance_by_website = []
         for website, stats in website_stats.items():
@@ -4498,6 +4539,7 @@ class RoundsService:
                     "successful": uc_stats["successful"],
                     "failed": uc_stats["failed"],
                     "averageDuration": _truncate_decimal(uc_avg_duration, 2),
+                    "taskDetails": tasks_by_use_case.get((website, use_case_name), []),
                 })
             
             performance_by_website.append({
