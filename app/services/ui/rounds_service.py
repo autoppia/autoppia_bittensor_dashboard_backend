@@ -3951,6 +3951,7 @@ class RoundsService:
                 RoundORM.round_number == round_number,
                 ValidatorRoundValidatorORM.validator_uid == AUTOPPIA_UID,
                 ValidatorRoundSummaryORM.miner_uid == miner_uid,
+                ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,  # Exclude burn UID
             )
             .limit(1)
         )
@@ -3964,6 +3965,7 @@ class RoundsService:
                 .where(
                     ValidatorRoundSummaryORM.validator_round_id.in_(validator_round_ids),
                     ValidatorRoundSummaryORM.miner_uid == miner_uid,
+                    ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,  # Exclude burn UID
                 )
                 .limit(1)
             )
@@ -4684,8 +4686,13 @@ class RoundsService:
         Returns None if no rounds exist.
         
         This is a lightweight query optimized for the initial redirect.
+        Only considers Autoppia validators (83 or 124) for consistency.
         """
+        # FILTRADO POR VALIDADOR AUTOPPIA (UID 83 o 124)
+        autoppia_uids = [83, 124]
+        
         # Get latest round that already has post-consensus rankings (post_consensus_rank = 1)
+        # Only from Autoppia validators
         stmt = (
             select(
                 RoundORM.round_number,
@@ -4696,9 +4703,15 @@ class RoundsService:
                 ValidatorRoundSummaryORM,
                 ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id,
             )
+            .join(
+                ValidatorRoundValidatorORM,
+                RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+            )
             .where(
                 RoundORM.round_number.is_not(None),
                 ValidatorRoundSummaryORM.post_consensus_rank == 1,
+                ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids),  # Solo Autoppia (83 o 124)
+                ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,  # Exclude burn UID
             )
             .order_by(RoundORM.round_number.desc())
             .limit(1)
