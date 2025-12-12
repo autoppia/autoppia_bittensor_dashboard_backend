@@ -257,11 +257,13 @@ class AgentRunsService:
         # When filtering by round_number, we need to get all runs (not paginated) to combine with miners without runs
         if round_number is not None and validator_round_ids:
             # Get total count of all miners in the round (with and without runs)
+            # Exclude burn UID
             stmt_total_miners = select(
                 func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid))
             ).where(
                 ValidatorRoundSummaryORM.validator_round_id.in_(validator_round_ids),
                 ValidatorRoundSummaryORM.miner_uid.isnot(None),
+                ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,  # Exclude burn UID
             )
             result_total_miners = await self.session.scalar(stmt_total_miners)
             total = int(result_total_miners or 0)
@@ -700,6 +702,7 @@ class AgentRunsService:
             return []
         
         # Get all miners from ValidatorRoundSummaryORM for these rounds
+        # Exclude burn UID which should never have agent_runs
         stmt_miners = select(
             ValidatorRoundSummaryORM.validator_round_id,
             ValidatorRoundSummaryORM.miner_uid,
@@ -709,6 +712,7 @@ class AgentRunsService:
         ).where(
             ValidatorRoundSummaryORM.validator_round_id.in_(validator_round_ids),
             ValidatorRoundSummaryORM.miner_uid.isnot(None),
+            ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,  # Exclude burn UID
         )
         
         result_miners = await self.session.execute(stmt_miners)
@@ -723,10 +727,10 @@ class AgentRunsService:
         result_runs = await self.session.execute(stmt_runs)
         miners_with_runs = {row[0] for row in result_runs.all()}
         
-        # Filter out miners that already have runs
+        # Filter out miners that already have runs and exclude burn UID
         miners_without_runs = [
             row for row in all_miners
-            if row.miner_uid not in miners_with_runs
+            if row.miner_uid not in miners_with_runs and row.miner_uid != settings.BURN_UID
         ]
         
         if not miners_without_runs:
