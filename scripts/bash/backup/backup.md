@@ -57,19 +57,25 @@ Variables principales:
 
 Password:
 
-- Si `PGPASSWORD` no está definida, el script exporta:
-  - `PGPASSWORD="Autoppia2025.Leaderboard.Production"`
+- Si `PGPASSWORD` no está definida, el script exporta una contraseña fija para ejecución no interactiva (cron).
 
 > Nota: al estar embebida en el script, cualquiera con acceso al archivo puede leerla.
 
 ---
 
-## Ubicación y permisos recomendados
+## Ubicación del script
 
-Ejemplo (root):
+Ruta del script:
 
-- Ruta: `/root/backup.sh`
-- Permisos:
-  ```bash
-  chmod +x /root/backup.sh
+- `~/autoppia_bittensor_dashboard_backend/scripts/bash/backup/backup.sh`
 
+> Importante: en `cron` conviene usar **ruta absoluta** (sin `~`).  
+> Si el usuario que ejecuta el cron es `root`, el equivalente es:
+> `/root/autoppia_bittensor_dashboard_backend/scripts/bash/backup/backup.sh`
+
+---
+
+## Permisos recomendados
+
+```bash
+chmod +x /root/autoppia_bittensor_dashboard_backend/scripts/bash/backup/backup.sh
