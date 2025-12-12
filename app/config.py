@@ -29,7 +29,7 @@ if ENVIRONMENT not in ("local", "development", "production"):
     )
 
 # TESTING mode: Independent of ENVIRONMENT
-# TESTING=true → use testing round config (ROUND_SIZE_EPOCHS=0.208)
+# TESTING=true → use testing round config (ROUND_SIZE_EPOCHS=0.347)
 # TESTING=false → use production round config (ROUND_SIZE_EPOCHS=3.0)
 # This allows running in production environment but with testing round sizes
 _legacy_testing = os.getenv("TESTING")
@@ -112,7 +112,7 @@ class Settings(BaseSettings):
         # Production mode: Long rounds (~4.8 hours) - matches validator TESTING=false
         ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "3.0"))
     BLOCKS_PER_EPOCH: int = int(_env_var("BLOCKS_PER_EPOCH", "360"))
-    DZ_STARTING_BLOCK: int = int(_env_var("DZ_STARTING_BLOCK", "6949035"))
+    DZ_STARTING_BLOCK: int = int(_env_var("DZ_STARTING_BLOCK", "7084057"))
 
     # Chain state
     CHAIN_BLOCK_CACHE_TTL_SECONDS: int = 15 * 60
