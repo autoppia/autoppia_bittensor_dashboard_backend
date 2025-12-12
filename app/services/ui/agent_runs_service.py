@@ -1318,30 +1318,59 @@ class AgentRunsService:
         failed_evaluations = max(total_evaluations - successful_evaluations, 0)
         
         # Calculate avg_score: simple average of all eval_scores
+        # Sum all eval_scores from evaluations and divide by total count
         eval_scores_sum = 0.0
         for er in context.evaluations:
-            eval_score_val = getattr(er, 'eval_score', None) or getattr(er, 'final_score', None)
-            eval_score_val = float(eval_score_val) if eval_score_val is not None else 0.0
+            # Get eval_score, check if it exists (not None), otherwise try final_score
+            eval_score_val = getattr(er, 'eval_score', None)
+            if eval_score_val is None:
+                eval_score_val = getattr(er, 'final_score', None)
+            # Convert to float, use 0.0 if None
+            if eval_score_val is None:
+                eval_score_val = 0.0
+            else:
+                try:
+                    eval_score_val = float(eval_score_val)
+                except (ValueError, TypeError):
+                    eval_score_val = 0.0
             eval_scores_sum += eval_score_val
-        avg_score = eval_scores_sum / total_evaluations if total_evaluations > 0 else 0.0
+        # Use total_evaluations to ensure we're dividing by the correct count
+        overall_avg_score = eval_scores_sum / total_evaluations if total_evaluations > 0 else 0.0
         
         # Calculate avg_reward: simple average of all rewards
+        # Sum all rewards from evaluations and divide by total count
         rewards_sum = 0.0
         for er in context.evaluations:
+            # Get reward, fallback to eval_score if None
             reward_val = getattr(er, 'reward', None)
             if reward_val is None:
-                # Fallback to eval_score if reward is None
-                reward_val = getattr(er, 'eval_score', None) or getattr(er, 'final_score', None)
-            reward_val = float(reward_val) if reward_val is not None else 0.0
+                reward_val = getattr(er, 'eval_score', None)
+                if reward_val is None:
+                    reward_val = getattr(er, 'final_score', None)
+            # Convert to float, use 0.0 if None
+            if reward_val is None:
+                reward_val = 0.0
+            else:
+                try:
+                    reward_val = float(reward_val)
+                except (ValueError, TypeError):
+                    reward_val = 0.0
             rewards_sum += reward_val
-        avg_reward = rewards_sum / total_evaluations if total_evaluations > 0 else 0.0
+        # Use total_evaluations to ensure we're dividing by the correct count
+        overall_avg_reward = rewards_sum / total_evaluations if total_evaluations > 0 else 0.0
         
-        # Calculate avg_time: simple average of all evaluation_times (use 0.0 if None)
+        # Calculate avg_time: simple average of all evaluation_times
+        # Sum all evaluation_times and divide by total count (use 0.0 if None)
         times_sum = 0.0
         for er in context.evaluations:
-            eval_time = float(er.evaluation_time) if er.evaluation_time is not None else 0.0
+            eval_time = getattr(er, 'evaluation_time', None)
+            try:
+                eval_time = float(eval_time) if eval_time is not None else 0.0
+            except (ValueError, TypeError):
+                eval_time = 0.0
             times_sum += eval_time
-        avg_time = times_sum / total_evaluations if total_evaluations > 0 else 0.0
+        # Use total_evaluations to ensure we're dividing by the correct count
+        overall_avg_time = times_sum / total_evaluations if total_evaluations > 0 else 0.0
         
         # Group evaluations by website and useCase
         from collections import defaultdict
@@ -1429,20 +1458,20 @@ class AgentRunsService:
                     use_case_failed = int(use_case_values["failed"])
                     
                     # avgScore is success rate (0-1): successful / total (same as website level)
-                    avg_score = (use_case_successful / use_case_evaluations) if use_case_evaluations > 0 else 0.0
+                    use_case_avg_score = (use_case_successful / use_case_evaluations) if use_case_evaluations > 0 else 0.0
                     # avg_reward is average of reward (0-1)
-                    avg_reward = (use_case_values["reward_sum"] / use_case_evaluations) if use_case_evaluations > 0 else 0.0
+                    use_case_avg_reward = (use_case_values["reward_sum"] / use_case_evaluations) if use_case_evaluations > 0 else 0.0
                     # avg_time is average of eval_time
-                    avg_time = (use_case_values["duration_sum"] / use_case_evaluations) if use_case_evaluations > 0 else 0.0
+                    use_case_avg_time = (use_case_values["duration_sum"] / use_case_evaluations) if use_case_evaluations > 0 else 0.0
                     
                     stats_by_usecase.append({
                         "useCase": use_case_key,
                         "total": use_case_evaluations,
                         "successful": use_case_successful,
                         "failed": use_case_failed,
-                        "avgScore": avg_score,  # Success rate (0-1): successful/total
-                        "avgReward": avg_reward,  # Average reward (0-1)
-                        "avgTime": avg_time,  # Average eval_time
+                        "avgScore": use_case_avg_score,  # Success rate (0-1): successful/total
+                        "avgReward": use_case_avg_reward,  # Average reward (0-1)
+                        "avgTime": use_case_avg_time,  # Average eval_time
                     })
             
             performance_by_website.append({
@@ -1459,9 +1488,9 @@ class AgentRunsService:
         return {
             "totalTasks": total_evaluations,  # Actually total evaluations
             "websites": len(websites_set),
-            "avg_score": float(avg_score),  # Ensure it's a float, not int
-            "avg_reward": float(avg_reward),  # Ensure it's a float, not int
-            "avg_time": float(avg_time) if avg_time else 0.0,
+            "avg_score": float(overall_avg_score),  # Ensure it's a float, not int
+            "avg_reward": float(overall_avg_reward),  # Ensure it's a float, not int
+            "avg_time": float(overall_avg_time) if overall_avg_time else 0.0,
             "successfulTasks": successful_evaluations,  # Actually successful evaluations
             "failedTasks": failed_evaluations,  # Actually failed evaluations
             "performanceByWebsite": performance_by_website,
