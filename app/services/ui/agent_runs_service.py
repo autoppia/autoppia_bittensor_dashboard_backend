@@ -18,6 +18,7 @@ from app.db.models import (
     ValidatorRoundSummaryORM,
 )
 
+from app.config import settings
 from app.models.core import Evaluation, Task, TaskSolution
 from app.models.ui.agent_runs import (
     Action,
@@ -189,6 +190,9 @@ class AgentRunsService:
             order_clause = order_expr.asc()
 
         filters: List[Any] = []
+        # Exclude burn UID which should never have agent_runs
+        filters.append(AgentEvaluationRunORM.miner_uid != settings.BURN_UID)
+        
         if validator_uid is not None:
             filters.append(AgentEvaluationRunORM.validator_uid == validator_uid)
         if miner_uid is not None:
