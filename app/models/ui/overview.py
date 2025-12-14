@@ -26,6 +26,7 @@ class OverviewMetrics(BaseModel):
 
     topMinerUid: Optional[int] = None
     topMinerName: Optional[str] = None
+    topReward: float = 0.0  # post_consensus_avg_reward of the top miner
     totalWebsites: int
     totalValidators: int
     totalMiners: int

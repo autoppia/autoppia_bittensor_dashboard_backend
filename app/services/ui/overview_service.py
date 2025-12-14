@@ -44,7 +44,7 @@ from app.utils.images import resolve_validator_image
 from app.services.service_utils import rollback_on_error
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # Temporarily enable INFO for debugging
+logger.setLevel(logging.INFO)  # Enable INFO for debugging top miner query
 
 
 class ValidatorState(Enum):
@@ -140,11 +140,22 @@ class OverviewService:
 
     @rollback_on_error
     async def overview_metrics(self) -> OverviewMetrics:
-        # Try to get from Redis cache first (10 minute TTL)
+        # Try to get from Redis cache first (15 minute TTL)
         cache_key = "overview:metrics:aggregate"
         cached = redis_cache.get(cache_key)
         if cached is not None:
-            return cached
+            cached_top_uid = getattr(cached, 'topMinerUid', None)
+            cached_top_reward = getattr(cached, 'topReward', 0)
+            logger.info("Returning cached overview metrics (topMinerUid=%s, topReward=%s)", 
+                       cached_top_uid, cached_top_reward)
+            # If cache has null/0 values, invalidate and recompute
+            if cached_top_uid is None and cached_top_reward == 0.0:
+                logger.warning("Cache has null/0 values - invalidating and recomputing")
+                redis_cache.delete(cache_key)
+            else:
+                return cached
+        
+        logger.info("Cache miss - computing fresh overview metrics")
 
         records_with_contexts = await self._recent_round_records(
             limit=10,
@@ -154,7 +165,7 @@ class OverviewService:
         if not records_with_contexts:
             now_iso = datetime.now(timezone.utc).isoformat()
             return OverviewMetrics(
-                topScore=0.0,
+                topReward=0.0,
                 totalWebsites=0,
                 totalValidators=0,
                 totalMiners=0,
@@ -274,7 +285,8 @@ class OverviewService:
             target_records = [records_with_contexts[0]]
             metrics_round_number = _round_number(target_records[0][0])
 
-        top_score = 0.0
+        # This top_score is for aggregating scores from contexts (legacy, not used for top miner)
+        context_top_score = 0.0
         validators: set[int] = set()
         miners: set[str] = set()
         version_candidates: List[str] = []
@@ -431,8 +443,8 @@ class OverviewService:
                     round_top = max(
                         winner.get("score", 0.0) for winner in round_obj.winners
                     )
-                    top_score = max(top_score, round(round_top, 6))
-                    logger.info(f"Using winners: top_score={round_top}")
+                    context_top_score = max(context_top_score, round(round_top, 6))
+                    logger.info(f"Using winners: context_top_score={round_top}")
                 else:
                     # Fallback: first try consensus scores, then query evaluations directly from DB
                     logger.info(
@@ -520,42 +532,167 @@ class OverviewService:
         top_miner_name = None
         top_score = 0.0
 
-        # Query directly from validator_round_summary_miners for the metrics round
-        if metrics_round_number and metrics_round_number > 0:
-            try:
-                # Get the best post_consensus_avg_reward for this round
+        # Query: Get the latest FINISHED validator_round_id from validator 83 or 124 (Autoppia)
+        # Then get the top miner from that specific validator_round_id using post_consensus_avg_reward
+        try:
+            autoppia_uids = [83, 124]
+            logger.info(
+                "Starting query for top miner from Autoppia validators: %s",
+                autoppia_uids,
+            )
+
+            # First: find the latest finished validator_round_id for Autoppia validators
+            stmt_latest_validator_round = (
+                select(
+                    RoundORM.validator_round_id,
+                    RoundORM.round_number,
+                    ValidatorRoundValidatorORM.validator_uid,
+                    RoundORM.status,
+                )
+                .select_from(
+                    RoundORM.__table__.join(
+                        ValidatorRoundValidatorORM.__table__,
+                        RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+                    )
+                )
+                .where(
+                    ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids),
+                    RoundORM.round_number.is_not(None),
+                    RoundORM.status == "finished",
+                )
+                .order_by(
+                    RoundORM.round_number.desc(),
+                    func.coalesce(RoundORM.ended_at, RoundORM.started_at).desc(),
+                )
+                .limit(1)
+            )
+            result_latest_validator_round = await self.session.execute(
+                stmt_latest_validator_round
+            )
+            latest_validator_round_row = result_latest_validator_round.first()
+
+            # Fallback: if no finished round exists, take the latest by round_number (any status)
+            if not latest_validator_round_row:
+                logger.warning(
+                    "No finished round found for Autoppia validators (%s); falling back to latest round regardless of status",
+                    autoppia_uids,
+                )
+                stmt_fallback_any_status = (
+                    select(
+                        RoundORM.validator_round_id,
+                        RoundORM.round_number,
+                        ValidatorRoundValidatorORM.validator_uid,
+                        RoundORM.status,
+                    )
+                    .select_from(
+                        RoundORM.__table__.join(
+                            ValidatorRoundValidatorORM.__table__,
+                            RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+                        )
+                    )
+                    .where(
+                        ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids),
+                        RoundORM.round_number.is_not(None),
+                    )
+                    .order_by(
+                        RoundORM.round_number.desc(),
+                        func.coalesce(RoundORM.ended_at, RoundORM.started_at).desc(),
+                    )
+                    .limit(1)
+                )
+                fallback_any_status = await self.session.execute(
+                    stmt_fallback_any_status
+                )
+                latest_validator_round_row = fallback_any_status.first()
+
+            if latest_validator_round_row:
+                latest_validator_round_id = latest_validator_round_row.validator_round_id
+                latest_round_number = latest_validator_round_row.round_number
+                validator_uid_found = latest_validator_round_row.validator_uid
+                latest_status = getattr(latest_validator_round_row, "status", "unknown")
+                logger.info(
+                    "✅ Using validator_round_id %s (round %s, validator UID %s, status=%s)",
+                    latest_validator_round_id,
+                    latest_round_number,
+                    validator_uid_found,
+                    latest_status,
+                )
+
+                # Debug: Count total miners in this round
+                stmt_count = (
+                    select(func.count(ValidatorRoundSummaryORM.miner_uid))
+                    .where(ValidatorRoundSummaryORM.validator_round_id == latest_validator_round_id)
+                )
+                count_result = await self.session.execute(stmt_count)
+                total_miners_in_round = count_result.scalar() or 0
+                logger.info(f"Total miners in validator_round_id {latest_validator_round_id}: {total_miners_in_round}")
+                
+                # Debug: Check if there are any miners with post_consensus_avg_reward
+                stmt_check_reward = (
+                    select(func.count(ValidatorRoundSummaryORM.miner_uid))
+                    .where(
+                        ValidatorRoundSummaryORM.validator_round_id == latest_validator_round_id,
+                        ValidatorRoundSummaryORM.post_consensus_avg_reward.is_not(None),
+                    )
+                )
+                check_result = await self.session.execute(stmt_check_reward)
+                miners_with_reward = check_result.scalar() or 0
+                logger.info(f"Miners with post_consensus_avg_reward in {latest_validator_round_id}: {miners_with_reward}")
+                
+                # Second: Get the top miner (max post_consensus_avg_reward) from that specific validator_round_id
+                # Try to get one with post_consensus_avg_reward > 0 first, otherwise get any (even if 0.0)
                 stmt = (
                     select(
                         ValidatorRoundSummaryORM.miner_uid,
                         ValidatorRoundSummaryORM.post_consensus_avg_reward,
                     )
-                    .join(
-                        RoundORM,
-                        ValidatorRoundSummaryORM.validator_round_id
-                        == RoundORM.validator_round_id,
+                    .where(
+                        ValidatorRoundSummaryORM.validator_round_id == latest_validator_round_id,
+                        ValidatorRoundSummaryORM.post_consensus_avg_reward.is_not(None),
+                        ValidatorRoundSummaryORM.post_consensus_avg_reward > 0.0,
                     )
-                    .where(RoundORM.round_number == metrics_round_number)
-                    .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc().nulls_last())
+                    .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc())
                     .limit(1)
                 )
                 result = await self.session.execute(stmt)
                 row = result.first()
-                
+                logger.info(f"Query for miners with reward > 0 returned: {row is not None}")
+
+                # If no miner with reward > 0, try to get any miner (even with 0.0)
+                if not row:
+                    logger.info(f"No miner with post_consensus_avg_reward > 0 in {latest_validator_round_id}, trying any miner")
+                    stmt_fallback = (
+                        select(
+                            ValidatorRoundSummaryORM.miner_uid,
+                            ValidatorRoundSummaryORM.post_consensus_avg_reward,
+                        )
+                        .where(
+                            ValidatorRoundSummaryORM.validator_round_id == latest_validator_round_id,
+                            ValidatorRoundSummaryORM.post_consensus_avg_reward.is_not(None),
+                        )
+                        .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc())
+                        .limit(1)
+                    )
+                    result_fallback = await self.session.execute(stmt_fallback)
+                    row = result_fallback.first()
+                    logger.info(f"Fallback query returned: {row is not None}")
+
                 if row and row.post_consensus_avg_reward is not None:
                     top_miner_uid = row.miner_uid
                     top_score = float(row.post_consensus_avg_reward)
-                    
-                    # Get miner name from validator_round_miners
+                    logger.info(
+                        "Found top miner: UID %s, reward %s from validator_round_id %s",
+                        top_miner_uid,
+                        top_score,
+                        latest_validator_round_id,
+                    )
+
+                    # Get miner name from validator_round_miners using the validator_round_id
                     try:
                         stmt_name = (
                             select(ValidatorRoundMinerORM.name)
-                            .join(
-                                RoundORM,
-                                ValidatorRoundMinerORM.validator_round_id
-                                == RoundORM.validator_round_id,
-                            )
                             .where(
-                                RoundORM.round_number == metrics_round_number,
+                                ValidatorRoundMinerORM.validator_round_id == latest_validator_round_id,
                                 ValidatorRoundMinerORM.miner_uid == top_miner_uid,
                             )
                             .limit(1)
@@ -564,12 +701,60 @@ class OverviewService:
                         miner_name_row = result_name.scalar_one_or_none()
                         if miner_name_row:
                             top_miner_name = miner_name_row
+                            logger.info(f"Found miner name: {top_miner_name}")
                     except Exception as e:
-                        logger.debug(
+                        logger.warning(
                             f"Could not fetch miner name for UID {top_miner_uid}: {e}"
                         )
-            except Exception as e:
-                logger.debug(f"Could not fetch top score for round {metrics_round_number}: {e}")
+                else:
+                    # Check if there are any miners at all in this round
+                    stmt_check = (
+                        select(func.count(ValidatorRoundSummaryORM.miner_uid))
+                        .where(ValidatorRoundSummaryORM.validator_round_id == latest_validator_round_id)
+                    )
+                    count_result = await self.session.execute(stmt_check)
+                    count = count_result.scalar() or 0
+                    
+                    # Debug: Get all miners with their rewards to see what we have
+                    stmt_debug_all = (
+                        select(
+                            ValidatorRoundSummaryORM.miner_uid,
+                            ValidatorRoundSummaryORM.post_consensus_avg_reward,
+                        )
+                        .where(ValidatorRoundSummaryORM.validator_round_id == latest_validator_round_id)
+                        .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc().nulls_last())
+                        .limit(5)
+                    )
+                    debug_result = await self.session.execute(stmt_debug_all)
+                    debug_rows = debug_result.all()
+                    logger.warning(
+                        f"❌ No top miner found in validator_round_id {latest_validator_round_id} "
+                        f"with post_consensus_avg_reward. Total miners in round: {count}"
+                    )
+                    if debug_rows:
+                        logger.warning(f"Sample miners in round: {[(r.miner_uid, r.post_consensus_avg_reward) for r in debug_rows]}")
+                    else:
+                        logger.warning(f"No miners found at all in validator_round_id {latest_validator_round_id}")
+            else:
+                logger.warning("❌ No validator_round_id found for Autoppia validators (83 or 124)")
+                # Debug: Check if there are any rounds at all for these validators
+                stmt_debug = (
+                    select(func.count(RoundORM.validator_round_id))
+                    .select_from(
+                        RoundORM.__table__.join(
+                            ValidatorRoundValidatorORM.__table__,
+                            RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+                        )
+                    )
+                    .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))
+                )
+                debug_result = await self.session.execute(stmt_debug)
+                debug_count = debug_result.scalar() or 0
+                logger.warning(f"Debug: Found {debug_count} total rounds for Autoppia validators {autoppia_uids}")
+        except Exception as e:
+            logger.error(f"❌ Error fetching top miner from latest round: {e}", exc_info=True)
+            # Don't let the error prevent the rest of the metrics from being calculated
+            # top_miner_uid, top_miner_name, and top_score will remain None/None/0.0
 
         subnet_version = version_candidates[0] if version_candidates else "1.0.0"
         total_websites = (
@@ -585,7 +770,7 @@ class OverviewService:
         total_miners_count = len(miners)  # Fallback to context-based count
         if display_metrics_round_number > 0:
             try:
-                from app.db.models import RoundORM
+                # RoundORM is already imported at the top of the file
                 stmt_total_miners = (
                     select(func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid)))
                     .join(
@@ -604,7 +789,7 @@ class OverviewService:
                 # Fallback to context-based count
 
         metrics = OverviewMetrics(
-            topScore=round(top_score, 3),
+            topReward=round(top_score, 3),
             topMinerUid=top_miner_uid,
             topMinerName=top_miner_name,
             totalWebsites=total_websites,
@@ -616,8 +801,23 @@ class OverviewService:
             lastUpdated=datetime.now(timezone.utc).isoformat(),
         )
 
-        # Cache metrics for 10 minutes in Redis (shared across all workers)
-        redis_cache.set(cache_key, metrics, ttl=600)
+        logger.info(
+            "✅ Final metrics computed: topMinerUid=%s, topMinerName=%s, topReward=%s, metricsRound=%s",
+            metrics.topMinerUid,
+            metrics.topMinerName,
+            metrics.topReward,
+            metrics.metricsRound,
+        )
+
+        # Only cache if we have valid top miner data, otherwise don't cache to force recalculation
+        if metrics.topMinerUid is not None and metrics.topReward > 0.0:
+            # Cache metrics for 15 minutes in Redis (shared across all workers)
+            redis_cache.set(cache_key, metrics, ttl=900)
+            logger.info("Cached metrics in Redis with key: %s (TTL: 15 minutes) - topMinerUid=%s, topReward=%s", 
+                       cache_key, metrics.topMinerUid, metrics.topReward)
+        else:
+            logger.warning("NOT caching metrics - topMinerUid=%s, topReward=%s (will force recalculation next time)", 
+                          metrics.topMinerUid, metrics.topReward)
         return metrics
 
     @rollback_on_error
