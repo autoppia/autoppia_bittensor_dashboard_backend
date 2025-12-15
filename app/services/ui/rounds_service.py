@@ -3680,10 +3680,16 @@ class RoundsService:
                 }
                 miners_list.append(miner_data)
             
+            # Resolver imagen del validador
+            from app.utils.images import resolve_validator_image
+            validator_name = validator_info.name or f"Validator {validator_info.validator_uid}"
+            validator_image = resolve_validator_image(validator_name)
+            
             validator_data = {
                 "validator_uid": validator_info.validator_uid,
-                "validator_name": validator_info.name or f"Validator {validator_info.validator_uid}",
+                "validator_name": validator_name,
                 "validator_hotkey": validator_info.validator_hotkey,
+                "validator_image": validator_image,  # ✅ Agregado campo de imagen del validador
                 "local_avg_winner_score": _truncate_decimal(float(top_summary.local_avg_reward or 0.0), 4) if top_summary else 0.0,  # ✅ Truncar a 4 decimales
                 "topScore": _truncate_decimal(float(top_summary.local_avg_reward or 0.0), 4) if top_summary else 0.0,  # ✅ Top score = local_avg_reward del top miner, truncar a 4 decimales
                 "local_avg_eval_time": _truncate_decimal(float(top_summary.local_avg_eval_time or 0.0), 2) if top_summary else 0.0,
