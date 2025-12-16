@@ -101,6 +101,9 @@ async def get_validators_filter(
 
 
 @router.get("/validators/{validator_id}", response_model=ValidatorDetailResponse)
+@cache(
+    "validator_detail", ttl=180
+)  # Cache 3 minutes - similar to validators_list
 async def get_validator_detail(
     validator_id: str, session: AsyncSession = Depends(get_session)
 ) -> ValidatorDetailResponse:
