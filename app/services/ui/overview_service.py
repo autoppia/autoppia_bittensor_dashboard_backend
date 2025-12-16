@@ -849,13 +849,27 @@ class OverviewService:
 
     @rollback_on_error
     async def validator_detail(self, validator_id: str) -> Dict[str, Any]:
-        validators = await self._aggregate_validators()
-        validator = validators.get(validator_id)
-        if not validator:
-            raise ValueError(f"Validator {validator_id} not found")
+        # Optimización: Primero intentar obtener del caché completo de validators
+        # Si no está disponible, construir solo el validador solicitado en lugar de todos
+        cache_key_aggregate = "overview:validators:aggregate"
+        cached_validators = redis_cache.get(cache_key_aggregate)
         
-        # Crear una copia del diccionario para poder modificarlo (puede venir de cache)
-        validator = dict(validator)
+        if cached_validators is not None:
+            validator = cached_validators.get(validator_id)
+            if validator:
+                # Crear una copia del diccionario para poder modificarlo (puede venir de cache)
+                validator = dict(validator)
+            else:
+                raise ValueError(f"Validator {validator_id} not found")
+        else:
+            # Si no hay caché, cargar todos los validadores (necesario para mantener consistencia)
+            # pero esto debería ser raro ya que el caché tiene TTL de 10 minutos
+            validators = await self._aggregate_validators()
+            validator = validators.get(validator_id)
+            if not validator:
+                raise ValueError(f"Validator {validator_id} not found")
+            # Crear una copia del diccionario para poder modificarlo
+            validator = dict(validator)
         
         # Agregar información del ganador de la última ronda
         # Intentar extraer el UID del validator_id (puede ser "validator-83" o "83")
