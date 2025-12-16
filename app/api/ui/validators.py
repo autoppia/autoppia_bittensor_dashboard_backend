@@ -5,9 +5,10 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, load_only
 
 from app.db.session import get_session
 from app.db.models import (
@@ -19,18 +20,24 @@ from app.db.models import (
     ValidatorRoundSummaryORM,
     ValidatorRoundMinerORM,
 )
+from app.services.redis_cache import cache
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/validators", tags=["validators"])
 
+# Máximo de evaluaciones a procesar si se especifica un límite (para evitar timeouts si el cliente lo solicita)
+MAX_EVALUATIONS_LIMIT = 50000
+
 
 @router.get("/{uid}/details")
+@cache("validator_details", ttl=120)  # Cache 2 minutos como recomienda Codex
 async def get_validator_details(
     uid: int,
     round: Optional[int] = Query(None, description="Filter by round number"),
     website: Optional[str] = Query(None, description="Filter evaluations table by website (e.g., 'AutoCinema')"),
     useCase: Optional[str] = Query(None, description="Filter evaluations table by use case (e.g., 'SEARCH_FILM')"),
+    limit: Optional[int] = Query(None, ge=1, le=MAX_EVALUATIONS_LIMIT, description="Optional limit number of evaluations to process. If not provided, processes all evaluations."),
     session: AsyncSession = Depends(get_session),
 ):
     """
@@ -41,6 +48,7 @@ async def get_validator_details(
         round: Optional round number to filter evaluations. If not provided, returns all rounds.
         website: Optional website filter for evaluations table (e.g., "AutoCinema", "AutoBooks")
         useCase: Optional use case filter for evaluations table (e.g., "SEARCH_FILM", "CONTACT_BOOK")
+        limit: Optional limit on number of evaluations to process (max 10000)
     
     Returns:
     - Validator info (uid, hotkey, stake, weight, lastRoundEvaluated)
@@ -71,13 +79,36 @@ async def get_validator_details(
     rounds_result = await session.execute(rounds_query)
     available_rounds = [r[0] for r in rounds_result.all()]
     
-    # Get all evaluations for this validator, optionally filtered by round
+    # Optimización: Usar load_only para traer solo columnas necesarias
+    # Solo necesitamos: eval_score, meta, feedback, task_id de EvaluationORM
+    # Y task_id, prompt, web_project_id, use_case de TaskORM
     evaluations_query = (
         select(EvaluationORM)
         .join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
         .where(EvaluationORM.validator_uid == uid)
-        .options(selectinload(EvaluationORM.task))
+        .options(
+            load_only(
+                EvaluationORM.eval_score,
+                EvaluationORM.meta,
+                EvaluationORM.feedback,
+                EvaluationORM.task_id,
+                EvaluationORM.validator_round_id,
+            ),
+            selectinload(EvaluationORM.task).load_only(
+                TaskORM.task_id,
+                TaskORM.prompt,
+                TaskORM.web_project_id,
+                TaskORM.use_case,
+            )
+        )
     )
+    
+    # Aplicar filtros opcionales
+    if website is not None:
+        evaluations_query = evaluations_query.where(TaskORM.web_project_id == website)
+    
+    # Nota: El filtro de useCase se aplicará en Python después de cargar los datos
+    # porque use_case es JSONB y la comparación exacta es compleja en SQL
     
     # If round filter is provided, join with ValidatorRoundORM to filter by round
     if round is not None:
@@ -86,6 +117,10 @@ async def get_validator_details(
             .join(ValidatorRoundORM, EvaluationORM.validator_round_id == ValidatorRoundORM.validator_round_id)
             .where(ValidatorRoundORM.round_number == round)
         )
+    
+    # Aplicar límite solo si se especifica explícitamente (sin límite por defecto)
+    if limit is not None:
+        evaluations_query = evaluations_query.limit(limit)
     
     evaluations_result = await session.execute(evaluations_query)
     evaluations = evaluations_result.scalars().all()
@@ -187,35 +222,40 @@ async def get_validator_details(
     
     if not evaluations:
         # Return empty response if no evaluations found
-        return {
-            "success": True,
-            "data": {
-                "validator": {
-                    "uid": uid,
-                    "hotkey": validator_snapshot.validator_hotkey if validator_snapshot else None,
-                    "stake": float(validator_snapshot.stake) if validator_snapshot and validator_snapshot.stake else None,
-                    "weight": None,  # Weight is per-round, not global
-                    "lastRoundEvaluated": last_round_number,
-                },
-                "globalStats": {
-                    "totalEvaluations": 0,
-                    "successCount": 0,
-                    "zeroCount": 0,
-                    "nullCount": 0,
-                    "failedCount": 0,
-                    "successPct": 0.0,
-                    "zeroPct": 0.0,
-                    "nullPct": 0.0,
-                    "failedPct": 0.0,
-                },
-                "context": {
-                    "lastRoundWinner": last_round_winner,
-                    "lastRoundWinnerReward": float(last_round_winner_reward) if last_round_winner_reward else None,
-                    "lastRoundWinnerWeight": float(last_round_winner_weight) if last_round_winner_weight else None,
-                },
-                "webs": [],
-            }
-        }
+        return JSONResponse(
+            content={
+                "success": True,
+                "data": {
+                    "validator": {
+                        "uid": uid,
+                        "hotkey": validator_snapshot.validator_hotkey if validator_snapshot else None,
+                        "stake": float(validator_snapshot.stake) if validator_snapshot and validator_snapshot.stake else None,
+                        "weight": None,  # Weight is per-round, not global
+                        "lastRoundEvaluated": last_round_number,
+                    },
+                    "globalStats": {
+                        "totalEvaluations": 0,
+                        "successCount": 0,
+                        "zeroCount": 0,
+                        "nullCount": 0,
+                        "failedCount": 0,
+                        "successPct": 0.0,
+                        "zeroPct": 0.0,
+                        "nullPct": 0.0,
+                        "failedPct": 0.0,
+                    },
+                    "context": {
+                        "lastRoundWinner": last_round_winner,
+                        "lastRoundWinnerReward": float(last_round_winner_reward) if last_round_winner_reward else None,
+                        "lastRoundWinnerWeight": float(last_round_winner_weight) if last_round_winner_weight else None,
+                    },
+                    "webs": [],
+                    "totalEvaluationsProcessed": 0,
+                    "hasMore": False,
+                }
+            },
+            headers={"Cache-Control": "public, max-age=60"}
+        )
     
     # Aggregate statistics
     global_stats = {
@@ -256,6 +296,22 @@ async def get_validator_details(
         
         # Extract web and use_case
         web_id = task.web_project_id or "unknown"
+        
+        # Aplicar filtro de useCase en Python (si se especificó)
+        if useCase is not None:
+            use_case_dict = task.use_case or {}
+            use_case_matches = False
+            
+            if isinstance(use_case_dict, dict):
+                # Buscar en valores del dict
+                use_case_str = str(use_case_dict.get("name") or use_case_dict.get("id") or use_case_dict.get("use_case") or "")
+                use_case_matches = useCase.lower() in use_case_str.lower()
+            elif isinstance(use_case_dict, str):
+                use_case_matches = useCase.lower() in use_case_dict.lower()
+            
+            if not use_case_matches:
+                continue  # Saltar esta evaluación si no coincide con el filtro
+        
         use_case_dict = task.use_case or {}
         # Use case can be a dict with 'name' or 'id', or a string
         use_case_name = "unknown"
@@ -445,8 +501,14 @@ async def get_validator_details(
     # Keep webs in natural order (as they come from database)
     # No sorting - maintain database order
     
+    # Contar total de evaluaciones procesadas vs total disponible
+    total_evaluations_processed = len(evaluations)
+    # Si se aplicó un límite, el total procesado puede ser menor que el real
+    # Devolvemos el número procesado y si hay más disponibles
+    has_more = limit is not None and total_evaluations_processed >= limit
+    
     # Build response
-    response = {
+    response_data = {
         "success": True,
         "data": {
             "validator": {
@@ -468,8 +530,14 @@ async def get_validator_details(
             "validatorImage": validator_snapshot.image_url if validator_snapshot else None,
             "webs": webs_list,
             "availableRounds": available_rounds,
+            "totalEvaluationsProcessed": total_evaluations_processed,
+            "hasMore": has_more,
         }
     }
     
-    return response
+    # Devolver JSONResponse con headers de caché HTTP
+    return JSONResponse(
+        content=response_data,
+        headers={"Cache-Control": "public, max-age=60"}  # Cache HTTP por 60 segundos
+    )
 
