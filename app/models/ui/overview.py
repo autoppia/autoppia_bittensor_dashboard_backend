@@ -65,6 +65,7 @@ class ValidatorInfo(BaseModel):
     emission: int
     validatorRoundId: Optional[str] = None
     roundNumber: Optional[int] = None
+    lastRoundWinner: Optional[Dict[str, Any]] = None
 
 
 class ValidatorsListResponse(BaseResponse):
