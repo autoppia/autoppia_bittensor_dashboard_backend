@@ -60,6 +60,29 @@ async def get_validator_details(
     validator_snapshot_result = await session.execute(validator_snapshot_query)
     validator_snapshot = validator_snapshot_result.scalar_one_or_none()
     
+    # Get the most recent stake for this validator
+    # First try to get the most recent stake (regardless of value)
+    stake_query = (
+        select(ValidatorRoundValidatorORM.stake)
+        .where(ValidatorRoundValidatorORM.validator_uid == uid)
+        .where(ValidatorRoundValidatorORM.stake.isnot(None))
+        .order_by(ValidatorRoundValidatorORM.round_number.desc())
+        .limit(1)
+    )
+    stake_result = await session.execute(stake_query)
+    recent_stake = stake_result.scalar_one_or_none()
+    
+    # Use the most recent stake if found, otherwise try from snapshot
+    validator_stake = None
+    if recent_stake is not None:
+        validator_stake = float(recent_stake)
+    elif validator_snapshot and validator_snapshot.stake is not None:
+        validator_stake = float(validator_snapshot.stake)
+    
+    # Log for debugging (can be removed in production)
+    if validator_stake == 0:
+        logger.debug(f"Validator {uid} stake is 0 (this may be correct if validator has no stake)")
+    
     # Get available rounds for this validator
     rounds_query = (
         select(ValidatorRoundORM.round_number)
@@ -70,6 +93,93 @@ async def get_validator_details(
     )
     rounds_result = await session.execute(rounds_query)
     available_rounds = [r[0] for r in rounds_result.all()]
+    
+    # Get target round for miner data
+    target_round = None
+    if round is not None:
+        target_round_query = (
+            select(ValidatorRoundORM)
+            .join(ValidatorRoundValidatorORM, ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
+            .where(
+                and_(
+                    ValidatorRoundValidatorORM.validator_uid == uid,
+                    ValidatorRoundORM.round_number == round
+                )
+            )
+            .limit(1)
+        )
+        target_round_result = await session.execute(target_round_query)
+        target_round = target_round_result.scalar_one_or_none()
+    else:
+        # Get the most recent round for this validator
+        last_round_query = (
+            select(ValidatorRoundORM)
+            .join(ValidatorRoundValidatorORM, ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
+            .where(ValidatorRoundValidatorORM.validator_uid == uid)
+            .order_by(ValidatorRoundORM.round_number.desc())
+            .limit(1)
+        )
+        last_round_result = await session.execute(last_round_query)
+        target_round = last_round_result.scalar_one_or_none()
+    
+    # Get miners data for the target round
+    miners_list = []
+    unique_miners_count = 0
+    if target_round:
+        # Get miners from AgentEvaluationRunORM for this validator round
+        miners_query = (
+            select(AgentEvaluationRunORM)
+            .where(AgentEvaluationRunORM.validator_round_id == target_round.validator_round_id)
+            .order_by(AgentEvaluationRunORM.average_reward.desc())
+        )
+        miners_result = await session.execute(miners_query)
+        miners_runs = miners_result.scalars().all()
+        
+        # Get unique miner UIDs
+        unique_miner_uids = set()
+        for run in miners_runs:
+            if run.miner_uid is not None:
+                unique_miner_uids.add(run.miner_uid)
+        
+        unique_miners_count = len(unique_miner_uids)
+        
+        # Get miner snapshots for names and images
+        if unique_miner_uids:
+            miner_snapshots_query = (
+                select(ValidatorRoundMinerORM)
+                .where(
+                    and_(
+                        ValidatorRoundMinerORM.validator_round_id == target_round.validator_round_id,
+                        ValidatorRoundMinerORM.miner_uid.in_(unique_miner_uids)
+                    )
+                )
+            )
+            miner_snapshots_result = await session.execute(miner_snapshots_query)
+            miner_snapshots = miner_snapshots_result.scalars().all()
+            
+            # Create a map of miner_uid -> snapshot
+            miner_snapshot_map = {snapshot.miner_uid: snapshot for snapshot in miner_snapshots}
+            
+            # Build miners list with scores
+            for run in miners_runs:
+                if run.miner_uid is None:
+                    continue
+                
+                snapshot = miner_snapshot_map.get(run.miner_uid)
+                miner_data = {
+                    "uid": run.miner_uid,
+                    "name": snapshot.name if snapshot else None,
+                    "image": snapshot.image_url if snapshot else None,
+                    "hotkey": run.miner_hotkey or (snapshot.miner_hotkey if snapshot else None),
+                    "score": float(run.average_reward) if run.average_reward is not None else 0.0,
+                    "reward": float(run.average_reward * 100) if run.average_reward is not None else 0.0,  # As percentage
+                    "tasksCompleted": run.success_tasks or 0,
+                    "tasksTotal": run.total_tasks or 0,
+                }
+                miners_list.append(miner_data)
+            
+            # Sort by score descending
+            miners_list.sort(key=lambda x: x["score"], reverse=True)
     
     # Get all evaluations for this validator, optionally filtered by round
     evaluations_query = (
@@ -102,7 +212,29 @@ async def get_validator_details(
     last_round = last_round_result.scalar_one_or_none()
     last_round_number = last_round.round_number if last_round else None
     
-    # Get winner of last round for this validator
+    # Determine which round to use for winner lookup
+    # If round filter is provided, use that round; otherwise use last round
+    target_round = None
+    if round is not None:
+        # Get the specific round requested
+        target_round_query = (
+            select(ValidatorRoundORM)
+            .join(ValidatorRoundValidatorORM, ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
+            .where(
+                and_(
+                    ValidatorRoundValidatorORM.validator_uid == uid,
+                    ValidatorRoundORM.round_number == round
+                )
+            )
+            .limit(1)
+        )
+        target_round_result = await session.execute(target_round_query)
+        target_round = target_round_result.scalar_one_or_none()
+    else:
+        # Use last round if no filter
+        target_round = last_round
+    
+    # Get winner of target round for this validator
     last_round_winner = None
     last_round_winner_reward = None
     last_round_winner_weight = None
@@ -110,14 +242,14 @@ async def get_validator_details(
     last_round_winner_image = None
     last_round_winner_hotkey = None
     
-    if last_round:
-        # Get the winner from ValidatorRoundSummaryORM for this validator's last round (rondas finalizadas)
+    if target_round:
+        # Get the winner from ValidatorRoundSummaryORM for this validator's target round (rondas finalizadas)
         winner_query = (
             select(ValidatorRoundSummaryORM)
             .join(ValidatorRoundORM, ValidatorRoundSummaryORM.validator_round_id == ValidatorRoundORM.validator_round_id)
             .where(
                 and_(
-                    ValidatorRoundORM.validator_round_id == last_round.validator_round_id,
+                    ValidatorRoundORM.validator_round_id == target_round.validator_round_id,
                     ValidatorRoundSummaryORM.post_consensus_rank == 1
                 )
             )
@@ -137,7 +269,7 @@ async def get_validator_details(
                 select(ValidatorRoundMinerORM)
                 .where(
                     and_(
-                        ValidatorRoundMinerORM.validator_round_id == last_round.validator_round_id,
+                        ValidatorRoundMinerORM.validator_round_id == target_round.validator_round_id,
                         ValidatorRoundMinerORM.miner_uid == winner.miner_uid
                     )
                 )
@@ -154,7 +286,7 @@ async def get_validator_details(
             # buscar el top miner en AgentEvaluationRunORM por average_reward
             top_run_query = (
                 select(AgentEvaluationRunORM)
-                .where(AgentEvaluationRunORM.validator_round_id == last_round.validator_round_id)
+                .where(AgentEvaluationRunORM.validator_round_id == target_round.validator_round_id)
                 .order_by(AgentEvaluationRunORM.average_reward.desc())
                 .limit(1)
             )
@@ -172,7 +304,7 @@ async def get_validator_details(
                     select(ValidatorRoundMinerORM)
                     .where(
                         and_(
-                            ValidatorRoundMinerORM.validator_round_id == last_round.validator_round_id,
+                            ValidatorRoundMinerORM.validator_round_id == target_round.validator_round_id,
                             ValidatorRoundMinerORM.miner_uid == top_run.miner_uid
                         )
                     )
@@ -185,6 +317,65 @@ async def get_validator_details(
                     last_round_winner_name = miner_snapshot.name
                     last_round_winner_image = miner_snapshot.image_url
     
+    # Get miners data for the target round
+    miners_list = []
+    unique_miners_count = 0
+    if target_round:
+        # Get miners from AgentEvaluationRunORM for this validator round
+        miners_query = (
+            select(AgentEvaluationRunORM)
+            .where(AgentEvaluationRunORM.validator_round_id == target_round.validator_round_id)
+            .order_by(AgentEvaluationRunORM.average_reward.desc())
+        )
+        miners_result = await session.execute(miners_query)
+        miners_runs = miners_result.scalars().all()
+        
+        # Get unique miner UIDs
+        unique_miner_uids = set()
+        for run in miners_runs:
+            if run.miner_uid is not None:
+                unique_miner_uids.add(run.miner_uid)
+        
+        unique_miners_count = len(unique_miner_uids)
+        
+        # Get miner snapshots for names and images
+        if unique_miner_uids:
+            miner_snapshots_query = (
+                select(ValidatorRoundMinerORM)
+                .where(
+                    and_(
+                        ValidatorRoundMinerORM.validator_round_id == target_round.validator_round_id,
+                        ValidatorRoundMinerORM.miner_uid.in_(unique_miner_uids)
+                    )
+                )
+            )
+            miner_snapshots_result = await session.execute(miner_snapshots_query)
+            miner_snapshots = miner_snapshots_result.scalars().all()
+            
+            # Create a map of miner_uid -> snapshot
+            miner_snapshot_map = {snapshot.miner_uid: snapshot for snapshot in miner_snapshots}
+            
+            # Build miners list with scores
+            for run in miners_runs:
+                if run.miner_uid is None:
+                    continue
+                
+                snapshot = miner_snapshot_map.get(run.miner_uid)
+                miner_data = {
+                    "uid": run.miner_uid,
+                    "name": snapshot.name if snapshot else None,
+                    "image": snapshot.image_url if snapshot else None,
+                    "hotkey": run.miner_hotkey or (snapshot.miner_hotkey if snapshot else None),
+                    "score": float(run.average_reward) if run.average_reward is not None else 0.0,
+                    "reward": float(run.average_reward * 100) if run.average_reward is not None else 0.0,  # As percentage
+                    "tasksCompleted": run.success_tasks or 0,
+                    "tasksTotal": run.total_tasks or 0,
+                }
+                miners_list.append(miner_data)
+            
+            # Sort by score descending
+            miners_list.sort(key=lambda x: x["score"], reverse=True)
+    
     if not evaluations:
         # Return empty response if no evaluations found
         return {
@@ -193,7 +384,7 @@ async def get_validator_details(
                 "validator": {
                     "uid": uid,
                     "hotkey": validator_snapshot.validator_hotkey if validator_snapshot else None,
-                    "stake": float(validator_snapshot.stake) if validator_snapshot and validator_snapshot.stake else None,
+                    "stake": validator_stake,
                     "weight": None,  # Weight is per-round, not global
                     "lastRoundEvaluated": last_round_number,
                 },
@@ -442,8 +633,35 @@ async def get_validator_details(
         web_data["useCases"] = use_cases_list
         webs_list.append(web_data)
     
-    # Keep webs in natural order (as they come from database)
-    # No sorting - maintain database order
+    # Sort webs by specific order
+    WEB_ORDER = {
+        "autocinema": 1,
+        "autobooks": 2,
+        "autozone": 3,
+        "autodining": 4,
+        "autocrm": 5,
+        "automail": 6,
+        "autodelivery": 7,
+        "autolodge": 8,
+        "autoconnect": 9,
+        "autowork": 10,
+        "autocalendar": 11,
+        "autolist": 12,
+        "autodrive": 13,
+        "autohealth": 14,
+    }
+    
+    def get_web_order(web_id: str) -> int:
+        """Get order for web_id based on web name"""
+        web_id_lower = web_id.lower()
+        # Check if web_id contains any of the web names
+        for web_name, order in WEB_ORDER.items():
+            if web_name in web_id_lower:
+                return order
+        # If not found, return a large number to put it at the end
+        return 999
+    
+    webs_list.sort(key=lambda w: get_web_order(w.get("webId", "")))
     
     # Build response
     response = {
@@ -468,6 +686,10 @@ async def get_validator_details(
             "validatorImage": validator_snapshot.image_url if validator_snapshot else None,
             "webs": webs_list,
             "availableRounds": available_rounds,
+            "roundDetails": {
+                "minersParticipated": unique_miners_count,
+                "miners": miners_list,
+            },
         }
     }
     
