@@ -849,13 +849,27 @@ class OverviewService:
 
     @rollback_on_error
     async def validator_detail(self, validator_id: str) -> Dict[str, Any]:
-        validators = await self._aggregate_validators()
-        validator = validators.get(validator_id)
-        if not validator:
-            raise ValueError(f"Validator {validator_id} not found")
+        # Optimización: Primero intentar obtener del caché completo de validators
+        # Si no está disponible, construir solo el validador solicitado en lugar de todos
+        cache_key_aggregate = "overview:validators:aggregate"
+        cached_validators = redis_cache.get(cache_key_aggregate)
         
-        # Crear una copia del diccionario para poder modificarlo (puede venir de cache)
-        validator = dict(validator)
+        if cached_validators is not None:
+            validator = cached_validators.get(validator_id)
+            if validator:
+                # Crear una copia del diccionario para poder modificarlo (puede venir de cache)
+                validator = dict(validator)
+            else:
+                raise ValueError(f"Validator {validator_id} not found")
+        else:
+            # Si no hay caché, cargar todos los validadores (necesario para mantener consistencia)
+            # pero esto debería ser raro ya que el caché tiene TTL de 10 minutos
+            validators = await self._aggregate_validators()
+            validator = validators.get(validator_id)
+            if not validator:
+                raise ValueError(f"Validator {validator_id} not found")
+            # Crear una copia del diccionario para poder modificarlo
+            validator = dict(validator)
         
         # Agregar información del ganador de la última ronda
         # Intentar extraer el UID del validator_id (puede ser "validator-83" o "83")
@@ -865,85 +879,100 @@ class OverviewService:
             # Si no se puede extraer el UID, devolver validator sin lastRoundWinner
             return validator
         
-        # Obtener la última ronda de este validador
-        last_round_query = (
-            select(RoundORM)
-            .join(ValidatorRoundValidatorORM, RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
-            .where(ValidatorRoundValidatorORM.validator_uid == validator_uid)
+        # Optimización: Obtener la última ronda y el ganador en una sola query con JOINs
+        # Primero intentar obtener ganador de ronda finalizada (post_consensus_rank == 1)
+        winner_query = (
+            select(
+                RoundORM.validator_round_id,
+                RoundORM.round_number,
+                ValidatorRoundSummaryORM.miner_uid,
+                ValidatorRoundSummaryORM.miner_hotkey,
+                ValidatorRoundSummaryORM.post_consensus_avg_reward,
+                ValidatorRoundSummaryORM.weight,
+                ValidatorRoundMinerORM.name,
+                ValidatorRoundMinerORM.image_url,
+            )
+            .select_from(
+                RoundORM.__table__
+                .join(
+                    ValidatorRoundValidatorORM.__table__,
+                    RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
+                )
+                .join(
+                    ValidatorRoundSummaryORM.__table__,
+                    RoundORM.validator_round_id == ValidatorRoundSummaryORM.validator_round_id
+                )
+                .outerjoin(
+                    ValidatorRoundMinerORM.__table__,
+                    (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id)
+                    & (ValidatorRoundSummaryORM.miner_uid == ValidatorRoundMinerORM.miner_uid)
+                )
+            )
+            .where(
+                ValidatorRoundValidatorORM.validator_uid == validator_uid,
+                ValidatorRoundSummaryORM.post_consensus_rank == 1
+            )
             .order_by(RoundORM.round_number.desc())
             .limit(1)
         )
-        last_round_result = await self.session.execute(last_round_query)
-        last_round = last_round_result.scalar_one_or_none()
+        winner_result = await self.session.execute(winner_query)
+        winner_row = winner_result.first()
         
-        if last_round:
-            # Intentar obtener el ganador de ValidatorRoundSummaryORM (rondas finalizadas)
-            winner_query = (
-                select(ValidatorRoundSummaryORM)
-                .where(
-                    ValidatorRoundSummaryORM.validator_round_id == last_round.validator_round_id,
-                    ValidatorRoundSummaryORM.post_consensus_rank == 1
+        if winner_row:
+            # Ronda finalizada con ganador
+            validator["lastRoundWinner"] = {
+                "uid": winner_row.miner_uid,
+                "name": winner_row.name if winner_row.name else f"Miner {winner_row.miner_uid}",
+                "image": winner_row.image_url if winner_row.image_url else None,
+                "hotkey": winner_row.miner_hotkey,
+                "reward": float(winner_row.post_consensus_avg_reward) if winner_row.post_consensus_avg_reward else None,
+                "weight": float(winner_row.weight) if winner_row.weight else None,
+            }
+        else:
+            # Si no hay datos en ValidatorRoundSummaryORM (ronda activa),
+            # buscar el top miner en AgentEvaluationRunORM por average_reward
+            # Optimización: Combinar con JOIN para obtener snapshot del miner en una query
+            top_run_query = (
+                select(
+                    RoundORM.validator_round_id,
+                    AgentEvaluationRunORM.miner_uid,
+                    AgentEvaluationRunORM.miner_hotkey,
+                    AgentEvaluationRunORM.average_reward,
+                    ValidatorRoundMinerORM.name,
+                    ValidatorRoundMinerORM.image_url,
                 )
+                .select_from(
+                    RoundORM.__table__
+                    .join(
+                        ValidatorRoundValidatorORM.__table__,
+                        RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
+                    )
+                    .join(
+                        AgentEvaluationRunORM.__table__,
+                        RoundORM.validator_round_id == AgentEvaluationRunORM.validator_round_id
+                    )
+                    .outerjoin(
+                        ValidatorRoundMinerORM.__table__,
+                        (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id)
+                        & (AgentEvaluationRunORM.miner_uid == ValidatorRoundMinerORM.miner_uid)
+                    )
+                )
+                .where(ValidatorRoundValidatorORM.validator_uid == validator_uid)
+                .order_by(RoundORM.round_number.desc(), AgentEvaluationRunORM.average_reward.desc())
                 .limit(1)
             )
-            winner_result = await self.session.execute(winner_query)
-            winner = winner_result.scalar_one_or_none()
+            top_run_result = await self.session.execute(top_run_query)
+            top_run_row = top_run_result.first()
             
-            if winner:
-                # Ronda finalizada con ganador
-                # Obtener snapshot del miner para nombre e imagen
-                miner_snapshot_query = (
-                    select(ValidatorRoundMinerORM)
-                    .where(
-                        ValidatorRoundMinerORM.validator_round_id == last_round.validator_round_id,
-                        ValidatorRoundMinerORM.miner_uid == winner.miner_uid
-                    )
-                    .limit(1)
-                )
-                miner_snapshot_result = await self.session.execute(miner_snapshot_query)
-                miner_snapshot = miner_snapshot_result.scalar_one_or_none()
-                
+            if top_run_row:
                 validator["lastRoundWinner"] = {
-                    "uid": winner.miner_uid,
-                    "name": miner_snapshot.name if miner_snapshot else f"Miner {winner.miner_uid}",
-                    "image": miner_snapshot.image_url if miner_snapshot else None,
-                    "hotkey": winner.miner_hotkey,
-                    "reward": float(winner.post_consensus_avg_reward) if winner.post_consensus_avg_reward else None,
-                    "weight": float(winner.weight) if winner.weight else None,
+                    "uid": top_run_row.miner_uid,
+                    "name": top_run_row.name if top_run_row.name else f"Miner {top_run_row.miner_uid}",
+                    "image": top_run_row.image_url if top_run_row.image_url else None,
+                    "hotkey": top_run_row.miner_hotkey,
+                    "reward": float(top_run_row.average_reward) if top_run_row.average_reward else None,
+                    "weight": None,  # Weight no disponible para rondas activas
                 }
-            else:
-                # Si no hay datos en ValidatorRoundSummaryORM (ronda activa),
-                # buscar el top miner en AgentEvaluationRunORM por average_reward
-                top_run_query = (
-                    select(AgentEvaluationRunORM)
-                    .where(AgentEvaluationRunORM.validator_round_id == last_round.validator_round_id)
-                    .order_by(AgentEvaluationRunORM.average_reward.desc())
-                    .limit(1)
-                )
-                top_run_result = await self.session.execute(top_run_query)
-                top_run = top_run_result.scalar_one_or_none()
-                
-                if top_run:
-                    # Obtener snapshot del miner para nombre e imagen
-                    miner_snapshot_query = (
-                        select(ValidatorRoundMinerORM)
-                        .where(
-                            ValidatorRoundMinerORM.validator_round_id == last_round.validator_round_id,
-                            ValidatorRoundMinerORM.miner_uid == top_run.miner_uid
-                        )
-                        .limit(1)
-                    )
-                    miner_snapshot_result = await self.session.execute(miner_snapshot_query)
-                    miner_snapshot = miner_snapshot_result.scalar_one_or_none()
-                    
-                    validator["lastRoundWinner"] = {
-                        "uid": top_run.miner_uid,
-                        "name": miner_snapshot.name if miner_snapshot else f"Miner {top_run.miner_uid}",
-                        "image": miner_snapshot.image_url if miner_snapshot else None,
-                        "hotkey": top_run.miner_hotkey,
-                        "reward": float(top_run.average_reward) if top_run.average_reward else None,
-                        "weight": None,  # Weight no disponible para rondas activas
-                    }
         
         return validator
 
