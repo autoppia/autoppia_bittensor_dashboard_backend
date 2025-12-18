@@ -61,7 +61,7 @@ class ValidatorInfo(BaseModel):
     version: Optional[str] = None  # String to preserve full version like "10.1.0"
     lastSeen: str  # ISO timestamp
     uptime: float
-    stake: int
+    stake: float  # Changed from int to float to preserve decimal values
     emission: int
     validatorRoundId: Optional[str] = None
     roundNumber: Optional[int] = None
