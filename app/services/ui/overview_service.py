@@ -2130,7 +2130,7 @@ class OverviewService:
                 "trust": trust_value,
                 "version": version,
                 "lastSeen": _timestamp(last_activity_ts),
-                "stake": int(stake_value),  # Convertir a int para el modelo Pydantic
+                "stake": stake_value,  # Keep as float to preserve decimal values
                 "emission": emission_value,
                 "uptime": uptime,
                 "completedTasks": int(completed_tasks),
