@@ -121,6 +121,7 @@ async def get_validator_details(
                 TaskORM.task_id,
                 TaskORM.prompt,
                 TaskORM.web_project_id,
+                TaskORM.web_version,
                 TaskORM.use_case,
             )
         )
@@ -269,20 +270,24 @@ async def get_validator_details(
     miners_list = []
     unique_miners_count = 0
     if target_round:
-        # Get miners from AgentEvaluationRunORM for this validator round
+        # Get miners from ValidatorRoundSummaryORM (post-consensus data)
+        # This includes ALL miners that participated, even those with 0 reward
         miners_query = (
-            select(AgentEvaluationRunORM)
-            .where(AgentEvaluationRunORM.validator_round_id == target_round.validator_round_id)
-            .order_by(AgentEvaluationRunORM.average_reward.desc())
+            select(ValidatorRoundSummaryORM)
+            .where(ValidatorRoundSummaryORM.validator_round_id == target_round.validator_round_id)
+            .order_by(
+                ValidatorRoundSummaryORM.post_consensus_rank.asc().nulls_last(),
+                ValidatorRoundSummaryORM.post_consensus_avg_reward.desc().nulls_last()
+            )
         )
         miners_result = await session.execute(miners_query)
-        miners_runs = miners_result.scalars().all()
+        miners_summaries = miners_result.scalars().all()
         
         # Get unique miner UIDs
         unique_miner_uids = set()
-        for run in miners_runs:
-            if run.miner_uid is not None:
-                unique_miner_uids.add(run.miner_uid)
+        for summary in miners_summaries:
+            if summary.miner_uid is not None:
+                unique_miner_uids.add(summary.miner_uid)
         
         unique_miners_count = len(unique_miner_uids)
         
@@ -303,26 +308,35 @@ async def get_validator_details(
             # Create a map of miner_uid -> snapshot
             miner_snapshot_map = {snapshot.miner_uid: snapshot for snapshot in miner_snapshots}
             
-            # Build miners list with scores
-            for run in miners_runs:
-                if run.miner_uid is None:
+            # Build miners list with post-consensus scores
+            for summary in miners_summaries:
+                if summary.miner_uid is None:
                     continue
                 
-                snapshot = miner_snapshot_map.get(run.miner_uid)
+                snapshot = miner_snapshot_map.get(summary.miner_uid)
+                
+                # Use post-consensus data (includes miners with 0 reward)
+                reward = float(summary.post_consensus_avg_reward) if summary.post_consensus_avg_reward is not None else 0.0
+                eval_score = float(summary.post_consensus_avg_eval_score) if summary.post_consensus_avg_eval_score is not None else 0.0
+                eval_time = float(summary.post_consensus_avg_eval_time) if summary.post_consensus_avg_eval_time is not None else 0.0
+                tasks_completed = summary.post_consensus_tasks_success or 0
+                tasks_total = summary.post_consensus_tasks_received or 0
+                
                 miner_data = {
-                    "uid": run.miner_uid,
+                    "uid": summary.miner_uid,
                     "name": snapshot.name if snapshot else None,
                     "image": snapshot.image_url if snapshot else None,
-                    "hotkey": run.miner_hotkey or (snapshot.miner_hotkey if snapshot else None),
-                    "score": float(run.average_reward) if run.average_reward is not None else 0.0,
-                    "reward": float(run.average_reward * 100) if run.average_reward is not None else 0.0,  # As percentage
-                    "tasksCompleted": run.success_tasks or 0,
-                    "tasksTotal": run.total_tasks or 0,
+                    "hotkey": summary.miner_hotkey or (snapshot.miner_hotkey if snapshot else None),
+                    "score": reward,
+                    "reward": reward * 100,  # As percentage
+                    "evalScore": eval_score * 100,  # As percentage
+                    "evalTime": eval_time,  # In seconds
+                    "tasksCompleted": tasks_completed,
+                    "tasksTotal": tasks_total,
                 }
                 miners_list.append(miner_data)
             
-            # Sort by score descending
-            miners_list.sort(key=lambda x: x["score"], reverse=True)
+            # Already sorted by rank and reward in the query
     
     if not evaluations:
         # Return empty response if no evaluations found
@@ -383,6 +397,7 @@ async def get_validator_details(
     web_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
         "webName": None,
         "webId": None,
+        "webVersion": None,
         "totalEvaluations": 0,
         "successCount": 0,
         "zeroCount": 0,
@@ -451,6 +466,7 @@ async def get_validator_details(
         if web_id not in web_stats:
             web_stats[web_id]["webId"] = web_id
             web_stats[web_id]["webName"] = web_id  # Use web_id as name if no better name available
+            web_stats[web_id]["webVersion"] = task.web_version  # Add web version from task
         
         # Initialize use case stats if needed
         use_case_key = f"{web_id}:{use_case_id}"
