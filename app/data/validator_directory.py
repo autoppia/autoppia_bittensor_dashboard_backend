@@ -33,7 +33,7 @@ VALIDATOR_DIRECTORY: Dict[int, Dict[str, Any]] = {
         "name": "RoundTable21",
         "hotkey": "5C5hkv...XGsn36",
         "coldkey": "5GZSAg...BMKpGQ",
-        "image": f"{_BASE_VALIDATOR_IMAGE}/RoundTable21.png",
+        "image": f"{_BASE_VALIDATOR_IMAGE}/roundtable.jpg",
         "stake": 582_500,
         "vtrust": 0.88,
     },

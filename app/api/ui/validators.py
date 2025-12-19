@@ -21,6 +21,7 @@ from app.db.models import (
     ValidatorRoundMinerORM,
 )
 from app.services.redis_cache import cache
+from app.utils.images import resolve_validator_image
 
 logger = logging.getLogger(__name__)
 
@@ -370,7 +371,10 @@ async def get_validator_details(
                         "lastRoundWinnerImage": last_round_winner_image,
                         "lastRoundWinnerHotkey": last_round_winner_hotkey,
                     },
-                    "validatorImage": validator_snapshot.image_url if validator_snapshot else None,
+                    "validatorImage": resolve_validator_image(
+                        validator_snapshot.name if validator_snapshot else None,
+                        existing=validator_snapshot.image_url if validator_snapshot else None
+                    ),
                     "webs": [],
                     "availableRounds": available_rounds,
                     "roundDetails": {
@@ -683,7 +687,10 @@ async def get_validator_details(
                 "lastRoundWinnerImage": last_round_winner_image,
                 "lastRoundWinnerHotkey": last_round_winner_hotkey,
             },
-            "validatorImage": validator_snapshot.image_url if validator_snapshot else None,
+            "validatorImage": resolve_validator_image(
+                validator_snapshot.name if validator_snapshot else None,
+                existing=validator_snapshot.image_url if validator_snapshot else None
+            ),
             "webs": webs_list,
             "availableRounds": available_rounds,
             "roundDetails": {
