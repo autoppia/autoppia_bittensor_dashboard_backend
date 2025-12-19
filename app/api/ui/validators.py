@@ -22,6 +22,7 @@ from app.db.models import (
 )
 from app.services.redis_cache import cache
 from app.utils.images import resolve_validator_image
+from app.services.metagraph_service import get_validator_data, MetagraphError
 
 logger = logging.getLogger(__name__)
 
@@ -69,24 +70,51 @@ async def get_validator_details(
     validator_snapshot_result = await session.execute(validator_snapshot_query)
     validator_snapshot = validator_snapshot_result.scalar_one_or_none()
     
-    # Get the most recent stake for this validator
-    # First try to get the most recent stake (regardless of value)
-    stake_query = (
-        select(ValidatorRoundValidatorORM.stake)
-        .where(ValidatorRoundValidatorORM.validator_uid == uid)
-        .where(ValidatorRoundValidatorORM.stake.isnot(None))
-        .order_by(ValidatorRoundValidatorORM.round_number.desc())
-        .limit(1)
-    )
-    stake_result = await session.execute(stake_query)
-    recent_stake = stake_result.scalar_one_or_none()
-    
-    # Use the most recent stake if found, otherwise try from snapshot
+    # Get stake from metagraph (preferred) or DB (fallback)
+    # This ensures consistency with the overview/validators list endpoint
+    # Stake is in RAO (not converted to TAO) to match overview endpoint
     validator_stake = None
-    if recent_stake is not None:
-        validator_stake = float(recent_stake)
-    elif validator_snapshot and validator_snapshot.stake is not None:
-        validator_stake = float(validator_snapshot.stake)
+    try:
+        fresh_data = get_validator_data(uid=uid)
+        if fresh_data and fresh_data.get("stake") is not None:
+            validator_stake = float(fresh_data.get("stake") or 0.0)
+            logger.debug(f"Validator {uid} stake from metagraph: {validator_stake:.2f} RAO")
+    except MetagraphError:
+        logger.debug(f"Metagraph data unavailable for validator {uid}, using DB fallback")
+    
+    # Fallback to DB if metagraph data not available
+    # Note: DB stake might be in TAO, so we need to convert it to RAO for consistency
+    if validator_stake is None:
+        # Get the most recent stake from DB
+        stake_query = (
+            select(ValidatorRoundValidatorORM.stake)
+            .where(ValidatorRoundValidatorORM.validator_uid == uid)
+            .where(ValidatorRoundValidatorORM.stake.isnot(None))
+            .order_by(ValidatorRoundValidatorORM.round_number.desc())
+            .limit(1)
+        )
+        stake_result = await session.execute(stake_query)
+        recent_stake = stake_result.scalar_one_or_none()
+        
+        if recent_stake is not None:
+            db_stake = float(recent_stake)
+            # If DB stake is very small (< 1), assume it's in TAO and convert to RAO
+            # Otherwise, assume it's already in RAO
+            if db_stake < 1.0:
+                validator_stake = db_stake * 1_000_000_000  # Convert TAO to RAO
+                logger.debug(f"Validator {uid} stake from DB (converted TAO->RAO): {validator_stake:.2f} RAO")
+            else:
+                validator_stake = db_stake
+                logger.debug(f"Validator {uid} stake from DB: {validator_stake:.2f} RAO")
+        elif validator_snapshot and validator_snapshot.stake is not None:
+            db_stake = float(validator_snapshot.stake)
+            # If DB stake is very small (< 1), assume it's in TAO and convert to RAO
+            if db_stake < 1.0:
+                validator_stake = db_stake * 1_000_000_000  # Convert TAO to RAO
+                logger.debug(f"Validator {uid} stake from snapshot (converted TAO->RAO): {validator_stake:.2f} RAO")
+            else:
+                validator_stake = db_stake
+                logger.debug(f"Validator {uid} stake from snapshot: {validator_stake:.2f} RAO")
     
     # Log for debugging (can be removed in production)
     if validator_stake == 0:
@@ -674,7 +702,7 @@ async def get_validator_details(
             "validator": {
                 "uid": uid,
                 "hotkey": validator_snapshot.validator_hotkey if validator_snapshot else None,
-                "stake": float(validator_snapshot.stake) if validator_snapshot and validator_snapshot.stake else None,
+                "stake": validator_stake,
                 "weight": None,  # Weight is per-round, not global
                 "lastRoundEvaluated": last_round_number,
             },

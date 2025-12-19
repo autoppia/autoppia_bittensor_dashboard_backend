@@ -170,10 +170,10 @@ def refresh_metagraph_data() -> Dict[str, Any]:
         if index < len(hotkeys):
             hotkey = str(hotkeys[index]) if hotkeys[index] else None
 
-        # Extract stake (already in TAO, not RAO)
-        stake_tao = None
+        # Extract stake from metagraph (in RAO, keep as RAO)
+        stake_rao = None
         if index < len(stakes):
-            stake_tao = _extract_numeric_value(stakes[index])
+            stake_rao = _extract_numeric_value(stakes[index])
 
         # Extract vtrust
         vtrust = None
@@ -190,7 +190,7 @@ def refresh_metagraph_data() -> Dict[str, Any]:
         validator_data = {
             "uid": uid,
             "hotkey": hotkey,
-            "stake": stake_tao,
+            "stake": stake_rao,  # Stake in RAO (not converted to TAO)
             "vtrust": vtrust,
             "version": version,  # string: "10.1.0"
             "fetched_at": time.time(),
