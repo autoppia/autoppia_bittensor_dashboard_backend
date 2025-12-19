@@ -14,8 +14,15 @@ logging.getLogger(__name__).setLevel(logging.WARNING)
 DEFAULT_VALIDATOR_IMAGE = "/validators/Other.png"
 VALIDATOR_IMAGE_OVERRIDES = {
     "autoppia": "/validators/Autoppia.png",
-    "roundtable21": "/validators/RoundTable21.png",
-    "round-table21": "/validators/RoundTable21.png",
+    "roundtable21": "/validators/roundtable.jpg",
+    "round-table21": "/validators/roundtable.jpg",
+    "roundtable": "/validators/roundtable.jpg",
+    "round-table": "/validators/roundtable.jpg",
+    "rt21": "/validators/roundtable.jpg",
+    "rt-21": "/validators/roundtable.jpg",
+    "rizzo": "/validators/rizzo.png",
+    "rizzo-insured": "/validators/rizzo.png",
+    "rizzo-(insured)": "/validators/rizzo.png",
     "tao5": "/validators/tao5.png",
     "kraken": "/validators/Kraken.png",
     "yuma": "/validators/Yuma.png",
@@ -376,33 +383,27 @@ def resolve_validator_image(name: Optional[str], existing: Optional[str] = None)
     Determine the best image for a validator card.
 
     Priority:
-    1. Use existing URL from validator_snapshot.image_url (ONLY if from S3 images-validator/)
-    2. Use name-based override if configured
+    1. Use name-based override if configured (ALWAYS for rizzo and roundtable)
+    2. Use existing URL from validator_snapshot.image_url (ONLY if from S3 images-validator/)
     3. Use default placeholder
     """
     import logging
 
     logger = logging.getLogger(__name__)
 
-    # Validate and sanitize the existing URL
-    validated_existing = _validate_validator_image_url(existing)
     default_url = _ensure_absolute_url(DEFAULT_VALIDATOR_IMAGE)
 
     logger.debug(
-        f"[resolve_validator_image] name={name}, existing={existing}, "
-        f"validated={validated_existing}, default={default_url}"
+        f"[resolve_validator_image] name={name}, existing={existing}, default={default_url}"
     )
 
-    # PRIORITY 1: Always prefer explicit image_url from validator (if valid)
-    if validated_existing:
-        logger.debug(
-            f"[resolve_validator_image] Using validated S3 URL: {validated_existing}"
-        )
-        return validated_existing
-
-    # PRIORITY 2: Use name-based override if no explicit image
+    # PRIORITY 1: Use name-based override if configured
+    # For rizzo and roundtable, ALWAYS use local images, ignoring any S3 URLs
     if name:
+        name_lower = name.lower().strip()
         slug = _slugify(name)
+        
+        # First try exact match
         if slug in VALIDATOR_IMAGE_OVERRIDES:
             override = _ensure_absolute_url(
                 VALIDATOR_IMAGE_OVERRIDES[slug], fallback=default_url
@@ -411,6 +412,45 @@ def resolve_validator_image(name: Optional[str], existing: Optional[str] = None)
                 f"[resolve_validator_image] Using name override for '{slug}': {override}"
             )
             return override
+        
+        # Aggressive override: Check if name contains "rizzo" (case-insensitive)
+        # This handles: "Rizzo", "Rizzo (Insured)", "rizzo-insured", etc.
+        if "rizzo" in name_lower:
+            override = _ensure_absolute_url(
+                VALIDATOR_IMAGE_OVERRIDES["rizzo"], fallback=default_url
+            )
+            logger.debug(
+                f"[resolve_validator_image] Using aggressive override for Rizzo (name='{name}', contains 'rizzo'): {override}"
+            )
+            return override
+        
+        # Check for roundtable/rt21 variations (case-insensitive)
+        # This handles: "RoundTable21", "RT21", "rt21", "roundtable", etc.
+        # Also check for "rt" followed by numbers (like "RT21", "rt21", etc.)
+        import re
+        rt_pattern = re.compile(r'rt\s*-?\s*21', re.IGNORECASE)
+        if ("roundtable" in name_lower or 
+            "rt21" in name_lower or 
+            "rt-21" in name_lower or
+            name_lower == "rt21" or
+            name_lower.startswith("rt21") or
+            name_lower.endswith("rt21") or
+            rt_pattern.search(name_lower)):
+            override = _ensure_absolute_url(
+                VALIDATOR_IMAGE_OVERRIDES["roundtable"], fallback=default_url
+            )
+            logger.debug(
+                f"[resolve_validator_image] Using aggressive override for RoundTable (name='{name}', contains 'roundtable' or 'rt21'): {override}"
+            )
+            return override
+
+    # PRIORITY 2: Use existing URL from validator (if valid and not overridden)
+    validated_existing = _validate_validator_image_url(existing)
+    if validated_existing:
+        logger.debug(
+            f"[resolve_validator_image] Using validated S3 URL: {validated_existing}"
+        )
+        return validated_existing
 
     # PRIORITY 3: Default placeholder
     logger.debug(f"[resolve_validator_image] Using default placeholder: {default_url}")
