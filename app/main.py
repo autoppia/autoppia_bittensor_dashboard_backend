@@ -11,10 +11,11 @@ logger, log_level = init_logging(settings)
 import os
 import re
 import time
-from fastapi import FastAPI, Request, Depends, HTTPException
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.middleware.logging_middleware import DetailedLoggingMiddleware
 from app.api.ui.agent_runs import router as agent_runs_router
@@ -32,22 +33,6 @@ from app.api.ui.validators import router as validators_router
 from app.api.validator.validator_round import router as validator_rounds_router
 from app.db.session import init_db, get_session
 from app.services.idempotency import get_cache_stats
-
-# Background updaters are now run as separate PM2 processes
-# from app.services.metagraph_updater_thread import (
-#     start_metagraph_updater,
-#     stop_metagraph_updater,
-#     get_updater_status,
-# )
-# from app.services.overview_cache_updater import (
-#     start_overview_updater,
-#     stop_overview_updater,
-# )
-from app.services.ui.agents_service import (
-    AgentsService,
-    AgentAggregateCacheWarmupRequired,
-)
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 app = FastAPI(
@@ -302,11 +287,8 @@ async def on_shutdown():
 
 
 # Global exception handler
-from fastapi import Request as _Request  # avoid shadowing
-
-
 @app.exception_handler(Exception)
-async def global_exception_handler(request: _Request, exc: Exception):
+async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
     
     # Get CORS origins from settings

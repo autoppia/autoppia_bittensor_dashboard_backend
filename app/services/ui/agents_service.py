@@ -73,8 +73,7 @@ class AgentAggregateCacheWarmupRequired(Exception):
 
 
 # ALPHA_EMISSION_PER_EPOCH moved to settings (app/config.py)
-# Import from settings instead of hardcoding
-from app.config import settings
+# settings is already imported at the top of the file
 
 _EPSILON = 1e-6
 

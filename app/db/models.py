@@ -14,7 +14,6 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    and_,
 )
 
 # Always use PostgreSQL JSONB (PostgreSQL is required)
