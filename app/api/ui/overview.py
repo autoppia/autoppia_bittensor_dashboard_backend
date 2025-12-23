@@ -33,18 +33,6 @@ async def _service(session: AsyncSession) -> OverviewService:
     return OverviewService(session)
 
 
-@router.get("", response_model=OverviewMetricsResponse)
-@cache(
-    "overview", ttl=600
-)  # Cache 10 minutes - standardized for consistent performance
-async def get_overview(
-    session: AsyncSession = Depends(get_session),
-) -> OverviewMetricsResponse:
-    service = await _service(session)
-    metrics = await service.overview_metrics()
-    return OverviewMetricsResponse(success=True, data={"metrics": metrics})
-
-
 @router.get("/metrics", response_model=OverviewMetricsResponse)
 async def get_overview_metrics(
     session: AsyncSession = Depends(get_session),

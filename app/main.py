@@ -31,6 +31,7 @@ from app.api.ui.subnets import router as subnets_router
 from app.api.ui.tasks import router as tasks_router
 from app.api.ui.validators import router as validators_router
 from app.api.validator.validator_round import router as validator_rounds_router
+from app.api.external.tasks import router as external_tasks_router
 from app.db.session import init_db, get_session
 from app.services.idempotency import get_cache_stats
 
@@ -116,6 +117,7 @@ app.include_router(miner_list_router)
 app.include_router(subnets_router)
 app.include_router(subnets_legacy_router)
 app.include_router(validators_router)
+app.include_router(external_tasks_router)
 
 
 # Health
