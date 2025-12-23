@@ -64,54 +64,6 @@ async def list_agents(
     return {"success": True, "data": data.model_dump()}
 
 
-@router.get("/statistics")
-async def get_agent_statistics(session: AsyncSession = Depends(get_session)):
-    service = await _service(session)
-    try:
-        response = await service.statistics()
-    except AgentAggregateCacheWarmupRequired as exc:
-        raise HTTPException(status_code=503, detail=CACHE_WARMING_MESSAGE) from exc
-    return {"success": True, "data": {"statistics": response.statistics.model_dump()}}
-
-
-@router.get("/activity")
-async def list_agent_activity(
-    session: AsyncSession = Depends(get_session),
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-    type: ActivityType | None = Query(None),
-    since: datetime | None = Query(None),
-    agentId: Optional[str] = Query(None),
-):
-    service = await _service(session)
-    try:
-        response = await service.get_all_activity(
-            limit=limit,
-            offset=offset,
-            activity_type=type,
-            since=since,
-            agent_id=agentId,
-        )
-    except AgentAggregateCacheWarmupRequired as exc:
-        raise HTTPException(status_code=503, detail=CACHE_WARMING_MESSAGE) from exc
-    return {"success": True, "data": response.model_dump()}
-
-
-@router.post("/compare")
-async def compare_agents(payload: dict, session: AsyncSession = Depends(get_session)):
-    agent_ids = payload.get("agentIds", [])
-    if not isinstance(agent_ids, list) or not agent_ids:
-        raise HTTPException(status_code=400, detail="agentIds must be a non-empty list")
-    service = await _service(session)
-    try:
-        response = await service.compare_agents(agent_ids)
-    except AgentAggregateCacheWarmupRequired as exc:
-        raise HTTPException(status_code=503, detail=CACHE_WARMING_MESSAGE) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"success": True, "data": response.model_dump()}
-
-
 @router.get("/latest-round-top-miner")
 async def get_latest_round_top_miner(
     session: AsyncSession = Depends(get_session),
