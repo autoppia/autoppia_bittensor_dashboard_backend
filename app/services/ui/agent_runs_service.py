@@ -21,7 +21,7 @@ from app.db.models import (
 )
 
 from app.config import settings
-from app.models.core import Evaluation, Task, TaskSolution
+from app.models.core import Evaluation, Task, TaskSolution, ValidatorRound
 from app.models.ui.agent_runs import (
     Action,
     AgentRun,
@@ -285,9 +285,11 @@ class AgentRunsService:
             # Get contexts for all runs
             contexts: List[AgentRunContext] = []
             if all_agent_run_ids:
+                # OPTIMIZACIÓN: Limitar cantidad de contexts a cargar
+                max_contexts = min(len(all_agent_run_ids), 500)  # Limitar a 500 máximo
                 contexts = await self.rounds_service.list_agent_run_contexts(
-                    include_details=True,
-                    agent_run_ids=all_agent_run_ids,
+                    include_details=False,  # No cargar execution_history
+                    agent_run_ids=all_agent_run_ids[:max_contexts],
                 )
             
             # Calculate ranks for all contexts
@@ -354,7 +356,7 @@ class AgentRunsService:
                 }
 
             contexts = await self.rounds_service.list_agent_run_contexts(
-                include_details=True,
+                include_details=False,  # No cargar execution_history (pesado)
                 agent_run_ids=agent_run_ids,
             )
 
