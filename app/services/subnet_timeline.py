@@ -8,7 +8,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, defer
 
 from app.db.models import AgentEvaluationRunORM, RoundORM
 from app.models.core import AgentEvaluationRun, MinerInfo, ValidatorRound
@@ -242,7 +242,13 @@ class SubnetTimelineService:
                 selectinload(RoundORM.agent_runs)
                 .selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(RoundORM.agent_runs)
-                .selectinload(AgentEvaluationRunORM.evaluations),
+                .selectinload(AgentEvaluationRunORM.evaluations).options(
+                    defer(EvaluationORM.feedback),
+                    defer(EvaluationORM.gif_recording),
+                    defer(EvaluationORM.meta),
+                ).selectinload(
+                    EvaluationORM.execution_history_record
+                ),
                 selectinload(RoundORM.validator_snapshot),  # 1:1 relationship (singular)
                 selectinload(RoundORM.miner_snapshots),
             )

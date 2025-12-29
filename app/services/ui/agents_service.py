@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple, Set
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, defer
 
 from app.config import settings
 
@@ -1283,7 +1283,13 @@ class AgentsService:
                     RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations),  # Relación correcta: evaluations
+                selectinload(AgentEvaluationRunORM.evaluations).options(
+                    defer(EvaluationORM.feedback),
+                    defer(EvaluationORM.gif_recording),
+                    defer(EvaluationORM.meta),
+                ).selectinload(
+                    EvaluationORM.execution_history_record
+                ),  # Relación correcta: evaluations
         )
         result = await self.session.scalars(stmt)
         run_rows = list(result)
@@ -1588,7 +1594,13 @@ class AgentsService:
                     RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations),  # Relación correcta: evaluations
+                selectinload(AgentEvaluationRunORM.evaluations).options(
+                    defer(EvaluationORM.feedback),
+                    defer(EvaluationORM.gif_recording),
+                    defer(EvaluationORM.meta),
+                ).selectinload(
+                    EvaluationORM.execution_history_record
+                ),  # Relación correcta: evaluations
         )
         if uid is not None:
             stmt = stmt.where(AgentEvaluationRunORM.miner_uid == uid)
