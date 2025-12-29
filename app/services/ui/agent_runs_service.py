@@ -10,10 +10,11 @@ from urllib.parse import urlparse
 
 from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, defer
 
 from app.db.models import (
     AgentEvaluationRunORM,
+    EvaluationORM,
     RoundORM,
     ValidatorRoundMinerORM,
     ValidatorRoundSummaryORM,
@@ -426,7 +427,15 @@ class AgentRunsService:
             stmt = (
                 select(AgentEvaluationRunORM)
                 .where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
-                .options(selectinload(AgentEvaluationRunORM.evaluations))
+                .options(
+                    selectinload(AgentEvaluationRunORM.evaluations).options(
+                        defer(EvaluationORM.feedback),
+                        defer(EvaluationORM.gif_recording),
+                        defer(EvaluationORM.meta),
+                    ).selectinload(
+                        EvaluationORM.execution_history_record
+                    )
+                )
             )
             all_runs = await self.session.scalars(stmt)
             

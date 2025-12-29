@@ -38,7 +38,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, defer
 
 from app.config import settings
 from app.db.session import AsyncSessionLocal
@@ -228,7 +228,13 @@ async def _iter_task_batches(session: AsyncSession, batch_size: int) -> Iterable
             select(TaskORM)
             .options(
                 selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluations),
+                selectinload(TaskORM.evaluations).options(
+                    defer(EvaluationORM.feedback),
+                    defer(EvaluationORM.gif_recording),
+                    defer(EvaluationORM.meta),
+                ).selectinload(
+                    EvaluationORM.execution_history_record
+                ),
             )
             .order_by(TaskORM.id.asc())
             .offset(offset)

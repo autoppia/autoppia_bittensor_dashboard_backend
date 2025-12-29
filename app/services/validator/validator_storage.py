@@ -5,7 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, defer
 from app.services.round_calc import compute_boundaries_for_round
 from app.config import settings
 
@@ -293,6 +293,9 @@ class ValidatorRoundPersistenceService:
         if not evaluation_kwargs.get("validator_hotkey") and round_row.validator_snapshot:
             evaluation_kwargs["validator_hotkey"] = round_row.validator_snapshot.validator_hotkey
         
+        # Separate execution_history to store in related table
+        execution_history_data = evaluation_kwargs.pop("execution_history", [])
+        
         stmt_evaluation = select(EvaluationORM).where(
             EvaluationORM.evaluation_id == evaluation.evaluation_id
         )
@@ -303,6 +306,16 @@ class ValidatorRoundPersistenceService:
             )
         evaluation_row = EvaluationORM(**evaluation_kwargs)
         self.session.add(evaluation_row)
+        
+        # Create execution_history record if there's data
+        if execution_history_data:
+            from app.db.models import EvaluationExecutionHistoryORM
+            await self.session.flush()  # Get evaluation.id
+            execution_history_row = EvaluationExecutionHistoryORM(
+                evaluations_id=evaluation_row.id,
+                execution_history=execution_history_data,
+            )
+            self.session.add(execution_history_row)
         
         # 🔍 CRITICAL: Update agent_run stats immediately after adding evaluation
         # This ensures average_score is NEVER NULL if there are evaluations
@@ -419,8 +432,22 @@ class ValidatorRoundPersistenceService:
             # Ensure validator_hotkey is set from round if not in evaluation model
             if not evaluation_kwargs.get("validator_hotkey") and round_row.validator_snapshot:
                 evaluation_kwargs["validator_hotkey"] = round_row.validator_snapshot.validator_hotkey
+            
+            # Separate execution_history to store in related table
+            execution_history_data = evaluation_kwargs.pop("execution_history", [])
+            
             evaluation_row = EvaluationORM(**evaluation_kwargs)
             self.session.add(evaluation_row)
+            
+            # Create execution_history record if there's data
+            if execution_history_data:
+                from app.db.models import EvaluationExecutionHistoryORM
+                await self.session.flush()  # Get evaluation.id
+                execution_history_row = EvaluationExecutionHistoryORM(
+                    evaluations_id=evaluation_row.id,
+                    execution_history=execution_history_data,
+                )
+                self.session.add(execution_history_row)
 
             # Handle race condition for evaluation
             try:
@@ -600,7 +627,13 @@ class ValidatorRoundPersistenceService:
             select(AgentEvaluationRunORM)
             .options(
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations),
+                selectinload(AgentEvaluationRunORM.evaluations).options(
+                    defer(EvaluationORM.feedback),
+                    defer(EvaluationORM.gif_recording),
+                    defer(EvaluationORM.meta),
+                ).selectinload(
+                    EvaluationORM.execution_history_record
+                ),
             )
             .where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
         )
@@ -711,8 +744,13 @@ class ValidatorRoundPersistenceService:
         # Evaluations
         evaluation_ids: List[str] = []
         evaluation_rows: Dict[str, EvaluationORM] = {}
+        execution_histories: List[tuple[EvaluationORM, list]] = []  # Store for later creation
+        
         for evaluation in payload.evaluations:
             kwargs = self._evaluation_kwargs(evaluation)
+            # Separate execution_history to store in related table
+            execution_history_data = kwargs.pop("execution_history", [])
+            
             stmt = select(EvaluationORM).where(
                 EvaluationORM.evaluation_id == evaluation.evaluation_id
             )
@@ -725,14 +763,27 @@ class ValidatorRoundPersistenceService:
             self.session.add(evaluation_row)
             evaluation_ids.append(evaluation.evaluation_id)
             evaluation_rows[evaluation.evaluation_id] = evaluation_row
+            
+            if execution_history_data:
+                execution_histories.append((evaluation_row, execution_history_data))
 
         await self.session.flush()
+        
+        # Create execution_history records after flush (so we have evaluation.id)
+        if execution_histories:
+            from app.db.models import EvaluationExecutionHistoryORM
+            for evaluation_row, execution_history_data in execution_histories:
+                execution_history_row = EvaluationExecutionHistoryORM(
+                    evaluations_id=evaluation_row.id,
+                    execution_history=execution_history_data,
+                )
+                self.session.add(execution_history_row)
 
         # 🔍 CRITICAL: Update agent_run stats after adding all evaluations in batch
         # This ensures average_score is NEVER NULL if there are evaluations
         # This is especially important for submit_round which adds multiple evaluations at once
         if agent_run_ids:
-            from sqlalchemy.orm import selectinload
+            from sqlalchemy.orm import selectinload, defer
             stmt_runs = (
                 select(AgentEvaluationRunORM)
                 .options(selectinload(AgentEvaluationRunORM.evaluations))
