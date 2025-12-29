@@ -34,6 +34,9 @@ async def _service(session: AsyncSession) -> OverviewService:
 
 
 @router.get("/metrics", response_model=OverviewMetricsResponse)
+@cache(
+    "overview_metrics", ttl=900
+)
 async def get_overview_metrics(
     session: AsyncSession = Depends(get_session),
 ) -> OverviewMetricsResponse:

@@ -61,7 +61,11 @@ class ValidatorRoundORM(TimestampMixin, Base):
     """Canonical representation of a validator_round."""
 
     __tablename__ = "validator_rounds"
-    __table_args__ = ()  # Constraints moved to ValidatorRoundValidatorORM
+    __table_args__ = (
+        # Composite index for optimized queries filtering by round_number and status
+        Index("ix_validator_rounds_round_status", "round_number", "status"),
+        Index("ix_validator_rounds_status", "status"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     validator_round_id: Mapped[str] = mapped_column(
@@ -222,6 +226,9 @@ class ValidatorRoundSummaryORM(TimestampMixin, Base):
         Index("ix_round_summary_miners_miner", "miner_uid"),
         Index("ix_round_summary_miners_local_rank", "validator_round_id", "local_rank"),
         Index("ix_round_summary_miners_consensus_rank", "validator_round_id", "post_consensus_rank"),
+        # Index for ORDER BY post_consensus_avg_reward DESC queries (top miner)
+        Index("ix_round_summary_miners_consensus_reward", "post_consensus_avg_reward"),
+        Index("ix_round_summary_miners_round_reward", "validator_round_id", "post_consensus_avg_reward"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
