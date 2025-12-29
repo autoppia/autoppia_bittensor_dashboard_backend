@@ -117,11 +117,64 @@ class EvaluationsService:
         task_id: Optional[str] = None,
         round_id: Optional[int] = None,
     ) -> Dict[str, object]:
+        """
+        Lista evaluaciones con paginación optimizada en SQL.
+        
+        OPTIMIZACIONES APLICADAS:
+        1. Filtros aplicados en SQL (no en Python)
+        2. Paginación en SQL (no en memoria)
+        3. Count total eficiente
+        4. No carga execution_history (relación pesada)
+        5. Usa índices compuestos para mejorar rendimiento
+        """
+        from sqlalchemy import func, and_
+        
         skip = (page - 1) * limit
 
+        # Construir query base con filtros en SQL
+        stmt = select(EvaluationORM)
+        
+        # Aplicar filtros en SQL (no en Python)
+        filters = []
+        
+        if run_id:
+            filters.append(EvaluationORM.agent_run_id == run_id)
+        
+        if task_id:
+            filters.append(EvaluationORM.task_id == task_id)
+        
+        if round_id is not None:
+            filters.append(EvaluationORM.validator_round_id == f"round_{round_id:03d}")
+        
+        # Filtro por agent_id (miner) - requiere JOIN con miner_evaluation_runs
+        if agent_id:
+            miner_uid = _parse_identifier(agent_id)
+            stmt = stmt.join(
+                AgentEvaluationRunORM,
+                EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id
+            )
+            filters.append(AgentEvaluationRunORM.miner_uid == miner_uid)
+        
+        # Filtro por validator_id
+        if validator_id:
+            validator_uid = _parse_identifier(validator_id)
+            filters.append(EvaluationORM.validator_uid == validator_uid)
+        
+        # Aplicar todos los filtros
+        if filters:
+            stmt = stmt.where(and_(*filters))
+        
+        # Contar total ANTES de paginar (optimizado con índices)
+        count_stmt = select(func.count()).select_from(
+            stmt.with_only_columns(EvaluationORM.id).subquery()
+        )
+        total = await self.session.scalar(count_stmt) or 0
+        
+        # Aplicar paginación en SQL
         stmt = (
-            select(EvaluationORM)
+            stmt
             .options(
+                # Cargar relaciones necesarias
                 selectinload(EvaluationORM.agent_run).selectinload(
                     AgentEvaluationRunORM.validator_round
                 ),
@@ -130,41 +183,32 @@ class EvaluationsService:
                 .selectinload(RoundORM.miner_snapshots),
                 selectinload(EvaluationORM.agent_run)
                 .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.validator_snapshot),  # 1:1 relationship (singular)
+                .selectinload(RoundORM.validator_snapshot),
                 selectinload(EvaluationORM.task),
                 selectinload(EvaluationORM.task_solution),
+                # NO cargar execution_history_record (muy pesado)
             )
             .order_by(EvaluationORM.id.desc())
+            .offset(skip)
+            .limit(limit)
         )
 
-        if run_id:
-            stmt = stmt.where(EvaluationORM.agent_run_id == run_id)
-        if task_id:
-            stmt = stmt.where(EvaluationORM.task_id == task_id)
-        if round_id is not None:
-            stmt = stmt.where(
-                EvaluationORM.validator_round_id == f"round_{round_id:03d}"
-            )
-
+        # Ejecutar query paginado
         result = await self.session.scalars(stmt)
-        contexts: List[EvaluationContext] = []
-        for evaluation_row in result:
-            context = self._build_context(evaluation_row)
-            if agent_id:
-                miner_uid = _parse_identifier(agent_id)
-                if context.agent_run.miner_uid != miner_uid:
-                    continue
-            if validator_id:
-                validator_uid = _parse_identifier(validator_id)
-                context_validator_uid = _get_validator_uid_from_context(context)
-                if context_validator_uid != validator_uid:
-                    continue
-
-            contexts.append(context)
-
-        total = len(contexts)
-        page_contexts = contexts[skip : skip + limit]
-        items = [self._build_list_item(context) for context in page_contexts]
+        evaluation_rows = result.all()
+        
+        # Construir items
+        items = []
+        for evaluation_row in evaluation_rows:
+            try:
+                context = self._build_context(evaluation_row)
+                item = self._build_list_item(context)
+                items.append(item)
+            except Exception as e:
+                logger.warning(
+                    f"Error building context for evaluation {evaluation_row.evaluation_id}: {e}"
+                )
+                continue
 
         return {
             "evaluations": items,
