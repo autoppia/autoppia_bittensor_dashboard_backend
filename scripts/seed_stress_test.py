@@ -327,7 +327,6 @@ async def create_validator_round(
                 eval_score=eval_score,
                 reward=reward,
                 evaluation_time=eval_time,
-                execution_history=[],
                 feedback=None,
                 meta={},
             )
@@ -338,6 +337,17 @@ async def create_validator_round(
             if len(all_evaluations) % BATCH_SIZE == 0:
                 await session.flush()
     
+    await session.flush()
+    
+    # Create execution_history records (empty for seed)
+    from app.db.models import EvaluationExecutionHistoryORM
+    print(f"  📝 Creando execution_history records...")
+    for evaluation in all_evaluations:
+        execution_history_record = EvaluationExecutionHistoryORM(
+            evaluations_id=evaluation.id,
+            execution_history=[],
+        )
+        session.add(execution_history_record)
     await session.flush()
     
     # 6. Crear datos en validator_round_summary_miners

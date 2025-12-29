@@ -277,13 +277,20 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
                 eval_score=eval_score,  # ✅ Usa eval_score (existe en BD)
                 reward=reward,  # ✅ Usa reward (existe en BD)
                 evaluation_time=eval_time,
-                execution_history=[],
                 feedback=None,
                 meta={},
             )
             session.add(evaluation)
             all_evaluations.append(evaluation)
             await session.flush()
+            
+            # Create execution_history record (empty for seed)
+            from app.db.models import EvaluationExecutionHistoryORM
+            execution_history_record = EvaluationExecutionHistoryORM(
+                evaluations_id=evaluation.id,
+                execution_history=[],
+            )
+            session.add(execution_history_record)
     
     # 6. Crear datos en validator_round_summary_miners
     print(f"  📊 Creando datos en validator_round_summary_miners...")
