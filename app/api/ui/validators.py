@@ -30,6 +30,8 @@ router = APIRouter(prefix="/api/v1/validators", tags=["validators"])
 
 # Máximo de evaluaciones a procesar si se especifica un límite (para evitar timeouts si el cliente lo solicita)
 MAX_EVALUATIONS_LIMIT = 50000
+# Límite por defecto para evitar cargar 213k+ evaluaciones sin límite
+DEFAULT_EVALUATIONS_LIMIT = 10000
 
 
 @router.get("/{uid}/details")
@@ -39,7 +41,7 @@ async def get_validator_details(
     round: Optional[int] = Query(None, description="Filter by round number"),
     website: Optional[str] = Query(None, description="Filter evaluations table by website (e.g., 'AutoCinema')"),
     useCase: Optional[str] = Query(None, description="Filter evaluations table by use case (e.g., 'SEARCH_FILM')"),
-    limit: Optional[int] = Query(None, ge=1, le=MAX_EVALUATIONS_LIMIT, description="Optional limit number of evaluations to process. If not provided, processes all evaluations."),
+    limit: Optional[int] = Query(DEFAULT_EVALUATIONS_LIMIT, ge=1, le=MAX_EVALUATIONS_LIMIT, description="Limit number of evaluations to process. Default: 10000 (to prevent performance issues with 213k+ evaluations)"),
     session: AsyncSession = Depends(get_session),
 ):
     """
@@ -160,8 +162,14 @@ async def get_validator_details(
     if website is not None:
         evaluations_query = evaluations_query.where(TaskORM.web_project_id == website)
     
-    # Nota: El filtro de useCase se aplicará en Python después de cargar los datos
-    # porque use_case es JSONB y la comparación exacta es compleja en SQL
+    # Filtro de useCase: ahora en SQL para mejor rendimiento
+    # use_case es JSONB, usamos el operador ->> para extraer el campo 'name'
+    if useCase is not None:
+        # Normalizar useCase: manejar tanto "SEARCH_FILM" como "SEARCH FILM"
+        use_case_normalized = useCase.upper().replace(" ", "_")
+        evaluations_query = evaluations_query.where(
+            func.upper(func.replace(TaskORM.use_case["name"].astext, " ", "_")) == use_case_normalized
+        )
     
     # If round filter is provided, join with ValidatorRoundORM to filter by round
     if round is not None:
@@ -171,9 +179,8 @@ async def get_validator_details(
             .where(ValidatorRoundORM.round_number == round)
         )
     
-    # Aplicar límite solo si se especifica explícitamente (sin límite por defecto)
-    if limit is not None:
-        evaluations_query = evaluations_query.limit(limit)
+    # SIEMPRE aplicar límite (ahora tiene default de 10000 para evitar cargar 213k registros)
+    evaluations_query = evaluations_query.limit(limit)
     
     evaluations_result = await session.execute(evaluations_query)
     evaluations = evaluations_result.scalars().all()
@@ -457,20 +464,8 @@ async def get_validator_details(
         # Extract web and use_case
         web_id = task.web_project_id or "unknown"
         
-        # Aplicar filtro de useCase en Python (si se especificó)
-        if useCase is not None:
-            use_case_dict = task.use_case or {}
-            use_case_matches = False
-            
-            if isinstance(use_case_dict, dict):
-                # Buscar en valores del dict
-                use_case_str = str(use_case_dict.get("name") or use_case_dict.get("id") or use_case_dict.get("use_case") or "")
-                use_case_matches = useCase.lower() in use_case_str.lower()
-            elif isinstance(use_case_dict, str):
-                use_case_matches = useCase.lower() in use_case_dict.lower()
-            
-            if not use_case_matches:
-                continue  # Saltar esta evaluación si no coincide con el filtro
+        # Nota: El filtro de useCase ya se aplicó en SQL (línea 167-172)
+        # No necesitamos filtrar nuevamente en Python
         
         use_case_dict = task.use_case or {}
         # Use case can be a dict with 'name' or 'id', or a string
