@@ -10,7 +10,7 @@ from urllib.parse import urlparse, parse_qs
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, defer
 
 from app.db.models import (
     AgentEvaluationRunORM,
@@ -226,7 +226,13 @@ class TasksService:
             .where(TaskORM.task_id.in_(select(EvaluationORM.task_id).distinct()))
             .options(
                 selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluations),
+                selectinload(TaskORM.evaluations).options(
+                    defer(EvaluationORM.feedback),
+                    defer(EvaluationORM.gif_recording),
+                    defer(EvaluationORM.meta),
+                ).selectinload(
+                    EvaluationORM.execution_history_record
+                ),
             )
             .order_by(TaskORM.id.desc())
         )
@@ -778,7 +784,13 @@ class TasksService:
             select(TaskORM)
             .options(
                 selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluations),
+                selectinload(TaskORM.evaluations).options(
+                    defer(EvaluationORM.feedback),
+                    defer(EvaluationORM.gif_recording),
+                    defer(EvaluationORM.meta),
+                ).selectinload(
+                    EvaluationORM.execution_history_record
+                ),
             )
             .where(TaskORM.task_id == task_id)
         )
@@ -803,7 +815,13 @@ class TasksService:
             select(TaskORM)
             .options(
                 selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluations),
+                selectinload(TaskORM.evaluations).options(
+                    defer(EvaluationORM.feedback),
+                    defer(EvaluationORM.gif_recording),
+                    defer(EvaluationORM.meta),
+                ).selectinload(
+                    EvaluationORM.execution_history_record
+                ),
             )
             .where(TaskORM.task_id == eval_row.task_id)
         )

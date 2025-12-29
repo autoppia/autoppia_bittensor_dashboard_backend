@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 from sqlalchemy import func, select, case, String, and_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, defer
 
 from app.db.models import (
     AgentEvaluationRunORM,
@@ -661,7 +661,13 @@ class RoundsService:
                     RoundORM.validator_snapshot  # 1:1 relationship (singular)
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations),
+                selectinload(AgentEvaluationRunORM.evaluations).options(
+                    defer(EvaluationORM.feedback),
+                    defer(EvaluationORM.gif_recording),
+                    defer(EvaluationORM.meta),
+                ).selectinload(
+                    EvaluationORM.execution_history_record
+                ),
             )
 
         result = await self.session.scalars(stmt)
@@ -695,7 +701,13 @@ class RoundsService:
                     RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations),
+                selectinload(AgentEvaluationRunORM.evaluations).options(
+                    defer(EvaluationORM.feedback),
+                    defer(EvaluationORM.gif_recording),
+                    defer(EvaluationORM.meta),
+                ).selectinload(
+                    EvaluationORM.execution_history_record
+                ),
             )
             .where(AgentEvaluationRunORM.agent_run_id == agent_run_id)
         )
@@ -732,7 +744,13 @@ class RoundsService:
         if include_details:
             stmt = stmt.options(
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations),
+                selectinload(AgentEvaluationRunORM.evaluations).options(
+                    defer(EvaluationORM.feedback),
+                    defer(EvaluationORM.gif_recording),
+                    defer(EvaluationORM.meta),
+                ).selectinload(
+                    EvaluationORM.execution_history_record
+                ),
             )
 
         stmt = stmt.order_by(AgentEvaluationRunORM.id.desc())
@@ -808,7 +826,13 @@ class RoundsService:
                     RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations),
+                selectinload(AgentEvaluationRunORM.evaluations).options(
+                    defer(EvaluationORM.feedback),
+                    defer(EvaluationORM.gif_recording),
+                    defer(EvaluationORM.meta),
+                ).selectinload(
+                    EvaluationORM.execution_history_record
+                ),
             )
             .where(AgentEvaluationRunORM.agent_run_id == agent_run_id)
         )

@@ -491,9 +491,6 @@ class EvaluationORM(TimestampMixin, Base):
     eval_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # Evaluation score (tests/actions only, 0-1)
     reward: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # Reward value (eval_score + time_score, used for consensus)
     evaluation_time: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    execution_history: Mapped[list[Any]] = mapped_column(
-        JSON, nullable=False, default=list
-    )
     feedback: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     gif_recording: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -508,6 +505,11 @@ class EvaluationORM(TimestampMixin, Base):
     agent_run: Mapped["AgentEvaluationRunORM"] = relationship(
         back_populates="evaluations"
     )
+    execution_history_record: Mapped[Optional["EvaluationExecutionHistoryORM"]] = relationship(
+        back_populates="evaluation",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
     @property
     def data(self) -> dict[str, Any]:
@@ -519,6 +521,40 @@ class EvaluationORM(TimestampMixin, Base):
             "evaluation_time": self.evaluation_time,
             "meta": dict(self.meta or {}),
         }
+
+    @property
+    def execution_history(self) -> list[Any]:
+        """Access execution_history from related table (safe for lazy loading)."""
+        from sqlalchemy import inspect
+        # Check if the relationship is loaded without triggering lazy load
+        state = inspect(self)
+        if "execution_history_record" in state.unloaded:
+            # Relationship not loaded, return empty list without triggering I/O
+            return []
+        # Relationship is loaded, safe to access
+        if self.execution_history_record:
+            return self.execution_history_record.execution_history
+        return []
+
+
+class EvaluationExecutionHistoryORM(TimestampMixin, Base):
+    """Execution history for evaluations (separate table for performance)."""
+
+    __tablename__ = "evaluations_execution_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    evaluations_id: Mapped[int] = mapped_column(
+        ForeignKey("evaluations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    execution_history: Mapped[list[Any]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+
+    evaluation: Mapped["EvaluationORM"] = relationship(
+        back_populates="execution_history_record"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +570,7 @@ __all__ = [
     "TaskORM",
     "TaskSolutionORM",
     "EvaluationORM",
+    "EvaluationExecutionHistoryORM",
     "RoundORM",
 ]
 
