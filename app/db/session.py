@@ -76,10 +76,11 @@ engine = create_async_engine(
     pool_pre_ping=True,  # verify connections before use
     connect_args={
         # Timeout for establishing a connection (seconds)
-        "timeout": 10,
+        "timeout": 15,  # Aumentado de 10 a 15 segundos
         # Apply server-side statement timeout to avoid long-lived queries
+        "command_timeout": 30,  # Aumentado de 10 a 30 segundos
         "server_settings": {
-            "statement_timeout": "30000",  # 30s
+            "statement_timeout": "30000",  # 30s (aumentado para queries complejas)
         },
     },
 )
