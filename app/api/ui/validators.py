@@ -30,8 +30,8 @@ router = APIRouter(prefix="/api/v1/validators", tags=["validators"])
 
 # Máximo de evaluaciones a procesar si se especifica un límite (para evitar timeouts si el cliente lo solicita)
 MAX_EVALUATIONS_LIMIT = 100000
-# Límite por defecto para evitar cargar 213k+ evaluaciones sin límite
-DEFAULT_EVALUATIONS_LIMIT = 10000
+# Límite por defecto: usar el máximo para devolver todas las evaluaciones disponibles
+DEFAULT_EVALUATIONS_LIMIT = 100000
 
 
 @router.get("/{uid}/details")
@@ -41,7 +41,7 @@ async def get_validator_details(
     round: Optional[int] = Query(None, description="Filter by round number"),
     website: Optional[str] = Query(None, description="Filter evaluations table by website (e.g., 'AutoCinema')"),
     useCase: Optional[str] = Query(None, description="Filter evaluations table by use case (e.g., 'SEARCH_FILM')"),
-    limit: Optional[int] = Query(DEFAULT_EVALUATIONS_LIMIT, ge=1, le=MAX_EVALUATIONS_LIMIT, description="Limit number of evaluations to process. Default: 10000, Max: 100000"),
+    limit: Optional[int] = Query(DEFAULT_EVALUATIONS_LIMIT, ge=1, le=MAX_EVALUATIONS_LIMIT, description="Limit number of evaluations to process. Default: 100000, Max: 100000"),
     session: AsyncSession = Depends(get_session),
 ):
     """
