@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, func, and_
+from sqlalchemy import and_, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, load_only
 
 from app.db.session import get_session
 from app.db.models import (
@@ -29,9 +28,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/validators", tags=["validators"])
 
 # Máximo de evaluaciones a procesar si se especifica un límite (para evitar timeouts si el cliente lo solicita)
-MAX_EVALUATIONS_LIMIT = 100000
+# Límite máximo para poder obtener todas las evaluaciones disponibles
+# 500k debería ser suficiente para cualquier validator (el máximo actual es ~95k)
+MAX_EVALUATIONS_LIMIT = 500000
 # Límite por defecto: usar el máximo para devolver todas las evaluaciones disponibles
-DEFAULT_EVALUATIONS_LIMIT = 100000
+DEFAULT_EVALUATIONS_LIMIT = 500000
 
 
 @router.get("/{uid}/details")
@@ -41,7 +42,7 @@ async def get_validator_details(
     round: Optional[int] = Query(None, description="Filter by round number"),
     website: Optional[str] = Query(None, description="Filter evaluations table by website (e.g., 'AutoCinema')"),
     useCase: Optional[str] = Query(None, description="Filter evaluations table by use case (e.g., 'SEARCH_FILM')"),
-    limit: Optional[int] = Query(DEFAULT_EVALUATIONS_LIMIT, ge=1, le=MAX_EVALUATIONS_LIMIT, description="Limit number of evaluations to process. Default: 100000, Max: 100000"),
+    limit: Optional[int] = Query(DEFAULT_EVALUATIONS_LIMIT, ge=1, le=MAX_EVALUATIONS_LIMIT, description=f"Limit number of evaluations to process. Default: {DEFAULT_EVALUATIONS_LIMIT}, Max: {MAX_EVALUATIONS_LIMIT}"),
     session: AsyncSession = Depends(get_session),
 ):
     """
@@ -52,7 +53,7 @@ async def get_validator_details(
         round: Optional round number to filter evaluations. If not provided, returns all rounds.
         website: Optional website filter for evaluations table (e.g., "AutoCinema", "AutoBooks")
         useCase: Optional use case filter for evaluations table (e.g., "SEARCH_FILM", "CONTACT_BOOK")
-        limit: Optional limit on number of evaluations to process (max 10000)
+        limit: Optional limit on number of evaluations to process (max 500000)
     
     Returns:
     - Validator info (uid, hotkey, stake, weight, lastRoundEvaluated)
@@ -133,57 +134,99 @@ async def get_validator_details(
     rounds_result = await session.execute(rounds_query)
     available_rounds = [r[0] for r in rounds_result.all()]
     
-    # Optimización: Usar load_only para traer solo columnas necesarias
-    # Solo necesitamos: eval_score, meta, feedback, task_id de EvaluationORM
-    # Y task_id, prompt, web_project_id, use_case de TaskORM
-    evaluations_query = (
-        select(EvaluationORM)
+    # Agregación en SQL para evitar traer todas las evaluaciones a Python
+    use_case_name_expr = func.coalesce(
+        TaskORM.use_case["name"].astext,
+        TaskORM.use_case["id"].astext,
+        TaskORM.use_case["use_case"].astext,
+        literal("unknown"),
+    )
+    use_case_id_expr = func.coalesce(
+        TaskORM.use_case["id"].astext,
+        TaskORM.use_case["name"].astext,
+        TaskORM.use_case["use_case"].astext,
+        literal("unknown"),
+    )
+
+    base_evaluations_query = (
+        select(
+            EvaluationORM.eval_score.label("eval_score"),
+            EvaluationORM.task_id.label("task_id"),
+            TaskORM.web_project_id.label("web_id"),
+            TaskORM.web_version.label("web_version"),
+            use_case_name_expr.label("use_case_name"),
+            use_case_id_expr.label("use_case_id"),
+            func.substr(TaskORM.prompt, 1, 120).label("task_prompt"),
+        )
         .join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
         .where(EvaluationORM.validator_uid == uid)
-        .options(
-            load_only(
-                EvaluationORM.eval_score,
-                EvaluationORM.meta,
-                EvaluationORM.feedback,
-                EvaluationORM.task_id,
-                EvaluationORM.validator_round_id,
-            ),
-            selectinload(EvaluationORM.task).load_only(
-                TaskORM.task_id,
-                TaskORM.prompt,
-                TaskORM.web_project_id,
-                TaskORM.web_version,
-                TaskORM.use_case,
-            )
-        )
     )
     
     # Aplicar filtros opcionales
     if website is not None:
-        evaluations_query = evaluations_query.where(TaskORM.web_project_id == website)
+        base_evaluations_query = base_evaluations_query.where(TaskORM.web_project_id == website)
     
-    # Filtro de useCase: ahora en SQL para mejor rendimiento
-    # use_case es JSONB, usamos el operador ->> para extraer el campo 'name'
+    # Filtro de useCase en SQL (JSONB -> 'name')
     if useCase is not None:
-        # Normalizar useCase: manejar tanto "SEARCH_FILM" como "SEARCH FILM"
         use_case_normalized = useCase.upper().replace(" ", "_")
-        evaluations_query = evaluations_query.where(
+        base_evaluations_query = base_evaluations_query.where(
             func.upper(func.replace(TaskORM.use_case["name"].astext, " ", "_")) == use_case_normalized
         )
     
-    # If round filter is provided, join with ValidatorRoundORM to filter by round
+    # Filtro por round
     if round is not None:
-        evaluations_query = (
-            evaluations_query
+        base_evaluations_query = (
+            base_evaluations_query
             .join(ValidatorRoundORM, EvaluationORM.validator_round_id == ValidatorRoundORM.validator_round_id)
             .where(ValidatorRoundORM.round_number == round)
         )
     
-    # SIEMPRE aplicar límite (ahora tiene default de 10000 para evitar cargar 213k registros)
-    evaluations_query = evaluations_query.limit(limit)
-    
-    evaluations_result = await session.execute(evaluations_query)
-    evaluations = evaluations_result.scalars().all()
+    # Aplicar límite configurable (por defecto 500k)
+    base_evaluations_query = base_evaluations_query.limit(limit)
+
+    evaluations_subquery = base_evaluations_query.subquery()
+
+    # Agregados globales
+    global_counts_stmt = (
+        select(
+            func.count().label("total"),
+            func.count().filter(evaluations_subquery.c.eval_score >= 0.5).label("success"),
+            func.count().filter(
+                and_(evaluations_subquery.c.eval_score < 0.5, evaluations_subquery.c.eval_score.isnot(None))
+            ).label("zero"),
+            func.count().filter(evaluations_subquery.c.eval_score.is_(None)).label("null_count"),
+        )
+        .select_from(evaluations_subquery)
+    )
+    global_counts_row = (await session.execute(global_counts_stmt)).one()
+    total_evaluations_processed = int(global_counts_row.total or 0)
+
+    # Agregados por web/useCase/task
+    grouped_stmt = (
+        select(
+            evaluations_subquery.c.web_id,
+            evaluations_subquery.c.web_version,
+            evaluations_subquery.c.use_case_name,
+            evaluations_subquery.c.use_case_id,
+            evaluations_subquery.c.task_id,
+            func.max(evaluations_subquery.c.task_prompt).label("task_prompt"),
+            func.count().label("total"),
+            func.count().filter(evaluations_subquery.c.eval_score >= 0.5).label("success"),
+            func.count().filter(
+                and_(evaluations_subquery.c.eval_score < 0.5, evaluations_subquery.c.eval_score.isnot(None))
+            ).label("zero"),
+            func.count().filter(evaluations_subquery.c.eval_score.is_(None)).label("null_count"),
+        )
+        .select_from(evaluations_subquery)
+        .group_by(
+            evaluations_subquery.c.web_id,
+            evaluations_subquery.c.web_version,
+            evaluations_subquery.c.use_case_name,
+            evaluations_subquery.c.use_case_id,
+            evaluations_subquery.c.task_id,
+        )
+    )
+    grouped_rows = (await session.execute(grouped_stmt)).all()
     
     # Get last round number for this validator (needed even if no evaluations)
     last_round_query = (
@@ -374,7 +417,7 @@ async def get_validator_details(
             
             # Already sorted by rank and reward in the query
     
-    if not evaluations:
+    if total_evaluations_processed == 0:
         # Return empty response if no evaluations found
         return JSONResponse(
             content={
@@ -423,16 +466,16 @@ async def get_validator_details(
             headers={"Cache-Control": "public, max-age=60"}
         )
     
-    # Aggregate statistics
+    # Aggregate statistics using SQL results
     global_stats = {
-        "totalEvaluations": 0,
-        "successCount": 0,
-        "zeroCount": 0,
-        "nullCount": 0,
+        "totalEvaluations": total_evaluations_processed,
+        "successCount": int(global_counts_row.success or 0),
+        "zeroCount": int(global_counts_row.zero or 0),
+        "nullCount": int(global_counts_row.null_count or 0),
         "failedCount": 0,
     }
     
-    # Group by web and use_case
+    # Group by web and use_case from grouped rows
     web_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
         "webName": None,
         "webId": None,
@@ -450,173 +493,63 @@ async def get_validator_details(
             "zeroCount": 0,
             "nullCount": 0,
             "failedCount": 0,
-            "tasks": [],  # List of individual tasks
+            "tasks": [],
         }),
     })
     
-    
-    # Process each evaluation
-    for eval in evaluations:
-        task = eval.task
-        if not task:
-            continue
+    for row in grouped_rows:
+        web_id = row.web_id or "unknown"
+        web_version = row.web_version
+        use_case_id = row.use_case_id or "unknown"
+        use_case_name = row.use_case_name or use_case_id
         
-        # Extract web and use_case
-        web_id = task.web_project_id or "unknown"
+        total = int(row.total or 0)
+        success = int(row.success or 0)
+        zero = int(row.zero or 0)
+        null_count = int(row.null_count or 0)
+        failed = 0  # failedCount remains for schema compatibility
         
-        # Nota: El filtro de useCase ya se aplicó en SQL (línea 167-172)
-        # No necesitamos filtrar nuevamente en Python
+        web_entry = web_stats[web_id]
+        if web_entry["webId"] is None:
+            web_entry["webId"] = web_id
+            web_entry["webName"] = web_id
+            web_entry["webVersion"] = web_version
         
-        use_case_dict = task.use_case or {}
-        # Use case can be a dict with 'name' or 'id', or a string
-        use_case_name = "unknown"
-        use_case_id = "unknown"
-        if isinstance(use_case_dict, dict):
-            # Try to get name or id from dict
-            use_case_name = use_case_dict.get("name") or use_case_dict.get("id") or use_case_dict.get("use_case") or "unknown"
-            use_case_id = use_case_dict.get("id") or use_case_dict.get("name") or use_case_name
-            # If still unknown, try to get first non-empty string value
-            if use_case_id == "unknown":
-                for key, value in use_case_dict.items():
-                    if isinstance(value, str) and value:
-                        use_case_id = value
-                        use_case_name = value
-                        break
-        elif isinstance(use_case_dict, str):
-            use_case_name = use_case_dict
-            use_case_id = use_case_dict
-        else:
-            use_case_name = str(use_case_dict) if use_case_dict else "unknown"
-            use_case_id = use_case_name
+        web_entry["totalEvaluations"] += total
+        web_entry["successCount"] += success
+        web_entry["zeroCount"] += zero
+        web_entry["nullCount"] += null_count
         
-        # Initialize web stats if needed
-        if web_id not in web_stats:
-            web_stats[web_id]["webId"] = web_id
-            web_stats[web_id]["webName"] = web_id  # Use web_id as name if no better name available
-            web_stats[web_id]["webVersion"] = task.web_version  # Add web version from task
-        
-        # Initialize use case stats if needed
         use_case_key = f"{web_id}:{use_case_id}"
-        if use_case_key not in web_stats[web_id]["useCases"]:
-            web_stats[web_id]["useCases"][use_case_key]["useCaseId"] = use_case_id
-            web_stats[web_id]["useCases"][use_case_key]["useCaseName"] = use_case_name
-            web_stats[web_id]["useCases"][use_case_key]["tasks"] = []
+        use_case_stats = web_entry["useCases"][use_case_key]
+        if use_case_stats["useCaseId"] is None:
+            use_case_stats["useCaseId"] = use_case_id
+            use_case_stats["useCaseName"] = use_case_name
         
-        # Count evaluation
-        eval_score = eval.eval_score
-        is_failed = False
+        use_case_stats["totalEvaluations"] += total
+        use_case_stats["successCount"] += success
+        use_case_stats["zeroCount"] += zero
+        use_case_stats["nullCount"] += null_count
         
-        # Check if evaluation failed (check meta, feedback, or error fields)
-        meta = eval.meta or {}
-        feedback = eval.feedback or {}
-        if isinstance(meta, dict):
-            # Check for error indicators in meta
-            if any(key in meta for key in ["error", "error_message", "exception", "status"]):
-                error_value = meta.get("error") or meta.get("error_message") or meta.get("exception")
-                status_value = meta.get("status")
-                if error_value or (status_value and str(status_value).lower() not in ["ok", "success", "completed"]):
-                    is_failed = True
-        if isinstance(feedback, dict):
-            if any(key in feedback for key in ["error", "error_message", "exception"]):
-                is_failed = True
+        task_total = total
+        task_success = success
+        task_zero = zero
+        task_null = null_count
+        task_failed = failed
         
-        # Update global stats
-        global_stats["totalEvaluations"] += 1
-        if is_failed:
-            global_stats["failedCount"] += 1
-        elif eval_score is None:
-            global_stats["nullCount"] += 1
-        elif eval_score == 1.0:
-            global_stats["successCount"] += 1
-        elif eval_score == 0.0:
-            global_stats["zeroCount"] += 1
-        else:
-            # Score between 0 and 1, count as success if >= 0.5, otherwise zero
-            if eval_score >= 0.5:
-                global_stats["successCount"] += 1
-            else:
-                global_stats["zeroCount"] += 1
-        
-        # Update web stats
-        web_stats[web_id]["totalEvaluations"] += 1
-        if is_failed:
-            web_stats[web_id]["failedCount"] += 1
-        elif eval_score is None:
-            web_stats[web_id]["nullCount"] += 1
-        elif eval_score == 1.0:
-            web_stats[web_id]["successCount"] += 1
-        elif eval_score == 0.0:
-            web_stats[web_id]["zeroCount"] += 1
-        else:
-            if eval_score >= 0.5:
-                web_stats[web_id]["successCount"] += 1
-            else:
-                web_stats[web_id]["zeroCount"] += 1
-        
-        # Update use case stats
-        use_case_stats = web_stats[web_id]["useCases"][use_case_key]
-        use_case_stats["totalEvaluations"] += 1
-        if is_failed:
-            use_case_stats["failedCount"] += 1
-        elif eval_score is None:
-            use_case_stats["nullCount"] += 1
-        elif eval_score == 1.0:
-            use_case_stats["successCount"] += 1
-        elif eval_score == 0.0:
-            use_case_stats["zeroCount"] += 1
-        else:
-            if eval_score >= 0.5:
-                use_case_stats["successCount"] += 1
-            else:
-                use_case_stats["zeroCount"] += 1
-        
-        # Add task to use case tasks list
-        task_status = "failed" if is_failed else ("null" if eval_score is None else ("success" if (eval_score == 1.0 or (eval_score is not None and eval_score >= 0.5)) else "zero"))
-        
-        # Check if task already exists in the list (same task_id)
-        task_exists = False
-        for existing_task in use_case_stats["tasks"]:
-            if existing_task.get("taskId") == task.task_id:
-                # Update existing task stats
-                existing_task["totalEvaluations"] += 1
-                if task_status == "success":
-                    existing_task["successCount"] += 1
-                elif task_status == "zero":
-                    existing_task["zeroCount"] += 1
-                elif task_status == "null":
-                    existing_task["nullCount"] += 1
-                elif task_status == "failed":
-                    existing_task["failedCount"] += 1
-                # Update percentages
-                total = existing_task["totalEvaluations"]
-                existing_task["successPct"] = (existing_task["successCount"] / total * 100) if total > 0 else 0.0
-                existing_task["zeroPct"] = (existing_task["zeroCount"] / total * 100) if total > 0 else 0.0
-                existing_task["nullPct"] = (existing_task["nullCount"] / total * 100) if total > 0 else 0.0
-                existing_task["failedPct"] = (existing_task["failedCount"] / total * 100) if total > 0 else 0.0
-                task_exists = True
-                break
-        
-        if not task_exists:
-            # Add new task
-            task_total = 1
-            task_success = 1 if task_status == "success" else 0
-            task_zero = 1 if task_status == "zero" else 0
-            task_null = 1 if task_status == "null" else 0
-            task_failed = 1 if task_status == "failed" else 0
-            
-            use_case_stats["tasks"].append({
-                "taskId": task.task_id,
-                "taskPrompt": task.prompt[:100] if task.prompt else "",  # Truncate prompt
-                "totalEvaluations": task_total,
-                "successCount": task_success,
-                "zeroCount": task_zero,
-                "nullCount": task_null,
-                "failedCount": task_failed,
-                "successPct": (task_success / task_total * 100) if task_total > 0 else 0.0,
-                "zeroPct": (task_zero / task_total * 100) if task_total > 0 else 0.0,
-                "nullPct": (task_null / task_total * 100) if task_total > 0 else 0.0,
-                "failedPct": (task_failed / task_total * 100) if task_total > 0 else 0.0,
-            })
+        use_case_stats["tasks"].append({
+            "taskId": row.task_id,
+            "taskPrompt": row.task_prompt or "",
+            "totalEvaluations": task_total,
+            "successCount": task_success,
+            "zeroCount": task_zero,
+            "nullCount": task_null,
+            "failedCount": task_failed,
+            "successPct": (task_success / task_total * 100) if task_total > 0 else 0.0,
+            "zeroPct": (task_zero / task_total * 100) if task_total > 0 else 0.0,
+            "nullPct": (task_null / task_total * 100) if task_total > 0 else 0.0,
+            "failedPct": (task_failed / task_total * 100) if task_total > 0 else 0.0,
+        })
     
     # Calculate percentages for global stats
     total = global_stats["totalEvaluations"]
@@ -634,7 +567,6 @@ async def get_validator_details(
         web_data["nullPct"] = (web_data["nullCount"] / web_total * 100) if web_total > 0 else 0.0
         web_data["failedPct"] = (web_data["failedCount"] / web_total * 100) if web_total > 0 else 0.0
         
-        # Convert use cases to list
         use_cases_list = []
         for use_case_key, use_case_data in web_data["useCases"].items():
             uc_total = use_case_data["totalEvaluations"]
@@ -642,14 +574,9 @@ async def get_validator_details(
             use_case_data["zeroPct"] = (use_case_data["zeroCount"] / uc_total * 100) if uc_total > 0 else 0.0
             use_case_data["nullPct"] = (use_case_data["nullCount"] / uc_total * 100) if uc_total > 0 else 0.0
             use_case_data["failedPct"] = (use_case_data["failedCount"] / uc_total * 100) if uc_total > 0 else 0.0
-            # Ensure tasks is a list (not defaultdict)
-            if "tasks" not in use_case_data:
-                use_case_data["tasks"] = []
-            # Sort tasks by successCount descending
             use_case_data["tasks"].sort(key=lambda t: t.get("successCount", 0), reverse=True)
             use_cases_list.append(use_case_data)
         
-        # Sort use cases by successCount descending
         use_cases_list.sort(key=lambda uc: uc.get("successCount", 0), reverse=True)
         web_data["useCases"] = use_cases_list
         webs_list.append(web_data)
@@ -675,19 +602,14 @@ async def get_validator_details(
     def get_web_order(web_id: str) -> int:
         """Get order for web_id based on web name"""
         web_id_lower = web_id.lower()
-        # Check if web_id contains any of the web names
         for web_name, order in WEB_ORDER.items():
             if web_name in web_id_lower:
                 return order
-        # If not found, return a large number to put it at the end
         return 999
     
     webs_list.sort(key=lambda w: get_web_order(w.get("webId", "")))
     
     # Contar total de evaluaciones procesadas vs total disponible
-    total_evaluations_processed = len(evaluations)
-    # Si se aplicó un límite, el total procesado puede ser menor que el real
-    # Devolvemos el número procesado y si hay más disponibles
     has_more = limit is not None and total_evaluations_processed >= limit
     
     # Build response
@@ -730,4 +652,3 @@ async def get_validator_details(
         content=response_data,
         headers={"Cache-Control": "public, max-age=60"}  # Cache HTTP por 60 segundos
     )
-
