@@ -109,6 +109,10 @@ app.include_router(rounds_router)
 app.include_router(legacy_rounds_router)
 app.include_router(agent_runs_router)
 app.include_router(evaluations_router)
+# IMPORTANT: external_tasks_router must be registered BEFORE tasks_router
+# because both share the same prefix /api/v1/tasks and tasks_router has a catch-all route /{task_id}
+# FastAPI matches routes in registration order, so specific routes must come before generic ones
+app.include_router(external_tasks_router)
 app.include_router(tasks_router)
 app.include_router(agents_router)
 app.include_router(miners_router)
@@ -117,7 +121,6 @@ app.include_router(miner_list_router)
 app.include_router(subnets_router)
 app.include_router(subnets_legacy_router)
 app.include_router(validators_router)
-app.include_router(external_tasks_router)
 
 
 # Health
