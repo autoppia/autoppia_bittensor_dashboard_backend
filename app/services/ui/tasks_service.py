@@ -68,6 +68,7 @@ from app.services.ui.rounds_service import (
 from app.utils.images import resolve_agent_image, resolve_validator_image
 from app.config import settings
 from app.services.round_calc import compute_boundaries_for_round
+from app.services.redis_cache import redis_cache
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +202,36 @@ class TasksService:
         latency predictable even with large tables.
         """
         if not include_details:
-            return await self._list_tasks_light(
+            # Generate cache key for lightweight listing
+            cache_key = redis_cache._generate_key(
+                "tasks_search_light",
+                page=page,
+                limit=limit,
+                agent_run_id=agent_run_id,
+                agent_id=agent_id,
+                validator_id=validator_id,
+                website=website,
+                use_case=use_case,
+                status=status,
+                query=query,
+                min_score=min_score,
+                max_score=max_score,
+                start_date=start_date.isoformat() if start_date else None,
+                end_date=end_date.isoformat() if end_date else None,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                include_facets=include_facets,
+            )
+            
+            # Try to get from cache
+            cached_result = redis_cache.get(cache_key)
+            if cached_result is not None:
+                logger.debug(f"Cache hit for tasks_search_light: {cache_key}")
+                return cached_result
+            
+            # Execute query
+            logger.debug(f"Cache miss for tasks_search_light: {cache_key}")
+            result = await self._list_tasks_light(
                 page=page,
                 limit=limit,
                 agent_run_id=agent_run_id,
@@ -219,6 +249,12 @@ class TasksService:
                 sort_order=sort_order,
                 include_facets=include_facets,
             )
+            
+            # Cache result (TTL: 60 seconds for search results)
+            if result is not None:
+                redis_cache.set(cache_key, result, ttl=60)
+            
+            return result
 
         # Only show tasks that have evaluations (i.e., completed tasks with agent_runs)
         stmt = (
@@ -548,13 +584,21 @@ class TasksService:
             if sort_order.lower() == "desc"
             else sort_column.asc()
         )
+        # Optimize COUNT: build count query without ORDER BY (faster)
+        # COUNT doesn't need ordering, so we avoid the subquery overhead
+        count_stmt = (
+            select(func.count(EvaluationORM.id))
+            .select_from(EvaluationORM.__table__.join(TaskORM.__table__, EvaluationORM.task_id == TaskORM.task_id))
+        )
+        if filters:
+            count_stmt = count_stmt.where(*filters)
+        
+        # Execute COUNT and pagination in parallel would be ideal, but for now do sequentially
+        # The COUNT is still needed for pagination UI, but we make it faster by avoiding subquery
+        total = (await self.session.execute(count_stmt)).scalar_one()
+
+        # Paginate over EVALUATIONS (only get the 50 we need)
         base_stmt = base_stmt.order_by(order_expr)
-
-        # Total before pagination (count ALL evaluations)
-        total_stmt = select(func.count()).select_from(base_stmt.subquery())
-        total = (await self.session.execute(total_stmt)).scalar_one()
-
-        # Paginate over EVALUATIONS
         offset = (page - 1) * limit
         page_stmt = base_stmt.offset(offset).limit(limit)
         eval_rows = list(await self.session.scalars(page_stmt))
