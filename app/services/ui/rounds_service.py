@@ -661,11 +661,7 @@ class RoundsService:
                     RoundORM.validator_snapshot  # 1:1 relationship (singular)
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations).options(
-                    defer(EvaluationORM.feedback),
-                    defer(EvaluationORM.gif_recording),
-                    defer(EvaluationORM.meta),
-                ).selectinload(
+                selectinload(AgentEvaluationRunORM.evaluations).selectinload(
                     EvaluationORM.execution_history_record
                 ),
             )
@@ -701,11 +697,7 @@ class RoundsService:
                     RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations).options(
-                    defer(EvaluationORM.feedback),
-                    defer(EvaluationORM.gif_recording),
-                    defer(EvaluationORM.meta),
-                ).selectinload(
+                selectinload(AgentEvaluationRunORM.evaluations).selectinload(
                     EvaluationORM.execution_history_record
                 ),
             )
@@ -744,11 +736,7 @@ class RoundsService:
         if include_details:
             stmt = stmt.options(
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations).options(
-                    defer(EvaluationORM.feedback),
-                    defer(EvaluationORM.gif_recording),
-                    defer(EvaluationORM.meta),
-                ).selectinload(
+                selectinload(AgentEvaluationRunORM.evaluations).selectinload(
                     EvaluationORM.execution_history_record
                 ),
             )
@@ -826,11 +814,7 @@ class RoundsService:
                     RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations).options(
-                    defer(EvaluationORM.feedback),
-                    defer(EvaluationORM.gif_recording),
-                    defer(EvaluationORM.meta),
-                ).selectinload(
+                selectinload(AgentEvaluationRunORM.evaluations).selectinload(
                     EvaluationORM.execution_history_record
                 ),
             )
