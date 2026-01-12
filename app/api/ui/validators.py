@@ -241,7 +241,7 @@ async def get_validator_details(
     last_round_number = last_round.round_number if last_round else None
     
     # Determine which round to use for winner lookup
-    # If round filter is provided, use that round; otherwise use last round
+    # If round filter is provided, use that round; otherwise use last FINISHED round
     target_round = None
     if round is not None:
         # Get the specific round requested
@@ -259,8 +259,23 @@ async def get_validator_details(
         target_round_result = await session.execute(target_round_query)
         target_round = target_round_result.scalar_one_or_none()
     else:
-        # Use last round if no filter
-        target_round = last_round
+        # Use last FINISHED round if no filter (so we can get weight from ValidatorRoundSummaryORM)
+        # A finished round has ended_at not null and status = 'finished'
+        last_finished_round_query = (
+            select(ValidatorRoundORM)
+            .join(ValidatorRoundValidatorORM, ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
+            .where(
+                and_(
+                    ValidatorRoundValidatorORM.validator_uid == uid,
+                    ValidatorRoundORM.ended_at.isnot(None),
+                    ValidatorRoundORM.status == 'finished'
+                )
+            )
+            .order_by(ValidatorRoundORM.round_number.desc())
+            .limit(1)
+        )
+        last_finished_round_result = await session.execute(last_finished_round_query)
+        target_round = last_finished_round_result.scalar_one_or_none()
     
     # Get winner of target round for this validator
     last_round_winner = None

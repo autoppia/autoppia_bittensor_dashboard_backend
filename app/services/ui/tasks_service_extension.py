@@ -309,7 +309,7 @@ async def get_tasks_with_solutions(
             "taskId": task_orm.task_id,
             "website": website_name,
             "useCase": use_case_name,
-            "intent": task_orm.prompt or "",
+            "prompt": task_orm.prompt or "",
             "startUrl": task_orm.url or "",
             "requiredUrl": None,  # Not available in TaskORM
             "webVersion": task_orm.web_version,
