@@ -3489,7 +3489,11 @@ class RoundsService:
                         validator_hotkey=evaluation_row.validator_hotkey,
                         eval_score=getattr(evaluation_row, "eval_score", getattr(evaluation_row, "final_score", 0.0)),
                         reward=getattr(evaluation_row, "reward", getattr(evaluation_row, "eval_score", getattr(evaluation_row, "final_score", 0.0))),
-                        execution_history=evaluation_row.execution_history or [],
+                        execution_history=(
+                            evaluation_row.execution_history_record.execution_history
+                            if evaluation_row.execution_history_record
+                            else []
+                        ),
                         feedback=evaluation_row.feedback,
                         evaluation_time=evaluation_row.evaluation_time or 0.0,
                         gif_recording=evaluation_row.gif_recording,
