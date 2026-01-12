@@ -233,3 +233,6 @@ async def test_validator_detail_performance(validator_id: str = "83"):
 if __name__ == "__main__":
     validator_id = sys.argv[1] if len(sys.argv) > 1 else "83"
     asyncio.run(test_validator_detail_performance(validator_id))
+
+
+
