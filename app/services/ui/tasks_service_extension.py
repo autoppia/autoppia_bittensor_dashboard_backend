@@ -329,21 +329,22 @@ async def get_tasks_with_solutions(
         if not task_orm:
             continue
 
-        # Extract website from url (only needed if not filtered in SQL)
+        # Extract website from url (always needed for response, but only filter if not done in SQL)
+        website_name = _map_website_port_to_name(task_orm.url)
         if website_filter and not website_filtered_in_sql:
-            website_name = _map_website_port_to_name(task_orm.url)
-            # Apply website filter if specified
+            # Apply website filter if specified (only if not already filtered in SQL)
             if website_name.lower() != website_filter:
                 continue
 
-        # Extract use_case name from dict (only needed if not filtered in SQL)
+        # Extract use_case name from dict (always needed for response, but only filter if not done in SQL)
+        use_case_name = "unknown"
+        if isinstance(task_orm.use_case, dict):
+            use_case_name = task_orm.use_case.get("name", "unknown")
+        elif isinstance(task_orm.use_case, str):
+            use_case_name = task_orm.use_case
+        
         if use_case_filter and not use_case_filtered_in_sql:
-            use_case_name = "unknown"
-            if isinstance(task_orm.use_case, dict):
-                use_case_name = task_orm.use_case.get("name", "unknown")
-            elif isinstance(task_orm.use_case, str):
-                use_case_name = task_orm.use_case
-            # Apply use_case filter if specified
+            # Apply use_case filter if specified (only if not already filtered in SQL)
             if use_case_name.lower() != use_case_filter:
                 continue
 
