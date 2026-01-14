@@ -16,30 +16,33 @@ from app.db.models import (
 )
 
 
+PORT_TO_NAME = {
+    "8000": "autocinema",
+    "8001": "autobooks",
+    "8002": "autozone",
+    "8003": "autodining",
+    "8004": "autocrm",
+    "8005": "automail",
+    "8006": "autodelivery",
+    "8007": "autolodge",
+    "8008": "autoconnect",
+    "8009": "autowork",
+    "8010": "autocalendar",
+    "8011": "autolist",
+    "8012": "autodrive",
+    "8013": "autohealth",
+    "8014": "autofinance",
+}
+
+NAME_TO_PORT = {v: k for k, v in PORT_TO_NAME.items()}
+
+
 def _map_website_port_to_name(url: Optional[str]) -> str:
     """Map localhost:PORT URLs to friendly website names."""
     if not url:
         return "unknown"
 
     from urllib.parse import urlparse
-
-    PORT_TO_NAME = {
-        "8000": "autocinema",
-        "8001": "autobooks",
-        "8002": "autozone",
-        "8003": "autodining",
-        "8004": "autocrm",
-        "8005": "automail",
-        "8006": "autodelivery",
-        "8007": "autolodge",
-        "8008": "autoconnect",
-        "8009": "autowork",
-        "8010": "autocalendar",
-        "8011": "autolist",
-        "8012": "autodrive",
-        "8013": "autohealth",
-        "8014": "autofinance",
-    }
 
     try:
         parsed = urlparse(url if url.startswith("http") else f"http://{url}")
@@ -50,6 +53,13 @@ def _map_website_port_to_name(url: Optional[str]) -> str:
         pass
 
     return "unknown"
+
+
+def _map_website_name_to_port(website_name: Optional[str]) -> Optional[str]:
+    """Map website name to port number for SQL filtering."""
+    if not website_name:
+        return None
+    return NAME_TO_PORT.get(website_name.lower())
 
 
 def _normalize_tests(raw_tests: Optional[List[Any]]) -> List[Dict[str, Any]]:
@@ -143,15 +153,43 @@ async def get_tasks_with_solutions(
             )
         filters.append(TaskORM.web_version == web_version)
 
-    # Filter by website/project
-    # Note: This filter will be applied in Python after fetching results
-    # because website is mapped from port numbers (8000=autocinema, 8001=autobooks, etc.)
+    # Filter by website/project - can be done in SQL by filtering URL by port
     website_filter = website.lower() if website else None
-
+    website_port = _map_website_name_to_port(website_filter) if website_filter else None
+    website_filtered_in_sql = False
+    
     # Filter by use_case (use_case is a JSON dict, extract 'name' field)
-    # Note: This filter will be applied in Python after fetching results
-    # because use_case is a JSON field and filtering in SQL is complex
+    # We can filter directly in SQL using the index on use_case->>'name'
     use_case_filter = use_case.lower() if use_case else None
+    use_case_filtered_in_sql = False
+    
+    # If we need to filter by website or use_case, join with TaskORM
+    if website_port or use_case_filter:
+        if TaskORM not in [t for t in base_stmt.froms]:
+            base_stmt = base_stmt.join(
+                TaskORM,
+                EvaluationORM.task_id == TaskORM.task_id,
+            )
+            count_stmt = count_stmt.join(
+                TaskORM,
+                EvaluationORM.task_id == TaskORM.task_id,
+            )
+        
+        # Filter by website port in SQL (more efficient than Python filtering)
+        if website_port:
+            # Filter URLs containing the port (e.g., ":8000" or "localhost:8000")
+            filters.append(
+                or_(
+                    TaskORM.url.like(f"%:{website_port}%"),
+                    TaskORM.url.like(f"%localhost:{website_port}%"),
+                )
+            )
+            website_filtered_in_sql = True
+        
+        # Filter by use_case in SQL using the index
+        if use_case_filter:
+            filters.append(func.lower(TaskORM.use_case["name"].astext) == use_case_filter)
+            use_case_filtered_in_sql = True
 
     # Filter by miner_uid
     if miner_uid is not None:
@@ -260,15 +298,19 @@ async def get_tasks_with_solutions(
     base_stmt = base_stmt.order_by(order_clause)
 
     # Simple pagination: apply offset and limit directly
-    if website_filter or use_case_filter:
+    # If both website and use_case are filtered in SQL, we can use direct SQL pagination
+    python_filters_needed = (website_filter and not website_filtered_in_sql) or (use_case_filter and not use_case_filtered_in_sql)
+    if python_filters_needed:
         # For Python-side filters, we need to fetch more and filter after
         # Then apply pagination in Python
-        fetch_limit = min(limit * 5, 500)
+        # Increase fetch limit to ensure we get enough data when filtering
+        fetch_multiplier = 20 if use_case_filter else 5
+        fetch_limit = min(limit * fetch_multiplier, 2000)  # Increased from 500 to 2000
         fetch_offset = max(0, (page - 1) * limit)
         base_stmt = base_stmt.offset(fetch_offset).limit(fetch_limit)
     else:
         # Direct SQL pagination - simple: offset and limit
-        # Note: If web_version filter is applied, we already joined TaskORM, so SQL pagination works
+        # Both filters are in SQL, so we can paginate directly
         base_stmt = base_stmt.offset(skip).limit(limit)
 
     # Execute queries
@@ -287,23 +329,23 @@ async def get_tasks_with_solutions(
         if not task_orm:
             continue
 
-        # Extract website from url
-        website_name = _map_website_port_to_name(task_orm.url)
+        # Extract website from url (only needed if not filtered in SQL)
+        if website_filter and not website_filtered_in_sql:
+            website_name = _map_website_port_to_name(task_orm.url)
+            # Apply website filter if specified
+            if website_name.lower() != website_filter:
+                continue
 
-        # Apply website filter if specified
-        if website_filter and website_name.lower() != website_filter:
-            continue
-
-        # Extract use_case name from dict
-        use_case_name = "unknown"
-        if isinstance(task_orm.use_case, dict):
-            use_case_name = task_orm.use_case.get("name", "unknown")
-        elif isinstance(task_orm.use_case, str):
-            use_case_name = task_orm.use_case
-
-        # Apply use_case filter if specified
-        if use_case_filter and use_case_name.lower() != use_case_filter:
-            continue
+        # Extract use_case name from dict (only needed if not filtered in SQL)
+        if use_case_filter and not use_case_filtered_in_sql:
+            use_case_name = "unknown"
+            if isinstance(task_orm.use_case, dict):
+                use_case_name = task_orm.use_case.get("name", "unknown")
+            elif isinstance(task_orm.use_case, str):
+                use_case_name = task_orm.use_case
+            # Apply use_case filter if specified
+            if use_case_name.lower() != use_case_filter:
+                continue
 
         task_data = {
             "taskId": task_orm.task_id,
@@ -367,14 +409,15 @@ async def get_tasks_with_solutions(
         )
 
     # If website or use_case filters were applied in Python, update total and apply pagination
-    if website_filter or use_case_filter:
+    python_filters_applied = (website_filter and not website_filtered_in_sql) or (use_case_filter and not use_case_filtered_in_sql)
+    if python_filters_applied:
         # We filtered in Python, so update total and apply pagination
         total = len(tasks_with_solutions)
         # Apply pagination after filtering
         start_idx = skip
         end_idx = skip + limit
         tasks_with_solutions = tasks_with_solutions[start_idx:end_idx]
-    # else: total from DB count is already accurate - no need to filter duplicates
+    # else: total from DB count is already accurate - both filters were in SQL
 
     return {
         "tasks": tasks_with_solutions,
