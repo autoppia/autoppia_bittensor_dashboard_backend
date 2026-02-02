@@ -6,7 +6,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, defer
-from app.services.round_calc import compute_boundaries_for_round
+from app.services.round_calc import (
+    compute_boundaries_for_round,
+    compute_season_number,
+)
 from app.config import settings
 
 from app.db.models import (
@@ -133,12 +136,16 @@ class ValidatorRoundPersistenceService:
         validator_snapshot: ValidatorRoundValidator,
     ) -> ValidatorRoundORM:
         """Create a new validator round and store the initial snapshot."""
-        await self._purge_round_for_validator_and_number(
-            validator_round.validator_uid, validator_round.round_number
-        )
-        await self._ensure_unique_round_number(
+        # Check for existing round with same season and round_in_season for this validator
+        await self._purge_round_for_validator_season_and_round(
             validator_round.validator_uid,
-            validator_round.round_number,
+            validator_round.season_number,
+            validator_round.round_number_in_season
+        )
+        await self._ensure_unique_season_round(
+            validator_round.validator_uid,
+            validator_round.season_number,
+            validator_round.round_number_in_season,
         )
 
         existing_round = await self._get_round_row(validator_round.validator_round_id)
@@ -147,9 +154,9 @@ class ValidatorRoundPersistenceService:
                 f"validator_round_id {validator_round.validator_round_id} is already registered"
             )
 
-        round_row = ValidatorRoundORM(
-            **self._validator_round_kwargs(validator_round)
-        )
+        round_kwargs = self._validator_round_kwargs(validator_round)
+
+        round_row = ValidatorRoundORM(**round_kwargs)
         self.session.add(round_row)
         await self.session.flush()
 
@@ -223,19 +230,13 @@ class ValidatorRoundPersistenceService:
         validator_uid: int,
         round_number: int,
     ) -> Optional[ValidatorRoundORM]:
-        """Fetch an existing round row by (validator_uid, round_number) without modifying DB state."""
-        stmt = (
-            select(ValidatorRoundORM)
-            .join(
-                ValidatorRoundValidatorORM,
-                ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
-            )
-            .where(
-                ValidatorRoundValidatorORM.validator_uid == validator_uid,
-                ValidatorRoundORM.round_number == round_number,
-            )
-        )
-        return await self.session.scalar(stmt)
+        """DEPRECATED: Fetch an existing round row by (validator_uid, round_number).
+        
+        This method is deprecated. Use season_number and round_number_in_season instead.
+        """
+        # This method is kept for backward compatibility but should not be used
+        # It will always return None since round_number column no longer exists
+        return None
 
     async def add_evaluation(
         self,
@@ -512,16 +513,16 @@ class ValidatorRoundPersistenceService:
         round_row = await self._ensure_round_exists(validator_round_id)
         # Ensure start/end epoch are populated even when testing overrides bypassed chain-boundary fill
         try:
-            round_number = int(getattr(round_row, "round_number", 0) or 0)
             if (
                 getattr(round_row, "start_epoch", None) is None
                 or getattr(round_row, "end_epoch", None) is None
             ):
-                bounds = compute_boundaries_for_round(round_number)
+                # Calculate epochs from start_block
+                from app.services.round_calc import block_to_epoch
                 if getattr(round_row, "start_epoch", None) is None:
-                    round_row.start_epoch = int(bounds.start_epoch)
+                    round_row.start_epoch = int(block_to_epoch(round_row.start_block))
                 if getattr(round_row, "end_epoch", None) is None:
-                    round_row.end_epoch = int(bounds.end_epoch)
+                    round_row.end_epoch = int(block_to_epoch(round_row.end_block or round_row.start_block))
         except Exception:
             # If boundary computation fails, proceed without blocking finish
             pass
@@ -935,7 +936,7 @@ class ValidatorRoundPersistenceService:
     async def _purge_round_for_validator_and_number(
         self, validator_uid: int, round_number: Optional[int]
     ) -> None:
-        """Delete any existing round for this validator and round_number (and cascade children)."""
+        """DEPRECATED: Delete any existing round for this validator and round_number (and cascade children)."""
         if round_number is None:
             return
         stmt = (
@@ -953,7 +954,30 @@ class ValidatorRoundPersistenceService:
         if not rows:
             return
         for row in rows:
-            await self.session.delete(row)  # Fixed: added await
+            await self.session.delete(row)
+        await self.session.flush()
+
+    async def _purge_round_for_validator_season_and_round(
+        self, validator_uid: int, season_number: int, round_number_in_season: int
+    ) -> None:
+        """Delete any existing round for this validator, season and round_in_season (and cascade children)."""
+        stmt = (
+            select(ValidatorRoundORM)
+            .join(
+                ValidatorRoundValidatorORM,
+                ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+            )
+            .where(
+                ValidatorRoundValidatorORM.validator_uid == validator_uid,
+                ValidatorRoundORM.season_number == season_number,
+                ValidatorRoundORM.round_number_in_season == round_number_in_season,
+            )
+        )
+        rows = list(await self.session.scalars(stmt))
+        if not rows:
+            return
+        for row in rows:
+            await self.session.delete(row)
         await self.session.flush()
 
     async def _get_agent_run_row(
@@ -987,6 +1011,7 @@ class ValidatorRoundPersistenceService:
         *,
         exclude_round_id: Optional[str] = None,
     ) -> None:
+        """DEPRECATED: Use _ensure_unique_season_round instead."""
         if round_number is None:
             return
 
@@ -1009,6 +1034,35 @@ class ValidatorRoundPersistenceService:
                 f"Validator {validator_uid} already has a round with number {round_number}"
             )
 
+    async def _ensure_unique_season_round(
+        self,
+        validator_uid: int,
+        season_number: int,
+        round_number_in_season: int,
+        *,
+        exclude_round_id: Optional[str] = None,
+    ) -> None:
+        """Ensure no existing round for this validator with same season and round_in_season."""
+        stmt = (
+            select(ValidatorRoundORM)
+            .join(
+                ValidatorRoundValidatorORM,
+                ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+            )
+            .where(
+                ValidatorRoundValidatorORM.validator_uid == validator_uid,
+                ValidatorRoundORM.season_number == season_number,
+                ValidatorRoundORM.round_number_in_season == round_number_in_season,
+            )
+        )
+        if exclude_round_id is not None:
+            stmt = stmt.where(ValidatorRoundORM.validator_round_id != exclude_round_id)
+        existing = await self.session.scalar(stmt)
+        if existing:
+            raise RoundConflictError(
+                f"Validator {validator_uid} already has a round for season {season_number}, round {round_number_in_season}"
+            )
+
     async def ensure_unique_round_number(
         self,
         validator_uid: int,
@@ -1016,7 +1070,7 @@ class ValidatorRoundPersistenceService:
         *,
         exclude_round_id: Optional[str] = None,
     ) -> None:
-        """Public wrapper to guard against duplicate round numbers."""
+        """DEPRECATED: Public wrapper to guard against duplicate round numbers."""
         await self._ensure_unique_round_number(
             validator_uid, round_number, exclude_round_id=exclude_round_id
         )
@@ -1036,7 +1090,6 @@ class ValidatorRoundPersistenceService:
             "validator_uid": snapshot.validator_uid,
             "validator_hotkey": snapshot.validator_hotkey,
             "validator_coldkey": snapshot.validator_coldkey,
-            "round_number": round_row.round_number,  # Copy from round_row
             "name": snapshot.name,
             "stake": snapshot.stake,
             "vtrust": snapshot.vtrust,
@@ -1091,9 +1144,11 @@ class ValidatorRoundPersistenceService:
         self, model: ValidatorRound
     ) -> Dict[str, Any]:
         # validator_uid, validator_hotkey, validator_coldkey moved to ValidatorRoundValidatorORM
+        # season_number and round_number_in_season are passed from model and validated in start_round
         return {
             "validator_round_id": model.validator_round_id,
-            "round_number": model.round_number,
+            "season_number": model.season_number,
+            "round_number_in_season": model.round_number_in_season,
             "start_block": model.start_block,
             "end_block": model.end_block,
             "start_epoch": model.start_epoch,

@@ -69,3 +69,16 @@ def progress_for_block(current_block: int, boundaries: RoundBoundaries) -> float
 def is_inside_window(current_block: int, boundaries: RoundBoundaries) -> bool:
     return current_block > boundaries.start_block and current_block <= boundaries.end_block
 
+
+def compute_season_number(start_block: int) -> int:
+    """Compute 1-based season number from start_block.
+    
+    Uses the same DZ_STARTING_BLOCK as rounds, but with SEASON_SIZE_EPOCHS.
+    """
+    base = int(settings.DZ_STARTING_BLOCK)
+    if start_block < base:
+        return 0
+    season_block_length = int(settings.SEASON_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
+    season_index = (start_block - base) // season_block_length
+    return int(season_index + 1)
+

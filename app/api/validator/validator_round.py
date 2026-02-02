@@ -92,8 +92,21 @@ class StartRoundRequest(BaseModel):
     @field_validator("validator_round")
     @classmethod
     def _ensure_round(cls, round_model: ValidatorRound) -> ValidatorRound:
-        if round_model.round_number is None:
-            raise ValueError("round_number is required to start a validator round")
+        # Validate season and round fields are present
+        if round_model.season_number is None:
+            raise ValueError("season_number is required to start a validator round")
+        if round_model.round_number_in_season is None:
+            raise ValueError("round_number_in_season is required to start a validator round")
+        
+        # Validate that the season and round match the start_block
+        from app.services.round_calc import compute_season_number
+        expected_season = compute_season_number(round_model.start_block)
+        if round_model.season_number != expected_season:
+            raise ValueError(
+                f"season_number mismatch: got {round_model.season_number}, "
+                f"expected {expected_season} for start_block {round_model.start_block}"
+            )
+        
         return round_model
 
 
@@ -230,7 +243,7 @@ async def start_round(
         )
 
     # ALWAYS enforce chain-derived round constraints (no bypass allowed)
-    # This ensures ALL validators use the same DZ_STARTING_BLOCK and round calculation
+    # This ensures ALL validators use the same DZ_STARTING_BLOCK and season/round calculation
     current_block = get_current_block()
     if current_block is None:
         raise HTTPException(
@@ -238,56 +251,38 @@ async def start_round(
             detail="Chain state unavailable",
         )
 
-    backend_round_number = compute_round_number(current_block)
-    if validator_round.round_number != backend_round_number:
-        logger.error(
-            "Round number mismatch: validator sent round %s but backend expects round %s (block=%s, DZ_STARTING_BLOCK=%s)",
-            validator_round.round_number,
-            backend_round_number,
-            current_block,
-            settings.DZ_STARTING_BLOCK,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "round_number mismatch - validator must use same DZ_STARTING_BLOCK as backend",
-                "expectedRoundNumber": backend_round_number,
-                "receivedRoundNumber": validator_round.round_number,
-                "currentBlock": current_block,
-                "backendDzStartingBlock": settings.DZ_STARTING_BLOCK,
-                "message": "Update your validator to use DZ_STARTING_BLOCK="
-                + str(settings.DZ_STARTING_BLOCK),
-            },
-        )
-
-    bounds = compute_boundaries_for_round(backend_round_number)
-
-    # Allow testing override ONLY for window timing, not round number validation
+    # Calculate boundaries from start_block (round boundaries are based on start_block)
+    from app.services.round_calc import _round_blocks, block_to_epoch
+    round_blocks = _round_blocks()
+    calculated_start_block = validator_round.start_block
+    calculated_end_block = calculated_start_block + round_blocks
+    
+    # Allow testing override ONLY for window timing
     testing_override = settings.TESTING and bool(force)
     if testing_override:
         logger.warning(
-            "TESTING override enabled: skipping window check for validator_round_id=%s with round_number=%s",
+            "TESTING override enabled: skipping window check for validator_round_id=%s (season=%s, round_in_season=%s)",
             validator_round.validator_round_id,
-            validator_round.round_number,
+            validator_round.season_number,
+            validator_round.round_number_in_season,
         )
-    elif not is_inside_window(current_block, bounds):
+    elif not (calculated_start_block < current_block <= calculated_end_block):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "error": "round window not active",
                 "currentBlock": current_block,
-                "startBlock": bounds.start_block,
-                "endBlock": bounds.end_block,
+                "startBlock": calculated_start_block,
+                "endBlock": calculated_end_block,
             },
         )
 
     # Override payload boundaries to chain-derived values unless testing override is enabled
-    if not testing_override and bounds is not None:
-        validator_round.round_number = backend_round_number
-        validator_round.start_block = bounds.start_block
-        validator_round.end_block = bounds.end_block
-        validator_round.start_epoch = int(bounds.start_epoch)
-        validator_round.end_epoch = int(bounds.end_epoch)
+    if not testing_override:
+        validator_round.start_block = calculated_start_block
+        validator_round.end_block = calculated_end_block
+        validator_round.start_epoch = int(block_to_epoch(calculated_start_block))
+        validator_round.end_epoch = int(block_to_epoch(calculated_end_block))
 
     # Use canonical directory as FALLBACK only (don't override validator-provided values)
     try:
@@ -346,22 +341,35 @@ async def start_round(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
     except RoundConflictError as exc:
-        # Si ya existe un round con ese round_number para este validator,
+        # Si ya existe un round con ese season_number y round_number_in_season para este validator,
         # BORRAR todos los datos del round anterior y crear uno nuevo
         try:
-            existing = await service.get_round_by_validator_and_number(
-                validator_uid=int(validator_round.validator_uid),  # type: ignore[arg-type]
-                round_number=int(validator_round.round_number),  # type: ignore[arg-type]
+            # Try to find existing round by season and round_in_season
+            from sqlalchemy import select
+            from app.db.models import ValidatorRoundORM, ValidatorRoundValidatorORM
+            stmt = (
+                select(ValidatorRoundORM)
+                .join(
+                    ValidatorRoundValidatorORM,
+                    ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+                )
+                .where(
+                    ValidatorRoundValidatorORM.validator_uid == validator_round.validator_uid,
+                    ValidatorRoundORM.season_number == validator_round.season_number,
+                    ValidatorRoundORM.round_number_in_season == validator_round.round_number_in_season,
+                )
             )
+            existing = await session.scalar(stmt)
         except Exception:
             existing = None
         if existing is not None:
             logger.warning(
-                "Validator %s (hotkey=%s) already has round_number=%s with round_id=%s; "
-                "deleting ALL data for this validator and round_number to allow new start",
+                "Validator %s (hotkey=%s) already has season=%s, round_in_season=%s with round_id=%s; "
+                "deleting ALL data for this validator and season/round to allow new start",
                 validator_round.validator_uid,
                 validator_round.validator_hotkey,
-                validator_round.round_number,
+                validator_round.season_number,
+                validator_round.round_number_in_season,
                 existing.validator_round_id,
             )
 
@@ -371,17 +379,12 @@ async def start_round(
             await session.delete(existing)
             await session.flush()  # Ejecutar el delete antes de continuar
 
-            # Invalidar caché del round si existe
-            from app.services.smart_cache import invalidate_round_cache
-
-            if existing.round_number:
-                await invalidate_round_cache(existing.round_number)
-
             logger.info(
-                "Deleted old round %s for validator %s (round_number=%s); proceeding with new round creation",
+                "Deleted old round %s for validator %s (season=%s, round_in_season=%s); proceeding with new round creation",
                 existing.validator_round_id,
                 validator_round.validator_uid,
-                validator_round.round_number,
+                validator_round.season_number,
+                validator_round.round_number_in_season,
             )
 
             # Ahora crear el nuevo round
@@ -405,10 +408,11 @@ async def start_round(
                 ) from inner_exc
 
             logger.info(
-                "Successfully replaced round for validator %s (round_number=%s): "
+                "Successfully replaced round for validator %s (season=%s, round_in_season=%s): "
                 "old_round_id=%s -> new_round_id=%s",
                 validator_round.validator_uid,
-                validator_round.round_number,
+                validator_round.season_number,
+                validator_round.round_number_in_season,
                 existing.validator_round_id,
                 validator_round.validator_round_id,
             )
@@ -425,9 +429,10 @@ async def start_round(
         ) from exc
 
     logger.info(
-        "Started validator round %s (round_number=%s, validator_uid=%s)",
+        "Started validator round %s (season=%s, round_in_season=%s, validator_uid=%s)",
         validator_round.validator_round_id,
-        validator_round.round_number,
+        validator_round.season_number,
+        validator_round.round_number_in_season,
         validator_round.validator_uid,
     )
     return {
@@ -478,19 +483,18 @@ async def set_tasks(
                     detail="Chain state unavailable",
                 )
 
-            stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
-            backend_round_number = compute_round_number(current_block)
-            if stored_round_number != backend_round_number:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "error": "round_number mismatch",
-                        "expectedRoundNumber": backend_round_number,
-                        "got": stored_round_number,
-                    },
-                )
-
-            bounds = compute_boundaries_for_round(backend_round_number)
+            # Calculate boundaries from start_block (no longer using round_number)
+            from app.services.round_calc import _round_blocks, block_to_epoch
+            round_blocks = _round_blocks()
+            calculated_start_block = round_row.start_block
+            calculated_end_block = calculated_start_block + round_blocks
+            
+            bounds = type('RoundBoundaries', (), {
+                'start_block': calculated_start_block,
+                'end_block': calculated_end_block,
+                'start_epoch': block_to_epoch(calculated_start_block),
+                'end_epoch': block_to_epoch(calculated_end_block),
+            })()
             if not is_inside_window(current_block, bounds):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -588,27 +592,18 @@ async def start_agent_run(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Chain state unavailable",
             )
-        backend_round_number = compute_round_number(current_block)
-        stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
-        if stored_round_number != backend_round_number:
-            logger.error(
-                "Round number mismatch in agent_run: stored round %s but backend expects round %s (block=%s)",
-                stored_round_number,
-                backend_round_number,
-                current_block,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": "round_number mismatch - validator must use same DZ_STARTING_BLOCK as backend",
-                    "expectedRoundNumber": backend_round_number,
-                    "storedRoundNumber": stored_round_number,
-                    "currentBlock": current_block,
-                    "backendDzStartingBlock": settings.DZ_STARTING_BLOCK,
-                },
-            )
-
-        bounds = compute_boundaries_for_round(backend_round_number)
+        # Calculate boundaries from start_block (no longer using round_number)
+        from app.services.round_calc import _round_blocks, block_to_epoch
+        round_blocks = _round_blocks()
+        calculated_start_block = round_row.start_block
+        calculated_end_block = calculated_start_block + round_blocks
+        
+        bounds = type('RoundBoundaries', (), {
+            'start_block': calculated_start_block,
+            'end_block': calculated_end_block,
+            'start_epoch': block_to_epoch(calculated_start_block),
+            'end_epoch': block_to_epoch(calculated_end_block),
+        })()
 
         # Allow testing override ONLY for window timing, not round number validation
         testing_override = settings.TESTING and bool(force)
@@ -932,18 +927,18 @@ async def add_evaluation(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Chain state unavailable",
                 )
-            backend_round_number = compute_round_number(current_block)
-            stored_round_number = int(getattr(round_row, "round_number", 0) or 0)
-            if stored_round_number != backend_round_number:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "error": "round_number mismatch",
-                        "expectedRoundNumber": backend_round_number,
-                        "got": stored_round_number,
-                    },
-                )
-            bounds = compute_boundaries_for_round(backend_round_number)
+            # Calculate boundaries from start_block (no longer using round_number)
+            from app.services.round_calc import _round_blocks, block_to_epoch
+            round_blocks = _round_blocks()
+            calculated_start_block = round_row.start_block
+            calculated_end_block = calculated_start_block + round_blocks
+            
+            bounds = type('RoundBoundaries', (), {
+                'start_block': calculated_start_block,
+                'end_block': calculated_end_block,
+                'start_epoch': block_to_epoch(calculated_start_block),
+                'end_epoch': block_to_epoch(calculated_end_block),
+            })()
             if not is_inside_window(current_block, bounds):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,

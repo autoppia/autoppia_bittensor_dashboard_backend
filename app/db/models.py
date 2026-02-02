@@ -62,16 +62,18 @@ class ValidatorRoundORM(TimestampMixin, Base):
 
     __tablename__ = "validator_rounds"
     __table_args__ = (
-        # Composite index for optimized queries filtering by round_number and status
-        Index("ix_validator_rounds_round_status", "round_number", "status"),
         Index("ix_validator_rounds_status", "status"),
+        Index("ix_validator_rounds_season_round", "season_number", "round_number_in_season"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     validator_round_id: Mapped[str] = mapped_column(
         String(128), unique=True, index=True
     )
-    round_number: Mapped[Optional[int]] = mapped_column(
+    season_number: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+    round_number_in_season: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True, index=True
     )
 
@@ -132,11 +134,6 @@ class ValidatorRoundValidatorORM(TimestampMixin, Base):
     __tablename__ = "validator_round_validators"
     __table_args__ = (
         UniqueConstraint(
-            "validator_uid",
-            "round_number",
-            name="uq_validator_round_uid_number",  # Mismo nombre para compatibilidad
-        ),
-        UniqueConstraint(
             "validator_round_id",
             name="uq_round_validator_round_id",  # 1:1 relationship
         ),
@@ -153,9 +150,6 @@ class ValidatorRoundValidatorORM(TimestampMixin, Base):
         String(128), nullable=False, index=True
     )
     validator_coldkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    round_number: Mapped[Optional[int]] = mapped_column(
-        Integer, nullable=True, index=True
-    )
 
     name: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     stake: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -294,6 +288,15 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     )
     # is_sota and version removed - obtain via validator_round.miner_snapshots
 
+    # Code reuse tracking
+    github_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True, index=True)
+    is_reused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reused_from_agent_run_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("miner_evaluation_runs.agent_run_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+
     started_at: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     ended_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     elapsed_sec: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -317,6 +320,14 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     )
     evaluations: Mapped[list["EvaluationORM"]] = relationship(
         back_populates="agent_run", cascade="all, delete-orphan"
+    )
+    
+    # Self-referential relationship for code reuse tracking
+    reused_from: Mapped[Optional["AgentEvaluationRunORM"]] = relationship(
+        "AgentEvaluationRunORM",
+        foreign_keys=[reused_from_agent_run_id],
+        remote_side="AgentEvaluationRunORM.agent_run_id",
+        uselist=False
     )
 
 

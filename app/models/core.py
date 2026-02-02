@@ -179,12 +179,13 @@ class ValidatorRound(BaseModel):
     validator_round_id: str = Field(
         ..., description="Primary identifier for the validator round (UUID/string)"
     )
-    round_number: Optional[int] = Field(
-        default=None,
-        description=(
-            "Global round index shared by all validators for a specific day "
-            "(autoincrementing integer)."
-        ),
+    season_number: int = Field(
+        ...,
+        description="Season number (calculated from blockchain block number)"
+    )
+    round_number_in_season: int = Field(
+        ...,
+        description="Round number within the current season (1-indexed)"
     )
     validator_uid: int = Field(
         ..., description="UID of the validator executing the round"
