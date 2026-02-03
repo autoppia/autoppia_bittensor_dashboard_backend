@@ -135,6 +135,9 @@ class Task(BaseModel):
     roundNumber: Optional[int] = Field(
         None, description="Round number this task belongs to"
     )
+    season: Optional[int] = Field(
+        None, description="Season number this task belongs to"
+    )
     website: str = Field(..., description="Target website")
     seed: Optional[str] = Field(
         None, description="Seed parameter extracted from website URL"

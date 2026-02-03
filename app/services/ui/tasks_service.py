@@ -737,9 +737,11 @@ class TasksService:
                             ev.agent_run_id if ev else sol.agent_run_id if sol else ""
                         )
                     ),
-                    roundNumber=getattr(round_row, "round_number", None),
+                    roundNumber=getattr(round_row, "round_number_in_season", None),
+                    season=getattr(round_row, "season_number", None),
                     website=task_row.url,
                     seed=None,
+                    webVersion=None,
                     useCase=_use_case_name(task_row.use_case),
                     prompt=task_row.prompt,
                     status=status_val,
@@ -1882,10 +1884,16 @@ class TasksService:
             miner_name = context.agent_run.miner_info.agent_name
             miner_image = resolve_agent_image(context.agent_run.miner_info)
 
+        # Get season and round from round context
+        season = getattr(context.round, 'season_number', None)
+        round_in_season = getattr(context.round, 'round_number_in_season', None)
+
         return UITask(
             taskId=context.task.task_id,
             evaluationId=evaluation.evaluation_id if evaluation else None,
             agentRunId=context.agent_run.agent_run_id,
+            roundNumber=round_in_season,
+            season=season,
             website=context.task.url,
             seed=seed_val,
             webVersion=context.task.web_version,
