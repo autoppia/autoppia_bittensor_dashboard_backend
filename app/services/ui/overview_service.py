@@ -570,7 +570,8 @@ class OverviewService:
             stmt_latest_round = (
                 select(
                     RoundORM.validator_round_id,
-                    RoundORM.round_number,
+                    RoundORM.season_number,
+                    RoundORM.round_number_in_season,
                     RoundORM.status,
                     ValidatorRoundValidatorORM.validator_uid,
                 )
@@ -582,11 +583,13 @@ class OverviewService:
                 )
                 .where(
                     ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids),
-                    RoundORM.round_number.is_not(None),
+                    RoundORM.season_number.is_not(None),
+                    RoundORM.round_number_in_season.is_not(None),
                     RoundORM.status == "finished",
                 )
                 .order_by(
-                    RoundORM.round_number.desc(),
+                    RoundORM.season_number.desc(),
+                    RoundORM.round_number_in_season.desc(),
                     func.coalesce(RoundORM.ended_at, RoundORM.started_at).desc(),
                 )
                 .limit(1)
@@ -596,7 +599,9 @@ class OverviewService:
 
             if latest_round_row:
                 latest_validator_round_id = latest_round_row.validator_round_id
-                latest_round_number = latest_round_row.round_number
+                latest_season = latest_round_row.season_number
+                latest_round_in_season = latest_round_row.round_number_in_season
+                latest_round_number = latest_round_in_season  # For compatibility/logging
                 latest_status = latest_round_row.status
                 validator_uid_found = latest_round_row.validator_uid
                 
