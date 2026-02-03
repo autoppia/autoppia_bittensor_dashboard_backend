@@ -539,23 +539,31 @@ class RoundsService:
         """
         Get lightweight list of round numbers only (no nested data).
         Super fast - use this for dropdowns and lists.
-        Returns up to 500 round IDs.
+        Returns up to 500 round IDs (calculated as season * 10000 + round_in_season).
         """
-        stmt = select(RoundORM.round_number).distinct()
+        stmt = select(
+            RoundORM.season_number,
+            RoundORM.round_number_in_season
+        ).distinct()
 
         if status:
             stmt = stmt.where(RoundORM.status == status)
 
         if sort_order.lower() == "desc":
-            stmt = stmt.order_by(RoundORM.round_number.desc())
+            stmt = stmt.order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
         else:
-            stmt = stmt.order_by(RoundORM.round_number.asc())
+            stmt = stmt.order_by(RoundORM.season_number.asc(), RoundORM.round_number_in_season.asc())
 
         if limit > 0:
             stmt = stmt.limit(limit)
 
         result = await self.session.execute(stmt)
-        round_numbers = [row[0] for row in result.all() if row[0] is not None]
+        # Calculate unique round number as season * 10000 + round_in_season
+        round_numbers = [
+            row[0] * 10000 + row[1] 
+            for row in result.all() 
+            if row[0] is not None and row[1] is not None
+        ]
         return round_numbers
 
     async def get_round_by_season(self, season: int, round_in_season: int) -> Dict[str, Any]:
