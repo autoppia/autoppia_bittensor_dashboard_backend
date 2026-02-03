@@ -294,6 +294,12 @@ class ValidatorRoundPersistenceService:
         if not evaluation_kwargs.get("validator_hotkey") and round_row.validator_snapshot:
             evaluation_kwargs["validator_hotkey"] = round_row.validator_snapshot.validator_hotkey
         
+        # Ensure miner_uid and miner_hotkey are set from agent_run if not in evaluation model
+        if not evaluation_kwargs.get("miner_uid") and agent_run_row.miner_uid is not None:
+            evaluation_kwargs["miner_uid"] = agent_run_row.miner_uid
+        if not evaluation_kwargs.get("miner_hotkey") and agent_run_row.miner_hotkey:
+            evaluation_kwargs["miner_hotkey"] = agent_run_row.miner_hotkey
+        
         # Separate execution_history to store in related table
         execution_history_data = evaluation_kwargs.pop("execution_history", [])
         
@@ -433,6 +439,12 @@ class ValidatorRoundPersistenceService:
             # Ensure validator_hotkey is set from round if not in evaluation model
             if not evaluation_kwargs.get("validator_hotkey") and round_row.validator_snapshot:
                 evaluation_kwargs["validator_hotkey"] = round_row.validator_snapshot.validator_hotkey
+            
+            # Ensure miner_uid and miner_hotkey are set from agent_run if not in evaluation model
+            if not evaluation_kwargs.get("miner_uid") and agent_run_row.miner_uid is not None:
+                evaluation_kwargs["miner_uid"] = agent_run_row.miner_uid
+            if not evaluation_kwargs.get("miner_hotkey") and agent_run_row.miner_hotkey:
+                evaluation_kwargs["miner_hotkey"] = agent_run_row.miner_hotkey
             
             # Separate execution_history to store in related table
             execution_history_data = evaluation_kwargs.pop("execution_history", [])
@@ -749,6 +761,20 @@ class ValidatorRoundPersistenceService:
         
         for evaluation in payload.evaluations:
             kwargs = self._evaluation_kwargs(evaluation)
+            
+            # Ensure miner_uid and miner_hotkey are set from agent_run if not in evaluation model
+            if not kwargs.get("miner_uid") or not kwargs.get("miner_hotkey"):
+                # Find the agent_run to get miner info
+                agent_run_stmt = select(AgentEvaluationRunORM).where(
+                    AgentEvaluationRunORM.agent_run_id == evaluation.agent_run_id
+                )
+                agent_run_row = await self.session.scalar(agent_run_stmt)
+                if agent_run_row:
+                    if not kwargs.get("miner_uid") and agent_run_row.miner_uid is not None:
+                        kwargs["miner_uid"] = agent_run_row.miner_uid
+                    if not kwargs.get("miner_hotkey") and agent_run_row.miner_hotkey:
+                        kwargs["miner_hotkey"] = agent_run_row.miner_hotkey
+            
             # Separate execution_history to store in related table
             execution_history_data = kwargs.pop("execution_history", [])
             
@@ -1125,11 +1151,8 @@ class ValidatorRoundPersistenceService:
             "name": snapshot.agent_name,
             "image_url": snapshot.image_url,
             "github_url": snapshot.github_url,
-            "description": snapshot.description,
             "is_sota": snapshot.is_sota,
             "version": snapshot.version if hasattr(snapshot, "version") else None,
-            "first_seen_at": snapshot.first_seen_at,
-            "last_seen_at": snapshot.last_seen_at,
         }
         if existing:
             for key, value in kwargs.items():
@@ -1307,9 +1330,33 @@ class ValidatorRoundPersistenceService:
         post_consensus_evaluation: Optional[Dict[str, Any]] = None,
         subnet_price: Optional[float] = None,
     ) -> None:
-        """Populate validator_round_summary_miners table from local_evaluation and post_consensus_evaluation."""
+        """Populate validator_round_summary_miners table from local_evaluation and post_consensus_evaluation.
+        
+        If no evaluation data is provided, creates basic summary records from agent_runs.
+        """
         # Build a map of miner_uid -> summary data
         summary_map: Dict[int, Dict[str, Any]] = {}
+        
+        # If no evaluation data provided, create basic summaries from agent_runs
+        if not local_evaluation and not post_consensus_evaluation:
+            stmt_runs = (
+                select(AgentEvaluationRunORM)
+                .where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
+                .where(AgentEvaluationRunORM.miner_uid.isnot(None))
+            )
+            run_rows = await self.session.scalars(stmt_runs)
+            for run_row in run_rows:
+                if run_row.miner_uid is None:
+                    continue
+                miner_uid = int(run_row.miner_uid)
+                summary_map.setdefault(miner_uid, {})["miner_uid"] = miner_uid
+                summary_map[miner_uid]["miner_hotkey"] = run_row.miner_hotkey
+                # Calculate local metrics from agent_run
+                summary_map[miner_uid]["local_avg_reward"] = run_row.average_reward
+                summary_map[miner_uid]["local_avg_eval_score"] = run_row.average_score
+                summary_map[miner_uid]["local_avg_eval_time"] = run_row.average_execution_time
+                summary_map[miner_uid]["local_tasks_received"] = run_row.total_tasks
+                summary_map[miner_uid]["local_tasks_success"] = run_row.success_tasks
 
         # Process local_evaluation
         if local_evaluation and isinstance(local_evaluation, dict):

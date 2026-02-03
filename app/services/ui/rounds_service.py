@@ -347,10 +347,26 @@ def _parse_iso8601(value: Optional[str]) -> Optional[datetime]:
 def _round_number_from_model(
     round_model: ValidatorRound, fallback_identifier: str
 ) -> Optional[int]:
+    # Try to get round_number from model (for backward compatibility)
     candidate = getattr(round_model, "round_number", None)
     if candidate is not None:
         try:
             return int(candidate)
+        except (TypeError, ValueError):
+            pass
+
+    # NEW: Use season_number and round_number_in_season to create a unique identifier
+    # Format: season_number * 10000 + round_number_in_season
+    # This allows up to 9999 rounds per season
+    season_number = getattr(round_model, "season_number", None)
+    round_number_in_season = getattr(round_model, "round_number_in_season", None)
+    
+    if season_number is not None and round_number_in_season is not None:
+        try:
+            # Create unique identifier: season * 10000 + round_in_season
+            # Example: Season 1 Round 1 = 10001, Season 2 Round 5 = 20005
+            unique_id = int(season_number) * 10000 + int(round_number_in_season)
+            return unique_id
         except (TypeError, ValueError):
             pass
 
@@ -541,6 +557,49 @@ class RoundsService:
         result = await self.session.execute(stmt)
         round_numbers = [row[0] for row in result.all() if row[0] is not None]
         return round_numbers
+
+    async def get_round_by_season(self, season: int, round_in_season: int) -> Dict[str, Any]:
+        """Get round by season and round number within season."""
+        stmt = (
+            select(RoundORM)
+            .options(
+                selectinload(RoundORM.validator_snapshot),
+                selectinload(RoundORM.miner_snapshots),
+            )
+            .where(
+                RoundORM.season_number == season,
+                RoundORM.round_number_in_season == round_in_season
+            )
+        )
+        rows = await self.session.scalars(stmt)
+        records = []
+        for row in rows:
+            try:
+                model = self._deserialize_round(row)
+                records.append(RoundRecord(row=row, model=model))
+            except Exception as exc:
+                logger.error(f"Failed to deserialize round: {exc}")
+                continue
+        
+        if not records:
+            raise ValueError(f"Round not found: Season {season}, Round {round_in_season}")
+        
+        # Create unique ID for compatibility
+        unique_id = season * 10000 + round_in_season
+        current = await self.get_current_round_overview()
+        latest_round_number = current.get("round") if current else unique_id
+        
+        overview = self._build_round_day_overview_from_records(
+            unique_id,
+            records,
+            latest_round_number,
+        )
+        
+        # Add season and round info to response
+        overview["season"] = season
+        overview["roundInSeason"] = round_in_season
+        
+        return overview
 
     async def get_round_basic(
         self, round_identifier: Union[str, int]
@@ -862,8 +921,18 @@ class RoundsService:
         return records
 
     async def _count_distinct_rounds(self) -> int:
-        stmt = select(func.count(func.distinct(RoundORM.round_number))).where(
-            RoundORM.round_number.is_not(None)
+        # Count distinct combinations of season_number and round_number_in_season
+        stmt = select(
+            func.count(func.distinct(
+                func.concat(
+                    RoundORM.season_number.cast(String),
+                    '_',
+                    RoundORM.round_number_in_season.cast(String)
+                )
+            ))
+        ).where(
+            RoundORM.season_number.is_not(None),
+            RoundORM.round_number_in_season.is_not(None)
         )
         result = await self.session.scalar(stmt)
         return int(result or 0)
@@ -875,20 +944,31 @@ class RoundsService:
         limit: int,
         sort_order: str,
     ) -> List[int]:
+        # Fetch distinct season/round combinations and convert to unique IDs
         order_desc = sort_order.lower() != "asc"
         order_clause = (
-            RoundORM.round_number.desc() if order_desc else RoundORM.round_number.asc()
+            (RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
+            if order_desc
+            else (RoundORM.season_number.asc(), RoundORM.round_number_in_season.asc())
         )
         stmt = (
-            select(RoundORM.round_number)
-            .where(RoundORM.round_number.is_not(None))
-            .group_by(RoundORM.round_number)
-            .order_by(order_clause)
+            select(RoundORM.season_number, RoundORM.round_number_in_season)
+            .where(
+                RoundORM.season_number.is_not(None),
+                RoundORM.round_number_in_season.is_not(None)
+            )
+            .group_by(RoundORM.season_number, RoundORM.round_number_in_season)
+            .order_by(*order_clause)
             .offset(offset)
             .limit(limit)
         )
-        result = await self.session.scalars(stmt)
-        return [int(number) for number in result]
+        result = await self.session.execute(stmt)
+        # Convert to unique IDs: season * 10000 + round_in_season
+        return [
+            int(season) * 10000 + int(round_in_season)
+            for season, round_in_season in result
+            if season is not None and round_in_season is not None
+        ]
 
     async def _get_round_records_for_round_numbers(
         self,
@@ -898,13 +978,36 @@ class RoundsService:
         if not numbers:
             return {}
 
+        # Convert unique IDs back to season/round pairs
+        # Format: season * 10000 + round_in_season
+        season_round_pairs = []
+        for number in numbers:
+            season = number // 10000
+            round_in_season = number % 10000
+            if season > 0 and round_in_season > 0:
+                season_round_pairs.append((season, round_in_season))
+
+        if not season_round_pairs:
+            return {}
+
+        # Build query with season_number and round_number_in_season
+        conditions = []
+        for season, round_in_season in season_round_pairs:
+            conditions.append(
+                and_(
+                    RoundORM.season_number == season,
+                    RoundORM.round_number_in_season == round_in_season
+                )
+            )
+        
+        from sqlalchemy import or_
         stmt = (
             select(RoundORM)
             .options(
                 selectinload(RoundORM.validator_snapshot),  # 1:1 relationship
                 selectinload(RoundORM.miner_snapshots),
             )
-            .where(RoundORM.round_number.in_(numbers))
+            .where(or_(*conditions))
         )
         rows = await self.session.scalars(stmt)
         record_map: Dict[int, List[RoundRecord]] = {number: [] for number in numbers}
@@ -929,13 +1032,25 @@ class RoundsService:
         return {key: records for key, records in record_map.items() if records}
 
     async def _get_latest_round_number(self) -> Optional[int]:
+        # Get the latest round based on season_number and round_number_in_season
         stmt = (
-            select(RoundORM.round_number)
-            .where(RoundORM.round_number.is_not(None))
-            .order_by(RoundORM.round_number.desc())
+            select(RoundORM.season_number, RoundORM.round_number_in_season)
+            .where(
+                RoundORM.season_number.is_not(None),
+                RoundORM.round_number_in_season.is_not(None)
+            )
+            .order_by(
+                RoundORM.season_number.desc(),
+                RoundORM.round_number_in_season.desc()
+            )
             .limit(1)
         )
-        return await self.session.scalar(stmt)
+        result = await self.session.execute(stmt)
+        row = result.first()
+        if row and row[0] is not None and row[1] is not None:
+            # Convert to unique ID: season * 10000 + round_in_season
+            return int(row[0]) * 10000 + int(row[1])
+        return None
 
     async def _fetch_round_records_by_number(
         self, round_number: int
@@ -1262,13 +1377,24 @@ class RoundsService:
             current_block_est = None
 
         if current_block_est is not None:
-            bounds = compute_boundaries_for_round(round_number)
-            if current_block_est > bounds.end_block:
-                status = "finished"
-            elif current_block_est <= bounds.start_block:
-                # If chain hasn't reached the window yet, prefer pending
-                # unless DB already says completed (keep completed if so).
-                if status != "finished":
+            # Convert unique ID back to season/round if needed
+            # Format: season * 10000 + round_in_season
+            try:
+                # Try to compute boundaries from the round_number (which might be our unique ID)
+                # For now, use the actual start_block/end_block from records instead
+                # since we have that data available
+                if current_block_est > end_block_value:
+                    status = "finished"
+                elif current_block_est <= start_block:
+                    # If chain hasn't reached the window yet, prefer pending
+                    # unless DB already says completed (keep completed if so).
+                    if status != "finished":
+                        status = "pending"
+            except Exception:
+                # Fallback: use record data
+                if current_block_est > end_block_value:
+                    status = "finished"
+                elif current_block_est <= start_block and status != "finished":
                     status = "pending"
         else:
             # Fallback when Redis is down: use round_number comparison
@@ -1300,7 +1426,15 @@ class RoundsService:
         round_key = f"round_{round_number}"
         is_current = round_number == latest_round_number and status == "active"
 
-        return {
+        # Extract season and round from records
+        season_number = None
+        round_in_season = None
+        if records:
+            first_record = records[0]
+            season_number = first_record.model.season_number
+            round_in_season = first_record.model.round_number_in_season
+
+        result = {
             "id": round_number,
             "round": round_number,
             "roundNumber": round_number,
@@ -1321,6 +1455,14 @@ class RoundsService:
                 self._summarize_validator_round(record) for record in records
             ],
         }
+        
+        # Add season and round info if available
+        if season_number is not None:
+            result["season"] = season_number
+        if round_in_season is not None:
+            result["roundInSeason"] = round_in_season
+            
+        return result
 
     @staticmethod
     def _sort_round_entries(
@@ -1639,26 +1781,34 @@ class RoundsService:
             progress_for_block = None  # type: ignore
 
         # Chain-based path using cached estimate only (no live fetch per request)
-        if get_current_block_estimate is not None and compute_round_number is not None:
+        if get_current_block_estimate is not None:
+            from app.services.round_calc import compute_season_number, compute_round_number_in_season
             current_block = get_current_block_estimate()
             if current_block is not None and int(current_block) > 0:
                 try:
-                    number = int(compute_round_number(int(current_block)))  # type: ignore[arg-type]
+                    # Calculate season and round from current block
+                    season = compute_season_number(int(current_block))
+                    round_length = int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
+                    round_in_season = compute_round_number_in_season(int(current_block), round_length)
+                    
+                    if season > 0 and round_in_season > 0:
+                        # Create unique ID: season * 10000 + round_in_season
+                        number = season * 10000 + round_in_season
+                        
+                        # If we have DB records for this chain-derived round, aggregate
+                        try:
+                            records, _ = await self._fetch_round_records_by_number(number)
+                        except Exception:
+                            records = []
+                        if records:
+                            return self._build_round_day_overview_from_records(
+                                number, records, number
+                            )
                 except Exception:
-                    number = 0
-                if number > 0:
-                    # If we have DB records for this chain-derived round, aggregate
-                    try:
-                        records, _ = await self._fetch_round_records_by_number(number)
-                    except Exception:
-                        records = []
-                    if records:
-                        return self._build_round_day_overview_from_records(
-                            number, records, number
-                        )
-                    # Don't synthesize a minimal overview for rounds without data
-                    # Instead, fall through to DB fallback to return the most recent round with actual data
-                    # This prevents showing empty rounds that validators haven't started yet
+                    pass
+                # Don't synthesize a minimal overview for rounds without data
+                # Instead, fall through to DB fallback to return the most recent round with actual data
+                # This prevents showing empty rounds that validators haven't started yet
 
         # Fallback: infer from DB rows
         records = await self._get_all_round_records()
@@ -3175,10 +3325,11 @@ class RoundsService:
         validator_uid = round_row.validator_snapshot.validator_uid if round_row.validator_snapshot else None
         validator_hotkey = round_row.validator_snapshot.validator_hotkey if round_row.validator_snapshot else None
         validator_coldkey = round_row.validator_snapshot.validator_coldkey if round_row.validator_snapshot else None
-        # Use round_number from validator_snapshot as fallback if not in round_row
-        round_number = round_row.round_number
-        if round_number is None and round_row.validator_snapshot:
-            round_number = round_row.validator_snapshot.round_number
+        # Calculate unique round_number from season_number and round_number_in_season
+        # Format: season * 10000 + round_in_season
+        round_number = None
+        if round_row.season_number is not None and round_row.round_number_in_season is not None:
+            round_number = int(round_row.season_number) * 10000 + int(round_row.round_number_in_season)
         
         profile = self._build_validator_profile(
             round_row=round_row,
@@ -3209,7 +3360,7 @@ class RoundsService:
                     agent_image=miner_snapshot.image_url or "",
                     github=miner_snapshot.github_url or "",
                     is_sota=bool(getattr(miner_snapshot, "is_sota", False)),
-                    description=getattr(miner_snapshot, "description", None),
+                    description=None,
                 )
             )
 
@@ -3247,7 +3398,9 @@ class RoundsService:
 
         return ValidatorRound(
             validator_round_id=round_row.validator_round_id,
-            round_number=round_number,
+            season_number=round_row.season_number,
+            round_number_in_season=round_row.round_number_in_season,
+            round_number=round_number,  # Calculated unique ID for backward compatibility
             validator_uid=validator_info.uid,
             validator_hotkey=validator_info.hotkey,
             validators=validators,
@@ -3493,28 +3646,29 @@ class RoundsService:
         return evaluations
 
     async def get_aggregated_metrics(
-        self, round_number: int
+        self, season: int, round_in_season: int
     ) -> Dict[str, Any]:
         """
         Obtiene métricas agregadas (post-consensus) y por validator (local) desde validator_round_summary_miners.
         
         Args:
-            round_number: Número del round (e.g., 2)
+            season: Número de la temporada (e.g., 1)
+            round_in_season: Número del round dentro de la temporada (e.g., 1)
         
         Retorna:
         - aggregated: winner (uid, name, image, hotkey), avg_winner_score, avg_eval_time, miners_evaluated, tasks_evaluated (todo post-consensus, filtrando por Autoppia UID 83)
         - validators: lista de validators con sus métricas locales
         """
         
-        # Obtener todos los validator_round_ids de este round
         stmt = select(RoundORM.validator_round_id).where(
-            RoundORM.round_number == round_number
+            RoundORM.season_number == season,
+            RoundORM.round_number_in_season == round_in_season
         )
         result = await self.session.execute(stmt)
         validator_round_ids = [row[0] for row in result.all()]
         
         if not validator_round_ids:
-            raise ValueError(f"Round {round_number} not found")
+            raise ValueError(f"Round not found: Season {season}, Round {round_in_season}")
         
         # Buscar validator_round_id de Autoppia (UID 83) para métricas agregadas
         autoppia_validator_round_id = None
@@ -3728,8 +3882,14 @@ class RoundsService:
             
             validators_list.append(validator_data)
         
+        # Crear un round_number único para compatibilidad con el frontend
+        # Format: season * 10000 + round_in_season
+        unique_round_number = season * 10000 + round_in_season
+        
         return {
-            "round_number": round_number,
+            "round_number": unique_round_number,
+            "season": season,
+            "round_in_season": round_in_season,
             "post_consensus_summary": aggregated_metrics,
             "validators": validators_list,
         }

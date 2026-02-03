@@ -1711,7 +1711,7 @@ class AgentsService:
         hotkey = miner.hotkey if miner else None
         image_url = resolve_agent_image(miner, miner.agent_image if miner else None)
         github = miner.github if miner else None
-        description = miner.description if miner else ""
+        description = ""  # description field removed from ValidatorRoundMinerORM
 
         average_score = (
             aggregate.total_score / aggregate.total_runs

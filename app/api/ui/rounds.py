@@ -149,9 +149,30 @@ async def get_current_round(
     return RoundDetailResponse(success=True, data={"round": current})
 
 
+@router.get("/{season}/{round}", response_model=RoundDetailResponse)
+@cache("round_by_season", ttl=300)
+async def get_round_by_season(
+    season: int,
+    round: int,
+    session: AsyncSession = Depends(get_session),
+) -> RoundDetailResponse:
+    """Get round by season and round number within season.
+    
+    Example: /rounds/8/3 returns Season 8, Round 3
+    """
+    service = await _service(session)
+    try:
+        detail_data = await service.get_round_by_season(season, round)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    
+    return RoundDetailResponse(success=True, data={"round": detail_data})
+
+
 @router.get("/get-round")
 async def get_round_aggregated(
-    round_number: int = Query(..., description="Round number (e.g., 2)"),
+    season: int = Query(..., description="Season number (e.g., 1)"),
+    round_in_season: int = Query(..., description="Round number within season (e.g., 1)"),
     session: AsyncSession = Depends(get_session),
 ):
     """
@@ -163,7 +184,7 @@ async def get_round_aggregated(
     """
     service = await _service(session)
     try:
-        data = await service.get_aggregated_metrics(round_number)
+        data = await service.get_aggregated_metrics(season, round_in_season)
         return {"success": True, "data": data}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -195,11 +195,8 @@ class ValidatorRoundMinerORM(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     github_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_sota: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    first_seen_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    last_seen_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="miner_snapshots"
@@ -288,15 +285,6 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     )
     # is_sota and version removed - obtain via validator_round.miner_snapshots
 
-    # Code reuse tracking
-    github_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True, index=True)
-    is_reused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    reused_from_agent_run_id: Mapped[Optional[str]] = mapped_column(
-        ForeignKey("miner_evaluation_runs.agent_run_id", ondelete="SET NULL"),
-        nullable=True,
-        index=True
-    )
-
     started_at: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     ended_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     elapsed_sec: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -320,14 +308,6 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     )
     evaluations: Mapped[list["EvaluationORM"]] = relationship(
         back_populates="agent_run", cascade="all, delete-orphan"
-    )
-    
-    # Self-referential relationship for code reuse tracking
-    reused_from: Mapped[Optional["AgentEvaluationRunORM"]] = relationship(
-        "AgentEvaluationRunORM",
-        foreign_keys=[reused_from_agent_run_id],
-        remote_side="AgentEvaluationRunORM.agent_run_id",
-        uselist=False
     )
 
 
