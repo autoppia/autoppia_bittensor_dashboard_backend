@@ -2583,17 +2583,13 @@ class RoundsService:
                 except ValueError:
                     pass
         
-        logger.info(f"🔍 get_round_progress: round_identifier={round_identifier}, season={season}, round_in_season={round_in_season}, current_block={current_block}")
-        
         if current_block is not None or (season is not None and round_in_season is not None):
             # If we have season/round, calculate round_number and use existing method
             if season is not None and round_in_season is not None:
                 # Calculate unique round_number for compatibility
                 round_number = season * 10000 + round_in_season
-                logger.info(f"🔍 Looking for round with season={season}, round_in_season={round_in_season}, calculated round_number={round_number}")
                 # Use existing method to fetch records
                 records, _ = await self._fetch_round_records_by_number(round_number)
-                logger.info(f"🔍 Found {len(records)} records for round_number={round_number}")
                 if not records:
                     raise ValueError(f"Round not found: Season {season}, Round {round_in_season}")
             else:
