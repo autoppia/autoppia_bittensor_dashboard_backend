@@ -2583,7 +2583,9 @@ class RoundsService:
                 except ValueError:
                     pass
         
-        if current_block is not None:
+        logger.info(f"🔍 get_round_progress: round_identifier={round_identifier}, season={season}, round_in_season={round_in_season}, current_block={current_block}")
+        
+        if current_block is not None or (season is not None and round_in_season is not None):
             # If we have season/round, calculate round_number and use existing method
             if season is not None and round_in_season is not None:
                 # Calculate unique round_number for compatibility
