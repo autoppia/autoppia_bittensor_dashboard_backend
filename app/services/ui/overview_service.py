@@ -674,7 +674,7 @@ class OverviewService:
         # Count all unique miners from the metrics round by querying validator_round_summary_miners
         # This ensures we get all miners from the round, not just those in loaded contexts
         total_miners_count = len(miners)  # Fallback to context-based count
-        if display_metrics_round_number > 0:
+        if metrics_season is not None and metrics_round_in_season is not None:
             try:
                 # RoundORM is already imported at the top of the file
                 stmt_total_miners = (
@@ -684,14 +684,15 @@ class OverviewService:
                         ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id,
                     )
                     .where(
-                        RoundORM.round_number == display_metrics_round_number,
+                        RoundORM.season_number == metrics_season,
+                        RoundORM.round_number_in_season == metrics_round_in_season,
                         ValidatorRoundSummaryORM.miner_uid.is_not(None),
                     )
                 )
                 result_total_miners = await self.session.execute(stmt_total_miners)
                 total_miners_count = result_total_miners.scalar() or len(miners)
             except Exception as e:
-                logger.debug(f"Could not fetch total miners count for round {display_metrics_round_number}: {e}")
+                logger.debug(f"Could not fetch total miners count for season {metrics_season} round {metrics_round_in_season}: {e}")
                 # Fallback to context-based count
 
         metrics = OverviewMetrics(
@@ -794,7 +795,8 @@ class OverviewService:
         winner_query = (
             select(
                 RoundORM.validator_round_id,
-                RoundORM.round_number,
+                RoundORM.season_number,
+                RoundORM.round_number_in_season,
                 ValidatorRoundSummaryORM.miner_uid,
                 ValidatorRoundSummaryORM.miner_hotkey,
                 ValidatorRoundSummaryORM.post_consensus_avg_reward,
@@ -822,7 +824,7 @@ class OverviewService:
                 ValidatorRoundValidatorORM.validator_uid == validator_uid,
                 ValidatorRoundSummaryORM.post_consensus_rank == 1
             )
-            .order_by(RoundORM.round_number.desc())
+            .order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
             .limit(1)
         )
         winner_result = await self.session.execute(winner_query)
@@ -868,7 +870,7 @@ class OverviewService:
                     )
                 )
                 .where(ValidatorRoundValidatorORM.validator_uid == validator_uid)
-                .order_by(RoundORM.round_number.desc(), AgentEvaluationRunORM.average_reward.desc())
+                .order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc(), AgentEvaluationRunORM.average_reward.desc())
                 .limit(1)
             )
             top_run_result = await self.session.execute(top_run_query)
