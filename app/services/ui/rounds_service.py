@@ -1030,11 +1030,11 @@ class RoundsService:
                 )
                 continue
 
-            value = _round_number_from_model(model, row.validator_round_id)
-            if value is None:
-                continue
-            if value in record_map:
-                record_map[value].append(RoundRecord(row=row, model=model))
+            # Calculate the unique round number from season/round
+            if row.season_number is not None and row.round_number_in_season is not None:
+                calculated_number = row.season_number * 10000 + row.round_number_in_season
+                if calculated_number in record_map:
+                    record_map[calculated_number].append(RoundRecord(row=row, model=model))
 
         # Remove empty entries to match the exact dataset present in the database.
         return {key: records for key, records in record_map.items() if records}
