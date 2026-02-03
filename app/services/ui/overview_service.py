@@ -606,9 +606,10 @@ class OverviewService:
                 validator_uid_found = latest_round_row.validator_uid
                 
                 logger.info(
-                    "✅ Found latest round: validator_round_id=%s (round %s, validator UID %s, status=%s)",
+                    "✅ Found latest round: validator_round_id=%s (season %s, round %s, validator UID %s, status=%s)",
                     latest_validator_round_id,
-                    latest_round_number,
+                    latest_season,
+                    latest_round_in_season,
                     validator_uid_found,
                     latest_status,
                 )
