@@ -2635,7 +2635,7 @@ class RoundsService:
                 "progress": progress_value,
                 "startEpoch": bounds.start_epoch,
                 "endEpoch": bounds.end_epoch,
-                "currentEpoch": block_to_epoch(current_block),
+                "currentEpoch": block_to_epoch(current_block) if current_block is not None else None,
                 "estimatedTimeRemaining": _time_remaining(seconds_remaining),
                 "lastUpdated": datetime.now(timezone.utc).isoformat(),
                 "status": aggregated_status,
