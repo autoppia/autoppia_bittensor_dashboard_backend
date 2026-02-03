@@ -104,7 +104,6 @@ class MinerSeedRecord:
     image: Optional[str]
     provider: Optional[str]
     github: Optional[str]
-    description: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -268,7 +267,6 @@ def _fallback_miner_seed_records(
                 image=_asset_url(fallback_asset),
                 provider=provider,
                 github=f"https://github.com/autoppia/mock-miner-{uid}",
-                description=f"Synthetic miner profile provided by {provider}.",
             )
         )
         used_uids.add(uid)
@@ -313,7 +311,6 @@ def _build_miner_seed_records(
                 image=None,
                 provider="metagraph",
                 github=f"https://github.com/bittensor/miner-{uid}",
-                description="Miner identity discovered via Bittensor metagraph.",
             )
         )
         used_uids.add(uid)
@@ -388,10 +385,7 @@ def _build_miner_identity_and_snapshot(
         agent_name=record.name,
         image_url=record.image,
         github_url=record.github,
-        description=record.description,
         is_sota=False,
-        first_seen_at=first_seen,
-        last_seen_at=last_seen,
     )
     return identity, snapshot
 

@@ -68,9 +68,6 @@ class MinerInfo(BaseModel):
     is_sota: bool = Field(
         default=False, description="Whether this agent is a SOTA benchmark agent"
     )
-    description: Optional[str] = Field(
-        default=None, description="Optional description for the agent"
-    )
 
     @field_validator("agent_image")
     @classmethod
@@ -292,21 +289,12 @@ class ValidatorRoundMiner(BaseModel):
     github_url: Optional[str] = Field(
         default=None, description="Repository URL or source code reference"
     )
-    description: Optional[str] = Field(
-        default=None, description="Free-form agent description"
-    )
     is_sota: bool = Field(
         default=False,
         description="Whether the agent is a benchmark/SOTA rather than a miner",
     )
     version: Optional[str] = Field(
         default=None, description="Version or build identifier for the agent"
-    )
-    first_seen_at: Optional[float] = Field(
-        default=None, description="Timestamp when the miner first appeared"
-    )
-    last_seen_at: Optional[float] = Field(
-        default=None, description="Timestamp when the miner was last observed"
     )
 
     @model_validator(mode="after")  # type: ignore[misc]

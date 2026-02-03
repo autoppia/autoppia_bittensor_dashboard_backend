@@ -29,11 +29,15 @@ class ValidatorRoundSummary(BaseModel):
 
 class RoundInfo(BaseModel):
     """Round information model."""
+    
+    model_config = {"extra": "allow"}
 
     id: int
     round: Optional[int] = None
     roundNumber: Optional[int] = None
     roundKey: Optional[str] = None
+    season: Optional[int] = None
+    roundInSeason: Optional[int] = None
     startBlock: int
     endBlock: int
     current: bool

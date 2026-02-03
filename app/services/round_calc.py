@@ -82,3 +82,27 @@ def compute_season_number(start_block: int) -> int:
     season_index = (start_block - base) // season_block_length
     return int(season_index + 1)
 
+
+def compute_round_number_in_season(current_block: int, round_block_length: int) -> int:
+    """Compute 1-based round number within the current season.
+    
+    Args:
+        current_block: Current blockchain block height
+        round_block_length: Number of blocks per round
+        
+    Returns:
+        1-based round number within the season (1, 2, 3, ...)
+    """
+    base = int(settings.DZ_STARTING_BLOCK)
+    if current_block < base:
+        return 0
+    
+    # Calculate which season we're in
+    season_block_length = int(settings.SEASON_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
+    season_start_block = base + ((current_block - base) // season_block_length) * season_block_length
+    
+    # Calculate round within the season
+    blocks_into_season = current_block - season_start_block
+    round_index = blocks_into_season // round_block_length
+    return int(round_index + 1)
+

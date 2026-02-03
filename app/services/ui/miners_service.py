@@ -126,7 +126,7 @@ class MinersService:
         hotkey = miner_info.hotkey if miner_info and miner_info.hotkey else ""
         image_url = resolve_agent_image(miner_info)
         github = miner_info.github if miner_info else None
-        description = miner_info.description if miner_info else ""
+        description = ""  # description field removed from ValidatorRoundMinerORM
         taostats_url = build_taostats_miner_url(hotkey) or ""
         average_score = (
             aggregate.total_score / aggregate.total_runs if aggregate.total_runs else 0.0
