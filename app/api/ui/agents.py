@@ -150,7 +150,7 @@ async def get_rounds_data(
 
 @router.get("/round-details")
 async def get_miner_round_details(
-    round: int = Query(..., description="Round number"),
+    round: str = Query(..., description="Round identifier in format 'season/round' (e.g., '1/1') or legacy round number"),
     miner_uid: int = Query(..., description="Miner UID"),
     session: AsyncSession = Depends(get_session),
 ):

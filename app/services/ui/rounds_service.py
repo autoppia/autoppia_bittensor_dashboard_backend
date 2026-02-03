@@ -3905,29 +3905,38 @@ class RoundsService:
             "validators": validators_list,
         }
     
-    async def get_available_rounds(self) -> List[int]:
+    async def get_available_rounds(self) -> List[str]:
         """
-        Get list of available round numbers from validator_rounds table.
-        Returns sorted list of round numbers in descending order.
+        Get list of available rounds from validator_rounds table.
+        Returns sorted list of round identifiers in format "season/round" in descending order.
         """
         stmt = (
-            select(RoundORM.round_number)
-            .where(RoundORM.round_number.isnot(None))
+            select(RoundORM.season_number, RoundORM.round_number_in_season)
+            .where(
+                RoundORM.season_number.isnot(None),
+                RoundORM.round_number_in_season.isnot(None)
+            )
             .distinct()
-            .order_by(RoundORM.round_number.desc())
+            .order_by(
+                RoundORM.season_number.desc(),
+                RoundORM.round_number_in_season.desc()
+            )
         )
         result = await self.session.execute(stmt)
-        rounds = [row[0] for row in result.all() if row[0] is not None]
-        return sorted(rounds, reverse=True)
+        rounds = [f"{row[0]}/{row[1]}" for row in result.all() if row[0] is not None and row[1] is not None]
+        return rounds
     
-    async def get_round_miners_for_autoppia(self, round_number: int) -> Dict[str, Any]:
+    async def get_round_miners_for_autoppia(self, round_identifier: Union[str, int]) -> Dict[str, Any]:
         """
         Get miners for a specific round from validator_round_summary_miners,
         filtered by Autoppia validator (UID 83) and using post_consensus data.
         
+        Args:
+            round_identifier: Round identifier in format "season/round" (e.g., "1/1") or legacy round_number
+        
         Returns:
         {
-            "round": round_number,
+            "round": round_identifier,
             "miners": [
                 {
                     "uid": int,
@@ -3942,55 +3951,103 @@ class RoundsService:
         """
         AUTOPPIA_UID = 83
         
+        # Parse round_identifier to get season and round_in_season
+        season = None
+        round_in_season = None
+        if isinstance(round_identifier, str) and "/" in round_identifier:
+            parts = round_identifier.split("/")
+            if len(parts) == 2:
+                try:
+                    season = int(parts[0])
+                    round_in_season = int(parts[1])
+                except ValueError:
+                    pass
+        
         # Find validator_round_id for Autoppia (UID 83) in this round
         # Need to join with ValidatorRoundValidatorORM to get validator_uid
-        stmt_validator_round = (
-            select(RoundORM.validator_round_id)
-            .join(
-                ValidatorRoundValidatorORM,
-                RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
+        if season is not None and round_in_season is not None:
+            stmt_validator_round = (
+                select(RoundORM.validator_round_id)
+                .join(
+                    ValidatorRoundValidatorORM,
+                    RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
+                )
+                .where(
+                    RoundORM.season_number == season,
+                    RoundORM.round_number_in_season == round_in_season,
+                    ValidatorRoundValidatorORM.validator_uid == AUTOPPIA_UID,
+                )
+                .limit(1)
             )
-            .where(
-                RoundORM.round_number == round_number,
-                ValidatorRoundValidatorORM.validator_uid == AUTOPPIA_UID,
-            )
-            .limit(1)
-        )
+        else:
+            # Legacy support: if round_identifier is a number, calculate season/round
+            if isinstance(round_identifier, int):
+                season = round_identifier // 10000
+                round_in_season = round_identifier % 10000
+                stmt_validator_round = (
+                    select(RoundORM.validator_round_id)
+                    .join(
+                        ValidatorRoundValidatorORM,
+                        RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
+                    )
+                    .where(
+                        RoundORM.season_number == season,
+                        RoundORM.round_number_in_season == round_in_season,
+                        ValidatorRoundValidatorORM.validator_uid == AUTOPPIA_UID,
+                    )
+                    .limit(1)
+                )
+            else:
+                raise ValueError(f"Invalid round identifier: {round_identifier}")
+        
         result_validator_round = await self.session.execute(stmt_validator_round)
         validator_round_id = result_validator_round.scalar_one_or_none()
         
         if not validator_round_id:
             # If Autoppia not found, try to find any validator_round_id for this round that has summaries
             logger.warning(
-                f"Autopia validator (UID {AUTOPPIA_UID}) not found for round {round_number}. "
+                f"Autopia validator (UID {AUTOPPIA_UID}) not found for round {round_identifier}. "
                 f"Trying to find any validator with summaries..."
             )
             
             # Find any validator_round_id for this round that has summaries
-            stmt_fallback = (
-                select(ValidatorRoundSummaryORM.validator_round_id)
-                .join(
-                    RoundORM,
-                    ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
+            if season is not None and round_in_season is not None:
+                stmt_fallback = (
+                    select(ValidatorRoundSummaryORM.validator_round_id)
+                    .join(
+                        RoundORM,
+                        ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
+                    )
+                    .where(
+                        RoundORM.season_number == season,
+                        RoundORM.round_number_in_season == round_in_season
+                    )
+                    .limit(1)
                 )
-                .where(RoundORM.round_number == round_number)
-                .limit(1)
-            )
+            else:
+                stmt_fallback = (
+                    select(ValidatorRoundSummaryORM.validator_round_id)
+                    .join(
+                        RoundORM,
+                        ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
+                    )
+                    .limit(1)
+                )
             result_fallback = await self.session.execute(stmt_fallback)
             validator_round_id = result_fallback.scalar_one_or_none()
             
             if not validator_round_id:
                 # No validator found with summaries for this round
                 logger.warning(
-                    f"No validator rounds with summaries found for round {round_number}"
+                    f"No validator rounds with summaries found for round {round_identifier}"
                 )
                 return {
-                    "round": round_number,
+                    "round": round_identifier,
                     "miners": [],
                 }
             else:
                 logger.info(
-                    f"Using fallback validator_round_id {validator_round_id} for round {round_number}"
+                    f"Using fallback validator_round_id {validator_round_id} for round {round_identifier}"
                 )
         
         # Get all miners from validator_round_summary_miners for this validator_round_id
@@ -4079,15 +4136,18 @@ class RoundsService:
             })
         
         return {
-            "round": round_number,
+            "round": round_identifier,
             "miners": miners_list,
         }
     
     async def get_miner_round_details(
-        self, round_number: int, miner_uid: int
+        self, round_identifier: Union[str, int], miner_uid: int
     ) -> Dict[str, Any]:
         """
         Get detailed information about a specific miner in a specific round.
+        
+        Args:
+            round_identifier: Round identifier in format "season/round" (e.g., "1/1") or legacy round_number
         
         Returns:
         {
@@ -4097,7 +4157,7 @@ class RoundsService:
                 "hotkey": str | None,
                 "image": str | None,
             },
-            "round": int,
+            "round": str,  # Format "season/round"
             "post_consensus_rank": int,
             "post_consensus_avg_reward": float,
             "post_consensus_avg_eval_score": float,
@@ -4117,16 +4177,54 @@ class RoundsService:
             ],
         }
         """
+        # Parse round_identifier to get season and round_in_season
+        season = None
+        round_in_season = None
+        if isinstance(round_identifier, str) and "/" in round_identifier:
+            parts = round_identifier.split("/")
+            if len(parts) == 2:
+                try:
+                    season = int(parts[0])
+                    round_in_season = int(parts[1])
+                except ValueError:
+                    pass
+        elif isinstance(round_identifier, (int, str)):
+            # Legacy support: if it's a single number, try to find the round
+            # First try to parse as int
+            try:
+                round_num = int(round_identifier)
+                # Query to find the first round with this round_number_in_season
+                # (assuming the user means the latest season with this round)
+                stmt_find = (
+                    select(RoundORM.season_number, RoundORM.round_number_in_season)
+                    .where(RoundORM.round_number_in_season == round_num)
+                    .order_by(RoundORM.season_number.desc())
+                    .limit(1)
+                )
+                result_find = await self.session.execute(stmt_find)
+                found = result_find.first()
+                if found:
+                    season = found[0]
+                    round_in_season = found[1]
+            except (ValueError, TypeError):
+                pass
+        
+        if season is None or round_in_season is None:
+            raise ValueError(f"Invalid round identifier: {round_identifier}")
+        
         # Get all validator_round_ids for this round
         stmt_rounds = (
             select(RoundORM.validator_round_id)
-            .where(RoundORM.round_number == round_number)
+            .where(
+                RoundORM.season_number == season,
+                RoundORM.round_number_in_season == round_in_season
+            )
         )
         result_rounds = await self.session.execute(stmt_rounds)
         validator_round_ids = [row[0] for row in result_rounds.all()]
         
         if not validator_round_ids:
-            raise ValueError(f"No validators found for round {round_number}")
+            raise ValueError(f"No validators found for round {round_identifier}")
         
         # Get post-consensus summary for this miner from any validator (they should be the same)
         # Prioritize Autopia (UID 83) if available
@@ -4142,7 +4240,8 @@ class RoundsService:
                 RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
             )
             .where(
-                RoundORM.round_number == round_number,
+                RoundORM.season_number == season,
+                RoundORM.round_number_in_season == round_in_season,
                 ValidatorRoundValidatorORM.validator_uid == AUTOPPIA_UID,
                 ValidatorRoundSummaryORM.miner_uid == miner_uid,
                 ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,  # Exclude burn UID
@@ -4167,7 +4266,7 @@ class RoundsService:
             summary = result_summary.scalar_one_or_none()
         
         if not summary:
-            raise ValueError(f"Miner {miner_uid} not found in round {round_number}")
+            raise ValueError(f"Miner {miner_uid} not found in round {round_identifier}")
         
         # Get miner snapshot for name, hotkey, image
         stmt_miner = (
@@ -4184,11 +4283,13 @@ class RoundsService:
         miner_name = f"Miner {miner_uid}"
         miner_hotkey = None
         miner_image = None
+        miner_github_url = None
         
         if miner_snapshot:
             miner_name = miner_snapshot.name or miner_name
             miner_hotkey = miner_snapshot.miner_hotkey
             miner_image = miner_snapshot.image_url
+            miner_github_url = miner_snapshot.github_url
             if not miner_image:
                 from app.models.core import MinerInfo
                 miner_info = MinerInfo(
@@ -4286,10 +4387,10 @@ class RoundsService:
         try:
             # Use the same validator_round_ids we already found earlier in the method
             # (validator_round_ids is already calculated above)
-            logger.warning(f"[DEBUG] Using {len(validator_round_ids)} validator_round_ids for round {round_number}, miner {miner_uid}")
+            logger.warning(f"[DEBUG] Using {len(validator_round_ids)} validator_round_ids for round {round_identifier}, miner {miner_uid}")
             
             if not validator_round_ids:
-                logger.warning(f"[DEBUG] No validator_round_ids found for round {round_number}")
+                logger.warning(f"[DEBUG] No validator_round_ids found for round {round_identifier}")
             
             for validator_round_id in validator_round_ids:
                 # Get validator snapshot for this validator_round_id
@@ -4415,7 +4516,7 @@ class RoundsService:
             logger.warning(f"[DEBUG] Final validators_data count: {len(validators_data)}")
             
         except Exception as e:
-            logger.error(f"[DEBUG] Failed to fetch validators data for round {round_number}, miner {miner_uid}: {e}", exc_info=True)
+            logger.error(f"[DEBUG] Failed to fetch validators data for round {round_identifier}, miner {miner_uid}: {e}", exc_info=True)
             import traceback
             logger.error(f"[DEBUG] Traceback: {traceback.format_exc()}")
             # Continue without validators data if there's an error
@@ -4423,10 +4524,10 @@ class RoundsService:
         # Get post_consensus_summary if needed
         post_consensus_summary_data = None
         try:
-            aggregated_metrics = await self.get_aggregated_metrics(round_number)
+            aggregated_metrics = await self.get_aggregated_metrics(season, round_in_season)
             post_consensus_summary_data = aggregated_metrics.get("post_consensus_summary", {})
         except Exception as e:
-            logger.warning(f"Failed to fetch post_consensus_summary for round {round_number}: {e}")
+            logger.warning(f"Failed to fetch post_consensus_summary for round {round_identifier}: {e}")
         
         result = {
             "miner": {
@@ -4434,8 +4535,9 @@ class RoundsService:
                 "name": miner_name,
                 "hotkey": miner_hotkey,
                 "image": miner_image,
+                "github_url": miner_github_url,
             },
-            "round": round_number,
+            "round": round_identifier,
             "post_consensus_rank": summary.post_consensus_rank or 0,
             "post_consensus_avg_reward": _truncate_decimal(
                 float(summary.post_consensus_avg_reward or 0.0), 4
@@ -4876,7 +4978,7 @@ class RoundsService:
 
     async def get_latest_round_and_top_miner(self) -> Optional[Dict[str, Any]]:
         """
-        Get the latest round number and the top miner (post_consensus_rank = 1) for that round.
+        Get the latest round and the top miner (post_consensus_rank = 1) for that round.
         Returns None if no rounds exist.
         
         This is a lightweight query optimized for the initial redirect.
@@ -4889,7 +4991,8 @@ class RoundsService:
         # Only from Autoppia validators
         stmt = (
             select(
-                RoundORM.round_number,
+                RoundORM.season_number,
+                RoundORM.round_number_in_season,
                 ValidatorRoundSummaryORM.miner_uid,
                 ValidatorRoundSummaryORM.miner_hotkey,
             )
@@ -4902,12 +5005,16 @@ class RoundsService:
                 RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
             )
             .where(
-                RoundORM.round_number.is_not(None),
+                RoundORM.season_number.is_not(None),
+                RoundORM.round_number_in_season.is_not(None),
                 ValidatorRoundSummaryORM.post_consensus_rank == 1,
                 ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids),  # Solo Autoppia (83 o 124)
                 ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,  # Exclude burn UID
             )
-            .order_by(RoundORM.round_number.desc())
+            .order_by(
+                RoundORM.season_number.desc(),
+                RoundORM.round_number_in_season.desc()
+            )
             .limit(1)
         )
 
@@ -4917,8 +5024,11 @@ class RoundsService:
         if row is None:
             return None
 
+        # Build round identifier in format "season/round"
+        round_identifier = f"{row.season_number}/{row.round_number_in_season}"
+
         return {
-            "round": int(row.round_number),
+            "round": round_identifier,
             "miner_uid": row.miner_uid,
             "miner_hotkey": row.miner_hotkey,
         }
