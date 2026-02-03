@@ -44,6 +44,7 @@ class EvaluationListItem(BaseModel):
     agentId: str
     validatorId: str
     roundId: int
+    season: Optional[int] = None  # Season number (e.g., 1, 2, 3)
     taskId: str
     taskUrl: str
     status: EvaluationStatus

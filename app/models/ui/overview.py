@@ -31,7 +31,11 @@ class OverviewMetrics(BaseModel):
     totalValidators: int
     totalMiners: int
     currentRound: int
+    currentSeason: Optional[int] = None
+    currentRoundInSeason: Optional[int] = None
     metricsRound: int
+    metricsSeason: Optional[int] = None
+    metricsRoundInSeason: Optional[int] = None
     subnetVersion: str
     lastUpdated: str  # ISO timestamp
 
@@ -137,7 +141,8 @@ class RoundDetailResponse(BaseResponse):
 class LeaderboardEntry(BaseModel):
     """Leaderboard entry for performance comparison."""
 
-    round: int
+    round: int  # round_number_in_season (for compatibility)
+    season: Optional[int] = None  # season_number
     subnet36: float  # post_consensus_avg_reward (mantener por compatibilidad)
     post_consensus_reward: float  # post_consensus_avg_reward
     winnerUid: Optional[int] = None

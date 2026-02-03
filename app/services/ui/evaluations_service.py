@@ -337,12 +337,20 @@ class EvaluationsService:
         updated = context.agent_run.ended_at or created
 
         validator_uid = _get_validator_uid_from_context(context)
+        
+        # Get season from round model
+        season = getattr(context.round, 'season_number', None)
+        if season is None and round_int >= 10000:
+            # Fallback: extract from legacy round_number format
+            season = round_int // 10000
+        
         return EvaluationListItem(
             evaluationId=context.evaluation.evaluation_id,
             runId=context.agent_run.agent_run_id,
             agentId=_format_agent_id(context.agent_run.miner_uid),
             validatorId=_format_validator_id(validator_uid) if validator_uid else "unknown",
             roundId=round_int,
+            season=season,  # Add season field
             taskId=context.task.task_id,
             taskUrl=task_url,
             status=status,

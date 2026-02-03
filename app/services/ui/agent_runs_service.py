@@ -5,7 +5,7 @@ import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
 from sqlalchemy import String, and_, cast, func, or_, select
@@ -145,7 +145,7 @@ class AgentRunsService:
         self,
         page: int = 1,
         limit: int = 20,
-        round_number: Optional[int] = None,
+        round_number: Optional[Union[int, str]] = None,  # Accept "season/round" format or legacy int
         validator_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         query: Optional[str] = None,
@@ -245,15 +245,34 @@ class AgentRunsService:
         # Add join with RoundORM if filtering by round_number
         validator_round_ids: List[str] = []
         if round_number is not None:
-            # Get all validator_round_ids for this round first
-            stmt_round_ids = select(RoundORM.validator_round_id).where(
-                RoundORM.round_number == round_number
-            )
-            result_round_ids = await self.session.execute(stmt_round_ids)
-            validator_round_ids = [row[0] for row in result_round_ids.all()]
+            # Parse round_number: can be "season/round" format or legacy int
+            season_num = None
+            round_num = None
             
-            if validator_round_ids:
-                filters.append(AgentEvaluationRunORM.validator_round_id.in_(validator_round_ids))
+            if isinstance(round_number, str) and "/" in round_number:
+                # New format: "season/round"
+                try:
+                    parts = round_number.split("/")
+                    season_num = int(parts[0])
+                    round_num = int(parts[1])
+                except (ValueError, IndexError):
+                    pass  # Invalid format, will return no results
+            elif isinstance(round_number, int):
+                # Legacy format: just a round number (not supported anymore)
+                # For backward compatibility, we could try to find it, but let's just skip
+                pass
+            
+            # Get all validator_round_ids for this season/round
+            if season_num is not None and round_num is not None:
+                stmt_round_ids = select(RoundORM.validator_round_id).where(
+                    RoundORM.season_number == season_num,
+                    RoundORM.round_number_in_season == round_num
+                )
+                result_round_ids = await self.session.execute(stmt_round_ids)
+                validator_round_ids = [row[0] for row in result_round_ids.all()]
+                
+                if validator_round_ids:
+                    filters.append(AgentEvaluationRunORM.validator_round_id.in_(validator_round_ids))
         
         # When filtering by round_number, we need to get all runs (not paginated) to combine with miners without runs
         if round_number is not None and validator_round_ids:
@@ -399,15 +418,34 @@ class AgentRunsService:
 
         return result
 
-    async def _list_available_round_numbers(self) -> List[int]:
+    async def _list_available_round_numbers(self) -> List[str]:
+        """
+        Returns available rounds in 'season/round' format (e.g., ['1/1', '1/2'])
+        """
         stmt = (
-            select(func.distinct(RoundORM.round_number))
-            .where(RoundORM.round_number.is_not(None))
-            .order_by(RoundORM.round_number.desc())
-            .limit(2)  # fuerza a devolver solo 2 registros
+            select(
+                RoundORM.season_number,
+                RoundORM.round_number_in_season
+            )
+            .where(
+                RoundORM.season_number.is_not(None),
+                RoundORM.round_number_in_season.is_not(None)
+            )
+            .distinct()
+            .order_by(
+                RoundORM.season_number.desc(),
+                RoundORM.round_number_in_season.desc()
+            )
+            .limit(50)  # Get last 50 rounds
         )
-        result = await self.session.scalars(stmt)
-        return [int(value) for value in result if value is not None]
+        result = await self.session.execute(stmt)
+        rounds = []
+        for row in result:
+            season = row[0]
+            round_num = row[1]
+            if season is not None and round_num is not None:
+                rounds.append(f"{season}/{round_num}")
+        return rounds
 
     async def _calculate_ranks_for_contexts(self, contexts: List[AgentRunContext]) -> None:
         """
@@ -839,7 +877,7 @@ class AgentRunsService:
                 "agentHotkey": miner_info.miner_hotkey if miner_info else "",
                 "agentName": miner_info.name if miner_info else f"Miner {miner_uid}",
                 "agentImage": agent_image,
-                "roundId": round_info.round_number or 0,
+                "roundId": _build_round_id(round_info) if round_info else "?",
                 "validatorId": _format_validator_id(validator_info.validator_uid) if validator_info else None,
                 "validatorName": validator_info.name if validator_info else None,
                 "validatorImage": validator_image,
@@ -1255,16 +1293,14 @@ class AgentRunsService:
             agent_identifier,
             agent_description,
         ) = self._resolve_agent_identity(context)
-        round_id_value = context.round.round_number
-        if round_id_value is None:
-            round_id_value = _round_id_to_int(context.round.validator_round_id)
+        round_id_value = _build_round_id(context.round)
         return AgentRun(
             runId=context.run.agent_run_id,
             agentId=agent_identifier,
             agentUid=agent_uid,
             agentHotkey=agent_hotkey,
             agentName=agent_name,
-            roundId=round_id_value or 0,
+            roundId=round_id_value,
             validatorId=_format_validator_id(_get_validator_uid_from_context(context) or 0),
             validatorName=validator_name,
             validatorImage=validator_image,
@@ -1786,9 +1822,7 @@ class AgentRunsService:
             )
         ]
 
-        round_id_value = context.round.round_number
-        if round_id_value is None:
-            round_id_value = _round_id_to_int(context.round.validator_round_id)
+        round_id_value = _build_round_id(context.round)
 
         return Summary(
             runId=context.run.agent_run_id,
@@ -1796,7 +1830,7 @@ class AgentRunsService:
             agentUid=agent_uid,
             agentHotkey=agent_hotkey,
             agentName=agent_name,
-            roundId=round_id_value or 0,
+            roundId=round_id_value,
             validatorId=_format_validator_id(_get_validator_uid_from_context(context) or 0),
             startTime=_ts_to_iso(context.run.started_at) or "",
             endTime=_ts_to_iso(context.run.ended_at),
@@ -1876,9 +1910,7 @@ class AgentRunsService:
         success_rate = (success_count / total_tasks * 100.0) if total_tasks else 0.0
         overall_score = _safe_int(average_score * 100)
 
-        round_id_value = context.round.round_number
-        if round_id_value is None:
-            round_id_value = _round_id_to_int(context.round.validator_round_id)
+        round_id_value = _build_round_id(context.round)
 
         duration_sec = None
         if getattr(run_model, "elapsed_sec", None) not in (None, 0):
@@ -1932,7 +1964,7 @@ class AgentRunsService:
             "agentHotkey": agent_hotkey,
             "agentName": agent_name,
             "agentImage": agent_image or None,
-            "roundId": round_id_value or 0,
+            "roundId": round_id_value,
             "validatorId": _format_validator_id(run_model.validator_uid),
             "validatorName": validator_name,
             "validatorImage": validator_image,
@@ -2307,6 +2339,32 @@ def _round_id_to_int(round_id: str) -> int:
         return int(matches[-1])
     except ValueError:
         return 0
+
+
+def _build_round_id(round_model) -> str:
+    """
+    Build roundId in 'season/round' format from round model.
+    Falls back to legacy format if season/round data is missing.
+    """
+    season = getattr(round_model, 'season_number', None)
+    round_num = getattr(round_model, 'round_number_in_season', None)
+    
+    if season is not None and round_num is not None:
+        return f"{season}/{round_num}"
+    
+    # Fallback to legacy round_number if available
+    legacy_round = getattr(round_model, 'round_number', None)
+    if legacy_round is not None:
+        return str(legacy_round)
+    
+    # Last resort: extract from validator_round_id
+    validator_round_id = getattr(round_model, 'validator_round_id', None)
+    if validator_round_id:
+        num = _round_id_to_int(validator_round_id)
+        if num > 0:
+            return str(num)
+    
+    return "?"
 
 
 def _parse_identifier(identifier: str) -> int:

@@ -39,7 +39,7 @@ DEFAULT_EVALUATIONS_LIMIT = 500000
 @cache("validator_details", ttl=120)  # Cache 2 minutos como recomienda Codex
 async def get_validator_details(
     uid: int,
-    round: Optional[int] = Query(None, description="Filter by round number"),
+    round: Optional[str] = Query(None, description="Filter by round (format: 'season/round', e.g., '1/1')"),
     website: Optional[str] = Query(None, description="Filter evaluations table by website (e.g., 'AutoCinema')"),
     useCase: Optional[str] = Query(None, description="Filter evaluations table by use case (e.g., 'SEARCH_FILM')"),
     limit: Optional[int] = Query(DEFAULT_EVALUATIONS_LIMIT, ge=1, le=MAX_EVALUATIONS_LIMIT, description=f"Limit number of evaluations to process. Default: {DEFAULT_EVALUATIONS_LIMIT}, Max: {MAX_EVALUATIONS_LIMIT}"),
@@ -50,7 +50,7 @@ async def get_validator_details(
     
     Args:
         uid: Validator UID
-        round: Optional round number to filter evaluations. If not provided, returns all rounds.
+        round: Optional round filter in "season/round" format (e.g., "1/1"). If not provided, returns all rounds.
         website: Optional website filter for evaluations table (e.g., "AutoCinema", "AutoBooks")
         useCase: Optional use case filter for evaluations table (e.g., "SEARCH_FILM", "CONTACT_BOOK")
         limit: Optional limit on number of evaluations to process (max 500000)
@@ -63,11 +63,24 @@ async def get_validator_details(
     - Available rounds list for this validator
     """
     
+    # Parse round parameter if provided
+    season_filter = None
+    round_filter = None
+    if round is not None:
+        try:
+            parts = round.split("/")
+            if len(parts) == 2:
+                season_filter = int(parts[0])
+                round_filter = int(parts[1])
+        except (ValueError, AttributeError):
+            pass  # Ignore invalid format
+    
     # Get validator information from the most recent validator snapshot
     validator_snapshot_query = (
         select(ValidatorRoundValidatorORM)
+        .join(ValidatorRoundORM, ValidatorRoundValidatorORM.validator_round_id == ValidatorRoundORM.validator_round_id)
         .where(ValidatorRoundValidatorORM.validator_uid == uid)
-        .order_by(ValidatorRoundValidatorORM.round_number.desc())
+        .order_by(ValidatorRoundORM.season_number.desc(), ValidatorRoundORM.round_number_in_season.desc())
         .limit(1)
     )
     validator_snapshot_result = await session.execute(validator_snapshot_query)
@@ -91,9 +104,10 @@ async def get_validator_details(
         # Get the most recent stake from DB
         stake_query = (
             select(ValidatorRoundValidatorORM.stake)
+            .join(ValidatorRoundORM, ValidatorRoundValidatorORM.validator_round_id == ValidatorRoundORM.validator_round_id)
             .where(ValidatorRoundValidatorORM.validator_uid == uid)
             .where(ValidatorRoundValidatorORM.stake.isnot(None))
-            .order_by(ValidatorRoundValidatorORM.round_number.desc())
+            .order_by(ValidatorRoundORM.season_number.desc(), ValidatorRoundORM.round_number_in_season.desc())
             .limit(1)
         )
         stake_result = await session.execute(stake_query)
@@ -123,16 +137,16 @@ async def get_validator_details(
     if validator_stake == 0:
         logger.debug(f"Validator {uid} stake is 0 (this may be correct if validator has no stake)")
     
-    # Get available rounds for this validator
+    # Get available rounds for this validator (return as "season/round" strings)
     rounds_query = (
-        select(ValidatorRoundORM.round_number)
+        select(ValidatorRoundORM.season_number, ValidatorRoundORM.round_number_in_season)
         .join(ValidatorRoundValidatorORM, ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
         .where(ValidatorRoundValidatorORM.validator_uid == uid)
         .distinct()
-        .order_by(ValidatorRoundORM.round_number.desc())
+        .order_by(ValidatorRoundORM.season_number.desc(), ValidatorRoundORM.round_number_in_season.desc())
     )
     rounds_result = await session.execute(rounds_query)
-    available_rounds = [r[0] for r in rounds_result.all()]
+    available_rounds = [f"{season}/{round_num}" for season, round_num in rounds_result.all() if season is not None and round_num is not None]
     
     # Agregación en SQL para evitar traer todas las evaluaciones a Python
     use_case_name_expr = func.coalesce(
@@ -174,11 +188,16 @@ async def get_validator_details(
         )
     
     # Filtro por round
-    if round is not None:
+    if season_filter is not None and round_filter is not None:
         base_evaluations_query = (
             base_evaluations_query
             .join(ValidatorRoundORM, EvaluationORM.validator_round_id == ValidatorRoundORM.validator_round_id)
-            .where(ValidatorRoundORM.round_number == round)
+            .where(
+                and_(
+                    ValidatorRoundORM.season_number == season_filter,
+                    ValidatorRoundORM.round_number_in_season == round_filter
+                )
+            )
         )
     
     # Aplicar límite configurable (por defecto 500k)
@@ -228,22 +247,26 @@ async def get_validator_details(
     )
     grouped_rows = (await session.execute(grouped_stmt)).all()
     
-    # Get last round number for this validator (needed even if no evaluations)
+    # Get last round for this validator (needed even if no evaluations)
     last_round_query = (
         select(ValidatorRoundORM)
         .join(ValidatorRoundValidatorORM, ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
         .where(ValidatorRoundValidatorORM.validator_uid == uid)
-        .order_by(ValidatorRoundORM.round_number.desc())
+        .order_by(ValidatorRoundORM.season_number.desc(), ValidatorRoundORM.round_number_in_season.desc())
         .limit(1)
     )
     last_round_result = await session.execute(last_round_query)
     last_round = last_round_result.scalar_one_or_none()
-    last_round_number = last_round.round_number if last_round else None
+    last_round_number = (
+        f"{last_round.season_number}/{last_round.round_number_in_season}"
+        if last_round and last_round.season_number is not None and last_round.round_number_in_season is not None
+        else None
+    )
     
     # Determine which round to use for winner lookup
     # If round filter is provided, use that round; otherwise use last FINISHED round
     target_round = None
-    if round is not None:
+    if season_filter is not None and round_filter is not None:
         # Get the specific round requested
         target_round_query = (
             select(ValidatorRoundORM)
@@ -251,7 +274,8 @@ async def get_validator_details(
             .where(
                 and_(
                     ValidatorRoundValidatorORM.validator_uid == uid,
-                    ValidatorRoundORM.round_number == round
+                    ValidatorRoundORM.season_number == season_filter,
+                    ValidatorRoundORM.round_number_in_season == round_filter
                 )
             )
             .limit(1)
@@ -271,7 +295,7 @@ async def get_validator_details(
                     ValidatorRoundORM.status == 'finished'
                 )
             )
-            .order_by(ValidatorRoundORM.round_number.desc())
+            .order_by(ValidatorRoundORM.season_number.desc(), ValidatorRoundORM.round_number_in_season.desc())
             .limit(1)
         )
         last_finished_round_result = await session.execute(last_finished_round_query)

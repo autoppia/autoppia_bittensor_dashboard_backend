@@ -170,7 +170,11 @@ class OverviewService:
                 totalValidators=0,
                 totalMiners=0,
                 currentRound=0,
+                currentSeason=None,
+                currentRoundInSeason=None,
                 metricsRound=0,
+                metricsSeason=None,
+                metricsRoundInSeason=None,
                 subnetVersion="1.0.0",
                 lastUpdated=now_iso,
             )
@@ -219,6 +223,11 @@ class OverviewService:
                     "Failed to compute current round from blockchain: %s", exc
                 )
 
+        # Get current round model to extract season and round_in_season
+        current_season = None
+        current_round_in_season = None
+        current_round_model = None
+        
         # Fallback: if we can't get blockchain round, use max from DB
         if current_round_value <= 0:
             current_round_candidates = [
@@ -231,6 +240,14 @@ class OverviewService:
                 logger.warning(
                     f"Using fallback current round from DB max: {current_round_value}"
                 )
+        
+        # Find the current round model to extract season/round_in_season
+        for record, _ in records_with_contexts:
+            if _round_number(record) == current_round_value:
+                current_round_model = record.model
+                current_season = getattr(current_round_model, 'season_number', None)
+                current_round_in_season = getattr(current_round_model, 'round_number_in_season', None)
+                break
 
         # Latest finished round should be current - 1
         preferred_previous_round: Optional[int] = None
@@ -284,6 +301,14 @@ class OverviewService:
         if not target_records:
             target_records = [records_with_contexts[0]]
             metrics_round_number = _round_number(target_records[0][0])
+        
+        # Extract season and round_in_season from the metrics round record
+        metrics_season = None
+        metrics_round_in_season = None
+        if target_records:
+            metrics_round_model = target_records[0][0].model
+            metrics_season = getattr(metrics_round_model, 'season_number', None)
+            metrics_round_in_season = getattr(metrics_round_model, 'round_number_in_season', None)
 
         # This top_score is for aggregating scores from contexts (legacy, not used for top miner)
         context_top_score = 0.0
@@ -671,7 +696,11 @@ class OverviewService:
             totalValidators=len(validators),
             totalMiners=total_miners_count,
             currentRound=current_round_value,
+            currentSeason=current_season,
+            currentRoundInSeason=current_round_in_season,
             metricsRound=display_metrics_round_number,
+            metricsSeason=metrics_season,
+            metricsRoundInSeason=metrics_round_in_season,
             subnetVersion=subnet_version,
             lastUpdated=datetime.now(timezone.utc).isoformat(),
         )
@@ -1037,11 +1066,12 @@ class OverviewService:
         # Preferir UID 83 (producción) sobre 124 (desarrollo)
         autoppia_uids = [83, 124]
         
-        # Subquery para obtener el máximo post_consensus_avg_reward por round_number
+        # Subquery para obtener el máximo post_consensus_avg_reward por season_number y round_number_in_season
         # Solo del validador Autoppia (UID 83 o 124)
         max_scores_subq = (
             select(
-                RoundORM.round_number,
+                RoundORM.season_number,
+                RoundORM.round_number_in_season,
                 func.max(ValidatorRoundSummaryORM.post_consensus_avg_reward).label(
                     "max_post_consensus_reward"
                 ),
@@ -1057,11 +1087,12 @@ class OverviewService:
                     RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
                 )
             )
-            .where(RoundORM.round_number.isnot(None))
+            .where(RoundORM.season_number.isnot(None))
+            .where(RoundORM.round_number_in_season.isnot(None))
             .where(RoundORM.status == "finished")
             .where(ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None))
             .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))  # Autoppia (83 o 124)
-            .group_by(RoundORM.round_number)
+            .group_by(RoundORM.season_number, RoundORM.round_number_in_season)
             .subquery()
         )
 
@@ -1071,7 +1102,8 @@ class OverviewService:
         # Primero obtenemos todos los rounds con datos del validador Autoppia, luego limitamos
         stmt = (
             select(
-                RoundORM.round_number,
+                RoundORM.season_number,
+                RoundORM.round_number_in_season,
                 ValidatorRoundSummaryORM.post_consensus_avg_reward,
                 ValidatorRoundSummaryORM.post_consensus_avg_eval_score,
                 ValidatorRoundSummaryORM.post_consensus_avg_eval_time,
@@ -1091,7 +1123,8 @@ class OverviewService:
                 )
                 .join(
                     max_scores_subq,
-                    (RoundORM.round_number == max_scores_subq.c.round_number)
+                    (RoundORM.season_number == max_scores_subq.c.season_number)
+                    & (RoundORM.round_number_in_season == max_scores_subq.c.round_number_in_season)
                     & (
                         ValidatorRoundSummaryORM.post_consensus_avg_reward
                         == max_scores_subq.c.max_post_consensus_reward
@@ -1106,12 +1139,14 @@ class OverviewService:
                     == ValidatorRoundMinerORM.miner_uid
                 ),
             )
-            .where(RoundORM.round_number.isnot(None))
+            .where(RoundORM.season_number.isnot(None))
+            .where(RoundORM.round_number_in_season.isnot(None))
             .where(RoundORM.status == "finished")
             .where(ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None))
             .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))  # Autoppia (83 o 124)
             .order_by(
-                RoundORM.round_number.desc(),  # Ordenar por round_number descendente (más reciente primero)
+                RoundORM.season_number.desc(),  # Ordenar por season_number descendente (más reciente primero)
+                RoundORM.round_number_in_season.desc(),  # Luego por round_number_in_season
                 ValidatorRoundSummaryORM.post_consensus_avg_reward.desc(),
                 ValidatorRoundSummaryORM.miner_uid.asc(),
             )
@@ -1128,22 +1163,27 @@ class OverviewService:
             now_iso = datetime.now(timezone.utc).isoformat()
             return [], {"start": now_iso, "end": now_iso}
 
-        # Agrupar por round_number y tomar el primero (ganador con max post_consensus_avg_reward)
+        # Agrupar por season_number y round_number_in_season y tomar el primero (ganador con max post_consensus_avg_reward)
         # Como la query está ordenada por post_consensus_avg_reward DESC, el primero es el ganador
-        seen_rounds: Dict[int, bool] = {}
+        seen_rounds: Dict[Tuple[int, int], bool] = {}
         entries: List[LeaderboardEntry] = []
         
         for row in rows:
-            round_number, post_consensus_reward, post_consensus_score, post_consensus_time, miner_uid, miner_name, ended_at = row
+            season_number, round_number_in_season, post_consensus_reward, post_consensus_score, post_consensus_time, miner_uid, miner_name, ended_at = row
 
-            if round_number is None or post_consensus_reward is None:
+            if season_number is None or round_number_in_season is None or post_consensus_reward is None:
                 continue
 
-            round_num = int(round_number)
-            # Solo tomar el primer registro por round_number (el ganador)
-            if round_num in seen_rounds:
+            season_num = int(season_number)
+            round_num = int(round_number_in_season)
+            round_key = (season_num, round_num)
+            # Solo tomar el primer registro por season/round (el ganador)
+            if round_key in seen_rounds:
                 continue
-            seen_rounds[round_num] = True
+            seen_rounds[round_key] = True
+            
+            # Use round_number_in_season for the round field (for compatibility)
+            display_round = round_num
 
             # Convertir ended_at (float timestamp) a ISO string
             if ended_at:
@@ -1153,7 +1193,8 @@ class OverviewService:
 
             entries.append(
                 LeaderboardEntry(
-                    round=round_num,
+                    round=display_round,  # round_number_in_season
+                    season=season_num,
                     subnet36=round(float(post_consensus_reward), 3),  # Mantener por compatibilidad
                     post_consensus_reward=round(float(post_consensus_reward), 3),
                     winnerUid=int(miner_uid) if miner_uid is not None else None,
@@ -1170,9 +1211,9 @@ class OverviewService:
                 )
             )
 
-        # Ordenar por round_number descendente (más reciente primero)
+        # Ordenar por season y round_number_in_season descendente (más reciente primero)
         # Esto asegura que los rounds más altos (más recientes) aparezcan primero
-        entries.sort(key=lambda e: e.round, reverse=True)
+        entries.sort(key=lambda e: (e.season or 0, e.round), reverse=True)
 
         # Aplicar límite después de ordenar
         if not unlimited and derived_limit:
