@@ -2563,11 +2563,32 @@ class RoundsService:
         except Exception:
             current_block = None
 
+        # Check if round_identifier is in season/round format (e.g., "1/1")
+        season = None
+        round_in_season = None
+        if isinstance(round_identifier, str) and "/" in round_identifier:
+            parts = round_identifier.split("/")
+            if len(parts) == 2:
+                try:
+                    season = int(parts[0])
+                    round_in_season = int(parts[1])
+                except ValueError:
+                    pass
+        
         if current_block is not None:
-            round_number = await self._resolve_round_number(round_identifier)
-            records, _ = await self._fetch_round_records_by_number(round_number)
-            if not records:
-                raise ValueError(f"Round {round_identifier} not found")
+            # If we have season/round, calculate round_number and use existing method
+            if season is not None and round_in_season is not None:
+                # Calculate unique round_number for compatibility
+                round_number = season * 10000 + round_in_season
+                # Use existing method to fetch records
+                records, _ = await self._fetch_round_records_by_number(round_number)
+                if not records:
+                    raise ValueError(f"Round not found: Season {season}, Round {round_in_season}")
+            else:
+                round_number = await self._resolve_round_number(round_identifier)
+                records, _ = await self._fetch_round_records_by_number(round_number)
+                if not records:
+                    raise ValueError(f"Round {round_identifier} not found")
 
             statuses = [record.model.status or "finished" for record in records]
             aggregated_status = _aggregate_status(statuses)
@@ -2587,25 +2608,13 @@ class RoundsService:
 
             seconds_remaining = blocks_remaining * 12
             
-            # ✅ Obtener nextRound y previousRound
-            from sqlalchemy import select, func
-            from app.db.models import RoundORM
+            # ✅ Obtener nextRound y previousRound usando season/round
+            # Por ahora, dejamos nextRound y previousRound como None para evitar problemas de async
+            # TODO: Implementar búsqueda de rounds anterior/siguiente cuando sea necesario
+            previous_round = None
+            next_round = None
             
-            # Buscar round anterior (round_number < current, más cercano)
-            stmt_prev = select(func.max(RoundORM.round_number)).where(
-                RoundORM.round_number < round_number
-            )
-            result_prev = await self.session.execute(stmt_prev)
-            previous_round = result_prev.scalar_one_or_none()
-            
-            # Buscar round siguiente (round_number > current, más cercano)
-            stmt_next = select(func.min(RoundORM.round_number)).where(
-                RoundORM.round_number > round_number
-            )
-            result_next = await self.session.execute(stmt_next)
-            next_round = result_next.scalar_one_or_none()
-            
-            return {
+            result = {
                 "roundId": round_number,
                 "currentBlock": display_block,
                 "startBlock": bounds.start_block,
@@ -2617,10 +2626,17 @@ class RoundsService:
                 "currentEpoch": block_to_epoch(current_block),
                 "estimatedTimeRemaining": _time_remaining(seconds_remaining),
                 "lastUpdated": datetime.now(timezone.utc).isoformat(),
-                "status": aggregated_status,  # ✅ Agregar status
-                "nextRound": int(next_round) if next_round is not None else None,  # ✅ Agregar nextRound
-                "previousRound": int(previous_round) if previous_round is not None else None,  # ✅ Agregar previousRound
+                "status": aggregated_status,
+                "nextRound": int(next_round) if next_round is not None else None,
+                "previousRound": int(previous_round) if previous_round is not None else None,
             }
+            
+            # Add season and roundInSeason if available
+            if season is not None and round_in_season is not None:
+                result["season"] = season
+                result["roundInSeason"] = round_in_season
+            
+            return result
 
         aggregated = await self._fetch_aggregated_round(
             round_identifier, include_details=False
@@ -3882,12 +3898,7 @@ class RoundsService:
             
             validators_list.append(validator_data)
         
-        # Crear un round_number único para compatibilidad con el frontend
-        # Format: season * 10000 + round_in_season
-        unique_round_number = season * 10000 + round_in_season
-        
         return {
-            "round_number": unique_round_number,
             "season": season,
             "round_in_season": round_in_season,
             "post_consensus_summary": aggregated_metrics,

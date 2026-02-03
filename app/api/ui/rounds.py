@@ -149,6 +149,24 @@ async def get_current_round(
     return RoundDetailResponse(success=True, data={"round": current})
 
 
+@router.get("/{season}/{round}/progress", response_model=RoundProgressResponse)
+async def get_round_progress_by_season(
+    season: int,
+    round: int,
+    session: AsyncSession = Depends(get_session),
+) -> RoundProgressResponse:
+    """Get round progress by season and round number.
+    
+    Example: /rounds/1/1/progress returns progress for Season 1, Round 1
+    """
+    service = await _service(session)
+    try:
+        progress = await service.get_round_progress(f"{season}/{round}")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RoundProgressResponse(success=True, data={"progress": progress})
+
+
 @router.get("/{season}/{round}", response_model=RoundDetailResponse)
 @cache("round_by_season", ttl=300)
 async def get_round_by_season(
@@ -477,6 +495,10 @@ async def get_round_progress(
     round_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> RoundProgressResponse:
+    """Get round progress. Supports both formats:
+    - /rounds/1/1/progress (season/round format)
+    - /rounds/{round_id}/progress (legacy format)
+    """
     service = await _service(session)
     try:
         progress = await service.get_round_progress(round_id)
