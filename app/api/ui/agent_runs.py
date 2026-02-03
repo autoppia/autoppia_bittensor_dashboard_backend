@@ -38,7 +38,7 @@ async def list_agent_runs(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    roundId: Optional[int] = Query(None),
+    roundId: Optional[str] = Query(None),  # Now accepts "season/round" format (e.g., "1/1")
     validatorId: Optional[str] = Query(None),
     agentId: Optional[str] = Query(None),
     query: Optional[str] = Query(None),

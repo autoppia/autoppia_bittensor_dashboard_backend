@@ -4077,7 +4077,7 @@ class RoundsService:
         
         if not summaries:
             logger.warning(
-                f"No miner summaries found for validator_round_id {validator_round_id} (round {round_number}, Autopia UID {AUTOPPIA_UID})"
+                f"No miner summaries found for validator_round_id {validator_round_id} (Autopia UID {AUTOPPIA_UID})"
             )
         
         # Get miner snapshots for image URLs
@@ -4563,9 +4563,13 @@ class RoundsService:
         
         return result
 
-    async def get_miner_historical(self, miner_uid: int) -> Dict[str, Any]:
+    async def get_miner_historical(self, miner_uid: int, season: Optional[int] = None) -> Dict[str, Any]:
         """
-        Get historical statistics for a miner across all rounds.
+        Get historical statistics for a miner across all rounds or for a specific season.
+        
+        Args:
+            miner_uid: Miner UID
+            season: Optional season number to filter by. If None, returns data for all seasons.
         
         Returns:
             - Summary statistics (rounds won/lost, total tasks, etc.)
@@ -4575,12 +4579,14 @@ class RoundsService:
         """
         # Get all summaries for this miner, including round epochs for alpha calculation
         # FILTRADO POR VALIDADOR AUTOPPIA (UID 83 o 124 - solo estos validators marcan el alpha)
-        autoppia_uids = [83, 124]
+        # En desarrollo/test también aceptamos validator_uid = 0
+        autoppia_uids = [0, 83, 124]  # 0 = test/dev, 83/124 = production Autoppia validators
         
         stmt_summaries = (
             select(
                 ValidatorRoundSummaryORM,
-                RoundORM.round_number,
+                RoundORM.season_number,
+                RoundORM.round_number_in_season,
                 RoundORM.start_epoch,
                 RoundORM.end_epoch,
             )
@@ -4593,9 +4599,14 @@ class RoundsService:
                 RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
             )
             .where(ValidatorRoundSummaryORM.miner_uid == miner_uid)
-            .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))  # Solo Autoppia (83 o 124)
-            .order_by(RoundORM.round_number.desc())
+            .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))  # Autoppia validators + test/dev
         )
+        
+        # Filter by season if provided
+        if season is not None:
+            stmt_summaries = stmt_summaries.where(RoundORM.season_number == season)
+        
+        stmt_summaries = stmt_summaries.order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
         result_summaries = await self.session.execute(stmt_summaries)
         summaries_with_rounds = result_summaries.all()
         
@@ -4661,7 +4672,7 @@ class RoundsService:
             )
             .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))
             .where(ValidatorRoundSummaryORM.subnet_price.isnot(None))
-            .order_by(RoundORM.round_number.desc())
+            .order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
             .limit(1)
         )
         result_latest_price = await self.session.execute(stmt_latest_subnet_price)
@@ -4689,23 +4700,26 @@ class RoundsService:
         rounds_history = []
         
         # Process each summary (one per validator per round)
-        # Group by round_number to get unique rounds
-        rounds_data: Dict[int, Dict[str, Any]] = {}
+        # Group by season_number and round_number_in_season to get unique rounds
+        rounds_data: Dict[str, Dict[str, Any]] = {}
         
         for summary_row in summaries_with_rounds:
             summary = summary_row[0]
-            round_number = summary_row[1]
-            start_epoch = summary_row[2] if len(summary_row) > 2 else None
-            end_epoch = summary_row[3] if len(summary_row) > 3 else None
-            if round_number is None:
+            season_number = summary_row[1]
+            round_number_in_season = summary_row[2]
+            start_epoch = summary_row[3] if len(summary_row) > 3 else None
+            end_epoch = summary_row[4] if len(summary_row) > 4 else None
+            if season_number is None or round_number_in_season is None:
                 continue
-                
-            rounds_participated.add(round_number)
+            
+            # Use "season/round" format as key
+            round_key = f"{season_number}/{round_number_in_season}"
+            rounds_participated.add(round_key)
             
             # Get post-consensus data (should be same for all summaries in same round)
-            if round_number not in rounds_data:
-                rounds_data[round_number] = {
-                    "round": round_number,
+            if round_key not in rounds_data:
+                rounds_data[round_key] = {
+                    "round": round_key,
                     "post_consensus_rank": summary.post_consensus_rank,
                     "post_consensus_avg_reward": summary.post_consensus_avg_reward or 0.0,
                     "post_consensus_avg_eval_score": summary.post_consensus_avg_eval_score or 0.0,
@@ -4720,29 +4734,29 @@ class RoundsService:
                 }
             
             # Update validators count
-            rounds_data[round_number]["validators_count"] += 1
+            rounds_data[round_key]["validators_count"] += 1
             
             # Calculate tasks failed
             tasks_received = summary.post_consensus_tasks_received or 0
             tasks_success = summary.post_consensus_tasks_success or 0
             tasks_failed = tasks_received - tasks_success
-            rounds_data[round_number]["tasks_failed"] = max(
-                rounds_data[round_number]["tasks_failed"],
+            rounds_data[round_key]["tasks_failed"] = max(
+                rounds_data[round_key]["tasks_failed"],
                 tasks_failed
             )
             
             # Track best score and rank (only process once per round, when first creating the entry)
-            if "_processed" not in rounds_data[round_number]:
+            if "_processed" not in rounds_data[round_key]:
                 score = summary.post_consensus_avg_reward or 0.0
                 rank = summary.post_consensus_rank or 0
                 
                 if score > best_score:
                     best_score = score
-                    best_score_round = round_number
+                    best_score_round = round_key
                 
                 if rank > 0 and (best_rank is None or rank < best_rank):
                     best_rank = rank
-                    best_rank_round = round_number
+                    best_rank_round = round_key
                 
                 scores.append(score)
                 if rank > 0:
@@ -4764,7 +4778,7 @@ class RoundsService:
                     alpha_earned = settings.ALPHA_EMISSION_PER_EPOCH * round_epochs * weight
                     total_alpha_earned += alpha_earned
                 
-                rounds_data[round_number]["_processed"] = True
+                rounds_data[round_key]["_processed"] = True
         
         # Convert total alpha to TAO using current subnet_price
         # Use the most recent subnet_price from validator 83 or 124
@@ -4868,7 +4882,11 @@ class RoundsService:
                 func.coalesce(TaskORM.web_project_id, "unknown").label("website"),
                 func.coalesce(TaskORM.prompt, "").label("prompt"),
                 use_case_name_expr,
-                RoundORM.round_number.label("round_number"),
+                func.concat(
+                    RoundORM.season_number.cast(String),
+                    '/',
+                    RoundORM.round_number_in_season.cast(String)
+                ).label("round_number"),
             )
             .join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
             .join(RoundORM, TaskORM.validator_round_id == RoundORM.validator_round_id)

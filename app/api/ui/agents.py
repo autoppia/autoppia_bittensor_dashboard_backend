@@ -173,10 +173,11 @@ async def get_miner_round_details(
 @router.get("/{miner_uid}/historical")
 async def get_miner_historical(
     miner_uid: int,
+    season: Optional[int] = Query(None, description="Optional season number to filter historical data"),
     session: AsyncSession = Depends(get_session),
 ):
     """
-    Get historical statistics for a miner across all rounds.
+    Get historical statistics for a miner across all rounds or for a specific season.
     
     Returns:
         - Summary statistics (rounds won/lost, total tasks, etc.)
@@ -186,7 +187,7 @@ async def get_miner_historical(
     """
     rounds_service = await _rounds_service(session)
     try:
-        data = await rounds_service.get_miner_historical(miner_uid)
+        data = await rounds_service.get_miner_historical(miner_uid, season=season)
         return {"success": True, "data": data}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
