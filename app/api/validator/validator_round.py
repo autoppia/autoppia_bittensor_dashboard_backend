@@ -605,7 +605,6 @@ async def start_agent_run(
         # In TESTING mode, allow bypass if chain state is unavailable
         current_block = get_current_block()
         if current_block is None:
-            force = request.query_params.get("force", "false").lower() == "true"
             if settings.TESTING and bool(force):
                 # In testing mode with force flag, use start_block as fallback
                 logger.warning(
