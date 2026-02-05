@@ -486,10 +486,18 @@ async def set_tasks(
         else:
             current_block = get_current_block()
             if current_block is None:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Chain state unavailable",
-                )
+                if settings.TESTING and bool(force):
+                    # In testing mode with force flag, use start_block as fallback
+                    logger.warning(
+                        "TESTING mode: Chain state unavailable, using start_block=%s as current_block fallback for set_tasks",
+                        round_row.start_block,
+                    )
+                    current_block = round_row.start_block
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Chain state unavailable",
+                    )
 
             # Calculate boundaries from start_block (no longer using round_number)
             from app.services.round_calc import _round_blocks, block_to_epoch
@@ -593,13 +601,23 @@ async def start_agent_run(
         # Canonicalize miner image on non-legacy path as well
         _resolve_miner_snapshot_image(miner_snapshot)
 
-        # ALWAYS enforce chain-derived round constraints (no bypass allowed)
+        # Enforce chain-derived round constraints
+        # In TESTING mode, allow bypass if chain state is unavailable
         current_block = get_current_block()
         if current_block is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Chain state unavailable",
-            )
+            force = request.query_params.get("force", "false").lower() == "true"
+            if settings.TESTING and bool(force):
+                # In testing mode with force flag, use start_block as fallback
+                logger.warning(
+                    "TESTING mode: Chain state unavailable, using start_block=%s as current_block fallback for start_agent_run",
+                    round_row.start_block,
+                )
+                current_block = round_row.start_block
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Chain state unavailable",
+                )
         # Calculate boundaries from start_block (no longer using round_number)
         from app.services.round_calc import _round_blocks, block_to_epoch
         round_blocks = _round_blocks()
