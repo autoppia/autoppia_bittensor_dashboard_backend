@@ -106,14 +106,14 @@ class Settings(BaseSettings):
     # When TESTING=true: ROUND_SIZE_EPOCHS=0.347 (matches validator testing mode)
     # When TESTING=false: ROUND_SIZE_EPOCHS=3.0 (matches validator production mode)
     if TESTING_MODE:
-        # Testing mode: Short rounds (~25 minutes) - matches validator TESTING=true
-        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.347"))
+        # Testing mode: Short rounds (0.5 epochs ≈ 36 minutes) - matches validator TESTING=true
+        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.5"))
     else:
         # Production mode: Long rounds (~4.8 hours) - matches validator TESTING=false
         ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "3.0"))
     BLOCKS_PER_EPOCH: int = int(_env_var("BLOCKS_PER_EPOCH", "360"))
-    DZ_STARTING_BLOCK: int = int(_env_var("DZ_STARTING_BLOCK", "7084250"))
-    SEASON_SIZE_EPOCHS: float = float(_env_var("SEASON_SIZE_EPOCHS", "280.0"))
+    MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7478200"))
+    SEASON_SIZE_EPOCHS: float = float(_env_var("SEASON_SIZE_EPOCHS", "2.0"))  # Testing: 2 epochs
 
     # Chain state
     CHAIN_BLOCK_CACHE_TTL_SECONDS: int = 15 * 60

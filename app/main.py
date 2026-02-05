@@ -260,7 +260,7 @@ async def on_startup():
         logger.info("🔧 BACKEND ROUND CONFIGURATION")
         logger.info("=" * 80)
         logger.info(f"📊 Mode: {'TESTING' if settings.TESTING else 'PRODUCTION'}")
-        logger.info(f"🔢 DZ_STARTING_BLOCK: {settings.DZ_STARTING_BLOCK:,}")
+        logger.info(f"🔢 MINIMUM_START_BLOCK: {settings.MINIMUM_START_BLOCK:,}")
         logger.info(f"⏱️  Round Size: {settings.ROUND_SIZE_EPOCHS} epochs")
         logger.info(f"📦 Blocks per Round: {int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)}")
         logger.info("=" * 80)
