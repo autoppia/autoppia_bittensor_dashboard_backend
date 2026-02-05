@@ -243,7 +243,7 @@ async def start_round(
         )
 
     # ALWAYS enforce chain-derived round constraints (no bypass allowed)
-    # This ensures ALL validators use the same DZ_STARTING_BLOCK and season/round calculation
+    # This ensures ALL validators use the same MINIMUM_START_BLOCK and season/round calculation
     current_block = get_current_block()
     if current_block is None:
         raise HTTPException(

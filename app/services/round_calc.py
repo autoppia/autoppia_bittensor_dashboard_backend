@@ -26,9 +26,9 @@ def block_to_epoch(block: int) -> float:
 def compute_round_number(current_block: int) -> int:
     """Compute 1-based round number from chain height.
 
-    Returns 0 when current_block is at or before the DZ gate.
+    Returns 0 when current_block is at or before the minimum start block.
     """
-    base = int(settings.DZ_STARTING_BLOCK)
+    base = int(settings.MINIMUM_START_BLOCK)
     if current_block <= base:
         return 0
     length = _round_blocks()
@@ -39,7 +39,7 @@ def compute_round_number(current_block: int) -> int:
 def compute_boundaries_for_round(round_number: int) -> RoundBoundaries:
     if round_number <= 0:
         # before first window
-        start_block = int(settings.DZ_STARTING_BLOCK)
+        start_block = int(settings.MINIMUM_START_BLOCK)
         end_block = start_block + _round_blocks()
         return RoundBoundaries(
             round_number=0,
@@ -49,8 +49,8 @@ def compute_boundaries_for_round(round_number: int) -> RoundBoundaries:
             end_epoch=block_to_epoch(end_block),
         )
 
-    start_block = int(settings.DZ_STARTING_BLOCK) + (round_number - 1) * _round_blocks()
-    end_block = int(settings.DZ_STARTING_BLOCK) + round_number * _round_blocks()
+    start_block = int(settings.MINIMUM_START_BLOCK) + (round_number - 1) * _round_blocks()
+    end_block = int(settings.MINIMUM_START_BLOCK) + round_number * _round_blocks()
     return RoundBoundaries(
         round_number=round_number,
         start_block=start_block,
@@ -73,9 +73,9 @@ def is_inside_window(current_block: int, boundaries: RoundBoundaries) -> bool:
 def compute_season_number(start_block: int) -> int:
     """Compute 1-based season number from start_block.
     
-    Uses the same DZ_STARTING_BLOCK as rounds, but with SEASON_SIZE_EPOCHS.
+    Uses the same MINIMUM_START_BLOCK as rounds, but with SEASON_SIZE_EPOCHS.
     """
-    base = int(settings.DZ_STARTING_BLOCK)
+    base = int(settings.MINIMUM_START_BLOCK)
     if start_block < base:
         return 0
     season_block_length = int(settings.SEASON_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
@@ -93,7 +93,7 @@ def compute_round_number_in_season(current_block: int, round_block_length: int) 
     Returns:
         1-based round number within the season (1, 2, 3, ...)
     """
-    base = int(settings.DZ_STARTING_BLOCK)
+    base = int(settings.MINIMUM_START_BLOCK)
     if current_block < base:
         return 0
     
