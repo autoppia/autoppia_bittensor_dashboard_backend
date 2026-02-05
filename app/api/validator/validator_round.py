@@ -242,14 +242,22 @@ async def start_round(
             detail="Validator header hotkey does not match payload hotkey",
         )
 
-    # ALWAYS enforce chain-derived round constraints (no bypass allowed)
-    # This ensures ALL validators use the same MINIMUM_START_BLOCK and season/round calculation
+    # Enforce chain-derived round constraints
+    # In TESTING mode, allow bypass if chain state is unavailable
     current_block = get_current_block()
     if current_block is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Chain state unavailable",
-        )
+        if settings.TESTING and bool(force):
+            # In testing mode with force flag, use start_block as fallback
+            logger.warning(
+                "TESTING mode: Chain state unavailable, using start_block=%s as current_block fallback",
+                validator_round.start_block,
+            )
+            current_block = validator_round.start_block
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Chain state unavailable",
+            )
 
     # Calculate boundaries from start_block (round boundaries are based on start_block)
     from app.services.round_calc import _round_blocks, block_to_epoch
