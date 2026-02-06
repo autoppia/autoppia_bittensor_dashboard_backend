@@ -2584,65 +2584,119 @@ class RoundsService:
                     pass
         
         if current_block is not None or (season is not None and round_in_season is not None):
-            # If we have season/round, calculate round_number and use existing method
+            # If we have season/round, fetch from database directly
             if season is not None and round_in_season is not None:
-                # Calculate unique round_number for compatibility
-                round_number = season * 10000 + round_in_season
-                # Use existing method to fetch records
-                records, _ = await self._fetch_round_records_by_number(round_number)
-                if not records:
+                # Fetch round records directly from database using season/round
+                from app.db.models import RoundORM
+                from sqlalchemy import select
+                
+                stmt = select(RoundORM).where(
+                    RoundORM.season_number == season,
+                    RoundORM.round_number_in_season == round_in_season
+                )
+                result_db = await self.session.execute(stmt)
+                round_rows = result_db.scalars().all()
+                
+                if not round_rows:
                     raise ValueError(f"Round not found: Season {season}, Round {round_in_season}")
+                
+                # Use the first round row (should be unique per season/round)
+                round_row = round_rows[0]
+                
+                # Get real start_block and end_block from database
+                from app.services.round_calc import _round_blocks
+                start_block = round_row.start_block
+                end_block = round_row.end_block or (start_block + _round_blocks())
+                start_epoch = block_to_epoch(start_block)
+                end_epoch = block_to_epoch(end_block)
+                
+                statuses = [round_row.status or "finished"]
+                aggregated_status = _aggregate_status(statuses)
+                
             else:
                 round_number = await self._resolve_round_number(round_identifier)
                 records, _ = await self._fetch_round_records_by_number(round_number)
                 if not records:
                     raise ValueError(f"Round {round_identifier} not found")
-
-            statuses = [record.model.status or "finished" for record in records]
-            aggregated_status = _aggregate_status(statuses)
-
-            bounds = compute_boundaries_for_round(round_number)
+                
+                # Get round data from first record
+                from app.services.round_calc import _round_blocks
+                round_row = records[0].model
+                start_block = round_row.start_block
+                end_block = round_row.end_block or (start_block + _round_blocks())
+                start_epoch = block_to_epoch(start_block)
+                end_epoch = block_to_epoch(end_block)
+                
+                statuses = [record.model.status or "finished" for record in records]
+                aggregated_status = _aggregate_status(statuses)
+                
+                # Extract season/round from round_row if available
+                if hasattr(round_row, 'season_number') and hasattr(round_row, 'round_number_in_season'):
+                    season = round_row.season_number
+                    round_in_season = round_row.round_number_in_season
 
             # If round is officially finished, force 100% progress
             if aggregated_status == "finished":
                 progress_value = 1.0
                 blocks_remaining = 0
-                display_block = bounds.end_block
+                display_block = end_block
             else:
                 # Active or evaluating_finished: use real current block
-                progress_value = progress_for_block(current_block, bounds)
-                blocks_remaining = max(bounds.end_block - current_block, 0)
-                display_block = current_block
+                if current_block is not None:
+                    progress_value = max(0.0, min(1.0, (current_block - start_block) / (end_block - start_block)))
+                    blocks_remaining = max(end_block - current_block, 0)
+                    display_block = current_block
+                else:
+                    progress_value = 0.0
+                    blocks_remaining = end_block - start_block
+                    display_block = start_block
 
             seconds_remaining = blocks_remaining * 12
             
             # ✅ Obtener nextRound y previousRound usando season/round
-            # Por ahora, dejamos nextRound y previousRound como None para evitar problemas de async
-            # TODO: Implementar búsqueda de rounds anterior/siguiente cuando sea necesario
             previous_round = None
             next_round = None
+            if season is not None and round_in_season is not None:
+                from app.db.models import RoundORM
+                from sqlalchemy import select, func, and_
+                
+                # Previous round: same season, round_in_season - 1
+                stmt_prev = select(RoundORM).where(
+                    RoundORM.season_number == season,
+                    RoundORM.round_number_in_season == round_in_season - 1
+                ).limit(1)
+                result_prev = await self.session.execute(stmt_prev)
+                prev_row = result_prev.scalar_one_or_none()
+                if prev_row:
+                    previous_round = f"{season}/{round_in_season - 1}"
+                
+                # Next round: same season, round_in_season + 1
+                stmt_next = select(RoundORM).where(
+                    RoundORM.season_number == season,
+                    RoundORM.round_number_in_season == round_in_season + 1
+                ).limit(1)
+                result_next = await self.session.execute(stmt_next)
+                next_row = result_next.scalar_one_or_none()
+                if next_row:
+                    next_round = f"{season}/{round_in_season + 1}"
             
             result = {
-                "roundId": round_number,
+                "season": season,
+                "roundInSeason": round_in_season,
                 "currentBlock": display_block,
-                "startBlock": bounds.start_block,
-                "endBlock": bounds.end_block,
+                "startBlock": start_block,
+                "endBlock": end_block,
                 "blocksRemaining": blocks_remaining,
                 "progress": progress_value,
-                "startEpoch": bounds.start_epoch,
-                "endEpoch": bounds.end_epoch,
+                "startEpoch": start_epoch,
+                "endEpoch": end_epoch,
                 "currentEpoch": block_to_epoch(current_block) if current_block is not None else None,
                 "estimatedTimeRemaining": _time_remaining(seconds_remaining),
                 "lastUpdated": datetime.now(timezone.utc).isoformat(),
                 "status": aggregated_status,
-                "nextRound": int(next_round) if next_round is not None else None,
-                "previousRound": int(previous_round) if previous_round is not None else None,
+                "nextRound": next_round,
+                "previousRound": previous_round,
             }
-            
-            # Add season and roundInSeason if available
-            if season is not None and round_in_season is not None:
-                result["season"] = season
-                result["roundInSeason"] = round_in_season
             
             return result
 
