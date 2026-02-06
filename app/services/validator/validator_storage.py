@@ -174,6 +174,9 @@ class ValidatorRoundPersistenceService:
         allow_existing: bool = False,
     ) -> int:
         """Persist or update tasks associated with a validator round."""
+        from app.core.logging import get_logger
+        logger = get_logger(__name__)
+        
         round_row = await self._ensure_round_exists(validator_round_id)
         count = 0
         for task in tasks:
@@ -189,13 +192,23 @@ class ValidatorRoundPersistenceService:
                         f"task_id {task.task_id} already belongs to validator_round {existing.validator_round_id}"
                     )
                 if allow_existing:
+                    logger.debug(
+                        f"Task {task.task_id} already exists for validator_round {validator_round_id}, skipping (idempotent)"
+                    )
                     continue
                 raise DuplicateIdentifierError(
                     f"task_id {task.task_id} already exists for validator_round {validator_round_id}"
                 )
 
+            logger.debug(
+                f"Adding new task {task.task_id} for validator_round {validator_round_id}"
+            )
             self.session.add(TaskORM(**kwargs))
             count += 1
+        
+        logger.info(
+            f"add_tasks: {count} new tasks added, {len(tasks) - count} already existed for validator_round {validator_round_id}"
+        )
         return count
 
     async def start_agent_run(
