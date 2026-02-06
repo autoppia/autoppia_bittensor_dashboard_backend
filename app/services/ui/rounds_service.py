@@ -5009,9 +5009,13 @@ class RoundsService:
         
         This is a lightweight query optimized for the initial redirect.
         Only considers Autoppia validators (83 or 124) for consistency.
+        In TESTING mode, also includes validator 60.
         """
         # FILTRADO POR VALIDADOR AUTOPPIA (UID 83 o 124)
+        # En modo TESTING, también incluir validator 60
         autoppia_uids = [83, 124]
+        if settings.TESTING:
+            autoppia_uids.append(60)
         
         # Get latest round that already has post-consensus rankings (post_consensus_rank = 1)
         # Only from Autoppia validators
