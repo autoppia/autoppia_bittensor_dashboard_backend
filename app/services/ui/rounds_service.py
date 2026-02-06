@@ -4275,6 +4275,8 @@ class RoundsService:
         
         # In TESTING mode, if no summary data, get from evaluations directly
         if not summary and settings.TESTING:
+            # Import EvaluationORM here to avoid scope issues
+            from app.db.models import EvaluationORM
             # Get miner data from evaluations
             stmt_eval = (
                 select(
