@@ -4709,6 +4709,7 @@ class RoundsService:
                     RoundORM.end_epoch,
                     func.avg(EvaluationORM.eval_score).label("avg_score"),
                     func.count(EvaluationORM.evaluation_id).label("tasks_count"),
+                    func.sum(case((EvaluationORM.eval_score >= 0.5, 1), else_=0)).label("tasks_success"),
                     func.avg(EvaluationORM.evaluation_time).label("avg_time"),
                 )
                 .join(
@@ -4746,6 +4747,7 @@ class RoundsService:
             
             # Create mock summary objects from evaluation data
             from types import SimpleNamespace
+            from sqlalchemy import case
             summaries_with_rounds = []
             for eval_row in eval_rounds:
                 validator_round_id = eval_row[0]
@@ -4755,9 +4757,10 @@ class RoundsService:
                 end_epoch = eval_row[4]
                 avg_score = float(eval_row[5] or 0.0)
                 tasks_count = int(eval_row[6] or 0)
-                avg_time = float(eval_row[7] or 0.0)
+                tasks_success = int(eval_row[7] or 0)
+                avg_time = float(eval_row[8] or 0.0)
                 
-                # Create a mock summary object
+                # Create a mock summary object with all required attributes
                 mock_summary = SimpleNamespace(
                     validator_round_id=validator_round_id,
                     miner_uid=miner_uid,
@@ -4766,8 +4769,11 @@ class RoundsService:
                     post_consensus_avg_reward=avg_score,
                     post_consensus_avg_eval_score=avg_score,
                     post_consensus_avg_eval_time=avg_time,
+                    post_consensus_tasks_received=tasks_count,
+                    post_consensus_tasks_success=tasks_success,
                     tasks_count=tasks_count,
                     subnet_price=None,
+                    weight=0.0,
                 )
                 summaries_with_rounds.append((mock_summary, season_num, round_num, start_epoch, end_epoch))
         
