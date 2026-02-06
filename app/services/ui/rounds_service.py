@@ -4083,6 +4083,41 @@ class RoundsService:
         result_summary = await self.session.execute(stmt_summary)
         summaries = result_summary.scalars().all()
         
+        # In TESTING mode, if no summaries, get miners from evaluations directly
+        if not summaries and settings.TESTING:
+            from app.db.models import EvaluationORM
+            # Get miners from evaluations for this round
+            stmt_eval_miners = (
+                select(
+                    EvaluationORM.miner_uid,
+                    func.avg(EvaluationORM.eval_score).label("avg_eval_score"),
+                    func.avg(EvaluationORM.evaluation_time).label("avg_eval_time"),
+                    func.count(EvaluationORM.evaluation_id).label("tasks_count"),
+                )
+                .where(
+                    EvaluationORM.validator_round_id == validator_round_id,
+                    EvaluationORM.miner_uid != settings.BURN_UID,
+                )
+                .group_by(EvaluationORM.miner_uid)
+                .order_by(func.avg(EvaluationORM.eval_score).desc())
+            )
+            result_eval_miners = await self.session.execute(stmt_eval_miners)
+            eval_miners = result_eval_miners.all()
+            
+            if eval_miners:
+                # Create mock summary objects from evaluation data
+                from types import SimpleNamespace
+                summaries = []
+                for rank, (miner_uid, avg_score, avg_time, tasks_count) in enumerate(eval_miners, start=1):
+                    mock_summary = SimpleNamespace(
+                        miner_uid=miner_uid,
+                        post_consensus_rank=rank,
+                        post_consensus_avg_reward=float(avg_score or 0.0),
+                        post_consensus_avg_eval_score=float(avg_score or 0.0),
+                        post_consensus_avg_eval_time=float(avg_time or 0.0),
+                    )
+                    summaries.append(mock_summary)
+        
         if not summaries:
             logger.warning(
                 f"No miner summaries found for validator_round_id {validator_round_id} (Autopia UID {AUTOPPIA_UID})"
