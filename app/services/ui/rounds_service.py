@@ -4012,20 +4012,16 @@ class RoundsService:
         validator_round_id = result_validator_round.scalar_one_or_none()
         
         if not validator_round_id:
-            # If Autoppia not found, try to find any validator_round_id for this round that has summaries
+            # If Autoppia not found, try to find any validator_round_id for this round
             logger.warning(
                 f"Autopia validator (UID {AUTOPPIA_UID}) not found for round {round_identifier}. "
-                f"Trying to find any validator with summaries..."
+                f"Trying to find any validator for this round..."
             )
             
-            # Find any validator_round_id for this round that has summaries
+            # Find any validator_round_id for this round (from validator_rounds table)
             if season is not None and round_in_season is not None:
                 stmt_fallback = (
-                    select(ValidatorRoundSummaryORM.validator_round_id)
-                    .join(
-                        RoundORM,
-                        ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
-                    )
+                    select(RoundORM.validator_round_id)
                     .where(
                         RoundORM.season_number == season,
                         RoundORM.round_number_in_season == round_in_season
@@ -4034,20 +4030,16 @@ class RoundsService:
                 )
             else:
                 stmt_fallback = (
-                    select(ValidatorRoundSummaryORM.validator_round_id)
-                    .join(
-                        RoundORM,
-                        ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
-                    )
+                    select(RoundORM.validator_round_id)
                     .limit(1)
                 )
             result_fallback = await self.session.execute(stmt_fallback)
             validator_round_id = result_fallback.scalar_one_or_none()
             
             if not validator_round_id:
-                # No validator found with summaries for this round
+                # No validator found for this round
                 logger.warning(
-                    f"No validator rounds with summaries found for round {round_identifier}"
+                    f"No validator rounds found for round {round_identifier}"
                 )
                 return {
                     "round": round_identifier,
