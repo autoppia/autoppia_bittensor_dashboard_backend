@@ -69,19 +69,21 @@ async def get_latest_round_top_miner(
     session: AsyncSession = Depends(get_session),
 ):
     """
-    Get the latest round number and the top miner (post_consensus_rank = 1) for that round.
+    Get redirect URL for the latest round and top miner.
     Used for initial redirect when accessing /subnet36/agents without parameters.
     
+    Returns a redirect URL instead of raw data.
     This endpoint uses Redis cache (30s TTL) for ultra-fast responses.
     Only considers Autoppia validators (83 or 124) for consistency.
     """
     from app.services.redis_cache import redis_cache
+    from fastapi.responses import RedirectResponse
     
     # Try Redis cache first
-    cache_key = "latest_round_top_miner"
-    cached_data = redis_cache.get(cache_key)
-    if cached_data is not None:
-        return {"success": True, "data": cached_data}
+    cache_key = "latest_round_top_miner_url"
+    cached_url = redis_cache.get(cache_key)
+    if cached_url is not None:
+        return RedirectResponse(url=cached_url, status_code=302)
     
     # Cache miss - fetch from database
     rounds_service = await _rounds_service(session)
@@ -90,10 +92,13 @@ async def get_latest_round_top_miner(
         if data is None:
             raise HTTPException(status_code=404, detail="No rounds available")
         
-        # Cache in Redis for 30 seconds
-        redis_cache.set(cache_key, data, ttl=30)
+        # Build redirect URL: /subnet36/agents/{miner_uid}?season={season}&round={round}
+        redirect_url = f"/subnet36/agents/{data['miner_uid']}?season={data['round'].split('/')[0]}&round={data['round'].split('/')[1]}"
         
-        return {"success": True, "data": data}
+        # Cache in Redis for 30 seconds
+        redis_cache.set(cache_key, redirect_url, ttl=30)
+        
+        return RedirectResponse(url=redirect_url, status_code=302)
     except HTTPException:
         raise
     except Exception as exc:
