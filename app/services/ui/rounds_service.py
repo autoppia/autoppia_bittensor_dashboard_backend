@@ -5019,6 +5019,7 @@ class RoundsService:
         
         # Get latest round that already has post-consensus rankings (post_consensus_rank = 1)
         # Only from Autoppia validators
+        # In TESTING mode, also try to find rounds with local_rank = 1 if no post_consensus_rank exists
         stmt = (
             select(
                 RoundORM.season_number,
@@ -5050,6 +5051,39 @@ class RoundsService:
 
         result = await self.session.execute(stmt)
         row = result.first()
+
+        # In TESTING mode, if no round with post_consensus_rank found, try with local_rank = 1
+        if row is None and settings.TESTING:
+            stmt_fallback = (
+                select(
+                    RoundORM.season_number,
+                    RoundORM.round_number_in_season,
+                    ValidatorRoundSummaryORM.miner_uid,
+                    ValidatorRoundSummaryORM.miner_hotkey,
+                )
+                .join(
+                    ValidatorRoundSummaryORM,
+                    ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id,
+                )
+                .join(
+                    ValidatorRoundValidatorORM,
+                    RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+                )
+                .where(
+                    RoundORM.season_number.is_not(None),
+                    RoundORM.round_number_in_season.is_not(None),
+                    ValidatorRoundSummaryORM.local_rank == 1,
+                    ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids),
+                    ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
+                )
+                .order_by(
+                    RoundORM.season_number.desc(),
+                    RoundORM.round_number_in_season.desc()
+                )
+                .limit(1)
+            )
+            result_fallback = await self.session.execute(stmt_fallback)
+            row = result_fallback.first()
 
         if row is None:
             return None
