@@ -5087,7 +5087,6 @@ class RoundsService:
 
         # In TESTING mode, if still no data from summary, get top miner from evaluations directly
         if row is None and settings.TESTING:
-            from app.db.models import EvaluationORM, MinerORM
             from sqlalchemy import func
             
             stmt_eval_fallback = (
@@ -5095,7 +5094,7 @@ class RoundsService:
                     RoundORM.season_number,
                     RoundORM.round_number_in_season,
                     EvaluationORM.miner_uid,
-                    MinerORM.hotkey.label("miner_hotkey"),
+                    ValidatorRoundMinerORM.miner_hotkey.label("miner_hotkey"),
                 )
                 .join(
                     EvaluationORM,
@@ -5106,8 +5105,11 @@ class RoundsService:
                     RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
                 )
                 .outerjoin(
-                    MinerORM,
-                    MinerORM.uid == EvaluationORM.miner_uid,
+                    ValidatorRoundMinerORM,
+                    and_(
+                        ValidatorRoundMinerORM.validator_round_id == RoundORM.validator_round_id,
+                        ValidatorRoundMinerORM.miner_uid == EvaluationORM.miner_uid,
+                    ),
                 )
                 .where(
                     RoundORM.season_number.is_not(None),
@@ -5119,7 +5121,7 @@ class RoundsService:
                     RoundORM.season_number,
                     RoundORM.round_number_in_season,
                     EvaluationORM.miner_uid,
-                    MinerORM.hotkey,
+                    ValidatorRoundMinerORM.miner_hotkey,
                 )
                 .order_by(
                     RoundORM.season_number.desc(),
