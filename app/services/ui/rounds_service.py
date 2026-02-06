@@ -4506,10 +4506,44 @@ class RoundsService:
                 result_miner_summary = await self.session.execute(stmt_miner_summary)
                 miner_summary = result_miner_summary.scalar_one_or_none()
                 
+                # If no summary, try to get from evaluations (fallback)
                 if not miner_summary:
-                    # Miner not evaluated by this validator, skip
-                    logger.warning(f"[DEBUG] Miner {miner_uid} not found in validator_round_summary_miners for validator_round_id {validator_round_id} (validator {validator_snapshot.validator_uid})")
-                    continue
+                    from app.db.models import EvaluationORM
+                    from types import SimpleNamespace
+                    # Get miner data from evaluations for this validator
+                    stmt_eval = (
+                        select(
+                            func.avg(EvaluationORM.eval_score).label("avg_eval_score"),
+                            func.avg(EvaluationORM.evaluation_time).label("avg_eval_time"),
+                            func.count(EvaluationORM.evaluation_id).label("tasks_received"),
+                        )
+                        .where(
+                            EvaluationORM.validator_round_id == validator_round_id,
+                            EvaluationORM.miner_uid == miner_uid,
+                            EvaluationORM.miner_uid != settings.BURN_UID,
+                        )
+                    )
+                    result_eval = await self.session.execute(stmt_eval)
+                    eval_row = result_eval.first()
+                    
+                    if eval_row and eval_row.tasks_received > 0:
+                        # Create a mock summary object with evaluation data
+                        miner_summary = SimpleNamespace(
+                            validator_round_id=validator_round_id,
+                            miner_uid=miner_uid,
+                            post_consensus_rank=None,
+                            post_consensus_avg_reward=float(eval_row.avg_eval_score or 0.0),
+                            post_consensus_avg_eval_score=float(eval_row.avg_eval_score or 0.0),
+                            post_consensus_avg_eval_time=float(eval_row.avg_eval_time or 0.0),
+                            local_rank=1,  # Default to 1 when using evaluations
+                            local_avg_reward=float(eval_row.avg_eval_score or 0.0),
+                            local_avg_eval_score=float(eval_row.avg_eval_score or 0.0),
+                            local_avg_eval_time=float(eval_row.avg_eval_time or 0.0),
+                        )
+                    else:
+                        # Miner not evaluated by this validator, skip
+                        logger.warning(f"[DEBUG] Miner {miner_uid} not found in validator_round_summary_miners or evaluations for validator_round_id {validator_round_id} (validator {validator_snapshot.validator_uid})")
+                        continue
                 
                 logger.warning(f"[DEBUG] Found miner summary for miner {miner_uid} in validator {validator_snapshot.validator_uid}: rank={miner_summary.local_rank}")
                 
