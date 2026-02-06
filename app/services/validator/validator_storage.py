@@ -174,8 +174,8 @@ class ValidatorRoundPersistenceService:
         allow_existing: bool = False,
     ) -> int:
         """Persist or update tasks associated with a validator round."""
-        from app.core.logging import get_logger
-        logger = get_logger(__name__)
+        import logging
+        logger = logging.getLogger(__name__)
         
         round_row = await self._ensure_round_exists(validator_round_id)
         count = 0
