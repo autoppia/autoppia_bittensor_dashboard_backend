@@ -4083,8 +4083,8 @@ class RoundsService:
         result_summary = await self.session.execute(stmt_summary)
         summaries = result_summary.scalars().all()
         
-        # In TESTING mode, if no summaries, get miners from evaluations directly
-        if not summaries and settings.TESTING:
+        # If no summaries, get miners from evaluations directly (fallback when consensus not available)
+        if not summaries:
             from app.db.models import EvaluationORM
             # Get miners from evaluations for this round
             stmt_eval_miners = (
@@ -4308,8 +4308,8 @@ class RoundsService:
             result_summary = await self.session.execute(stmt_summary)
             summary = result_summary.scalar_one_or_none()
         
-        # In TESTING mode, if no summary data, get from evaluations directly
-        if not summary and settings.TESTING:
+        # If no summary data, get from evaluations directly (fallback when consensus not available)
+        if not summary:
             # Import EvaluationORM here to avoid scope issues
             from app.db.models import EvaluationORM
             # Get miner data from evaluations
@@ -4385,7 +4385,7 @@ class RoundsService:
                 miner_image = resolve_agent_image(miner_info, existing=None)
         
         # Get all summaries for this miner across all validators to get validator count
-        # In TESTING mode, if no summaries, use validator_round_ids count
+        # If no summaries, count distinct validators from validator_round_validators (fallback)
         stmt_all_summaries = (
             select(ValidatorRoundSummaryORM)
             .where(
@@ -4396,8 +4396,8 @@ class RoundsService:
         result_all_summaries = await self.session.execute(stmt_all_summaries)
         all_summaries = result_all_summaries.scalars().all()
         validators_count = len(all_summaries)
-        if validators_count == 0 and settings.TESTING:
-            # In TESTING mode, count distinct validators from validator_round_validators
+        if validators_count == 0:
+            # Fallback: count distinct validators from validator_round_validators
             stmt_validators = (
                 select(func.count(func.distinct(ValidatorRoundValidatorORM.validator_uid)))
                 .where(
@@ -5098,10 +5098,8 @@ class RoundsService:
         In TESTING mode, also includes validator 60.
         """
         # FILTRADO POR VALIDADOR AUTOPPIA (UID 83 o 124)
-        # En modo TESTING, también incluir validator 60
-        autoppia_uids = [83, 124]
-        if settings.TESTING:
-            autoppia_uids.append(60)
+        # También incluir validator 60 (testing/development)
+        autoppia_uids = [83, 124, 60]
         
         # Get latest round that already has post-consensus rankings (post_consensus_rank = 1)
         # Only from Autoppia validators
@@ -5138,8 +5136,8 @@ class RoundsService:
         result = await self.session.execute(stmt)
         row = result.first()
 
-        # In TESTING mode, if no round with post_consensus_rank found, try with local_rank = 1
-        if row is None and settings.TESTING:
+        # If no round with post_consensus_rank found, try with local_rank = 1 (fallback)
+        if row is None:
             stmt_fallback = (
                 select(
                     RoundORM.season_number,
@@ -5171,8 +5169,8 @@ class RoundsService:
             result_fallback = await self.session.execute(stmt_fallback)
             row = result_fallback.first()
 
-        # In TESTING mode, if still no data from summary, get top miner from evaluations directly
-        if row is None and settings.TESTING:
+        # If still no data from summary, get top miner from evaluations directly (fallback)
+        if row is None:
             from sqlalchemy import func
             
             stmt_eval_fallback = (
