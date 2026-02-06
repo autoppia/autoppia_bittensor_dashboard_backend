@@ -4665,8 +4665,8 @@ class RoundsService:
         """
         # Get all summaries for this miner, including round epochs for alpha calculation
         # FILTRADO POR VALIDADOR AUTOPPIA (UID 83 o 124 - solo estos validators marcan el alpha)
-        # En desarrollo/test también aceptamos validator_uid = 0
-        autoppia_uids = [0, 83, 124]  # 0 = test/dev, 83/124 = production Autoppia validators
+        # También incluir validator 60 (testing/development)
+        autoppia_uids = [0, 60, 83, 124]  # 0 = test/dev, 60 = testing, 83/124 = production Autoppia validators
         
         stmt_summaries = (
             select(
@@ -4696,24 +4696,126 @@ class RoundsService:
         result_summaries = await self.session.execute(stmt_summaries)
         summaries_with_rounds = result_summaries.all()
         
+        # If no summaries, try to get data from evaluations directly (fallback)
         if not summaries_with_rounds:
-            raise ValueError(f"Miner {miner_uid} not found in any round")
+            from app.db.models import EvaluationORM
+            # Get rounds from evaluations for this miner
+            stmt_eval_rounds = (
+                select(
+                    EvaluationORM.validator_round_id,
+                    RoundORM.season_number,
+                    RoundORM.round_number_in_season,
+                    RoundORM.start_epoch,
+                    RoundORM.end_epoch,
+                    func.avg(EvaluationORM.eval_score).label("avg_score"),
+                    func.count(EvaluationORM.evaluation_id).label("tasks_count"),
+                    func.avg(EvaluationORM.evaluation_time).label("avg_time"),
+                )
+                .join(
+                    RoundORM,
+                    EvaluationORM.validator_round_id == RoundORM.validator_round_id
+                )
+                .join(
+                    ValidatorRoundValidatorORM,
+                    RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
+                )
+                .where(
+                    EvaluationORM.miner_uid == miner_uid,
+                    EvaluationORM.miner_uid != settings.BURN_UID,
+                    ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids),
+                )
+            )
+            
+            # Filter by season if provided
+            if season is not None:
+                stmt_eval_rounds = stmt_eval_rounds.where(RoundORM.season_number == season)
+            
+            stmt_eval_rounds = stmt_eval_rounds.group_by(
+                EvaluationORM.validator_round_id,
+                RoundORM.season_number,
+                RoundORM.round_number_in_season,
+                RoundORM.start_epoch,
+                RoundORM.end_epoch,
+            ).order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
+            
+            result_eval_rounds = await self.session.execute(stmt_eval_rounds)
+            eval_rounds = result_eval_rounds.all()
+            
+            if not eval_rounds:
+                raise ValueError(f"Miner {miner_uid} not found in any round")
+            
+            # Create mock summary objects from evaluation data
+            from types import SimpleNamespace
+            summaries_with_rounds = []
+            for eval_row in eval_rounds:
+                validator_round_id = eval_row[0]
+                season_num = eval_row[1]
+                round_num = eval_row[2]
+                start_epoch = eval_row[3]
+                end_epoch = eval_row[4]
+                avg_score = float(eval_row[5] or 0.0)
+                tasks_count = int(eval_row[6] or 0)
+                avg_time = float(eval_row[7] or 0.0)
+                
+                # Create a mock summary object
+                mock_summary = SimpleNamespace(
+                    validator_round_id=validator_round_id,
+                    miner_uid=miner_uid,
+                    miner_hotkey=None,  # Will be fetched from miner snapshot
+                    post_consensus_rank=None,
+                    post_consensus_avg_reward=avg_score,
+                    post_consensus_avg_eval_score=avg_score,
+                    post_consensus_avg_eval_time=avg_time,
+                    tasks_count=tasks_count,
+                    subnet_price=None,
+                )
+                summaries_with_rounds.append((mock_summary, season_num, round_num, start_epoch, end_epoch))
         
         # Get miner info from first summary
         first_summary = summaries_with_rounds[0][0]
-        miner_hotkey = first_summary.miner_hotkey or ""
+        first_validator_round_id = first_summary.validator_round_id
+        miner_hotkey = getattr(first_summary, 'miner_hotkey', None) or ""
         
         # Get miner snapshot for name and image
         stmt_miner = (
             select(ValidatorRoundMinerORM)
             .where(
-                ValidatorRoundMinerORM.validator_round_id == first_summary.validator_round_id,
+                ValidatorRoundMinerORM.validator_round_id == first_validator_round_id,
                 ValidatorRoundMinerORM.miner_uid == miner_uid,
             )
             .limit(1)
         )
         result_miner = await self.session.execute(stmt_miner)
         miner_snapshot = result_miner.scalar_one_or_none()
+        
+        # If no snapshot found, try to get from any round for this miner
+        if not miner_snapshot:
+            stmt_miner_any = (
+                select(ValidatorRoundMinerORM)
+                .join(
+                    RoundORM,
+                    ValidatorRoundMinerORM.validator_round_id == RoundORM.validator_round_id
+                )
+                .where(
+                    ValidatorRoundMinerORM.miner_uid == miner_uid,
+                )
+            )
+            if season is not None:
+                stmt_miner_any = stmt_miner_any.where(RoundORM.season_number == season)
+            stmt_miner_any = stmt_miner_any.limit(1)
+            result_miner_any = await self.session.execute(stmt_miner_any)
+            miner_snapshot = result_miner_any.scalar_one_or_none()
+            
+            # If still no snapshot, try to get hotkey from evaluations
+            if not miner_snapshot and miner_hotkey == "":
+                from app.db.models import EvaluationORM
+                stmt_hotkey = (
+                    select(EvaluationORM.miner_hotkey)
+                    .where(EvaluationORM.miner_uid == miner_uid)
+                    .limit(1)
+                )
+                result_hotkey = await self.session.execute(stmt_hotkey)
+                miner_hotkey = result_hotkey.scalar_one_or_none() or ""
         
         miner_name = miner_snapshot.name if miner_snapshot else f"Miner {miner_uid}"
         miner_image = ""
