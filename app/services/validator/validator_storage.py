@@ -277,9 +277,33 @@ class ValidatorRoundPersistenceService:
 
         existing_task = await self._get_task_row(task.task_id)
         if existing_task is None:
-            raise ValueError(
-                f"Task {task.task_id} has not been registered for validator_round {validator_round_id}"
-            )
+            # In TESTING mode, auto-register the task if it doesn't exist
+            # This handles cases where set_tasks failed but we still want to accept evaluations
+            if settings.TESTING:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"TESTING mode: Task {task.task_id} not found, auto-registering for validator_round {validator_round_id}"
+                )
+                try:
+                    await self.add_tasks(validator_round_id, [task], allow_existing=True)
+                    existing_task = await self._get_task_row(task.task_id)
+                    if existing_task is None:
+                        raise ValueError(
+                            f"Failed to auto-register task {task.task_id} for validator_round {validator_round_id}"
+                        )
+                except Exception as exc:
+                    logger.error(
+                        f"Failed to auto-register task {task.task_id}: {exc}",
+                        exc_info=True,
+                    )
+                    raise ValueError(
+                        f"Task {task.task_id} has not been registered for validator_round {validator_round_id} and auto-registration failed: {exc}"
+                    ) from exc
+            else:
+                raise ValueError(
+                    f"Task {task.task_id} has not been registered for validator_round {validator_round_id}"
+                )
         if existing_task.validator_round_id != validator_round_id:
             raise ValueError(
                 f"Task {task.task_id} is registered under validator_round {existing_task.validator_round_id}, "
