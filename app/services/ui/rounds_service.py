@@ -4700,6 +4700,8 @@ class RoundsService:
         if not summaries_with_rounds:
             from app.db.models import EvaluationORM
             # Get rounds from evaluations for this miner
+            # Use case from sqlalchemy (already imported at top of file)
+            from sqlalchemy import case as sql_case
             stmt_eval_rounds = (
                 select(
                     EvaluationORM.validator_round_id,
@@ -4709,7 +4711,7 @@ class RoundsService:
                     RoundORM.end_epoch,
                     func.avg(EvaluationORM.eval_score).label("avg_score"),
                     func.count(EvaluationORM.evaluation_id).label("tasks_count"),
-                    func.sum(case((EvaluationORM.eval_score >= 0.5, 1), else_=0)).label("tasks_success"),
+                    func.sum(sql_case((EvaluationORM.eval_score >= 0.5, 1), else_=0)).label("tasks_success"),
                     func.avg(EvaluationORM.evaluation_time).label("avg_time"),
                 )
                 .join(
