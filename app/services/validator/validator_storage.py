@@ -222,11 +222,41 @@ class ValidatorRoundPersistenceService:
         """Persist the beginning of an agent evaluation run."""
         round_row = await self._ensure_round_exists(validator_round_id)
 
+        # Check if agent_run_id already exists (idempotency by ID)
         existing_run = await self._get_agent_run_row(agent_run.agent_run_id)
         if existing_run:
-            raise DuplicateIdentifierError(
-                f"agent_run_id {agent_run.agent_run_id} is already registered"
+            if existing_run.validator_round_id == validator_round_id:
+                # Same agent_run_id for same round - idempotent, return existing
+                return existing_run
+            else:
+                raise DuplicateIdentifierError(
+                    f"agent_run_id {agent_run.agent_run_id} is already registered for a different round"
+                )
+        
+        # CRITICAL: Check if there's already an agent_run for this miner in this round
+        # An agent run should be unique per (validator_round_id, miner_uid)
+        if agent_run.miner_uid is not None:
+            from app.db.models import AgentEvaluationRunORM
+            stmt_existing = (
+                select(AgentEvaluationRunORM)
+                .where(
+                    AgentEvaluationRunORM.validator_round_id == validator_round_id,
+                    AgentEvaluationRunORM.miner_uid == agent_run.miner_uid,
+                )
+                .limit(1)
             )
+            result_existing = await self.session.execute(stmt_existing)
+            existing_for_miner = result_existing.scalar_one_or_none()
+            
+            if existing_for_miner:
+                # There's already an agent_run for this miner in this round
+                # Return the existing one instead of creating a duplicate
+                logger.warning(
+                    f"Agent run already exists for miner_uid={agent_run.miner_uid} in validator_round_id={validator_round_id}. "
+                    f"Existing agent_run_id={existing_for_miner.agent_run_id}, requested agent_run_id={agent_run.agent_run_id}. "
+                    f"Returning existing agent run (idempotent)."
+                )
+                return existing_for_miner
 
         await self._upsert_miner_snapshot(round_row, miner_snapshot)
 
