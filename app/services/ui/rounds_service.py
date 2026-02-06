@@ -4606,6 +4606,19 @@ class RoundsService:
                 result_miners_count = await self.session.execute(stmt_miners_count)
                 local_miners_evaluated = result_miners_count.scalar_one_or_none() or 0
                 
+                # If no summary data, count from evaluations (fallback)
+                if local_miners_evaluated == 0:
+                    stmt_miners_eval = (
+                        select(func.count(func.distinct(EvaluationORM.miner_uid)))
+                        .where(
+                            EvaluationORM.validator_round_id == validator_round_id,
+                            EvaluationORM.miner_uid.isnot(None),
+                            EvaluationORM.miner_uid != settings.BURN_UID,
+                        )
+                    )
+                    result_miners_eval = await self.session.execute(stmt_miners_eval)
+                    local_miners_evaluated = result_miners_eval.scalar_one_or_none() or 0
+                
                 # Get validator image
                 validator_name = validator_snapshot.name or f"Validator {validator_snapshot.validator_uid}"
                 validator_image = resolve_validator_image(validator_name, existing=validator_snapshot.image_url)
