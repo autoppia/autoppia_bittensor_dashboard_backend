@@ -5085,6 +5085,52 @@ class RoundsService:
             result_fallback = await self.session.execute(stmt_fallback)
             row = result_fallback.first()
 
+        # In TESTING mode, if still no data from summary, get top miner from evaluations directly
+        if row is None and settings.TESTING:
+            from app.db.models import EvaluationORM, MinerORM
+            from sqlalchemy import func
+            
+            stmt_eval_fallback = (
+                select(
+                    RoundORM.season_number,
+                    RoundORM.round_number_in_season,
+                    EvaluationORM.miner_uid,
+                    MinerORM.hotkey.label("miner_hotkey"),
+                )
+                .join(
+                    EvaluationORM,
+                    EvaluationORM.validator_round_id == RoundORM.validator_round_id,
+                )
+                .join(
+                    ValidatorRoundValidatorORM,
+                    RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
+                )
+                .outerjoin(
+                    MinerORM,
+                    MinerORM.uid == EvaluationORM.miner_uid,
+                )
+                .where(
+                    RoundORM.season_number.is_not(None),
+                    RoundORM.round_number_in_season.is_not(None),
+                    ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids),
+                    EvaluationORM.miner_uid != settings.BURN_UID,
+                )
+                .group_by(
+                    RoundORM.season_number,
+                    RoundORM.round_number_in_season,
+                    EvaluationORM.miner_uid,
+                    MinerORM.hotkey,
+                )
+                .order_by(
+                    RoundORM.season_number.desc(),
+                    RoundORM.round_number_in_season.desc(),
+                    func.avg(EvaluationORM.eval_score).desc(),
+                )
+                .limit(1)
+            )
+            result_eval_fallback = await self.session.execute(stmt_eval_fallback)
+            row = result_eval_fallback.first()
+
         if row is None:
             return None
 
