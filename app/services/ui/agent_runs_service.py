@@ -1877,6 +1877,11 @@ class AgentRunsService:
             getattr(run_model, "n_tasks_failed", None) or run_model.failed_tasks or 0
         )
 
+        # Fallback: if total_tasks is 0 or None, count from evaluations
+        if (total_tasks is None or total_tasks == 0) and context.evaluations:
+            total_tasks = len(context.evaluations)
+
+        # Fallback: if success_tasks is 0, count from evaluations
         if success_tasks == 0 and context.evaluations:
             success_tasks = sum(
                 1
