@@ -1248,6 +1248,9 @@ class TasksService:
                 minerUid=context.evaluation.miner_uid,
                 hasFeedback=bool(context.evaluation.feedback),
                 hasRecording=bool(context.evaluation.gif_recording),
+                llmCost=getattr(context.evaluation, "llm_cost", None),
+                llmTokens=getattr(context.evaluation, "llm_tokens", None),
+                llmProvider=getattr(context.evaluation, "llm_provider", None),
             )
 
         solution_summary: Optional[TaskSolutionSummary] = None

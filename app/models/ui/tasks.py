@@ -245,6 +245,16 @@ class TaskEvaluationSummary(BaseModel):
     hasRecording: bool = Field(
         False, description="Indicates if a recording artifact is available"
     )
+    # LLM usage tracking
+    llmCost: Optional[float] = Field(
+        None, description="Total cost in USD for LLM usage during evaluation"
+    )
+    llmTokens: Optional[int] = Field(
+        None, description="Total tokens used by LLM during evaluation"
+    )
+    llmProvider: Optional[str] = Field(
+        None, description="LLM provider used (e.g., 'openai', 'chutes')"
+    )
 
 
 class TaskSolutionSummary(BaseModel):
