@@ -787,6 +787,177 @@ async def start_agent_run(
 
 
 @router.post(
+    "/{validator_round_id}/agent-runs/{agent_run_id}/evaluations/batch",
+    dependencies=[Depends(require_validator_auth)],
+)
+async def add_evaluations_batch(
+    validator_round_id: str,
+    agent_run_id: str,
+    payload: List[AddEvaluationRequest],
+    request: Request,
+    force: bool = Query(
+        False, description="TESTING-only override to skip chain round/window checks"
+    ),
+    session: AsyncSession = Depends(get_session),
+):
+    """Persist multiple evaluation data (tasks, solutions, and evaluations) in a single transaction."""
+    service = ValidatorRoundPersistenceService(session)
+    
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Batch cannot be empty"
+        )
+    
+    # Process each evaluation in the batch
+    evaluations_created = 0
+    errors = []
+    
+    try:
+        for idx, eval_request in enumerate(payload):
+            try:
+                # Merge evaluation_result (if provided) into evaluation so reward/time fields are not dropped
+                request_payload = eval_request
+                eval_result_payload: Dict[str, Any] | None = None
+                if isinstance(getattr(request_payload, "evaluation_result", None), dict):
+                    eval_result_payload = request_payload.evaluation_result  # type: ignore[assignment]
+                
+                if eval_result_payload:
+                    merged_eval_data = request_payload.evaluation.model_dump(
+                        mode="json", exclude_none=True
+                    )
+                    # evaluation_result values (e.g., reward, stats) take precedence
+                    merged_eval_data.update(eval_result_payload)
+                    request_payload = AddEvaluationRequest(
+                        task=request_payload.task,
+                        task_solution=request_payload.task_solution,
+                        evaluation=Evaluation(**merged_eval_data),
+                        evaluation_result=eval_result_payload,
+                    )
+                
+                task = request_payload.task
+                task_solution = request_payload.task_solution
+                evaluation = request_payload.evaluation
+                
+                # Validate round matches
+                expected_fields = [
+                    (task.validator_round_id, "task.validator_round_id"),
+                    (task_solution.validator_round_id, "task_solution.validator_round_id"),
+                    (evaluation.validator_round_id, "evaluation.validator_round_id"),
+                ]
+                for value, label in expected_fields:
+                    _require_round_match(value, validator_round_id, f"[batch {idx}] {label}")
+                
+                _require_round_match(
+                    task_solution.task_id, task.task_id, f"[batch {idx}] task_solution.task_id"
+                )
+                _require_round_match(evaluation.task_id, task.task_id, f"[batch {idx}] evaluation.task_id")
+                _require_round_match(
+                    task_solution.agent_run_id, agent_run_id, f"[batch {idx}] task_solution.agent_run_id"
+                )
+                _require_round_match(
+                    evaluation.agent_run_id, agent_run_id, f"[batch {idx}] evaluation.agent_run_id"
+                )
+                _require_round_match(
+                    evaluation.task_solution_id,
+                    task_solution.solution_id,
+                    f"[batch {idx}] evaluation.task_solution_id",
+                )
+                
+                # Cross-check validator identity on payloads matches the round
+                round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+                _ensure_request_matches_round_owner(request, round_row)
+                check_pairs = [
+                    (
+                        task_solution.validator_uid,
+                        task_solution.validator_hotkey,
+                        "task_solution",
+                    ),
+                    (evaluation.validator_uid, evaluation.validator_hotkey, "evaluation"),
+                ]
+                if not round_row.validator_snapshot:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Validator snapshot not found for round",
+                    )
+                for uid_value, hotkey_value, label in check_pairs:
+                    if uid_value is not None and int(uid_value) != int(round_row.validator_snapshot.validator_uid):
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"[batch {idx}] {label}.validator_uid must match the round's validator_uid",
+                        )
+                    if hotkey_value and hotkey_value != round_row.validator_snapshot.validator_hotkey:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"[batch {idx}] {label}.validator_hotkey must match the round's validator_hotkey",
+                        )
+                
+                # Persist evaluation
+                # Note: add_evaluation() does flush() internally to update agent_run stats
+                # This ensures stats are updated after each evaluation in the batch
+                await service.add_evaluation(
+                    validator_round_id=validator_round_id,
+                    agent_run_id=agent_run_id,
+                    task=task,
+                    task_solution=task_solution,
+                    evaluation=evaluation,
+                )
+                evaluations_created += 1
+                
+            except DuplicateIdentifierError as exc:
+                # Skip duplicates (idempotency)
+                # Duplicates are already persisted, so we count them as "created" for stats purposes
+                logger.info(f"Batch evaluation {idx} already exists: {exc}")
+                evaluations_created += 1  # Count as created since it already exists
+                continue
+            except Exception as exc:
+                error_msg = f"Batch evaluation {idx} failed: {str(exc)}"
+                logger.error(error_msg, exc_info=True)
+                errors.append(error_msg)
+                # Continue with remaining evaluations instead of failing the entire batch
+                # Note: Previous evaluations in the batch are already flushed but not committed
+                # They will be committed at the end if no critical error occurs
+        
+        # Commit all changes in a single transaction
+        # All evaluations that were successfully added (via add_evaluation) are now committed
+        # This includes all flushes done inside add_evaluation() calls
+        await session.commit()
+        
+        # Final refresh of agent_run to ensure stats are up-to-date after commit
+        # This is a safety measure, though stats should already be updated by add_evaluation()
+        try:
+            agent_run_row = await service._get_agent_run_row(agent_run_id)  # type: ignore[attr-defined]
+            if agent_run_row:
+                await session.refresh(agent_run_row, ["evaluations", "task_solutions"])
+                # Stats are already updated by add_evaluation(), but this ensures consistency
+        except Exception:
+            # Non-critical: stats should already be correct from add_evaluation()
+            pass
+        
+        result = {
+            "message": f"Batch evaluations processed: {evaluations_created} created",
+            "evaluations_created": evaluations_created,
+            "total_requested": len(payload),
+        }
+        
+        if errors:
+            result["errors"] = errors
+            result["message"] += f", {len(errors)} failed"
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Failed to process batch evaluations")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process batch evaluations: {str(exc)}"
+        ) from exc
+
+
+@router.post(
     "/{validator_round_id}/agent-runs/{agent_run_id}/evaluations",
     dependencies=[Depends(require_validator_auth)],
 )
