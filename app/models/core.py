@@ -706,6 +706,16 @@ class Evaluation(BaseModel):
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Extensible metadata for the evaluation"
     )
+    # LLM usage tracking
+    llm_cost: Optional[float] = Field(
+        default=None, description="Total cost in USD for LLM usage during evaluation"
+    )
+    llm_tokens: Optional[int] = Field(
+        default=None, description="Total tokens used by LLM during evaluation"
+    )
+    llm_provider: Optional[str] = Field(
+        default=None, description="LLM provider used (e.g., 'openai', 'chutes')"
+    )
 
     def validate_relationships(
         self,
