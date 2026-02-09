@@ -481,5 +481,9 @@ class EvaluationsService:
         data.setdefault("stats", evaluation_row.stats)
         data.setdefault("gif_recording", evaluation_row.gif_recording)
         data.setdefault("metadata", evaluation_row.meta)
+        # LLM usage tracking
+        data.setdefault("llm_cost", evaluation_row.llm_cost)
+        data.setdefault("llm_tokens", evaluation_row.llm_tokens)
+        data.setdefault("llm_provider", evaluation_row.llm_provider)
         result = Evaluation(**data)
         return result
