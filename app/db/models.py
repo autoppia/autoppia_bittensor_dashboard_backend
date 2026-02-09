@@ -485,6 +485,10 @@ class EvaluationORM(TimestampMixin, Base):
     feedback: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     gif_recording: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    # LLM usage tracking
+    llm_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=None)  # Total cost in USD for LLM usage
+    llm_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)  # Total tokens used by LLM
+    llm_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None)  # LLM provider used (e.g., 'openai', 'chutes')
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="evaluations"

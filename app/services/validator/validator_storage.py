@@ -1357,6 +1357,9 @@ class ValidatorRoundPersistenceService:
             "feedback": _optional_dump(model.feedback),
             "gif_recording": model.gif_recording,
             "meta": _clean_meta_dict(model.metadata),
+            "llm_cost": getattr(model, "llm_cost", None),
+            "llm_tokens": getattr(model, "llm_tokens", None),
+            "llm_provider": getattr(model, "llm_provider", None),
         }
 
     @staticmethod
