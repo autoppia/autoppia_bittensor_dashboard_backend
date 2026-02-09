@@ -9,7 +9,7 @@ import time
 from typing import Any, Dict
 from types import SimpleNamespace
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -793,8 +793,8 @@ async def start_agent_run(
 async def add_evaluations_batch(
     validator_round_id: str,
     agent_run_id: str,
-    payload: List[AddEvaluationRequest],
     request: Request,
+    payload: list[AddEvaluationRequest] = Body(..., description="List of evaluation requests"),
     force: bool = Query(
         False, description="TESTING-only override to skip chain round/window checks"
     ),
