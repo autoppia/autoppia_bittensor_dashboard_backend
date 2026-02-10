@@ -129,7 +129,9 @@ class TimeRemaining(BaseModel):
 class RoundProgress(BaseModel):
     """Round progress information."""
 
-    roundId: int
+    roundId: int | None = None  # Optional for season/round format
+    season: int | None = None  # Season number
+    roundInSeason: int | None = None  # Round number within season
     currentBlock: int
     startBlock: int
     endBlock: int
@@ -142,8 +144,8 @@ class RoundProgress(BaseModel):
     estimatedTimeRemaining: TimeRemaining
     lastUpdated: str  # ISO timestamp
     status: str  # active, finished, pending, evaluating_finished
-    nextRound: int | None = None  # Número del siguiente round
-    previousRound: int | None = None  # Número del round anterior
+    nextRound: str | int | None = None  # Can be season/round format (e.g., "1/2") or round number
+    previousRound: str | int | None = None  # Can be season/round format (e.g., "1/2") or round number
 
 
 class RoundSummary(BaseModel):

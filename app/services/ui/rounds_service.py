@@ -2653,6 +2653,13 @@ class RoundsService:
 
             seconds_remaining = blocks_remaining * 12
             
+            # ✅ Calcular roundId: usar round_number si está disponible, sino calcular como season * 10000 + round_in_season
+            round_id = None
+            if hasattr(round_row, 'round_number') and round_row.round_number is not None:
+                round_id = round_row.round_number
+            elif season is not None and round_in_season is not None:
+                round_id = season * 10000 + round_in_season
+            
             # ✅ Obtener nextRound y previousRound usando season/round
             previous_round = None
             next_round = None
@@ -2681,6 +2688,7 @@ class RoundsService:
                     next_round = f"{season}/{round_in_season + 1}"
             
             result = {
+                "roundId": round_id,
                 "season": season,
                 "roundInSeason": round_in_season,
                 "currentBlock": display_block,
