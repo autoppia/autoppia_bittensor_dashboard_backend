@@ -99,6 +99,9 @@ yarn-error.log
 logs/
 *.log
 
+# Exported tasks/output
+output/
+
 # Database backups
 *.dump
 *.sql
