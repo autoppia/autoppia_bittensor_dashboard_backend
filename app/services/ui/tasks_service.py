@@ -1238,6 +1238,15 @@ class TasksService:
         evaluation_summary: Optional[TaskEvaluationSummary] = None
         if context.evaluation:
             eval_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0))
+            eval_meta = getattr(context.evaluation, "meta", None) or {}
+            llm_model = (
+                getattr(context.evaluation, "llm_model", None)
+                or eval_meta.get("llm_model")
+                or eval_meta.get("model")
+                or eval_meta.get("llm_model_name")
+                or eval_meta.get("model_name")
+                or eval_meta.get("llm")
+            )
             evaluation_summary = TaskEvaluationSummary(
                 evaluationId=context.evaluation.evaluation_id,
                 finalScore=eval_score,
@@ -1248,6 +1257,8 @@ class TasksService:
                 minerUid=context.evaluation.miner_uid,
                 hasFeedback=bool(context.evaluation.feedback),
                 hasRecording=bool(context.evaluation.gif_recording),
+                reward=getattr(context.evaluation, "reward", None),
+                llmModel=str(llm_model) if llm_model else None,
                 llmCost=getattr(context.evaluation, "llm_cost", None),
                 llmTokens=getattr(context.evaluation, "llm_tokens", None),
                 llmProvider=getattr(context.evaluation, "llm_provider", None),
@@ -2012,41 +2023,12 @@ class TasksService:
     
     def _build_task_details_clean(self, context: TaskContext) -> Dict[str, Any]:
         """Build task details without actions, screenshots, logs."""
-        # Build actions separately to calculate performance
-        actions = self.build_actions(context)
-        
-        # Build task without actions
-        task = self._build_ui_task(context)
-        performance = TaskPerformance(
-            totalActions=len(actions),
-            successfulActions=len([a for a in actions if a.success]),
-            failedActions=len([a for a in actions if not a.success]),
-            averageActionDuration=self._average_action_duration(actions),
-            totalWaitTime=0.0,
-            totalNavigationTime=0.0,
-        )
-        
-        metadata = TaskMetadata(
-            environment="production",
-            browser="chrome",
-            viewport={"width": 1920, "height": 1080},
-            userAgent="Auto-generated",
-            resources={
-                "cpu": 1.0,
-                "memory": 512,
-                "network": 100,
-            },
-        )
-        
-        task_dict = task.model_dump()
+        task_details = self.build_task_detail(context)
+        task_dict = task_details.model_dump()
         # Remove actions, screenshots, logs from task_details
         task_dict.pop("actions", None)
         task_dict.pop("screenshots", None)
         task_dict.pop("logs", None)
-        
-        task_dict["performance"] = performance.model_dump()
-        task_dict["metadata"] = metadata.model_dump()
-        
         return task_dict
     
     def _build_results_clean(self, context: TaskContext, actions: List[TaskAction]) -> Dict[str, Any]:

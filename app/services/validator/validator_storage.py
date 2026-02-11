@@ -1360,6 +1360,7 @@ class ValidatorRoundPersistenceService:
             "llm_cost": getattr(model, "llm_cost", None),
             "llm_tokens": getattr(model, "llm_tokens", None),
             "llm_provider": getattr(model, "llm_provider", None),
+            "llm_model": getattr(model, "llm_model", None),
         }
 
     @staticmethod

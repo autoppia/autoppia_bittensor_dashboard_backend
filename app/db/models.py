@@ -489,6 +489,7 @@ class EvaluationORM(TimestampMixin, Base):
     llm_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=None)  # Total cost in USD for LLM usage
     llm_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)  # Total tokens used by LLM
     llm_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None)  # LLM provider used (e.g., 'openai', 'chutes')
+    llm_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)  # LLM model used (e.g., 'gpt-4.1-mini')
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="evaluations"
@@ -515,6 +516,7 @@ class EvaluationORM(TimestampMixin, Base):
             "reward": self.reward,
             "evaluation_time": self.evaluation_time,
             "meta": dict(self.meta or {}),
+            "llm_model": self.llm_model,
         }
 
     @property

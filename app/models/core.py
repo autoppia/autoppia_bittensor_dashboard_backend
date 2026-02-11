@@ -716,6 +716,9 @@ class Evaluation(BaseModel):
     llm_provider: Optional[str] = Field(
         default=None, description="LLM provider used (e.g., 'openai', 'chutes')"
     )
+    llm_model: Optional[str] = Field(
+        default=None, description="LLM model used during evaluation"
+    )
 
     def validate_relationships(
         self,

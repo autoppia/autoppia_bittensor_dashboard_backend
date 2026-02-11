@@ -245,6 +245,12 @@ class TaskEvaluationSummary(BaseModel):
     hasRecording: bool = Field(
         False, description="Indicates if a recording artifact is available"
     )
+    reward: Optional[float] = Field(
+        None, description="Reward value for the evaluation (alpha units)"
+    )
+    llmModel: Optional[str] = Field(
+        None, description="LLM model used during evaluation"
+    )
     # LLM usage tracking
     llmCost: Optional[float] = Field(
         None, description="Total cost in USD for LLM usage during evaluation"
