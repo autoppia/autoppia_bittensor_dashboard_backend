@@ -485,5 +485,6 @@ class EvaluationsService:
         data.setdefault("llm_cost", evaluation_row.llm_cost)
         data.setdefault("llm_tokens", evaluation_row.llm_tokens)
         data.setdefault("llm_provider", evaluation_row.llm_provider)
+        data.setdefault("llm_model", evaluation_row.llm_model)
         result = Evaluation(**data)
         return result
