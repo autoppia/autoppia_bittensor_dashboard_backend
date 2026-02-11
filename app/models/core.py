@@ -719,6 +719,10 @@ class Evaluation(BaseModel):
     llm_model: Optional[str] = Field(
         default=None, description="LLM model used during evaluation"
     )
+    llm_usage: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Per-provider/model usage entries: {provider, model, tokens, cost}",
+    )
 
     def validate_relationships(
         self,

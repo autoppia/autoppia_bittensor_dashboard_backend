@@ -506,6 +506,10 @@ class EvaluationORM(TimestampMixin, Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    llm_usage: Mapped[list["EvaluationLLMUsageORM"]] = relationship(
+        back_populates="evaluation",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def data(self) -> dict[str, Any]:
@@ -551,6 +555,30 @@ class EvaluationExecutionHistoryORM(TimestampMixin, Base):
 
     evaluation: Mapped["EvaluationORM"] = relationship(
         back_populates="execution_history_record"
+    )
+
+
+class EvaluationLLMUsageORM(TimestampMixin, Base):
+    """Per-model/provider LLM usage details for an evaluation."""
+
+    __tablename__ = "evaluation_llm_usage"
+    __table_args__ = (
+        Index("ix_eval_llm_usage_eval_id", "evaluation_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    evaluation_id: Mapped[str] = mapped_column(
+        ForeignKey("evaluations.evaluation_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    evaluation: Mapped["EvaluationORM"] = relationship(
+        back_populates="llm_usage"
     )
 
 
