@@ -486,5 +486,23 @@ class EvaluationsService:
         data.setdefault("llm_tokens", evaluation_row.llm_tokens)
         data.setdefault("llm_provider", evaluation_row.llm_provider)
         data.setdefault("llm_model", evaluation_row.llm_model)
+        try:
+            from sqlalchemy import inspect
+
+            if "llm_usage" not in inspect(evaluation_row).unloaded:
+                data.setdefault(
+                    "llm_usage",
+                    [
+                        {
+                            "provider": u.provider,
+                            "model": u.model,
+                            "tokens": u.tokens,
+                            "cost": u.cost,
+                        }
+                        for u in (evaluation_row.llm_usage or [])
+                    ],
+                )
+        except Exception:
+            pass
         result = Evaluation(**data)
         return result

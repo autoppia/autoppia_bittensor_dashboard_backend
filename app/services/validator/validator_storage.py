@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, defer
 from app.services.round_calc import (
@@ -15,6 +15,7 @@ from app.config import settings
 from app.db.models import (
     AgentEvaluationRunORM,
     EvaluationORM,
+    EvaluationLLMUsageORM,
     TaskORM,
     TaskSolutionORM,
     ValidatorRoundMinerORM,
@@ -380,7 +381,7 @@ class ValidatorRoundPersistenceService:
             )
         evaluation_row = EvaluationORM(**evaluation_kwargs)
         self.session.add(evaluation_row)
-        
+
         # Create execution_history record if there's data
         if execution_history_data:
             from app.db.models import EvaluationExecutionHistoryORM
@@ -390,6 +391,9 @@ class ValidatorRoundPersistenceService:
                 execution_history=execution_history_data,
             )
             self.session.add(execution_history_row)
+
+        # Persist per-model/provider LLM usage if provided
+        await self._sync_llm_usage(evaluation_row, getattr(evaluation, "llm_usage", None))
         
         # 🔍 CRITICAL: Update agent_run stats immediately after adding evaluation
         # This ensures average_score is NEVER NULL if there are evaluations
@@ -501,6 +505,7 @@ class ValidatorRoundPersistenceService:
                     f"evaluation_id {evaluation.evaluation_id} already belongs to a different context"
                 )
             evaluation_row = existing_eval
+            await self._sync_llm_usage(evaluation_row, getattr(evaluation, "llm_usage", None))
         else:
             evaluation_kwargs = self._evaluation_kwargs(evaluation)
             # Ensure validator_hotkey is set from round if not in evaluation model
@@ -546,6 +551,9 @@ class ValidatorRoundPersistenceService:
                         raise
                 else:
                     raise
+
+            # Persist per-model/provider LLM usage if provided
+            await self._sync_llm_usage(evaluation_row, getattr(evaluation, "llm_usage", None))
             
             # 🔍 CRITICAL: Update agent_run stats immediately after adding new evaluation
             # This ensures average_score is NEVER NULL if there are evaluations
@@ -862,6 +870,12 @@ class ValidatorRoundPersistenceService:
                 execution_histories.append((evaluation_row, execution_history_data))
 
         await self.session.flush()
+
+        # Persist per-model/provider LLM usage (after flush so eval rows exist)
+        for evaluation in payload.evaluations:
+            eval_row = evaluation_rows.get(evaluation.evaluation_id)
+            if eval_row is not None:
+                await self._sync_llm_usage(eval_row, getattr(evaluation, "llm_usage", None))
         
         # Create execution_history records after flush (so we have evaluation.id)
         if execution_histories:
@@ -1362,6 +1376,57 @@ class ValidatorRoundPersistenceService:
             "llm_provider": getattr(model, "llm_provider", None),
             "llm_model": getattr(model, "llm_model", None),
         }
+
+    def _normalize_llm_usage(self, usage: Any) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        if not usage:
+            return rows
+        for item in usage:
+            if hasattr(item, "model_dump"):
+                raw = item.model_dump()
+            elif isinstance(item, dict):
+                raw = item
+            else:
+                continue
+            provider = raw.get("provider")
+            model = raw.get("model")
+            tokens = raw.get("tokens")
+            cost = raw.get("cost")
+            if provider is None and model is None and tokens is None and cost is None:
+                continue
+            rows.append(
+                {
+                    "provider": provider,
+                    "model": model,
+                    "tokens": tokens,
+                    "cost": cost,
+                }
+            )
+        return rows
+
+    async def _sync_llm_usage(
+        self,
+        evaluation_row: EvaluationORM,
+        usage: Any,
+    ) -> None:
+        usage_rows = self._normalize_llm_usage(usage)
+        if not usage_rows:
+            return
+        await self.session.execute(
+            delete(EvaluationLLMUsageORM).where(
+                EvaluationLLMUsageORM.evaluation_id == evaluation_row.evaluation_id
+            )
+        )
+        for row in usage_rows:
+            self.session.add(
+                EvaluationLLMUsageORM(
+                    evaluation_id=evaluation_row.evaluation_id,
+                    provider=row.get("provider"),
+                    model=row.get("model"),
+                    tokens=row.get("tokens"),
+                    cost=row.get("cost"),
+                )
+            )
 
     @staticmethod
     def _assert_unique(sequence: Iterable[str], name: str) -> None:

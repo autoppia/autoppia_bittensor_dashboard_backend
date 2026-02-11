@@ -251,6 +251,9 @@ class TaskEvaluationSummary(BaseModel):
     llmModel: Optional[str] = Field(
         None, description="LLM model used during evaluation"
     )
+    llmUsage: Optional[list[dict[str, Any]]] = Field(
+        None, description="Per-provider/model usage entries"
+    )
     # LLM usage tracking
     llmCost: Optional[float] = Field(
         None, description="Total cost in USD for LLM usage during evaluation"

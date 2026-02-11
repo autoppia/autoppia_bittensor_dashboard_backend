@@ -266,9 +266,9 @@ class TasksService:
                     defer(EvaluationORM.feedback),
                     defer(EvaluationORM.gif_recording),
                     defer(EvaluationORM.meta),
-                ).selectinload(
-                    EvaluationORM.execution_history_record
-                ),
+                )
+                .selectinload(EvaluationORM.execution_history_record)
+                .selectinload(EvaluationORM.llm_usage),
             )
             .order_by(TaskORM.id.desc())
         )
@@ -834,9 +834,9 @@ class TasksService:
                     defer(EvaluationORM.feedback),
                     defer(EvaluationORM.gif_recording),
                     defer(EvaluationORM.meta),
-                ).selectinload(
-                    EvaluationORM.execution_history_record
-                ),
+                )
+                .selectinload(EvaluationORM.execution_history_record)
+                .selectinload(EvaluationORM.llm_usage),
             )
             .where(TaskORM.task_id == task_id)
         )
@@ -900,6 +900,25 @@ class TasksService:
             (e for e in context.evaluations if e.evaluation_id == evaluation_id),
             None
         )
+        if evaluation_model is None:
+            evaluation_model = self._deserialize_evaluation(eval_row)
+        if evaluation_model and not getattr(evaluation_model, "llm_usage", None):
+            from app.db.models import EvaluationLLMUsageORM
+            usage_stmt = select(EvaluationLLMUsageORM).where(
+                EvaluationLLMUsageORM.evaluation_id == evaluation_id
+            )
+            usage_rows = await self.session.scalars(usage_stmt)
+            usage_list = [
+                {
+                    "provider": u.provider,
+                    "model": u.model,
+                    "tokens": u.tokens,
+                    "cost": u.cost,
+                }
+                for u in usage_rows.all()
+            ]
+            if usage_list:
+                setattr(evaluation_model, "llm_usage", usage_list)
         
         return TaskContext(
             round=context.round,
@@ -1247,6 +1266,31 @@ class TasksService:
                 or eval_meta.get("model_name")
                 or eval_meta.get("llm")
             )
+            llm_usage = getattr(context.evaluation, "llm_usage", None) or []
+            try:
+                llm_usage_list = list(llm_usage)
+            except Exception:
+                llm_usage_list = []
+            total_tokens = (
+                sum(int(u.get("tokens") or 0) for u in llm_usage_list)
+                if llm_usage_list
+                else None
+            )
+            total_cost = (
+                sum(float(u.get("cost") or 0.0) for u in llm_usage_list)
+                if llm_usage_list
+                else None
+            )
+            single_provider = (
+                llm_usage_list[0].get("provider")
+                if len(llm_usage_list) == 1
+                else None
+            )
+            single_model = (
+                llm_usage_list[0].get("model")
+                if len(llm_usage_list) == 1
+                else None
+            )
             evaluation_summary = TaskEvaluationSummary(
                 evaluationId=context.evaluation.evaluation_id,
                 finalScore=eval_score,
@@ -1258,10 +1302,11 @@ class TasksService:
                 hasFeedback=bool(context.evaluation.feedback),
                 hasRecording=bool(context.evaluation.gif_recording),
                 reward=getattr(context.evaluation, "reward", None),
-                llmModel=str(llm_model) if llm_model else None,
-                llmCost=getattr(context.evaluation, "llm_cost", None),
-                llmTokens=getattr(context.evaluation, "llm_tokens", None),
-                llmProvider=getattr(context.evaluation, "llm_provider", None),
+                llmModel=str(llm_model) if llm_model else single_model,
+                llmCost=getattr(context.evaluation, "llm_cost", None) or total_cost,
+                llmTokens=getattr(context.evaluation, "llm_tokens", None) or total_tokens,
+                llmProvider=getattr(context.evaluation, "llm_provider", None) or single_provider,
+                llmUsage=llm_usage_list or None,
             )
 
         solution_summary: Optional[TaskSolutionSummary] = None
@@ -1981,12 +2026,12 @@ class TasksService:
         data.setdefault("validator_hotkey", evaluation_row.validator_hotkey)
         data.setdefault("miner_uid", evaluation_row.miner_uid)
         data.setdefault("miner_hotkey", evaluation_row.miner_hotkey)
-        data.setdefault("final_score", evaluation_row.final_score)
+        data.setdefault("eval_score", getattr(evaluation_row, "eval_score", 0.0))
         data.setdefault("evaluation_time", evaluation_row.evaluation_time)
         data.setdefault("execution_history", evaluation_row.execution_history)
         data.setdefault("feedback", evaluation_row.feedback)
-        data.setdefault("web_agent_id", evaluation_row.web_agent_id)
-        data.setdefault("stats", evaluation_row.stats)
+        data.setdefault("web_agent_id", getattr(evaluation_row, "web_agent_id", None))
+        data.setdefault("stats", getattr(evaluation_row, "stats", None))
         data.setdefault("gif_recording", evaluation_row.gif_recording)
         data.setdefault("metadata", evaluation_row.meta)
         result = Evaluation(**data)

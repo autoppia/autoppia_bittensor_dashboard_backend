@@ -728,9 +728,9 @@ class RoundsService:
                     RoundORM.validator_snapshot  # 1:1 relationship (singular)
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations).selectinload(
-                    EvaluationORM.execution_history_record
-                ),
+                selectinload(AgentEvaluationRunORM.evaluations)
+                .selectinload(EvaluationORM.execution_history_record)
+                .selectinload(EvaluationORM.llm_usage),
             )
 
         result = await self.session.scalars(stmt)
@@ -3721,6 +3721,19 @@ class RoundsService:
                         evaluation_time=evaluation_row.evaluation_time or 0.0,
                         gif_recording=evaluation_row.gif_recording,
                         metadata=evaluation_row.meta or {},
+                        llm_cost=evaluation_row.llm_cost,
+                        llm_tokens=evaluation_row.llm_tokens,
+                        llm_provider=evaluation_row.llm_provider,
+                        llm_model=evaluation_row.llm_model,
+                        llm_usage=[
+                            {
+                                "provider": u.provider,
+                                "model": u.model,
+                                "tokens": u.tokens,
+                                "cost": u.cost,
+                            }
+                            for u in (evaluation_row.llm_usage or [])
+                        ],
                     )
                 )
             except Exception as exc:  # noqa: BLE001
