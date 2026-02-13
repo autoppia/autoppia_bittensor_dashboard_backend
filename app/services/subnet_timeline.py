@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, defer
 
-from app.db.models import AgentEvaluationRunORM, RoundORM
+from app.db.models import AgentEvaluationRunORM, EvaluationORM, RoundORM
 from app.models.core import AgentEvaluationRun, MinerInfo, ValidatorRound
 from app.models.ui.subnets import (
     MinerRosterEntry,
@@ -82,9 +82,8 @@ def _iso_timestamp(seconds: float) -> str:
 def _score_from_run(context: AgentRunContext) -> float:
     """Return the average evaluation score for an agent run (0-1 range)."""
     if context.evaluations:
-        return sum(result.final_score for result in context.evaluations) / len(
-            context.evaluations
-        )
+        scores = [getattr(result, "eval_score", getattr(result, "final_score", 0.0)) for result in context.evaluations]
+        return sum(scores) / len(scores) if scores else 0.0
     if context.run.avg_eval_score is not None:
         return context.run.avg_eval_score
     return 0.0
@@ -239,16 +238,15 @@ class SubnetTimelineService:
         stmt = (
             select(RoundORM)
             .options(
+                selectinload(RoundORM.agent_runs).selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(RoundORM.agent_runs)
-                .selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(RoundORM.agent_runs)
-                .selectinload(AgentEvaluationRunORM.evaluations).options(
+                .selectinload(AgentEvaluationRunORM.evaluations)
+                .options(
                     defer(EvaluationORM.feedback),
                     defer(EvaluationORM.gif_recording),
                     defer(EvaluationORM.meta),
-                ).selectinload(
-                    EvaluationORM.execution_history_record
-                ),
+                )
+                .selectinload(EvaluationORM.execution_history_record),
                 selectinload(RoundORM.validator_snapshot),  # 1:1 relationship (singular)
                 selectinload(RoundORM.miner_snapshots),
             )

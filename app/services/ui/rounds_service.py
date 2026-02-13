@@ -3317,6 +3317,17 @@ class RoundsService:
         evaluations: List[Evaluation] = []
         for evaluation_row in evaluation_rows:
             try:
+                from sqlalchemy import inspect
+
+                state = inspect(evaluation_row)
+                exec_history = []
+                if "execution_history_record" not in state.unloaded and evaluation_row.execution_history_record:
+                    exec_history = evaluation_row.execution_history_record.execution_history
+
+                llm_usage_rows = []
+                if "llm_usage" not in state.unloaded:
+                    llm_usage_rows = evaluation_row.llm_usage or []
+
                 evaluations.append(
                     Evaluation(
                         evaluation_id=evaluation_row.evaluation_id,
@@ -3330,12 +3341,12 @@ class RoundsService:
                         validator_hotkey=evaluation_row.validator_hotkey,
                         eval_score=getattr(evaluation_row, "eval_score", getattr(evaluation_row, "final_score", 0.0)),
                         reward=getattr(evaluation_row, "reward", getattr(evaluation_row, "eval_score", getattr(evaluation_row, "final_score", 0.0))),
-                        execution_history=(evaluation_row.execution_history_record.execution_history if evaluation_row.execution_history_record else []),
+                        execution_history=exec_history,
                         feedback=evaluation_row.feedback,
                         evaluation_time=evaluation_row.evaluation_time or 0.0,
                         gif_recording=evaluation_row.gif_recording,
                         metadata=evaluation_row.meta or {},
-                        **llm_summary_from_usage(evaluation_row.llm_usage or []),
+                        **llm_summary_from_usage(llm_usage_rows),
                         llm_usage=[
                             {
                                 "provider": u.provider,
@@ -3343,7 +3354,7 @@ class RoundsService:
                                 "tokens": u.tokens,
                                 "cost": u.cost,
                             }
-                            for u in (evaluation_row.llm_usage or [])
+                            for u in llm_usage_rows
                         ],
                     )
                 )
