@@ -1585,8 +1585,8 @@ class OverviewService:
     @rollback_on_error
     async def _aggregate_validators(self) -> Dict[str, Dict[str, Any]]:
         # Try to get from Redis cache first (10 minute TTL - shared across all workers)
-        cache_key = "overview:validators:aggregate"
-        cached = redis_cache.get(cache_key)
+        aggregate_cache_key = "overview:validators:aggregate"
+        cached = redis_cache.get(aggregate_cache_key)
         if cached is not None:
             return cached
 
@@ -1802,13 +1802,13 @@ class OverviewService:
             status = status_info.label
             current_task = status_info.default_task
 
-            cache_key = validator_round.validator_round_id if validator_round else None
+            round_cache_key = validator_round.validator_round_id if validator_round else None
             current_website: Optional[str] = None
             current_use_case: Optional[str] = None
-            if cache_key and status_info.requires_prompt:
-                if cache_key not in meta_cache:
-                    meta_cache[cache_key] = await self._latest_task_meta(cache_key)
-                meta = meta_cache.get(cache_key)
+            if round_cache_key and status_info.requires_prompt:
+                if round_cache_key not in meta_cache:
+                    meta_cache[round_cache_key] = await self._latest_task_meta(round_cache_key)
+                meta = meta_cache.get(round_cache_key)
                 if meta:
                     if meta.get("prompt"):
                         current_task = meta.get("prompt") or current_task
@@ -1853,7 +1853,7 @@ class OverviewService:
             }
 
         # Cache the aggregated validators for 10 minutes in Redis (shared across all workers)
-        redis_cache.set(cache_key, aggregates, ttl=600)
+        redis_cache.set(aggregate_cache_key, aggregates, ttl=600)
         return aggregates
 
     def _round_to_info(self, round_obj: ValidatorRound, current: bool) -> RoundInfo:
