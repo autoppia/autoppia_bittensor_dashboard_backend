@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-from collections import defaultdict
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
@@ -32,11 +31,10 @@ from app.models.ui.overview import (
     RecentActivity,
     RoundInfo,
     SubnetStatistics,
-    ValidatorInfo,
 )
 from app.services.ui.rounds_service import AgentRunContext, RoundRecord, RoundsService
 from app.services.chain_state import get_current_block_estimate
-from app.services.round_calc import compute_boundaries_for_round, compute_round_number
+from app.services.round_calc import compute_round_number
 from app.services.redis_cache import redis_cache
 from app.services.metagraph_service import get_all_validators_data, MetagraphError
 from app.config import settings
@@ -95,8 +93,7 @@ class ValidatorStatusInfo:
             default_task=STATUS_DEFAULT_TASK[state],
             # Don't fetch task prompts for NOT_STARTED or FINISHED states
             # These should always show their generic messages
-            requires_prompt=state
-            not in {ValidatorState.NOT_STARTED, ValidatorState.FINISHED},
+            requires_prompt=state not in {ValidatorState.NOT_STARTED, ValidatorState.FINISHED},
         )
 
 
@@ -144,18 +141,24 @@ class OverviewService:
         cache_key = "overview:metrics:aggregate"
         cached = redis_cache.get(cache_key)
         if cached is not None:
-            cached_top_uid = getattr(cached, 'topMinerUid', None)
-            cached_top_reward = getattr(cached, 'topReward', 0)
-            logger.info("Returning cached overview metrics (topMinerUid=%s, topReward=%s)", 
-                       cached_top_uid, cached_top_reward)
+            cached_top_uid = getattr(cached, "topMinerUid", None)
+            cached_top_reward = getattr(cached, "topReward", 0)
+            logger.info("Returning cached overview metrics (topMinerUid=%s, topReward=%s)", cached_top_uid, cached_top_reward)
             # If cache has null/0 values, invalidate and recompute
             if cached_top_uid is None and cached_top_reward == 0.0:
                 logger.warning("Cache has null/0 values - invalidating and recomputing")
                 redis_cache.delete(cache_key)
             else:
                 return cached
-        
+
         logger.info("Cache miss - computing fresh overview metrics")
+
+        # Defensive rollback so we start with a clean transaction (avoids InFailedSQLTransactionError
+        # if the connection was returned to the pool in an aborted state by a previous request).
+        try:
+            await self.session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
 
         records_with_contexts = await self._recent_round_records(
             limit=10,
@@ -184,22 +187,16 @@ class OverviewService:
             return model.round_number or _round_id_to_int(model.validator_round_id)
 
         # Group records by round so we can easily pick the latest completed set.
-        round_records_by_number: Dict[
-            int, List[Tuple[RoundRecord, List[AgentRunContext]]]
-        ] = {}
+        round_records_by_number: Dict[int, List[Tuple[RoundRecord, List[AgentRunContext]]]] = {}
         completed_round_numbers: set[int] = set()
         for record, contexts in records_with_contexts:
             number = _round_number(record)
             if number:
-                round_records_by_number.setdefault(number, []).append(
-                    (record, contexts)
-                )
+                round_records_by_number.setdefault(number, []).append((record, contexts))
                 if record.model.ended_at:
                     completed_round_numbers.add(number)
 
-        latest_completed_round = (
-            max(completed_round_numbers) if completed_round_numbers else None
-        )
+        latest_completed_round = max(completed_round_numbers) if completed_round_numbers else None
 
         # ═══════════════════════════════════════════════════════════════════
         # SINGLE SOURCE OF TRUTH: Calculate current round from blockchain
@@ -215,55 +212,40 @@ class OverviewService:
         if current_block is not None:
             try:
                 current_round_value = compute_round_number(current_block)
-                logger.debug(
-                    f"Computed current round from blockchain: block={current_block}, round={current_round_value}"
-                )
+                logger.debug(f"Computed current round from blockchain: block={current_block}, round={current_round_value}")
             except Exception as exc:
-                logger.warning(
-                    "Failed to compute current round from blockchain: %s", exc
-                )
+                logger.warning("Failed to compute current round from blockchain: %s", exc)
 
         # Get current round model to extract season and round_in_season
         current_season = None
         current_round_in_season = None
         current_round_model = None
-        
+
         # Fallback: if we can't get blockchain round, use max from DB
         if current_round_value <= 0:
-            current_round_candidates = [
-                _round_number(record)
-                for record, _ in records_with_contexts
-                if _round_number(record)
-            ]
+            current_round_candidates = [_round_number(record) for record, _ in records_with_contexts if _round_number(record)]
             if current_round_candidates:
                 current_round_value = max(current_round_candidates)
-                logger.warning(
-                    f"Using fallback current round from DB max: {current_round_value}"
-                )
-        
+                logger.warning(f"Using fallback current round from DB max: {current_round_value}")
+
         # Find the current round model to extract season/round_in_season
         for record, _ in records_with_contexts:
             if _round_number(record) == current_round_value:
                 current_round_model = record.model
-                current_season = getattr(current_round_model, 'season_number', None)
-                current_round_in_season = getattr(current_round_model, 'round_number_in_season', None)
+                current_season = getattr(current_round_model, "season_number", None)
+                current_round_in_season = getattr(current_round_model, "round_number_in_season", None)
                 break
 
         # Latest finished round should be current - 1
         preferred_previous_round: Optional[int] = None
         if current_round_value > 0:
             preferred_previous_round = max(current_round_value - 1, 0)
-            logger.debug(
-                f"Current round: {current_round_value}, Preferred previous (latest finished): {preferred_previous_round}"
-            )
+            logger.debug(f"Current round: {current_round_value}, Preferred previous (latest finished): {preferred_previous_round}")
 
         candidate_round_numbers: List[int] = []
         if preferred_previous_round and preferred_previous_round > 0:
             candidate_round_numbers.append(preferred_previous_round)
-        if (
-            latest_completed_round is not None
-            and latest_completed_round not in candidate_round_numbers
-        ):
+        if latest_completed_round is not None and latest_completed_round not in candidate_round_numbers:
             candidate_round_numbers.append(latest_completed_round)
 
         for number in sorted(completed_round_numbers, reverse=True):
@@ -283,9 +265,7 @@ class OverviewService:
             # CRITICAL: Latest finished round MUST be < current round
             # They can NEVER be the same
             if current_round_value > 0 and number >= current_round_value:
-                logger.debug(
-                    f"Skipping round {number} for metrics: >= current round {current_round_value}"
-                )
+                logger.debug(f"Skipping round {number} for metrics: >= current round {current_round_value}")
                 continue
             candidates = round_records_by_number.get(number)
             if not candidates:
@@ -301,14 +281,14 @@ class OverviewService:
         if not target_records:
             target_records = [records_with_contexts[0]]
             metrics_round_number = _round_number(target_records[0][0])
-        
+
         # Extract season and round_in_season from the metrics round record
         metrics_season = None
         metrics_round_in_season = None
         if target_records:
             metrics_round_model = target_records[0][0].model
-            metrics_season = getattr(metrics_round_model, 'season_number', None)
-            metrics_round_in_season = getattr(metrics_round_model, 'round_number_in_season', None)
+            metrics_season = getattr(metrics_round_model, "season_number", None)
+            metrics_round_in_season = getattr(metrics_round_model, "round_number_in_season", None)
 
         # This top_score is for aggregating scores from contexts (legacy, not used for top miner)
         context_top_score = 0.0
@@ -337,16 +317,12 @@ class OverviewService:
             seen_tasks: set[str] = set()
             # Track agent_runs with NULL average_score to query from DB
             agent_runs_to_query: List[str] = []
-            
+
             # First, try to fetch consensus scores for all contexts in this round
             consensus_scores_map: Dict[Tuple[str, int], float] = {}
             if contexts:
                 validator_round_id = contexts[0].round.validator_round_id
-                miner_uids = [
-                    ctx.run.miner_uid
-                    for ctx in contexts
-                    if ctx.run.miner_uid is not None
-                ]
+                miner_uids = [ctx.run.miner_uid for ctx in contexts if ctx.run.miner_uid is not None]
                 if miner_uids:
                     try:
                         stmt = select(
@@ -360,11 +336,13 @@ class OverviewService:
                         rows = result.all()
                         for row in rows:
                             if row.post_consensus_avg_reward is not None:
-                                consensus_scores_map[(validator_round_id, row.miner_uid)] = float(
-                                    row.post_consensus_avg_reward
-                                )
+                                consensus_scores_map[(validator_round_id, row.miner_uid)] = float(row.post_consensus_avg_reward)
                     except Exception as e:
                         logger.debug(f"Could not fetch consensus scores: {e}")
+                        try:
+                            await self.session.rollback()
+                        except Exception:  # noqa: BLE001
+                            pass
 
             for ctx in contexts:
                 # Ignore SOTA/baseline runs when computing miner leaderboard metrics
@@ -383,16 +361,12 @@ class OverviewService:
                 if ctx.run.miner_uid is not None:
                     consensus_key = (ctx.round.validator_round_id, ctx.run.miner_uid)
                     score = consensus_scores_map.get(consensus_key)
-                
+
                 if score is None:
                     score = self.rounds_service._context_score(ctx)
 
                 # If score is 0 and average_score is NULL, we need to query from DB
-                if (
-                    score == 0.0
-                    and ctx.run.average_score is None
-                    and ctx.run.agent_run_id
-                ):
+                if score == 0.0 and ctx.run.average_score is None and ctx.run.agent_run_id:
                     agent_runs_to_query.append(ctx.run.agent_run_id)
 
                 if miner_identifier:
@@ -404,9 +378,7 @@ class OverviewService:
                 try:
                     from app.db.models import EvaluationORM
 
-                    logger.info(
-                        f"Querying DB for {len(agent_runs_to_query)} agent_runs with NULL average_score"
-                    )
+                    logger.info(f"Querying DB for {len(agent_runs_to_query)} agent_runs with NULL average_score")
 
                     stmt = (
                         select(
@@ -416,12 +388,9 @@ class OverviewService:
                         )
                         .join(
                             EvaluationORM,
-                            EvaluationORM.agent_run_id
-                            == AgentEvaluationRunORM.agent_run_id,
+                            EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
                         )
-                        .where(
-                            AgentEvaluationRunORM.agent_run_id.in_(agent_runs_to_query)
-                        )
+                        .where(AgentEvaluationRunORM.agent_run_id.in_(agent_runs_to_query))
                         .group_by(
                             AgentEvaluationRunORM.agent_run_id,
                             AgentEvaluationRunORM.miner_uid,
@@ -431,9 +400,7 @@ class OverviewService:
                     rows = result.all()
 
                     if rows:
-                        logger.info(
-                            f"✅ Found {len(rows)} agent_runs with evaluations in DB"
-                        )
+                        logger.info(f"✅ Found {len(rows)} agent_runs with evaluations in DB")
                         for row in rows:
                             agent_run_id, miner_uid, avg_score = row
                             if avg_score is not None and miner_uid is not None:
@@ -445,11 +412,13 @@ class OverviewService:
                                     if 0.0 in tracker:
                                         tracker.remove(0.0)
                                     tracker.append(float(avg_score))
-                                    logger.debug(
-                                        f"  Updated {miner_identifier}: {avg_score}"
-                                    )
+                                    logger.debug(f"  Updated {miner_identifier}: {avg_score}")
                 except Exception as e:
                     logger.error(f"Failed to query evaluations from DB: {e}")
+                    try:
+                        await self.session.rollback()
+                    except Exception:  # noqa: BLE001
+                        pass
 
                 for task in ctx.tasks or []:
                     if task.task_id in seen_tasks:
@@ -461,48 +430,33 @@ class OverviewService:
 
             if not contexts:
                 # If no contexts loaded, try winners first
-                logger.info(
-                    f"No contexts for round {round_obj.validator_round_id}, checking winners or DB..."
-                )
+                logger.info(f"No contexts for round {round_obj.validator_round_id}, checking winners or DB...")
                 if round_obj.winners:
-                    round_top = max(
-                        winner.get("score", 0.0) for winner in round_obj.winners
-                    )
+                    round_top = max(winner.get("score", 0.0) for winner in round_obj.winners)
                     context_top_score = max(context_top_score, round(round_top, 6))
                     logger.info(f"Using winners: context_top_score={round_top}")
                 else:
                     # Fallback: first try consensus scores, then query evaluations directly from DB
-                    logger.info(
-                        f"No winners, querying DB for round {round_obj.validator_round_id}"
-                    )
+                    logger.info(f"No winners, querying DB for round {round_obj.validator_round_id}")
                     try:
                         # First try to get consensus scores
                         stmt = select(
                             ValidatorRoundSummaryORM.miner_uid,
                             ValidatorRoundSummaryORM.post_consensus_avg_reward,
-                        ).where(
-                            ValidatorRoundSummaryORM.validator_round_id
-                            == round_obj.validator_round_id
-                        )
+                        ).where(ValidatorRoundSummaryORM.validator_round_id == round_obj.validator_round_id)
                         result = await self.session.execute(stmt)
                         consensus_rows = result.all()
 
                         if consensus_rows:
-                            logger.info(
-                                f"Found {len(consensus_rows)} consensus scores for round {round_obj.validator_round_id}"
-                            )
+                            logger.info(f"Found {len(consensus_rows)} consensus scores for round {round_obj.validator_round_id}")
                             for row in consensus_rows:
                                 miner_uid, post_consensus_reward = row
                                 if post_consensus_reward is not None:
                                     miner_identifier = f"uid:{miner_uid}"
                                     miners.add(miner_identifier)
-                                    tracker = miner_score_tracker.setdefault(
-                                        miner_identifier, []
-                                    )
+                                    tracker = miner_score_tracker.setdefault(miner_identifier, [])
                                     tracker.append(float(post_consensus_reward))
-                            logger.info(
-                                f"✅ Loaded {len(consensus_rows)} consensus scores from DB for round {round_obj.validator_round_id}"
-                            )
+                            logger.info(f"✅ Loaded {len(consensus_rows)} consensus scores from DB for round {round_obj.validator_round_id}")
                         else:
                             # Fallback to evaluations if no consensus scores
                             from app.db.models import EvaluationORM
@@ -515,21 +469,15 @@ class OverviewService:
                                 )
                                 .join(
                                     EvaluationORM,
-                                    EvaluationORM.agent_run_id
-                                    == AgentEvaluationRunORM.agent_run_id,
+                                    EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
                                 )
-                                .where(
-                                    AgentEvaluationRunORM.validator_round_id
-                                    == round_obj.validator_round_id
-                                )
+                                .where(AgentEvaluationRunORM.validator_round_id == round_obj.validator_round_id)
                                 .group_by(AgentEvaluationRunORM.miner_uid)
                             )
                             result = await self.session.execute(stmt)
                             rows = result.all()
 
-                            logger.info(
-                                f"DB query returned {len(rows)} rows for round {round_obj.validator_round_id}"
-                            )
+                            logger.info(f"DB query returned {len(rows)} rows for round {round_obj.validator_round_id}")
                             if rows:
                                 for row in rows:
                                     miner_uid, avg_score = row
@@ -537,21 +485,17 @@ class OverviewService:
                                     if avg_score is not None:
                                         miner_identifier = f"uid:{miner_uid}"
                                         miners.add(miner_identifier)
-                                        tracker = miner_score_tracker.setdefault(
-                                            miner_identifier, []
-                                        )
+                                        tracker = miner_score_tracker.setdefault(miner_identifier, [])
                                         tracker.append(float(avg_score))
-                                logger.info(
-                                    f"✅ Loaded {len(rows)} miner scores from DB for round {round_obj.validator_round_id}"
-                                )
+                                logger.info(f"✅ Loaded {len(rows)} miner scores from DB for round {round_obj.validator_round_id}")
                             else:
-                                logger.warning(
-                                    f"No evaluation data found in DB for round {round_obj.validator_round_id}"
-                                )
+                                logger.warning(f"No evaluation data found in DB for round {round_obj.validator_round_id}")
                     except Exception as e:
-                        logger.error(
-                            f"Failed to load scores for round {round_obj.validator_round_id}: {e}"
-                        )
+                        logger.error(f"Failed to load scores for round {round_obj.validator_round_id}: {e}")
+                        try:
+                            await self.session.rollback()
+                        except Exception:  # noqa: BLE001
+                            pass
 
         top_miner_uid = None
         top_miner_name = None
@@ -601,10 +545,9 @@ class OverviewService:
                 latest_validator_round_id = latest_round_row.validator_round_id
                 latest_season = latest_round_row.season_number
                 latest_round_in_season = latest_round_row.round_number_in_season
-                latest_round_number = latest_round_in_season  # For compatibility/logging
                 latest_status = latest_round_row.status
                 validator_uid_found = latest_round_row.validator_uid
-                
+
                 logger.info(
                     "✅ Found latest round: validator_round_id=%s (season %s, round %s, validator UID %s, status=%s)",
                     latest_validator_round_id,
@@ -623,8 +566,7 @@ class OverviewService:
                     )
                     .outerjoin(
                         ValidatorRoundMinerORM,
-                        (ValidatorRoundSummaryORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id)
-                        & (ValidatorRoundSummaryORM.miner_uid == ValidatorRoundMinerORM.miner_uid),
+                        (ValidatorRoundSummaryORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id) & (ValidatorRoundSummaryORM.miner_uid == ValidatorRoundMinerORM.miner_uid),
                     )
                     .where(
                         ValidatorRoundSummaryORM.validator_round_id == latest_validator_round_id,
@@ -640,7 +582,7 @@ class OverviewService:
                     top_miner_uid = top_miner_row.miner_uid
                     top_score = float(top_miner_row.post_consensus_avg_reward) if top_miner_row.post_consensus_avg_reward else 0.0
                     top_miner_name = top_miner_row.name
-                    
+
                     logger.info(
                         "✅ Found top miner: miner_uid=%s, reward=%s, name=%s",
                         top_miner_uid,
@@ -659,13 +601,23 @@ class OverviewService:
                 )
         except Exception as e:
             logger.error(f"❌ Error fetching top miner from latest round: {e}", exc_info=True)
+            try:
+                await self.session.rollback()
+            except Exception:  # noqa: BLE001
+                pass
             # Don't let the error prevent the rest of the metrics from being calculated
             # top_miner_uid, top_miner_name, and top_score will remain None/None/0.0
 
         subnet_version = version_candidates[0] if version_candidates else "1.0.0"
-        total_websites = (
-            len(unique_websites) if unique_websites else await self._total_websites()
-        )
+        try:
+            total_websites = len(unique_websites) if unique_websites else await self._total_websites()
+        except Exception as e:
+            logger.warning("Failed to get total_websites: %s", e)
+            try:
+                await self.session.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            total_websites = len(unique_websites) if unique_websites else 0
 
         display_metrics_round_number = int(metrics_round_number or 0)
         if display_metrics_round_number < 0:
@@ -693,6 +645,10 @@ class OverviewService:
                 total_miners_count = result_total_miners.scalar() or len(miners)
             except Exception as e:
                 logger.debug(f"Could not fetch total miners count for season {metrics_season} round {metrics_round_in_season}: {e}")
+                try:
+                    await self.session.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
                 # Fallback to context-based count
 
         metrics = OverviewMetrics(
@@ -724,11 +680,9 @@ class OverviewService:
         if metrics.topMinerUid is not None and metrics.topReward > 0.0:
             # Cache metrics for 15 minutes in Redis (shared across all workers)
             redis_cache.set(cache_key, metrics, ttl=900)
-            logger.info("Cached metrics in Redis with key: %s (TTL: 15 minutes) - topMinerUid=%s, topReward=%s", 
-                       cache_key, metrics.topMinerUid, metrics.topReward)
+            logger.info("Cached metrics in Redis with key: %s (TTL: 15 minutes) - topMinerUid=%s, topReward=%s", cache_key, metrics.topMinerUid, metrics.topReward)
         else:
-            logger.warning("NOT caching metrics - topMinerUid=%s, topReward=%s (will force recalculation next time)", 
-                          metrics.topMinerUid, metrics.topReward)
+            logger.warning("NOT caching metrics - topMinerUid=%s, topReward=%s (will force recalculation next time)", metrics.topMinerUid, metrics.topReward)
         return metrics
 
     @rollback_on_error
@@ -764,7 +718,7 @@ class OverviewService:
         # Si no está disponible, construir solo el validador solicitado en lugar de todos
         cache_key_aggregate = "overview:validators:aggregate"
         cached_validators = redis_cache.get(cache_key_aggregate)
-        
+
         if cached_validators is not None:
             validator = cached_validators.get(validator_id)
             if validator:
@@ -781,7 +735,7 @@ class OverviewService:
                 raise ValueError(f"Validator {validator_id} not found")
             # Crear una copia del diccionario para poder modificarlo
             validator = dict(validator)
-        
+
         # Agregar información del ganador de la última ronda
         # Intentar extraer el UID del validator_id (puede ser "validator-83" o "83")
         try:
@@ -789,7 +743,7 @@ class OverviewService:
         except (ValueError, IndexError):
             # Si no se puede extraer el UID, devolver validator sin lastRoundWinner
             return validator
-        
+
         # Optimización: Obtener la última ronda y el ganador en una sola query con JOINs
         # Primero intentar obtener ganador de ronda finalizada (post_consensus_rank == 1)
         winner_query = (
@@ -805,31 +759,20 @@ class OverviewService:
                 ValidatorRoundMinerORM.image_url,
             )
             .select_from(
-                RoundORM.__table__
-                .join(
-                    ValidatorRoundValidatorORM.__table__,
-                    RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
-                )
-                .join(
-                    ValidatorRoundSummaryORM.__table__,
-                    RoundORM.validator_round_id == ValidatorRoundSummaryORM.validator_round_id
-                )
+                RoundORM.__table__.join(ValidatorRoundValidatorORM.__table__, RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
+                .join(ValidatorRoundSummaryORM.__table__, RoundORM.validator_round_id == ValidatorRoundSummaryORM.validator_round_id)
                 .outerjoin(
                     ValidatorRoundMinerORM.__table__,
-                    (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id)
-                    & (ValidatorRoundSummaryORM.miner_uid == ValidatorRoundMinerORM.miner_uid)
+                    (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id) & (ValidatorRoundSummaryORM.miner_uid == ValidatorRoundMinerORM.miner_uid),
                 )
             )
-            .where(
-                ValidatorRoundValidatorORM.validator_uid == validator_uid,
-                ValidatorRoundSummaryORM.post_consensus_rank == 1
-            )
+            .where(ValidatorRoundValidatorORM.validator_uid == validator_uid, ValidatorRoundSummaryORM.post_consensus_rank == 1)
             .order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
             .limit(1)
         )
         winner_result = await self.session.execute(winner_query)
         winner_row = winner_result.first()
-        
+
         if winner_row:
             # Ronda finalizada con ganador
             validator["lastRoundWinner"] = {
@@ -854,19 +797,11 @@ class OverviewService:
                     ValidatorRoundMinerORM.image_url,
                 )
                 .select_from(
-                    RoundORM.__table__
-                    .join(
-                        ValidatorRoundValidatorORM.__table__,
-                        RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
-                    )
-                    .join(
-                        AgentEvaluationRunORM.__table__,
-                        RoundORM.validator_round_id == AgentEvaluationRunORM.validator_round_id
-                    )
+                    RoundORM.__table__.join(ValidatorRoundValidatorORM.__table__, RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
+                    .join(AgentEvaluationRunORM.__table__, RoundORM.validator_round_id == AgentEvaluationRunORM.validator_round_id)
                     .outerjoin(
                         ValidatorRoundMinerORM.__table__,
-                        (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id)
-                        & (AgentEvaluationRunORM.miner_uid == ValidatorRoundMinerORM.miner_uid)
+                        (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id) & (AgentEvaluationRunORM.miner_uid == ValidatorRoundMinerORM.miner_uid),
                     )
                 )
                 .where(ValidatorRoundValidatorORM.validator_uid == validator_uid)
@@ -875,7 +810,7 @@ class OverviewService:
             )
             top_run_result = await self.session.execute(top_run_query)
             top_run_row = top_run_result.first()
-            
+
             if top_run_row:
                 validator["lastRoundWinner"] = {
                     "uid": top_run_row.miner_uid,
@@ -885,7 +820,7 @@ class OverviewService:
                     "reward": float(top_run_row.average_reward) if top_run_row.average_reward else None,
                     "weight": None,  # Weight no disponible para rondas activas
                 }
-        
+
         return validator
 
     @rollback_on_error
@@ -937,17 +872,10 @@ class OverviewService:
             round_num = round_obj.round_number or 0
 
             # Check if this is the actual current round (trust compute_round_number)
-            if (
-                actual_current_round_number > 0
-                and round_num == actual_current_round_number
-            ):
+            if actual_current_round_number > 0 and round_num == actual_current_round_number:
                 # Verify it's not finished AND has actual data
                 # A round is only "current" if it has started processing (has validator_rounds)
-                has_data = (
-                    round_obj.start_block is not None
-                    and round_obj.start_block > 0
-                    and len(round_obj.validators or []) > 0
-                )
+                has_data = round_obj.start_block is not None and round_obj.start_block > 0 and len(round_obj.validators or []) > 0
                 if round_obj.status != "finished" and has_data:
                     return self._round_to_info(round_obj, current=True)
 
@@ -960,19 +888,14 @@ class OverviewService:
         return None
 
     @rollback_on_error
-    async def rounds_list(
-        self, page: int, limit: int, status: Optional[str]
-    ) -> Tuple[List[RoundInfo], Optional[RoundInfo], int]:
+    async def rounds_list(self, page: int, limit: int, status: Optional[str]) -> Tuple[List[RoundInfo], Optional[RoundInfo], int]:
         rounds = await self._recent_rounds(limit=100)
         active_rounds = [round_obj for round_obj in rounds if not round_obj.ended_at]
         completed_rounds = [round_obj for round_obj in rounds if round_obj.ended_at]
 
         completed_rounds.sort(key=lambda r: r.started_at or 0, reverse=True)
 
-        round_infos = [
-            self._round_to_info(round_obj, current=False)
-            for round_obj in completed_rounds
-        ]
+        round_infos = [self._round_to_info(round_obj, current=False) for round_obj in completed_rounds]
 
         if status:
             round_infos = [info for info in round_infos if info.status == status]
@@ -989,11 +912,7 @@ class OverviewService:
         elif completed_rounds:
             current_round_obj = completed_rounds[0]
 
-        current_round = (
-            self._round_to_info(current_round_obj, current=True)
-            if current_round_obj
-            else None
-        )
+        current_round = self._round_to_info(current_round_obj, current=True) if current_round_obj else None
         return paginated, current_round, total
 
     @rollback_on_error
@@ -1069,28 +988,24 @@ class OverviewService:
         # Query SQL simplificada usando las nuevas tablas
         # Para cada round_number, obtenemos el miner_uid con el máximo post_consensus_avg_reward
         # FILTRADO POR VALIDADOR AUTOPPIA (UID 83 o 124 - usa el que tenga datos)
-        
+
         # Primero intentar detectar qué validador tiene datos disponibles
         # Preferir UID 83 (producción) sobre 124 (desarrollo)
         autoppia_uids = [83, 124]
-        
+
         # Subquery para obtener el máximo post_consensus_avg_reward por season_number y round_number_in_season
         # Solo del validador Autoppia (UID 83 o 124)
         max_scores_subq = (
             select(
                 RoundORM.season_number,
                 RoundORM.round_number_in_season,
-                func.max(ValidatorRoundSummaryORM.post_consensus_avg_reward).label(
-                    "max_post_consensus_reward"
-                ),
+                func.max(ValidatorRoundSummaryORM.post_consensus_avg_reward).label("max_post_consensus_reward"),
             )
             .select_from(
                 RoundORM.__table__.join(
                     ValidatorRoundSummaryORM.__table__,
-                    RoundORM.validator_round_id
-                    == ValidatorRoundSummaryORM.validator_round_id,
-                )
-                .join(
+                    RoundORM.validator_round_id == ValidatorRoundSummaryORM.validator_round_id,
+                ).join(
                     ValidatorRoundValidatorORM.__table__,
                     RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id,
                 )
@@ -1122,8 +1037,7 @@ class OverviewService:
             .select_from(
                 RoundORM.__table__.join(
                     ValidatorRoundSummaryORM.__table__,
-                    RoundORM.validator_round_id
-                    == ValidatorRoundSummaryORM.validator_round_id,
+                    RoundORM.validator_round_id == ValidatorRoundSummaryORM.validator_round_id,
                 )
                 .join(
                     ValidatorRoundValidatorORM.__table__,
@@ -1133,19 +1047,12 @@ class OverviewService:
                     max_scores_subq,
                     (RoundORM.season_number == max_scores_subq.c.season_number)
                     & (RoundORM.round_number_in_season == max_scores_subq.c.round_number_in_season)
-                    & (
-                        ValidatorRoundSummaryORM.post_consensus_avg_reward
-                        == max_scores_subq.c.max_post_consensus_reward
-                    ),
+                    & (ValidatorRoundSummaryORM.post_consensus_avg_reward == max_scores_subq.c.max_post_consensus_reward),
                 )
             )
             .outerjoin(
                 ValidatorRoundMinerORM,
-                (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id)
-                & (
-                    ValidatorRoundSummaryORM.miner_uid
-                    == ValidatorRoundMinerORM.miner_uid
-                ),
+                (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id) & (ValidatorRoundSummaryORM.miner_uid == ValidatorRoundMinerORM.miner_uid),
             )
             .where(RoundORM.season_number.isnot(None))
             .where(RoundORM.round_number_in_season.isnot(None))
@@ -1159,7 +1066,7 @@ class OverviewService:
                 ValidatorRoundSummaryORM.miner_uid.asc(),
             )
         )
-        
+
         # Si no es "all", limitar los rounds en la query
         if not unlimited:
             stmt = stmt.limit(fetch_limit * 2)  # Multiplicar por 2 para asegurar que tenemos suficientes después de agrupar
@@ -1175,7 +1082,7 @@ class OverviewService:
         # Como la query está ordenada por post_consensus_avg_reward DESC, el primero es el ganador
         seen_rounds: Dict[Tuple[int, int], bool] = {}
         entries: List[LeaderboardEntry] = []
-        
+
         for row in rows:
             season_number, round_number_in_season, post_consensus_reward, post_consensus_score, post_consensus_time, miner_uid, miner_name, ended_at = row
 
@@ -1189,7 +1096,7 @@ class OverviewService:
             if round_key in seen_rounds:
                 continue
             seen_rounds[round_key] = True
-            
+
             # Use round_number_in_season for the round field (for compatibility)
             display_round = round_num
 
@@ -1249,32 +1156,14 @@ class OverviewService:
             except (TypeError, ValueError):
                 return 0.0
 
-        total_stake = int(
-            sum(_to_float(entry.get("stake")) for entry in validators.values())
-        )
-        total_emission = int(
-            sum(_to_float(entry.get("emission")) for entry in validators.values())
-        )
-        total_runs = await self._total_runs()
-        success_total = int(total_runs * 0.85)
+        total_stake = int(sum(_to_float(entry.get("stake")) for entry in validators.values()))
+        total_emission = int(sum(_to_float(entry.get("emission")) for entry in validators.values()))
 
-        average_trust = (
-            sum(_to_float(entry.get("trust")) for entry in validators.values())
-            / len(validators)
-            if validators
-            else 0.0
-        )
-        average_uptime = (
-            sum(_to_float(entry.get("uptime", 0.0)) for entry in validators.values())
-            / len(validators)
-            if validators
-            else 0.0
-        )
+        average_trust = sum(_to_float(entry.get("trust")) for entry in validators.values()) / len(validators) if validators else 0.0
+        average_uptime = sum(_to_float(entry.get("uptime", 0.0)) for entry in validators.values()) / len(validators) if validators else 0.0
 
         average_score = await self._average_score()
-        total_tasks_completed = sum(
-            entry["completedTasks"] for entry in validators.values()
-        )
+        total_tasks_completed = sum(entry["completedTasks"] for entry in validators.values())
 
         return SubnetStatistics(
             totalStake=total_stake,
@@ -1299,11 +1188,7 @@ class OverviewService:
             if round_obj.started_at and round_obj.ended_at:
                 elapsed = round_obj.ended_at - round_obj.started_at
                 network_latency_samples.append(elapsed)
-        average_latency = (
-            int(sum(network_latency_samples) / len(network_latency_samples))
-            if network_latency_samples
-            else 0
-        )
+        average_latency = int(sum(network_latency_samples) / len(network_latency_samples)) if network_latency_samples else 0
 
         # Simplified policy: Always show healthy/live except when last round was > 6 hours ago.
         # If there are no rounds yet, treat as healthy.
@@ -1321,11 +1206,7 @@ class OverviewService:
             key=lambda r: (r.ended_at or r.started_at or 0),
         )
         last_activity_ts = last_round.ended_at or last_round.started_at
-        last_activity_dt = (
-            datetime.fromtimestamp(last_activity_ts, tz=timezone.utc)
-            if last_activity_ts
-            else None
-        )
+        last_activity_dt = datetime.fromtimestamp(last_activity_ts, tz=timezone.utc) if last_activity_ts else None
 
         # If timestamp missing, still treat as healthy per simplified policy
         if not last_activity_ts:
@@ -1352,25 +1233,15 @@ class OverviewService:
                 return " ".join(parts)
 
             human_delta = _humanize(delta)
-            timestamp_label = (
-                last_activity_dt.strftime("%Y-%m-%d %H:%M UTC")
-                if last_activity_dt
-                else "unknown time"
-            )
+            timestamp_label = last_activity_dt.strftime("%Y-%m-%d %H:%M UTC") if last_activity_dt else "unknown time"
             round_label = _round_id_to_int(last_round.validator_round_id)
 
             if delta_hours > 6:
                 status = "degraded"
-                message = (
-                    f"No round activity for {human_delta} — last known round #{round_label} "
-                    f"completed at {timestamp_label}"
-                )
+                message = f"No round activity for {human_delta} — last known round #{round_label} completed at {timestamp_label}"
             else:
                 status = "healthy"
-                message = (
-                    f"Awaiting next round — last recorded round #{round_label} finished {human_delta} ago "
-                    f"({timestamp_label})"
-                )
+                message = f"Awaiting next round — last recorded round #{round_label} finished {human_delta} ago ({timestamp_label})"
 
         return NetworkStatus(
             status=status,
@@ -1461,9 +1332,7 @@ class OverviewService:
             try:
                 round_model = self.rounds_service._deserialize_round(row)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Failed to parse round %s: %s", row.validator_round_id, exc
-                )
+                logger.warning("Failed to parse round %s: %s", row.validator_round_id, exc)
                 continue
 
             if round_model.started_at is None:
@@ -1492,9 +1361,7 @@ class OverviewService:
                         exc,
                     )
                 if contexts:
-                    self.rounds_service._recalculate_round_from_contexts(
-                        record, contexts
-                    )
+                    self.rounds_service._recalculate_round_from_contexts(record, contexts)
 
             records.append((record, contexts))
         return records
@@ -1664,9 +1531,7 @@ class OverviewService:
         }
 
     @rollback_on_error
-    async def _latest_evaluated_task_meta(
-        self, validator_round_id: str
-    ) -> Optional[Dict[str, Optional[str]]]:
+    async def _latest_evaluated_task_meta(self, validator_round_id: str) -> Optional[Dict[str, Optional[str]]]:
         """Fetch latest evaluated task prompt + website + use case for a validator round."""
 
         stmt = (
@@ -1678,9 +1543,7 @@ class OverviewService:
             )
             .join(EvaluationORM, EvaluationORM.task_id == TaskORM.task_id)
             .where(EvaluationORM.validator_round_id == validator_round_id)
-            .order_by(
-                EvaluationORM.created_at.desc(), EvaluationORM.id.desc()
-            )
+            .order_by(EvaluationORM.created_at.desc(), EvaluationORM.id.desc())
             .limit(1)
         )
         result = await self.session.execute(stmt)
@@ -1691,9 +1554,7 @@ class OverviewService:
         return self._normalize_task_meta(prompt, url, relevant_data, use_case)
 
     @rollback_on_error
-    async def _latest_task_meta(
-        self, validator_round_id: str
-    ) -> Optional[Dict[str, Optional[str]]]:
+    async def _latest_task_meta(self, validator_round_id: str) -> Optional[Dict[str, Optional[str]]]:
         """Fetch the most recent task metadata, falling back to stored tasks if needed."""
 
         meta = await self._latest_evaluated_task_meta(validator_round_id)
@@ -1731,9 +1592,7 @@ class OverviewService:
 
         # Performance optimization: Don't load agent run contexts since we only need
         # round metadata for validator aggregation (eliminates N+1 queries)
-        records_with_contexts = await self._recent_round_records(
-            limit=20, include_details=False, fetch_contexts=False
-        )
+        records_with_contexts = await self._recent_round_records(limit=20, include_details=False, fetch_contexts=False)
         aggregates: Dict[str, Dict[str, Any]] = {}
 
         # ═══════════════════════════════════════════════════════════════════
@@ -1746,9 +1605,7 @@ class OverviewService:
             if current_block is not None:
                 try:
                     current_round_from_blockchain = compute_round_number(current_block)
-                    logger.debug(
-                        f"[_aggregate_validators] Current round from blockchain: {current_round_from_blockchain}"
-                    )
+                    logger.debug(f"[_aggregate_validators] Current round from blockchain: {current_round_from_blockchain}")
                 except Exception:
                     pass
         except Exception:
@@ -1758,9 +1615,7 @@ class OverviewService:
         # Also track max round in DB for fallback
         round_numbers: List[int] = []
         for record, _ in records_with_contexts:
-            num = record.model.round_number or _round_id_to_int(
-                record.model.validator_round_id
-            )
+            num = record.model.round_number or _round_id_to_int(record.model.validator_round_id)
             if num:
                 round_numbers.append(num)
         round_numbers = sorted(set(round_numbers), reverse=True)
@@ -1768,21 +1623,12 @@ class OverviewService:
 
         if max_round_in_db == 0 and records_with_contexts:
             fallback_record = records_with_contexts[0][0]
-            max_round_in_db = fallback_record.model.round_number or _round_id_to_int(
-                fallback_record.model.validator_round_id
-            )
+            max_round_in_db = fallback_record.model.round_number or _round_id_to_int(fallback_record.model.validator_round_id)
 
         # Use blockchain round as "current", fallback to DB max if blockchain unavailable
-        current_round_number = (
-            current_round_from_blockchain
-            if current_round_from_blockchain > 0
-            else max_round_in_db
-        )
+        current_round_number = current_round_from_blockchain if current_round_from_blockchain > 0 else max_round_in_db
 
-        logger.debug(
-            f"[_aggregate_validators] current_round_number={current_round_number}, "
-            f"blockchain={current_round_from_blockchain}, db_max={max_round_in_db}"
-        )
+        logger.debug(f"[_aggregate_validators] current_round_number={current_round_number}, blockchain={current_round_from_blockchain}, db_max={max_round_in_db}")
 
         # Build helper maps:
         # - current_round_entries: entries for the CURRENT round from blockchain
@@ -1790,19 +1636,13 @@ class OverviewService:
         current_round_entries: Dict[int, Tuple[RoundRecord, List[AgentRunContext]]] = {}
         last_entry_by_uid: Dict[int, Tuple[RoundRecord, List[AgentRunContext]]] = {}
         for record, contexts in records_with_contexts:
-            round_number = record.model.round_number or _round_id_to_int(
-                record.model.validator_round_id
-            )
+            round_number = record.model.round_number or _round_id_to_int(record.model.validator_round_id)
             validator_uid = record.model.validator_uid or record.validator_uid
             if validator_uid is None:
                 continue
             # Track most recent record per validator overall
             prev_last = last_entry_by_uid.get(validator_uid)
-            prev_ts = (
-                (prev_last[0].model.ended_at or prev_last[0].model.started_at or 0.0)
-                if prev_last
-                else -1
-            )
+            prev_ts = (prev_last[0].model.ended_at or prev_last[0].model.started_at or 0.0) if prev_last else -1
             curr_ts = record.model.ended_at or record.model.started_at or 0.0
             if prev_last is None or curr_ts >= prev_ts:
                 last_entry_by_uid[validator_uid] = (record, contexts)
@@ -1810,9 +1650,7 @@ class OverviewService:
             # This will be empty if validator hasn't started current round yet
             if round_number == current_round_number:
                 existing = current_round_entries.get(validator_uid)
-                if existing is None or (record.model.started_at or 0.0) > (
-                    existing[0].model.started_at or 0.0
-                ):
+                if existing is None or (record.model.started_at or 0.0) > (existing[0].model.started_at or 0.0):
                     current_round_entries[validator_uid] = (record, contexts)
 
         now_ts = datetime.now(timezone.utc).timestamp()
@@ -1826,30 +1664,22 @@ class OverviewService:
         recent_round_numbers = set(round_numbers[:lookback]) if round_numbers else set()
         recent_participant_uids: set[int] = set()
         for record, _ in records_with_contexts:
-            rn = record.model.round_number or _round_id_to_int(
-                record.model.validator_round_id
-            )
+            rn = record.model.round_number or _round_id_to_int(record.model.validator_round_id)
             uid = record.model.validator_uid or record.validator_uid
             if uid is None:
                 continue
             if rn in recent_round_numbers:
                 recent_participant_uids.add(uid)
 
-        known_validator_uids = (
-            set(current_round_entries.keys()) | recent_participant_uids
-        )
+        known_validator_uids = set(current_round_entries.keys()) | recent_participant_uids
 
         # Fetch fresh metagraph data for all validators
         fresh_metagraph_data: Dict[int, Dict[str, Any]] = {}
         try:
             fresh_metagraph_data = get_all_validators_data()
-            logger.info(
-                f"Loaded fresh metagraph data for {len(fresh_metagraph_data)} validators"
-            )
+            logger.info(f"Loaded fresh metagraph data for {len(fresh_metagraph_data)} validators")
         except MetagraphError as exc:
-            logger.warning(
-                f"Failed to fetch fresh metagraph data, will use DB snapshots: {exc}"
-            )
+            logger.warning(f"Failed to fetch fresh metagraph data, will use DB snapshots: {exc}")
 
         for validator_uid in sorted(known_validator_uids):
             entry = current_round_entries.get(validator_uid)
@@ -1860,30 +1690,20 @@ class OverviewService:
 
             display_record = current_record or (last_entry[0] if last_entry else None)
             display_round = display_record.model if display_record else None
-            validator_info = (
-                getattr(display_round, "validator_info", None)
-                if display_round
-                else None
-            )
+            validator_info = getattr(display_round, "validator_info", None) if display_round else None
 
             contexts_flat = current_contexts
 
             # Use last participation for display of last seen round when not currently running
             # If validator has never participated, show current blockchain round
             if last_entry is not None:
-                round_number = last_entry[0].model.round_number or _round_id_to_int(
-                    last_entry[0].model.validator_round_id
-                )
+                round_number = last_entry[0].model.round_number or _round_id_to_int(last_entry[0].model.validator_round_id)
             else:
                 round_number = current_round_number or None
 
-            display_name = (
-                validator_info.name if validator_info and validator_info.name else None
-            )
+            display_name = validator_info.name if validator_info and validator_info.name else None
             if not display_name and display_round:
-                display_name = (
-                    getattr(display_round, "metadata", {}).get("validator_name") or None
-                )
+                display_name = getattr(display_round, "metadata", {}).get("validator_name") or None
             if not display_name:
                 display_name = f"Validator {validator_uid}"
 
@@ -1894,21 +1714,12 @@ class OverviewService:
                 hotkey_candidates.append(display_round.validator_hotkey)
             if current_record and current_record.model.validator_hotkey:
                 hotkey_candidates.append(current_record.model.validator_hotkey)
-            hotkey = next(
-                (candidate for candidate in hotkey_candidates if candidate), None
-            )
+            hotkey = next((candidate for candidate in hotkey_candidates if candidate), None)
 
-            existing_icon = (
-                getattr(validator_info, "image_url", None) if validator_info else None
-            )
+            existing_icon = getattr(validator_info, "image_url", None) if validator_info else None
 
             # DEBUG: Log validator image resolution
-            logger.debug(
-                f"[Validator {validator_uid}] Image resolution: "
-                f"validator_info={validator_info is not None}, "
-                f"existing_icon={existing_icon}, "
-                f"display_name={display_name}"
-            )
+            logger.debug(f"[Validator {validator_uid}] Image resolution: validator_info={validator_info is not None}, existing_icon={existing_icon}, display_name={display_name}")
 
             icon = resolve_validator_image(display_name, existing=existing_icon)
 
@@ -1926,10 +1737,7 @@ class OverviewService:
                 # Use fresh metagraph data for stake/vtrust (preferred)
                 stake_value = fresh_data.get("stake") or 0.0
                 trust_value = fresh_data.get("vtrust") or 0.0
-                logger.debug(
-                    f"[Validator {validator_uid}] Using fresh metagraph data: "
-                    f"stake={stake_value:.2f}, vtrust={trust_value:.4f}"
-                )
+                logger.debug(f"[Validator {validator_uid}] Using fresh metagraph data: stake={stake_value:.2f}, vtrust={trust_value:.4f}")
             else:
                 # Fallback to DB snapshot data for stake/vtrust
                 if validator_info and validator_info.stake is not None:
@@ -1944,10 +1752,7 @@ class OverviewService:
                     except (TypeError, ValueError):
                         trust_value = 0.0
 
-                logger.debug(
-                    f"[Validator {validator_uid}] Using DB snapshot data: "
-                    f"stake={stake_value:.2f}, vtrust={trust_value:.4f}"
-                )
+                logger.debug(f"[Validator {validator_uid}] Using DB snapshot data: stake={stake_value:.2f}, vtrust={trust_value:.4f}")
 
             # Version is ALWAYS from DB (not in metagraph)
             if validator_info and validator_info.version:
@@ -1955,9 +1760,7 @@ class OverviewService:
 
             if display_round:
                 total_tasks = display_round.n_tasks or 0
-                completed_tasks = self.rounds_service._estimate_completed_tasks(
-                    display_round
-                )
+                completed_tasks = self.rounds_service._estimate_completed_tasks(display_round)
                 validator_round_id = display_round.validator_round_id
             else:
                 total_tasks = 0
@@ -1965,16 +1768,8 @@ class OverviewService:
                 validator_round_id = None
 
             total_runs = len(contexts_flat)
-            successful_runs = len(
-                [
-                    ctx
-                    for ctx in contexts_flat
-                    if self.rounds_service._context_score(ctx) >= 0.5
-                ]
-            )
-            has_scores = any(
-                self.rounds_service._context_score(ctx) > 0.0 for ctx in contexts_flat
-            )
+            successful_runs = len([ctx for ctx in contexts_flat if self.rounds_service._context_score(ctx) >= 0.5])
+            has_scores = any(self.rounds_service._context_score(ctx) > 0.0 for ctx in contexts_flat)
 
             last_activity_candidates: List[float] = []
             # Prefer current round activity; otherwise fall back to last participation
@@ -1992,14 +1787,8 @@ class OverviewService:
                     elif context.run.started_at:
                         last_activity_candidates.append(context.run.started_at)
 
-            last_activity_ts = (
-                max(last_activity_candidates) if last_activity_candidates else None
-            )
-            seconds_since_activity = (
-                max(0.0, now_ts - last_activity_ts)
-                if last_activity_ts is not None
-                else None
-            )
+            last_activity_ts = max(last_activity_candidates) if last_activity_candidates else None
+            seconds_since_activity = max(0.0, now_ts - last_activity_ts) if last_activity_ts is not None else None
 
             validator_round = current_record.model if current_record else None
 
@@ -2085,9 +1874,7 @@ class OverviewService:
             derived_status = "active"
 
         return RoundInfo(
-            id=int(
-                round_obj.round_number or _round_id_to_int(round_obj.validator_round_id)
-            ),
+            id=int(round_obj.round_number or _round_id_to_int(round_obj.validator_round_id)),
             startBlock=round_obj.start_block,
             endBlock=round_obj.end_block or round_obj.start_block + 360,
             current=current,
