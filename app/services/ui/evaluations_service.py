@@ -18,6 +18,8 @@ from app.db.models import (
     AgentEvaluationRunORM,
     EvaluationORM,
     RoundORM,
+    ValidatorRoundORM,
+    ValidatorRoundMinerORM,
     TaskORM,
     TaskSolutionORM,
 )
@@ -216,6 +218,56 @@ class EvaluationsService:
             "page": page,
             "limit": limit,
         }
+
+    async def export_evaluations_by_season(self, season: int) -> List[Dict[str, object]]:
+        stmt = (
+            select(
+                EvaluationORM,
+                ValidatorRoundORM.season_number,
+                ValidatorRoundORM.round_number_in_season,
+            )
+            .join(
+                ValidatorRoundORM,
+                EvaluationORM.validator_round_id == ValidatorRoundORM.validator_round_id,
+            )
+            .join(
+                ValidatorRoundMinerORM,
+                (ValidatorRoundMinerORM.validator_round_id == EvaluationORM.validator_round_id)
+                & (ValidatorRoundMinerORM.miner_uid == EvaluationORM.miner_uid),
+            )
+            .where(ValidatorRoundORM.season_number == season)
+            .where(ValidatorRoundMinerORM.is_sota.is_(True))
+            .order_by(EvaluationORM.id.asc())
+        )
+
+        rows = (await self.session.execute(stmt)).all()
+        export_items: List[Dict[str, object]] = []
+        for evaluation_row, season_number, round_number_in_season in rows:
+            export_items.append(
+                {
+                    "evaluation_id": evaluation_row.evaluation_id,
+                    "validator_round_id": evaluation_row.validator_round_id,
+                    "agent_run_id": evaluation_row.agent_run_id,
+                    "task_id": evaluation_row.task_id,
+                    "task_solution_id": evaluation_row.task_solution_id,
+                    "miner_uid": evaluation_row.miner_uid,
+                    "validator_uid": evaluation_row.validator_uid,
+                    "eval_score": evaluation_row.eval_score,
+                    "reward": evaluation_row.reward,
+                    "evaluation_time": evaluation_row.evaluation_time,
+                    "llm_cost": evaluation_row.llm_cost,
+                    "llm_tokens": evaluation_row.llm_tokens,
+                    "llm_provider": evaluation_row.llm_provider,
+                    "llm_model": evaluation_row.llm_model,
+                    "season": season_number,
+                    "round_in_season": round_number_in_season,
+                    "created_at": evaluation_row.created_at.isoformat()
+                    if evaluation_row.created_at
+                    else None,
+                }
+            )
+
+        return export_items
 
     async def get_evaluation(self, evaluation_id: str) -> EvaluationContext:
         stmt = (

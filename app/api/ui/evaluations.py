@@ -64,6 +64,16 @@ async def list_evaluations(
     return EvaluationListResponse(success=True, data=data)
 
 
+@router.get("/export")
+async def export_evaluations_by_season(
+    season: int = Query(..., description="Season number to export evaluations for"),
+    session: AsyncSession = Depends(get_session),
+):
+    service = await _service(session)
+    data = await service.export_evaluations_by_season(season=season)
+    return {"success": True, "data": {"season": season, "evaluations": data}}
+
+
 @router.get("/{evaluation_id}", response_model=EvaluationDetailResponse)
 async def get_evaluation(
     evaluation_id: str,
