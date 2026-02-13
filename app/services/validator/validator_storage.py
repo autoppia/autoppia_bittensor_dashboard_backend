@@ -120,6 +120,27 @@ def _optional_dump(value: Any) -> Optional[Dict[str, Any]]:
     return value
 
 
+def _strip_round_prefix(task_id: str, round_id: str) -> Optional[str]:
+    prefix = f"{round_id}_"
+    if task_id.startswith(prefix):
+        return task_id[len(prefix) :]
+    return None
+
+
+def _make_solution_id(miner_uid: Optional[int]) -> str:
+    suffix = uuid.uuid4().hex
+    if miner_uid is None:
+        return f"task_solution_{suffix}"
+    return f"task_solution_{miner_uid}_{suffix}"
+
+
+def _make_evaluation_id(miner_uid: Optional[int]) -> str:
+    suffix = uuid.uuid4().hex
+    if miner_uid is None:
+        return f"evaluation_{suffix}"
+    return f"evaluation_{miner_uid}_{suffix}"
+
+
 class ValidatorRoundPersistenceService:
     """Handle persisting validator round submissions into the SQL database."""
 
@@ -439,27 +460,6 @@ class ValidatorRoundPersistenceService:
             )
 
         return cloned
-
-
-def _strip_round_prefix(task_id: str, round_id: str) -> Optional[str]:
-    prefix = f"{round_id}_"
-    if task_id.startswith(prefix):
-        return task_id[len(prefix) :]
-    return None
-
-
-def _make_solution_id(miner_uid: Optional[int]) -> str:
-    suffix = uuid.uuid4().hex
-    if miner_uid is None:
-        return f"task_solution_{suffix}"
-    return f"task_solution_{miner_uid}_{suffix}"
-
-
-def _make_evaluation_id(miner_uid: Optional[int]) -> str:
-    suffix = uuid.uuid4().hex
-    if miner_uid is None:
-        return f"evaluation_{suffix}"
-    return f"evaluation_{miner_uid}_{suffix}"
 
     async def get_round_by_validator_and_number(
         self,
