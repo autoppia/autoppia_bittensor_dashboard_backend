@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional
 
-from sqlalchemy import Select, func, select, delete
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, defer
-from app.services.round_calc import (
-    compute_boundaries_for_round,
-    compute_season_number,
-)
 from app.config import settings
 
 from app.db.models import (
@@ -23,6 +19,8 @@ from app.db.models import (
     ValidatorRoundSummaryORM,
     ValidatorRoundValidatorORM,
 )
+import logging
+
 from app.models.core import (
     AgentEvaluationRun,
     Evaluation,
@@ -35,6 +33,8 @@ from app.models.core import (
     ValidatorRoundSubmissionRequest,
     ValidatorRoundValidator,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -59,7 +59,7 @@ def _clean_meta_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Clean metadata dict, removing empty or useless fields."""
     if not value:
         return {}
-    
+
     # Fields that are considered useless if empty or have default values
     useless_fields = {
         "notes": "",
@@ -69,7 +69,7 @@ def _clean_meta_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "reward": 0.0,  # Already stored in reward column
         "final_score": 0.0,  # Legacy field name (replaced by eval_score)
     }
-    
+
     cleaned = {}
     for key, val in value.items():
         # Skip if it's a useless field with default/empty value
@@ -80,7 +80,7 @@ def _clean_meta_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             continue
         # Include the field
         cleaned[key] = val
-    
+
     return cleaned
 
 
@@ -138,11 +138,7 @@ class ValidatorRoundPersistenceService:
     ) -> ValidatorRoundORM:
         """Create a new validator round and store the initial snapshot."""
         # Check for existing round with same season and round_in_season for this validator
-        await self._purge_round_for_validator_season_and_round(
-            validator_round.validator_uid,
-            validator_round.season_number,
-            validator_round.round_number_in_season
-        )
+        await self._purge_round_for_validator_season_and_round(validator_round.validator_uid, validator_round.season_number, validator_round.round_number_in_season)
         await self._ensure_unique_season_round(
             validator_round.validator_uid,
             validator_round.season_number,
@@ -151,9 +147,7 @@ class ValidatorRoundPersistenceService:
 
         existing_round = await self._get_round_row(validator_round.validator_round_id)
         if existing_round is not None:
-            raise DuplicateIdentifierError(
-                f"validator_round_id {validator_round.validator_round_id} is already registered"
-            )
+            raise DuplicateIdentifierError(f"validator_round_id {validator_round.validator_round_id} is already registered")
 
         round_kwargs = self._validator_round_kwargs(validator_round)
 
@@ -161,9 +155,7 @@ class ValidatorRoundPersistenceService:
         self.session.add(round_row)
         await self.session.flush()
 
-        snapshot_row = await self._upsert_validator_snapshot(
-            round_row, validator_snapshot
-        )
+        await self._upsert_validator_snapshot(round_row, validator_snapshot)
 
         return round_row
 
@@ -175,9 +167,6 @@ class ValidatorRoundPersistenceService:
         allow_existing: bool = False,
     ) -> int:
         """Persist or update tasks associated with a validator round."""
-        import logging
-        logger = logging.getLogger(__name__)
-        
         round_row = await self._ensure_round_exists(validator_round_id)
         count = 0
         for task in tasks:
@@ -189,27 +178,17 @@ class ValidatorRoundPersistenceService:
 
             if existing:
                 if existing.validator_round_id != validator_round_id:
-                    raise DuplicateIdentifierError(
-                        f"task_id {task.task_id} already belongs to validator_round {existing.validator_round_id}"
-                    )
+                    raise DuplicateIdentifierError(f"task_id {task.task_id} already belongs to validator_round {existing.validator_round_id}")
                 if allow_existing:
-                    logger.debug(
-                        f"Task {task.task_id} already exists for validator_round {validator_round_id}, skipping (idempotent)"
-                    )
+                    logger.debug(f"Task {task.task_id} already exists for validator_round {validator_round_id}, skipping (idempotent)")
                     continue
-                raise DuplicateIdentifierError(
-                    f"task_id {task.task_id} already exists for validator_round {validator_round_id}"
-                )
+                raise DuplicateIdentifierError(f"task_id {task.task_id} already exists for validator_round {validator_round_id}")
 
-            logger.debug(
-                f"Adding new task {task.task_id} for validator_round {validator_round_id}"
-            )
+            logger.debug(f"Adding new task {task.task_id} for validator_round {validator_round_id}")
             self.session.add(TaskORM(**kwargs))
             count += 1
-        
-        logger.info(
-            f"add_tasks: {count} new tasks added, {len(tasks) - count} already existed for validator_round {validator_round_id}"
-        )
+
+        logger.info(f"add_tasks: {count} new tasks added, {len(tasks) - count} already existed for validator_round {validator_round_id}")
         return count
 
     async def start_agent_run(
@@ -230,14 +209,13 @@ class ValidatorRoundPersistenceService:
                 # Same agent_run_id for same round - idempotent, return existing
                 return existing_run
             else:
-                raise DuplicateIdentifierError(
-                    f"agent_run_id {agent_run.agent_run_id} is already registered for a different round"
-                )
-        
+                raise DuplicateIdentifierError(f"agent_run_id {agent_run.agent_run_id} is already registered for a different round")
+
         # CRITICAL: Check if there's already an agent_run for this miner in this round
         # An agent run should be unique per (validator_round_id, miner_uid)
         if agent_run.miner_uid is not None:
             from app.db.models import AgentEvaluationRunORM
+
             stmt_existing = (
                 select(AgentEvaluationRunORM)
                 .where(
@@ -248,7 +226,7 @@ class ValidatorRoundPersistenceService:
             )
             result_existing = await self.session.execute(stmt_existing)
             existing_for_miner = result_existing.scalar_one_or_none()
-            
+
             if existing_for_miner:
                 # There's already an agent_run for this miner in this round
                 # Return the existing one instead of creating a duplicate
@@ -275,7 +253,7 @@ class ValidatorRoundPersistenceService:
         round_number: int,
     ) -> Optional[ValidatorRoundORM]:
         """DEPRECATED: Fetch an existing round row by (validator_uid, round_number).
-        
+
         This method is deprecated. Use season_number and round_number_in_season instead.
         """
         # This method is kept for backward compatibility but should not be used
@@ -297,14 +275,10 @@ class ValidatorRoundPersistenceService:
         if not agent_run_row:
             raise ValueError(f"Agent run {agent_run_id} has not been registered yet")
         if agent_run_row.validator_round_id != validator_round_id:
-            raise ValueError(
-                f"Agent run {agent_run_id} is not associated with validator_round {validator_round_id}"
-            )
+            raise ValueError(f"Agent run {agent_run_id} is not associated with validator_round {validator_round_id}")
 
         if task.validator_round_id != validator_round_id:
-            raise ValueError(
-                f"Task {task.task_id} does not belong to validator_round {validator_round_id}"
-            )
+            raise ValueError(f"Task {task.task_id} does not belong to validator_round {validator_round_id}")
 
         existing_task = await self._get_task_row(task.task_id)
         if existing_task is None:
@@ -312,45 +286,31 @@ class ValidatorRoundPersistenceService:
             # This handles cases where set_tasks failed but we still want to accept evaluations
             if settings.TESTING:
                 import logging
+
                 logger = logging.getLogger(__name__)
-                logger.warning(
-                    f"TESTING mode: Task {task.task_id} not found, auto-registering for validator_round {validator_round_id}"
-                )
+                logger.warning(f"TESTING mode: Task {task.task_id} not found, auto-registering for validator_round {validator_round_id}")
                 try:
                     await self.add_tasks(validator_round_id, [task], allow_existing=True)
                     existing_task = await self._get_task_row(task.task_id)
                     if existing_task is None:
-                        raise ValueError(
-                            f"Failed to auto-register task {task.task_id} for validator_round {validator_round_id}"
-                        )
+                        raise ValueError(f"Failed to auto-register task {task.task_id} for validator_round {validator_round_id}")
                 except Exception as exc:
                     logger.error(
                         f"Failed to auto-register task {task.task_id}: {exc}",
                         exc_info=True,
                     )
-                    raise ValueError(
-                        f"Task {task.task_id} has not been registered for validator_round {validator_round_id} and auto-registration failed: {exc}"
-                    ) from exc
+                    raise ValueError(f"Task {task.task_id} has not been registered for validator_round {validator_round_id} and auto-registration failed: {exc}") from exc
             else:
-                raise ValueError(
-                    f"Task {task.task_id} has not been registered for validator_round {validator_round_id}"
-                )
+                raise ValueError(f"Task {task.task_id} has not been registered for validator_round {validator_round_id}")
         if existing_task.validator_round_id != validator_round_id:
-            raise ValueError(
-                f"Task {task.task_id} is registered under validator_round {existing_task.validator_round_id}, "
-                f"not {validator_round_id}"
-            )
+            raise ValueError(f"Task {task.task_id} is registered under validator_round {existing_task.validator_round_id}, not {validator_round_id}")
 
         # Task solution
         solution_kwargs = self._task_solution_kwargs(task_solution)
-        stmt_solution = select(TaskSolutionORM).where(
-            TaskSolutionORM.solution_id == task_solution.solution_id
-        )
+        stmt_solution = select(TaskSolutionORM).where(TaskSolutionORM.solution_id == task_solution.solution_id)
         existing_solution = await self.session.scalar(stmt_solution)
         if existing_solution:
-            raise DuplicateIdentifierError(
-                f"task_solution_id {task_solution.solution_id} is already registered"
-            )
+            raise DuplicateIdentifierError(f"task_solution_id {task_solution.solution_id} is already registered")
         solution_row = TaskSolutionORM(**solution_kwargs)
         self.session.add(solution_row)
 
@@ -361,30 +321,27 @@ class ValidatorRoundPersistenceService:
         evaluation_kwargs = self._evaluation_kwargs(evaluation)
         if not evaluation_kwargs.get("validator_hotkey") and round_row.validator_snapshot:
             evaluation_kwargs["validator_hotkey"] = round_row.validator_snapshot.validator_hotkey
-        
+
         # Ensure miner_uid and miner_hotkey are set from agent_run if not in evaluation model
         if not evaluation_kwargs.get("miner_uid") and agent_run_row.miner_uid is not None:
             evaluation_kwargs["miner_uid"] = agent_run_row.miner_uid
         if not evaluation_kwargs.get("miner_hotkey") and agent_run_row.miner_hotkey:
             evaluation_kwargs["miner_hotkey"] = agent_run_row.miner_hotkey
-        
+
         # Separate execution_history to store in related table
         execution_history_data = evaluation_kwargs.pop("execution_history", [])
-        
-        stmt_evaluation = select(EvaluationORM).where(
-            EvaluationORM.evaluation_id == evaluation.evaluation_id
-        )
+
+        stmt_evaluation = select(EvaluationORM).where(EvaluationORM.evaluation_id == evaluation.evaluation_id)
         existing_evaluation = await self.session.scalar(stmt_evaluation)
         if existing_evaluation:
-            raise DuplicateIdentifierError(
-                f"evaluation_id {evaluation.evaluation_id} is already registered"
-            )
+            raise DuplicateIdentifierError(f"evaluation_id {evaluation.evaluation_id} is already registered")
         evaluation_row = EvaluationORM(**evaluation_kwargs)
         self.session.add(evaluation_row)
 
         # Create execution_history record if there's data
         if execution_history_data:
             from app.db.models import EvaluationExecutionHistoryORM
+
             await self.session.flush()  # Get evaluation.id
             execution_history_row = EvaluationExecutionHistoryORM(
                 evaluations_id=evaluation_row.id,
@@ -392,15 +349,15 @@ class ValidatorRoundPersistenceService:
             )
             self.session.add(execution_history_row)
 
-        # Persist per-model/provider LLM usage if provided
-        await self._sync_llm_usage(evaluation_row, getattr(evaluation, "llm_usage", None))
-        
+        # Persist per-model/provider LLM usage (from llm_usage or from scalar llm_* for subnet compat)
+        await self._sync_llm_usage(evaluation_row, self._llm_usage_from_evaluation(evaluation))
+
         # 🔍 CRITICAL: Update agent_run stats immediately after adding evaluation
         # This ensures average_score is NEVER NULL if there are evaluations
         # Previously, average_score was only updated in finish_round, which could
         # be called before all evaluations were created, leaving average_score as NULL
         await self.session.flush()  # Ensure evaluation is persisted before recalculating
-        
+
         # Reload agent_run with evaluations and task_solutions to recalc stats without lazy loads
         await self.session.refresh(agent_run_row, ["evaluations", "task_solutions"])
         metrics = self._compute_agent_run_stats(agent_run_row)
@@ -410,7 +367,7 @@ class ValidatorRoundPersistenceService:
         agent_run_row.average_score = metrics["average_score"]
         agent_run_row.average_execution_time = metrics["average_execution_time"]
         agent_run_row.average_reward = metrics["average_reward"]
-        
+
         # Reaching here means fresh insert path; idempotency is handled at endpoint by
         # detecting duplicates before writes. This method intentionally raises
         # DuplicateIdentifierError when any of the IDs already exist.
@@ -436,36 +393,22 @@ class ValidatorRoundPersistenceService:
         if not agent_run_row:
             raise ValueError(f"Agent run {agent_run_id} has not been registered yet")
         if agent_run_row.validator_round_id != validator_round_id:
-            raise ValueError(
-                f"Agent run {agent_run_id} is not associated with validator_round {validator_round_id}"
-            )
+            raise ValueError(f"Agent run {agent_run_id} is not associated with validator_round {validator_round_id}")
 
         # Ensure task exists and belongs to round
         if task.validator_round_id != validator_round_id:
-            raise ValueError(
-                f"Task {task.task_id} does not belong to validator_round {validator_round_id}"
-            )
+            raise ValueError(f"Task {task.task_id} does not belong to validator_round {validator_round_id}")
         existing_task = await self._get_task_row(task.task_id)
         if existing_task is None:
-            raise ValueError(
-                f"Task {task.task_id} has not been registered for validator_round {validator_round_id}"
-            )
+            raise ValueError(f"Task {task.task_id} has not been registered for validator_round {validator_round_id}")
         if existing_task.validator_round_id != validator_round_id:
-            raise ValueError(
-                f"Task {task.task_id} is registered under validator_round {existing_task.validator_round_id}, not {validator_round_id}"
-            )
+            raise ValueError(f"Task {task.task_id} is registered under validator_round {existing_task.validator_round_id}, not {validator_round_id}")
 
         # Task solution upsert/validate
         existing_solution = await self.get_task_solution_row(task_solution.solution_id)
         if existing_solution is not None:
-            if (
-                existing_solution.validator_round_id != validator_round_id
-                or existing_solution.agent_run_id != agent_run_id
-                or existing_solution.task_id != task.task_id
-            ):
-                raise DuplicateIdentifierError(
-                    f"task_solution_id {task_solution.solution_id} already belongs to a different context"
-                )
+            if existing_solution.validator_round_id != validator_round_id or existing_solution.agent_run_id != agent_run_id or existing_solution.task_id != task.task_id:
+                raise DuplicateIdentifierError(f"task_solution_id {task_solution.solution_id} already belongs to a different context")
             solution_row = existing_solution
         else:
             solution_kwargs = self._task_solution_kwargs(task_solution)
@@ -482,9 +425,7 @@ class ValidatorRoundPersistenceService:
                     # Race condition: solution was inserted by concurrent request
                     await self.session.rollback()
                     # Reload the existing solution
-                    existing_solution = await self.get_task_solution_row(
-                        task_solution.solution_id
-                    )
+                    existing_solution = await self.get_task_solution_row(task_solution.solution_id)
                     if existing_solution:
                         solution_row = existing_solution
                     else:
@@ -501,32 +442,31 @@ class ValidatorRoundPersistenceService:
                 or existing_eval.task_id != task.task_id
                 or existing_eval.task_solution_id != task_solution.solution_id
             ):
-                raise DuplicateIdentifierError(
-                    f"evaluation_id {evaluation.evaluation_id} already belongs to a different context"
-                )
+                raise DuplicateIdentifierError(f"evaluation_id {evaluation.evaluation_id} already belongs to a different context")
             evaluation_row = existing_eval
-            await self._sync_llm_usage(evaluation_row, getattr(evaluation, "llm_usage", None))
+            await self._sync_llm_usage(evaluation_row, self._llm_usage_from_evaluation(evaluation))
         else:
             evaluation_kwargs = self._evaluation_kwargs(evaluation)
             # Ensure validator_hotkey is set from round if not in evaluation model
             if not evaluation_kwargs.get("validator_hotkey") and round_row.validator_snapshot:
                 evaluation_kwargs["validator_hotkey"] = round_row.validator_snapshot.validator_hotkey
-            
+
             # Ensure miner_uid and miner_hotkey are set from agent_run if not in evaluation model
             if not evaluation_kwargs.get("miner_uid") and agent_run_row.miner_uid is not None:
                 evaluation_kwargs["miner_uid"] = agent_run_row.miner_uid
             if not evaluation_kwargs.get("miner_hotkey") and agent_run_row.miner_hotkey:
                 evaluation_kwargs["miner_hotkey"] = agent_run_row.miner_hotkey
-            
+
             # Separate execution_history to store in related table
             execution_history_data = evaluation_kwargs.pop("execution_history", [])
-            
+
             evaluation_row = EvaluationORM(**evaluation_kwargs)
             self.session.add(evaluation_row)
-            
+
             # Create execution_history record if there's data
             if execution_history_data:
                 from app.db.models import EvaluationExecutionHistoryORM
+
                 await self.session.flush()  # Get evaluation.id
                 execution_history_row = EvaluationExecutionHistoryORM(
                     evaluations_id=evaluation_row.id,
@@ -542,9 +482,7 @@ class ValidatorRoundPersistenceService:
 
                 if isinstance(e, IntegrityError) and "uq_evaluation_id" in str(e):
                     await self.session.rollback()
-                    existing_eval = await self.get_evaluation_row(
-                        evaluation.evaluation_id
-                    )
+                    existing_eval = await self.get_evaluation_row(evaluation.evaluation_id)
                     if existing_eval:
                         evaluation_row = existing_eval
                     else:
@@ -552,9 +490,9 @@ class ValidatorRoundPersistenceService:
                 else:
                     raise
 
-            # Persist per-model/provider LLM usage if provided
-            await self._sync_llm_usage(evaluation_row, getattr(evaluation, "llm_usage", None))
-            
+            # Persist per-model/provider LLM usage (from llm_usage or scalar llm_* for subnet compat)
+            await self._sync_llm_usage(evaluation_row, self._llm_usage_from_evaluation(evaluation))
+
             # 🔍 CRITICAL: Update agent_run stats immediately after adding new evaluation
             # This ensures average_score is NEVER NULL if there are evaluations
             # Only update if this was a new evaluation (not existing)
@@ -567,21 +505,17 @@ class ValidatorRoundPersistenceService:
             agent_run_row.average_execution_time = metrics["average_execution_time"]
             agent_run_row.average_reward = metrics["average_reward"]
 
-
     # ──────────────────────────────────────────────────────────────────────
     # Read-only helpers for idempotency checks
     # ──────────────────────────────────────────────────────────────────────
 
-    async def get_task_solution_row(
-        self, solution_id: str
-    ) -> Optional[TaskSolutionORM]:
+    async def get_task_solution_row(self, solution_id: str) -> Optional[TaskSolutionORM]:
         stmt = select(TaskSolutionORM).where(TaskSolutionORM.solution_id == solution_id)
         return await self.session.scalar(stmt)
 
     async def get_evaluation_row(self, evaluation_id: str) -> Optional[EvaluationORM]:
         stmt = select(EvaluationORM).where(EvaluationORM.evaluation_id == evaluation_id)
         return await self.session.scalar(stmt)
-
 
     async def finish_round(
         self,
@@ -600,12 +534,10 @@ class ValidatorRoundPersistenceService:
         round_row = await self._ensure_round_exists(validator_round_id)
         # Ensure start/end epoch are populated even when testing overrides bypassed chain-boundary fill
         try:
-            if (
-                getattr(round_row, "start_epoch", None) is None
-                or getattr(round_row, "end_epoch", None) is None
-            ):
+            if getattr(round_row, "start_epoch", None) is None or getattr(round_row, "end_epoch", None) is None:
                 # Calculate epochs from start_block
                 from app.services.round_calc import block_to_epoch
+
                 if getattr(round_row, "start_epoch", None) is None:
                     round_row.start_epoch = int(block_to_epoch(round_row.start_block))
                 if getattr(round_row, "end_epoch", None) is None:
@@ -651,10 +583,11 @@ class ValidatorRoundPersistenceService:
         # Check if emission is already in round_metadata (preferred)
         if round_metadata and isinstance(round_metadata, dict):
             emission_info = round_metadata.get("emission", {})
-        
+
         # Fallback: extract from post_consensus_evaluation (backward compatibility)
         if not emission_info and post_consensus_evaluation:
             import copy
+
             post_consensus_copy = copy.deepcopy(post_consensus_evaluation)
             emission_info = post_consensus_copy.get("emission", {})
             # Remove emission from post_consensus_evaluation if it was there
@@ -715,13 +648,13 @@ class ValidatorRoundPersistenceService:
             select(AgentEvaluationRunORM)
             .options(
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations).options(
+                selectinload(AgentEvaluationRunORM.evaluations)
+                .options(
                     defer(EvaluationORM.feedback),
                     defer(EvaluationORM.gif_recording),
                     defer(EvaluationORM.meta),
-                ).selectinload(
-                    EvaluationORM.execution_history_record
-                ),
+                )
+                .selectinload(EvaluationORM.execution_history_record),
             )
             .where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
         )
@@ -754,9 +687,7 @@ class ValidatorRoundPersistenceService:
             subnet_price=alpha_price,
         )
 
-    async def submit_round(
-        self, payload: ValidatorRoundSubmissionRequest
-    ) -> PersistenceResult:
+    async def submit_round(self, payload: ValidatorRoundSubmissionRequest) -> PersistenceResult:
         """Persist the entire round submission payload."""
         self._assert_unique_payload(payload)
 
@@ -799,14 +730,10 @@ class ValidatorRoundPersistenceService:
         agent_run_ids: List[str] = []
         for agent_run in payload.agent_evaluation_runs:
             kwargs = self._agent_run_kwargs(agent_run)
-            stmt = select(AgentEvaluationRunORM).where(
-                AgentEvaluationRunORM.agent_run_id == agent_run.agent_run_id
-            )
+            stmt = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == agent_run.agent_run_id)
             existing = await self.session.scalar(stmt)
             if existing:
-                raise DuplicateIdentifierError(
-                    f"agent_run_id {agent_run.agent_run_id} is provided multiple times"
-                )
+                raise DuplicateIdentifierError(f"agent_run_id {agent_run.agent_run_id} is provided multiple times")
             self.session.add(AgentEvaluationRunORM(**kwargs))
             agent_run_ids.append(agent_run.agent_run_id)
 
@@ -818,14 +745,10 @@ class ValidatorRoundPersistenceService:
         task_solution_ids: List[str] = []
         for solution in payload.task_solutions:
             kwargs = self._task_solution_kwargs(solution)
-            stmt = select(TaskSolutionORM).where(
-                TaskSolutionORM.solution_id == solution.solution_id
-            )
+            stmt = select(TaskSolutionORM).where(TaskSolutionORM.solution_id == solution.solution_id)
             existing = await self.session.scalar(stmt)
             if existing:
-                raise DuplicateIdentifierError(
-                    f"task_solution_id {solution.solution_id} is provided multiple times"
-                )
+                raise DuplicateIdentifierError(f"task_solution_id {solution.solution_id} is provided multiple times")
             self.session.add(TaskSolutionORM(**kwargs))
             task_solution_ids.append(solution.solution_id)
 
@@ -833,53 +756,48 @@ class ValidatorRoundPersistenceService:
         evaluation_ids: List[str] = []
         evaluation_rows: Dict[str, EvaluationORM] = {}
         execution_histories: List[tuple[EvaluationORM, list]] = []  # Store for later creation
-        
+
         for evaluation in payload.evaluations:
             kwargs = self._evaluation_kwargs(evaluation)
-            
+
             # Ensure miner_uid and miner_hotkey are set from agent_run if not in evaluation model
             if not kwargs.get("miner_uid") or not kwargs.get("miner_hotkey"):
                 # Find the agent_run to get miner info
-                agent_run_stmt = select(AgentEvaluationRunORM).where(
-                    AgentEvaluationRunORM.agent_run_id == evaluation.agent_run_id
-                )
+                agent_run_stmt = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == evaluation.agent_run_id)
                 agent_run_row = await self.session.scalar(agent_run_stmt)
                 if agent_run_row:
                     if not kwargs.get("miner_uid") and agent_run_row.miner_uid is not None:
                         kwargs["miner_uid"] = agent_run_row.miner_uid
                     if not kwargs.get("miner_hotkey") and agent_run_row.miner_hotkey:
                         kwargs["miner_hotkey"] = agent_run_row.miner_hotkey
-            
+
             # Separate execution_history to store in related table
             execution_history_data = kwargs.pop("execution_history", [])
-            
-            stmt = select(EvaluationORM).where(
-                EvaluationORM.evaluation_id == evaluation.evaluation_id
-            )
+
+            stmt = select(EvaluationORM).where(EvaluationORM.evaluation_id == evaluation.evaluation_id)
             existing = await self.session.scalar(stmt)
             if existing:
-                raise DuplicateIdentifierError(
-                    f"evaluation_id {evaluation.evaluation_id} is provided multiple times"
-                )
+                raise DuplicateIdentifierError(f"evaluation_id {evaluation.evaluation_id} is provided multiple times")
             evaluation_row = EvaluationORM(**kwargs)
             self.session.add(evaluation_row)
             evaluation_ids.append(evaluation.evaluation_id)
             evaluation_rows[evaluation.evaluation_id] = evaluation_row
-            
+
             if execution_history_data:
                 execution_histories.append((evaluation_row, execution_history_data))
 
         await self.session.flush()
 
-        # Persist per-model/provider LLM usage (after flush so eval rows exist)
+        # Persist per-model/provider LLM usage (after flush so eval rows exist; subnet can send llm_* scalars)
         for evaluation in payload.evaluations:
             eval_row = evaluation_rows.get(evaluation.evaluation_id)
             if eval_row is not None:
-                await self._sync_llm_usage(eval_row, getattr(evaluation, "llm_usage", None))
-        
+                await self._sync_llm_usage(eval_row, self._llm_usage_from_evaluation(evaluation))
+
         # Create execution_history records after flush (so we have evaluation.id)
         if execution_histories:
             from app.db.models import EvaluationExecutionHistoryORM
+
             for evaluation_row, execution_history_data in execution_histories:
                 execution_history_row = EvaluationExecutionHistoryORM(
                     evaluations_id=evaluation_row.id,
@@ -891,15 +809,12 @@ class ValidatorRoundPersistenceService:
         # This ensures average_score is NEVER NULL if there are evaluations
         # This is especially important for submit_round which adds multiple evaluations at once
         if agent_run_ids:
-            from sqlalchemy.orm import selectinload, defer
-            stmt_runs = (
-                select(AgentEvaluationRunORM)
-                .options(selectinload(AgentEvaluationRunORM.evaluations))
-                .where(AgentEvaluationRunORM.agent_run_id.in_(agent_run_ids))
-            )
+            from sqlalchemy.orm import selectinload
+
+            stmt_runs = select(AgentEvaluationRunORM).options(selectinload(AgentEvaluationRunORM.evaluations)).where(AgentEvaluationRunORM.agent_run_id.in_(agent_run_ids))
             run_rows_result = await self.session.scalars(stmt_runs)
             run_rows = list(run_rows_result)
-            
+
             for run_row in run_rows:
                 metrics = self._compute_agent_run_stats(run_row)
                 run_row.total_tasks = metrics["total_tasks"]
@@ -936,9 +851,7 @@ class ValidatorRoundPersistenceService:
         except (TypeError, ValueError):
             return None
 
-    def _compute_agent_run_stats(
-        self, run_row: AgentEvaluationRunORM
-    ) -> Dict[str, Any]:
+    def _compute_agent_run_stats(self, run_row: AgentEvaluationRunORM) -> Dict[str, Any]:
         task_solutions = list(getattr(run_row, "task_solutions", []) or [])
         evaluations = list(getattr(run_row, "evaluations", []) or [])
 
@@ -946,12 +859,12 @@ class ValidatorRoundPersistenceService:
         # (even if the miner didn't respond, we create an evaluation with score 0.0)
         # So total_tasks = len(evaluations) is correct
         total_tasks = len(evaluations)
-        
+
         # If no evaluations yet, fall back to counting unique task_ids from solutions
         if total_tasks == 0:
             task_ids = {solution.task_id for solution in task_solutions if solution.task_id}
             total_tasks = len(task_ids) if task_ids else (run_row.total_tasks or 0)
-        
+
         total_tasks = int(total_tasks or 0)
 
         scores: List[float] = []
@@ -968,7 +881,7 @@ class ValidatorRoundPersistenceService:
                 # This should never happen if task_flow.py is working correctly,
                 # but we handle it defensively
                 scores.append(0.0)
-        
+
         # 🔍 CRITICAL: average_score should NEVER be None if there are evaluations
         # If there are evaluations, we should always have scores (even if all are 0.0)
         # If there are no evaluations, average_score can be None (round not finished yet)
@@ -991,9 +904,7 @@ class ValidatorRoundPersistenceService:
             value = self._to_float(getattr(eval_obj, "evaluation_time", None))
             if value is not None and value >= 0.0:
                 evaluation_times.append(value)
-        average_execution_time = (
-            sum(evaluation_times) / len(evaluation_times) if evaluation_times else None
-        )
+        average_execution_time = sum(evaluation_times) / len(evaluation_times) if evaluation_times else None
 
         reward_values: List[float] = []
         for eval_obj in evaluations:
@@ -1010,11 +921,7 @@ class ValidatorRoundPersistenceService:
             if value is not None:
                 reward_values.append(value)
 
-        average_reward = (
-            (sum(reward_values) / len(reward_values))
-            if reward_values and len(reward_values) > 0
-            else None
-        )
+        average_reward = (sum(reward_values) / len(reward_values)) if reward_values and len(reward_values) > 0 else None
 
         return {
             "total_tasks": total_tasks,
@@ -1029,20 +936,12 @@ class ValidatorRoundPersistenceService:
     # Helper utilities
     # ------------------------------------------------------------------
 
-    async def _get_round_row(
-        self, validator_round_id: str
-    ) -> Optional[ValidatorRoundORM]:
+    async def _get_round_row(self, validator_round_id: str) -> Optional[ValidatorRoundORM]:
         # Load with eager loading for validator_snapshot (1:1 relationship)
-        stmt = (
-            select(ValidatorRoundORM)
-            .options(selectinload(ValidatorRoundORM.validator_snapshot))
-            .where(ValidatorRoundORM.validator_round_id == validator_round_id)
-        )
+        stmt = select(ValidatorRoundORM).options(selectinload(ValidatorRoundORM.validator_snapshot)).where(ValidatorRoundORM.validator_round_id == validator_round_id)
         return await self.session.scalar(stmt)
 
-    async def _purge_round_for_validator_and_number(
-        self, validator_uid: int, round_number: Optional[int]
-    ) -> None:
+    async def _purge_round_for_validator_and_number(self, validator_uid: int, round_number: Optional[int]) -> None:
         """DEPRECATED: Delete any existing round for this validator and round_number (and cascade children)."""
         if round_number is None:
             return
@@ -1064,9 +963,7 @@ class ValidatorRoundPersistenceService:
             await self.session.delete(row)
         await self.session.flush()
 
-    async def _purge_round_for_validator_season_and_round(
-        self, validator_uid: int, season_number: int, round_number_in_season: int
-    ) -> None:
+    async def _purge_round_for_validator_season_and_round(self, validator_uid: int, season_number: int, round_number_in_season: int) -> None:
         """Delete any existing round for this validator, season and round_in_season (and cascade children)."""
         stmt = (
             select(ValidatorRoundORM)
@@ -1087,12 +984,8 @@ class ValidatorRoundPersistenceService:
             await self.session.delete(row)
         await self.session.flush()
 
-    async def _get_agent_run_row(
-        self, agent_run_id: str
-    ) -> Optional[AgentEvaluationRunORM]:
-        stmt = select(AgentEvaluationRunORM).where(
-            AgentEvaluationRunORM.agent_run_id == agent_run_id
-        )
+    async def _get_agent_run_row(self, agent_run_id: str) -> Optional[AgentEvaluationRunORM]:
+        stmt = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == agent_run_id)
         return await self.session.scalar(stmt)
 
     async def _get_task_row(self, task_id: str) -> Optional[TaskORM]:
@@ -1101,11 +994,7 @@ class ValidatorRoundPersistenceService:
 
     async def _ensure_round_exists(self, validator_round_id: str) -> ValidatorRoundORM:
         # Load with eager loading for validator_snapshot (1:1 relationship)
-        stmt = (
-            select(ValidatorRoundORM)
-            .options(selectinload(ValidatorRoundORM.validator_snapshot))
-            .where(ValidatorRoundORM.validator_round_id == validator_round_id)
-        )
+        stmt = select(ValidatorRoundORM).options(selectinload(ValidatorRoundORM.validator_snapshot)).where(ValidatorRoundORM.validator_round_id == validator_round_id)
         round_row = await self.session.scalar(stmt)
         if not round_row:
             raise ValueError(f"Validator round {validator_round_id} not found")
@@ -1137,9 +1026,7 @@ class ValidatorRoundPersistenceService:
             stmt = stmt.where(ValidatorRoundORM.validator_round_id != exclude_round_id)
         existing = await self.session.scalar(stmt)
         if existing:
-            raise RoundConflictError(
-                f"Validator {validator_uid} already has a round with number {round_number}"
-            )
+            raise RoundConflictError(f"Validator {validator_uid} already has a round with number {round_number}")
 
     async def _ensure_unique_season_round(
         self,
@@ -1166,9 +1053,7 @@ class ValidatorRoundPersistenceService:
             stmt = stmt.where(ValidatorRoundORM.validator_round_id != exclude_round_id)
         existing = await self.session.scalar(stmt)
         if existing:
-            raise RoundConflictError(
-                f"Validator {validator_uid} already has a round for season {season_number}, round {round_number_in_season}"
-            )
+            raise RoundConflictError(f"Validator {validator_uid} already has a round for season {season_number}, round {round_number_in_season}")
 
     async def ensure_unique_round_number(
         self,
@@ -1178,9 +1063,7 @@ class ValidatorRoundPersistenceService:
         exclude_round_id: Optional[str] = None,
     ) -> None:
         """DEPRECATED: Public wrapper to guard against duplicate round numbers."""
-        await self._ensure_unique_round_number(
-            validator_uid, round_number, exclude_round_id=exclude_round_id
-        )
+        await self._ensure_unique_round_number(validator_uid, round_number, exclude_round_id=exclude_round_id)
 
     async def _upsert_validator_snapshot(
         self,
@@ -1244,9 +1127,7 @@ class ValidatorRoundPersistenceService:
         await self.session.flush()
         return row
 
-    def _validator_round_kwargs(
-        self, model: ValidatorRound
-    ) -> Dict[str, Any]:
+    def _validator_round_kwargs(self, model: ValidatorRound) -> Dict[str, Any]:
         # validator_uid, validator_hotkey, validator_coldkey moved to ValidatorRoundValidatorORM
         # season_number and round_number_in_season are passed from model and validated in start_round
         return {
@@ -1301,15 +1182,9 @@ class ValidatorRoundPersistenceService:
             "url": model.url,
             "prompt": model.prompt,
             "specifications": _non_empty_dict(model.specifications),
-            "tests": [
-                test.model_dump(mode="json", exclude_none=True) for test in model.tests
-            ],
+            "tests": [test.model_dump(mode="json", exclude_none=True) for test in model.tests],
             "relevant_data": _non_empty_dict(model.relevant_data),
-            "use_case": (
-                model.use_case
-                if isinstance(model.use_case, dict)
-                else _optional_dump(model.use_case)
-            ),
+            "use_case": (model.use_case if isinstance(model.use_case, dict) else _optional_dump(model.use_case)),
         }
 
     def _task_solution_kwargs(
@@ -1371,11 +1246,20 @@ class ValidatorRoundPersistenceService:
             "feedback": _optional_dump(model.feedback),
             "gif_recording": model.gif_recording,
             "meta": _clean_meta_dict(model.metadata),
-            "llm_cost": getattr(model, "llm_cost", None),
-            "llm_tokens": getattr(model, "llm_tokens", None),
-            "llm_provider": getattr(model, "llm_provider", None),
-            "llm_model": getattr(model, "llm_model", None),
         }
+
+    def _llm_usage_from_evaluation(self, evaluation: Evaluation) -> Any:
+        """Return llm_usage list; if empty, build one entry from scalar llm_* fields (subnet compat)."""
+        usage = getattr(evaluation, "llm_usage", None)
+        if usage and (isinstance(usage, list) and len(usage) > 0):
+            return usage
+        cost = getattr(evaluation, "llm_cost", None)
+        tokens = getattr(evaluation, "llm_tokens", None)
+        provider = getattr(evaluation, "llm_provider", None)
+        model = getattr(evaluation, "llm_model", None)
+        if cost is not None or tokens is not None or provider is not None or model is not None:
+            return [{"provider": provider, "model": model, "tokens": tokens, "cost": cost}]
+        return None
 
     def _normalize_llm_usage(self, usage: Any) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -1412,11 +1296,7 @@ class ValidatorRoundPersistenceService:
         usage_rows = self._normalize_llm_usage(usage)
         if not usage_rows:
             return
-        await self.session.execute(
-            delete(EvaluationLLMUsageORM).where(
-                EvaluationLLMUsageORM.evaluation_id == evaluation_row.evaluation_id
-            )
-        )
+        await self.session.execute(delete(EvaluationLLMUsageORM).where(EvaluationLLMUsageORM.evaluation_id == evaluation_row.evaluation_id))
         for row in usage_rows:
             self.session.add(
                 EvaluationLLMUsageORM(
@@ -1467,19 +1347,15 @@ class ValidatorRoundPersistenceService:
         subnet_price: Optional[float] = None,
     ) -> None:
         """Populate validator_round_summary_miners table from local_evaluation and post_consensus_evaluation.
-        
+
         If no evaluation data is provided, creates basic summary records from agent_runs.
         """
         # Build a map of miner_uid -> summary data
         summary_map: Dict[int, Dict[str, Any]] = {}
-        
+
         # If no evaluation data provided, create basic summaries from agent_runs
         if not local_evaluation and not post_consensus_evaluation:
-            stmt_runs = (
-                select(AgentEvaluationRunORM)
-                .where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
-                .where(AgentEvaluationRunORM.miner_uid.isnot(None))
-            )
+            stmt_runs = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.validator_round_id == validator_round_id).where(AgentEvaluationRunORM.miner_uid.isnot(None))
             run_rows = await self.session.scalars(stmt_runs)
             for run_row in run_rows:
                 if run_row.miner_uid is None:
@@ -1503,7 +1379,7 @@ class ValidatorRoundPersistenceService:
                 miner_uid = miner_data.get("miner_uid")
                 if miner_uid is None:
                     continue
-                
+
                 summary_map.setdefault(miner_uid, {})["miner_uid"] = int(miner_uid)
                 summary_map[miner_uid]["miner_hotkey"] = miner_data.get("miner_hotkey")
                 summary_map[miner_uid]["local_rank"] = miner_data.get("rank")
@@ -1522,12 +1398,12 @@ class ValidatorRoundPersistenceService:
                 miner_uid = miner_data.get("miner_uid")
                 if miner_uid is None:
                     continue
-                
+
                 summary_map.setdefault(miner_uid, {})["miner_uid"] = int(miner_uid)
                 # Update miner_hotkey if not already set or if post_consensus has it
                 if "miner_hotkey" not in summary_map[miner_uid] or summary_map[miner_uid]["miner_hotkey"] is None:
                     summary_map[miner_uid]["miner_hotkey"] = miner_data.get("miner_hotkey")
-                
+
                 summary_map[miner_uid]["post_consensus_rank"] = miner_data.get("rank")
                 summary_map[miner_uid]["post_consensus_avg_reward"] = miner_data.get("consensus_reward")
                 summary_map[miner_uid]["post_consensus_avg_eval_score"] = miner_data.get("avg_eval_score")
@@ -1546,11 +1422,11 @@ class ValidatorRoundPersistenceService:
                 ValidatorRoundSummaryORM.miner_uid == miner_uid,
             )
             existing = await self.session.scalar(stmt)
-            
+
             # Ensure subnet_price is set for all records (use provided value or keep existing)
             if subnet_price is not None and "subnet_price" not in summary_data:
                 summary_data["subnet_price"] = float(subnet_price)
-            
+
             if existing:
                 # Update existing record
                 for key, value in summary_data.items():
@@ -1561,8 +1437,5 @@ class ValidatorRoundPersistenceService:
                     existing.subnet_price = float(subnet_price)
             else:
                 # Create new record
-                new_summary = ValidatorRoundSummaryORM(
-                    validator_round_id=validator_round_id,
-                    **summary_data
-                )
+                new_summary = ValidatorRoundSummaryORM(validator_round_id=validator_round_id, **summary_data)
                 self.session.add(new_summary)

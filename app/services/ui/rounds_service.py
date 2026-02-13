@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 from sqlalchemy import func, select, case, String, and_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, defer
+from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     AgentEvaluationRunORM,
@@ -28,7 +28,6 @@ from app.models.core import (
     AgentEvaluationRun,
     AgentEvaluationRunWithDetails,
     Evaluation,
-    TestResult,
     ValidatorRound,
     ValidatorRoundWithDetails,
     ValidatorInfo,
@@ -38,10 +37,10 @@ from app.models.core import (
 )
 from app.services.cache_ttl import CACHE_TTL
 from app.services.redis_cache import redis_cache
+from app.services.service_utils import llm_summary_from_usage
 from app.utils.images import resolve_agent_image, resolve_validator_image
 from app.config import settings
 from app.services.chain_state import get_current_block_estimate
-from app.services.round_calc import compute_boundaries_for_round
 from app.services.metagraph_service import get_validator_data, MetagraphError
 
 logger = logging.getLogger(__name__)
@@ -55,7 +54,7 @@ def _truncate_decimal(value: float, decimals: int = 4) -> float:
     """
     if value is None or value == 0.0:
         return 0.0
-    multiplier = 10 ** decimals
+    multiplier = 10**decimals
     return math.floor(float(value) * multiplier) / multiplier
 
 
@@ -245,7 +244,7 @@ class MinerAggregate:
         if self.score_count == 0:
             return 0.0
         return self.total_score / self.score_count
-    
+
     @property
     def stake_weighted_score(self) -> float:
         """Score ponderado por stake de los validators."""
@@ -313,11 +312,7 @@ def _timestamp_from_iso(value: Optional[str]) -> float:
         return datetime.fromisoformat(normalized).timestamp()
     except ValueError:
         try:
-            return (
-                datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ")
-                .replace(tzinfo=timezone.utc)
-                .timestamp()
-            )
+            return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc).timestamp()
         except ValueError:
             return 0.0
 
@@ -344,9 +339,7 @@ def _parse_iso8601(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _round_number_from_model(
-    round_model: ValidatorRound, fallback_identifier: str
-) -> Optional[int]:
+def _round_number_from_model(round_model: ValidatorRound, fallback_identifier: str) -> Optional[int]:
     # Try to get round_number from model (for backward compatibility)
     candidate = getattr(round_model, "round_number", None)
     if candidate is not None:
@@ -360,7 +353,7 @@ def _round_number_from_model(
     # This allows up to 9999 rounds per season
     season_number = getattr(round_model, "season_number", None)
     round_number_in_season = getattr(round_model, "round_number_in_season", None)
-    
+
     if season_number is not None and round_number_in_season is not None:
         try:
             # Create unique identifier: season * 10000 + round_in_season
@@ -453,14 +446,9 @@ class RoundsService:
                         profile["stake"] = float(fresh_data["stake"])
                     if fresh_data.get("vtrust") is not None:
                         profile["vtrust"] = float(fresh_data["vtrust"])
-                    logger.debug(
-                        f"[Validator {validator_uid}] Using fresh metagraph data in profile: "
-                        f"stake={profile['stake']:.2f}, vtrust={profile['vtrust']:.4f}"
-                    )
+                    logger.debug(f"[Validator {validator_uid}] Using fresh metagraph data in profile: stake={profile['stake']:.2f}, vtrust={profile['vtrust']:.4f}")
             except MetagraphError as exc:
-                logger.debug(
-                    f"[Validator {validator_uid}] Fresh metagraph data unavailable: {exc}"
-                )
+                logger.debug(f"[Validator {validator_uid}] Fresh metagraph data unavailable: {exc}")
 
         # Then, overlay snapshot data (for name, hotkey, image which aren't in metagraph)
         # and as fallback for stake/vtrust/version if fresh data wasn't available
@@ -482,10 +470,7 @@ class RoundsService:
                     profile["image_url"] = snapshot.image_url
 
             if not profile["hotkey"]:
-                if (
-                    round_row.validator_uid == validator_uid
-                    and round_row.validator_hotkey
-                ):
+                if round_row.validator_uid == validator_uid and round_row.validator_hotkey:
                     profile["hotkey"] = round_row.validator_hotkey
 
         if validator_uid is not None and not profile.get("name"):
@@ -493,9 +478,7 @@ class RoundsService:
 
         return profile
 
-    async def list_rounds(
-        self, limit: int, skip: int
-    ) -> List[ValidatorRoundWithDetails]:
+    async def list_rounds(self, limit: int, skip: int) -> List[ValidatorRoundWithDetails]:
         stmt = (
             select(RoundORM)
             .options(
@@ -541,10 +524,7 @@ class RoundsService:
         Super fast - use this for dropdowns and lists.
         Returns up to 500 round IDs (calculated as season * 10000 + round_in_season).
         """
-        stmt = select(
-            RoundORM.season_number,
-            RoundORM.round_number_in_season
-        ).distinct()
+        stmt = select(RoundORM.season_number, RoundORM.round_number_in_season).distinct()
 
         if status:
             stmt = stmt.where(RoundORM.status == status)
@@ -559,11 +539,7 @@ class RoundsService:
 
         result = await self.session.execute(stmt)
         # Calculate unique round number as season * 10000 + round_in_season
-        round_numbers = [
-            row[0] * 10000 + row[1] 
-            for row in result.all() 
-            if row[0] is not None and row[1] is not None
-        ]
+        round_numbers = [row[0] * 10000 + row[1] for row in result.all() if row[0] is not None and row[1] is not None]
         return round_numbers
 
     async def get_round_by_season(self, season: int, round_in_season: int) -> Dict[str, Any]:
@@ -574,10 +550,7 @@ class RoundsService:
                 selectinload(RoundORM.validator_snapshot),
                 selectinload(RoundORM.miner_snapshots),
             )
-            .where(
-                RoundORM.season_number == season,
-                RoundORM.round_number_in_season == round_in_season
-            )
+            .where(RoundORM.season_number == season, RoundORM.round_number_in_season == round_in_season)
         )
         rows = await self.session.scalars(stmt)
         records = []
@@ -588,30 +561,28 @@ class RoundsService:
             except Exception as exc:
                 logger.error(f"Failed to deserialize round: {exc}")
                 continue
-        
+
         if not records:
             raise ValueError(f"Round not found: Season {season}, Round {round_in_season}")
-        
+
         # Create unique ID for compatibility
         unique_id = season * 10000 + round_in_season
         current = await self.get_current_round_overview()
         latest_round_number = current.get("round") if current else unique_id
-        
+
         overview = self._build_round_day_overview_from_records(
             unique_id,
             records,
             latest_round_number,
         )
-        
+
         # Add season and round info to response
         overview["season"] = season
         overview["roundInSeason"] = round_in_season
-        
+
         return overview
 
-    async def get_round_basic(
-        self, round_identifier: Union[str, int]
-    ) -> Dict[str, Any]:
+    async def get_round_basic(self, round_identifier: Union[str, int]) -> Dict[str, Any]:
         """
         Get basic round info without nested agent runs, tasks, solutions, or evaluations.
         Returns only essential fields for round page header and status display.
@@ -665,9 +636,7 @@ class RoundsService:
 
         current = await self.get_current_round_overview()
         latest_round_number = current["round"] if current else aggregated.round_number
-        logger.info(
-            f"Building round {aggregated.round_number} overview (latest_round={latest_round_number}, current={current is not None})"
-        )
+        logger.info(f"Building round {aggregated.round_number} overview (latest_round={latest_round_number}, current={current is not None})")
         records = [entry.record for entry in aggregated.validator_rounds]
         overview = self._build_round_day_overview_from_records(
             aggregated.round_number,
@@ -711,26 +680,16 @@ class RoundsService:
         skip: int,
         include_details: bool = True,
     ) -> List[AgentEvaluationRunWithDetails]:
-        stmt = (
-            select(AgentEvaluationRunORM)
-            .where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
-            .order_by(AgentEvaluationRunORM.id.desc())
-            .offset(skip)
-            .limit(limit)
-        )
+        stmt = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.validator_round_id == validator_round_id).order_by(AgentEvaluationRunORM.id.desc()).offset(skip).limit(limit)
 
         if include_details:
             stmt = stmt.options(
-                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                    RoundORM.miner_snapshots
-                ),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(RoundORM.miner_snapshots),
                 selectinload(AgentEvaluationRunORM.validator_round).selectinload(
                     RoundORM.validator_snapshot  # 1:1 relationship (singular)
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations)
-                .selectinload(EvaluationORM.execution_history_record)
-                .selectinload(EvaluationORM.llm_usage),
+                selectinload(AgentEvaluationRunORM.evaluations).selectinload(EvaluationORM.execution_history_record).selectinload(EvaluationORM.llm_usage),
             )
 
         result = await self.session.scalars(stmt)
@@ -754,9 +713,7 @@ class RoundsService:
         stmt = (
             select(AgentEvaluationRunORM)
             .options(
-                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                    RoundORM.miner_snapshots
-                ),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(RoundORM.miner_snapshots),
                 selectinload(AgentEvaluationRunORM.validator_round).selectinload(
                     RoundORM.validator_snapshot  # 1:1 relationship (singular)
                 ),
@@ -764,9 +721,7 @@ class RoundsService:
                     RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations).selectinload(
-                    EvaluationORM.execution_history_record
-                ),
+                selectinload(AgentEvaluationRunORM.evaluations).selectinload(EvaluationORM.execution_history_record),
             )
             .where(AgentEvaluationRunORM.agent_run_id == agent_run_id)
         )
@@ -789,9 +744,7 @@ class RoundsService:
         agent_run_ids: Optional[Iterable[str]] = None,
     ) -> List[AgentRunContext]:
         stmt = select(AgentEvaluationRunORM).options(
-            selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                RoundORM.miner_snapshots
-            ),
+            selectinload(AgentEvaluationRunORM.validator_round).selectinload(RoundORM.miner_snapshots),
             selectinload(AgentEvaluationRunORM.validator_round).selectinload(
                 RoundORM.validator_snapshot  # 1:1 relationship (singular)
             ),
@@ -803,9 +756,7 @@ class RoundsService:
         if include_details:
             stmt = stmt.options(
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations).selectinload(
-                    EvaluationORM.execution_history_record
-                ),
+                selectinload(AgentEvaluationRunORM.evaluations).selectinload(EvaluationORM.execution_history_record),
             )
 
         stmt = stmt.order_by(AgentEvaluationRunORM.id.desc())
@@ -823,13 +774,11 @@ class RoundsService:
                 stmt = stmt.limit(limit)
 
         if validator_round_id:
-            stmt = stmt.where(
-                AgentEvaluationRunORM.validator_round_id == validator_round_id
-            )
+            stmt = stmt.where(AgentEvaluationRunORM.validator_round_id == validator_round_id)
 
         result = await self.session.scalars(stmt)
         run_rows = list(result)
-        
+
         # CRITICAL: Ensure all relationships are loaded before accessing them
         # This prevents MissingGreenlet errors when accessing lazy-loaded relationships
         # Convert to list to force eager loading of all relationships
@@ -850,11 +799,7 @@ class RoundsService:
             self._build_agent_run_context(
                 run_row,
                 include_details=include_details,
-                tasks_for_round=(
-                    tasks_by_round.get(run_row.validator_round_id)
-                    if include_details
-                    else None
-                ),
+                tasks_for_round=(tasks_by_round.get(run_row.validator_round_id) if include_details else None),
             )
             for run_row in run_rows
         ]
@@ -862,18 +807,14 @@ class RoundsService:
 
         if run_id_list:
             order_map = {run_id: index for index, run_id in enumerate(run_id_list)}
-            contexts.sort(
-                key=lambda ctx: order_map.get(ctx.run.agent_run_id, len(order_map))
-            )
+            contexts.sort(key=lambda ctx: order_map.get(ctx.run.agent_run_id, len(order_map)))
         return contexts
 
     async def get_agent_run_context(self, agent_run_id: str) -> AgentRunContext:
         stmt = (
             select(AgentEvaluationRunORM)
             .options(
-                selectinload(AgentEvaluationRunORM.validator_round).selectinload(
-                    RoundORM.miner_snapshots
-                ),
+                selectinload(AgentEvaluationRunORM.validator_round).selectinload(RoundORM.miner_snapshots),
                 selectinload(AgentEvaluationRunORM.validator_round).selectinload(
                     RoundORM.validator_snapshot  # 1:1 relationship (singular)
                 ),
@@ -881,9 +822,7 @@ class RoundsService:
                     RoundORM.round_summaries  # Load round_summaries to avoid lazy loading
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations).selectinload(
-                    EvaluationORM.execution_history_record
-                ),
+                selectinload(AgentEvaluationRunORM.evaluations).selectinload(EvaluationORM.execution_history_record),
             )
             .where(AgentEvaluationRunORM.agent_run_id == agent_run_id)
         )
@@ -930,17 +869,8 @@ class RoundsService:
 
     async def _count_distinct_rounds(self) -> int:
         # Count distinct combinations of season_number and round_number_in_season
-        stmt = select(
-            func.count(func.distinct(
-                func.concat(
-                    RoundORM.season_number.cast(String),
-                    '_',
-                    RoundORM.round_number_in_season.cast(String)
-                )
-            ))
-        ).where(
-            RoundORM.season_number.is_not(None),
-            RoundORM.round_number_in_season.is_not(None)
+        stmt = select(func.count(func.distinct(func.concat(RoundORM.season_number.cast(String), "_", RoundORM.round_number_in_season.cast(String))))).where(
+            RoundORM.season_number.is_not(None), RoundORM.round_number_in_season.is_not(None)
         )
         result = await self.session.scalar(stmt)
         return int(result or 0)
@@ -954,17 +884,10 @@ class RoundsService:
     ) -> List[int]:
         # Fetch distinct season/round combinations and convert to unique IDs
         order_desc = sort_order.lower() != "asc"
-        order_clause = (
-            (RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
-            if order_desc
-            else (RoundORM.season_number.asc(), RoundORM.round_number_in_season.asc())
-        )
+        order_clause = (RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc()) if order_desc else (RoundORM.season_number.asc(), RoundORM.round_number_in_season.asc())
         stmt = (
             select(RoundORM.season_number, RoundORM.round_number_in_season)
-            .where(
-                RoundORM.season_number.is_not(None),
-                RoundORM.round_number_in_season.is_not(None)
-            )
+            .where(RoundORM.season_number.is_not(None), RoundORM.round_number_in_season.is_not(None))
             .group_by(RoundORM.season_number, RoundORM.round_number_in_season)
             .order_by(*order_clause)
             .offset(offset)
@@ -972,11 +895,7 @@ class RoundsService:
         )
         result = await self.session.execute(stmt)
         # Convert to unique IDs: season * 10000 + round_in_season
-        return [
-            int(season) * 10000 + int(round_in_season)
-            for season, round_in_season in result
-            if season is not None and round_in_season is not None
-        ]
+        return [int(season) * 10000 + int(round_in_season) for season, round_in_season in result if season is not None and round_in_season is not None]
 
     async def _get_round_records_for_round_numbers(
         self,
@@ -1001,14 +920,10 @@ class RoundsService:
         # Build query with season_number and round_number_in_season
         conditions = []
         for season, round_in_season in season_round_pairs:
-            conditions.append(
-                and_(
-                    RoundORM.season_number == season,
-                    RoundORM.round_number_in_season == round_in_season
-                )
-            )
-        
+            conditions.append(and_(RoundORM.season_number == season, RoundORM.round_number_in_season == round_in_season))
+
         from sqlalchemy import or_
+
         stmt = (
             select(RoundORM)
             .options(
@@ -1043,14 +958,8 @@ class RoundsService:
         # Get the latest round based on season_number and round_number_in_season
         stmt = (
             select(RoundORM.season_number, RoundORM.round_number_in_season)
-            .where(
-                RoundORM.season_number.is_not(None),
-                RoundORM.round_number_in_season.is_not(None)
-            )
-            .order_by(
-                RoundORM.season_number.desc(),
-                RoundORM.round_number_in_season.desc()
-            )
+            .where(RoundORM.season_number.is_not(None), RoundORM.round_number_in_season.is_not(None))
+            .order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
             .limit(1)
         )
         result = await self.session.execute(stmt)
@@ -1060,9 +969,7 @@ class RoundsService:
             return int(row[0]) * 10000 + int(row[1])
         return None
 
-    async def _fetch_round_records_by_number(
-        self, round_number: int
-    ) -> Tuple[List[RoundRecord], int]:
+    async def _fetch_round_records_by_number(self, round_number: int) -> Tuple[List[RoundRecord], int]:
         record_map = await self._get_round_records_for_round_numbers([round_number])
         matched = record_map.get(round_number, [])
         latest_round_number = await self._get_latest_round_number()
@@ -1114,9 +1021,7 @@ class RoundsService:
         # TypeError: '_GeneratorContextManager' does not support async protocol.
         with self.session.no_autoflush:
             round_number = await self._resolve_round_number(round_identifier)
-            records, latest_round_number = await self._fetch_round_records_by_number(
-                round_number
-            )
+            records, latest_round_number = await self._fetch_round_records_by_number(round_number)
             if not records:
                 raise ValueError(f"Round {round_identifier} not found")
 
@@ -1172,15 +1077,8 @@ class RoundsService:
             contexts = entry.contexts
             non_sota_contexts = [ctx for ctx in contexts if not ctx.run.is_sota]
             if non_sota_contexts:
-                total_tasks_for_contexts = sum(
-                    (ctx.run.n_tasks_total or len(ctx.tasks) or 0)
-                    for ctx in non_sota_contexts
-                )
-                avg_tasks_for_validator = (
-                    total_tasks_for_contexts / len(non_sota_contexts)
-                    if non_sota_contexts
-                    else 0.0
-                )
+                total_tasks_for_contexts = sum((ctx.run.n_tasks_total or len(ctx.tasks) or 0) for ctx in non_sota_contexts)
+                avg_tasks_for_validator = total_tasks_for_contexts / len(non_sota_contexts) if non_sota_contexts else 0.0
                 tasks_per_validator.append(avg_tasks_for_validator)
             elif round_obj.n_tasks is not None:
                 tasks_per_validator.append(float(round_obj.n_tasks))
@@ -1210,11 +1108,7 @@ class RoundsService:
                     )
                     miner_aggregates[uid] = aggregate
 
-                evaluation_scores = [
-                    getattr(er, "eval_score", getattr(er, "final_score", 0.0))
-                    for er in ctx.evaluations
-                    if getattr(er, "eval_score", getattr(er, "final_score", None)) is not None
-                ]
+                evaluation_scores = [getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in ctx.evaluations if getattr(er, "eval_score", getattr(er, "final_score", None)) is not None]
                 tasks_total = ctx.run.n_tasks_total
                 if tasks_total is None:
                     tasks_total = len(ctx.tasks)
@@ -1223,20 +1117,12 @@ class RoundsService:
                 validator_id = performance.get("validatorId")
                 if validator_id:
                     current_best = best_by_validator.get(validator_id)
-                    if current_best is None or performance.get(
-                        "score", 0.0
-                    ) > current_best.get("score", 0.0):
+                    if current_best is None or performance.get("score", 0.0) > current_best.get("score", 0.0):
                         best_by_validator[validator_id] = performance
 
                 completed = ctx.run.n_tasks_completed
                 if completed is None:
-                    completed = len(
-                        [
-                            er
-                            for er in ctx.evaluations
-                            if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5
-                        ]
-                    )
+                    completed = len([er for er in ctx.evaluations if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5])
                 success_tasks += completed
 
                 total = ctx.run.n_tasks_total
@@ -1303,23 +1189,16 @@ class RoundsService:
         profile = self._build_validator_profile(
             round_row=record.row,
             validator_uid=validator_uid,
-            fallback_hotkey=round_obj.validator_hotkey
-            or (validator_info.hotkey if validator_info else None),
+            fallback_hotkey=round_obj.validator_hotkey or (validator_info.hotkey if validator_info else None),
             fallback_name=validator_info.name if validator_info else None,
             use_fresh_data=use_fresh,
         )
 
         validator_name = profile.get("name")
         if not validator_name:
-            validator_name = (
-                f"Validator {validator_uid}"
-                if validator_uid is not None
-                else "Validator"
-            )
+            validator_name = f"Validator {validator_uid}" if validator_uid is not None else "Validator"
         validator_hotkey = profile.get("hotkey") or ""
-        icon = resolve_validator_image(
-            validator_name, existing=profile.get("image_url")
-        )
+        icon = resolve_validator_image(validator_name, existing=profile.get("image_url"))
 
         completed_tasks = self._estimate_completed_tasks(round_obj)
 
@@ -1330,9 +1209,7 @@ class RoundsService:
             "validatorHotkey": validator_hotkey,
             "status": (round_obj.status or "finished"),
             "startTime": _iso_timestamp(round_obj.started_at),
-            "endTime": (
-                _iso_timestamp(round_obj.ended_at) if round_obj.ended_at else None
-            ),
+            "endTime": (_iso_timestamp(round_obj.ended_at) if round_obj.ended_at else None),
             "totalTasks": round_obj.n_tasks,
             "completedTasks": completed_tasks,
             "icon": icon,
@@ -1358,16 +1235,8 @@ class RoundsService:
             end_block_candidates.append(end_block)
         end_block_value = max(end_block_candidates)
 
-        started_at_values = [
-            record.model.started_at
-            for record in records
-            if record.model.started_at is not None
-        ]
-        ended_at_values = [
-            record.model.ended_at
-            for record in records
-            if record.model.ended_at is not None
-        ]
+        started_at_values = [record.model.started_at for record in records if record.model.started_at is not None]
+        ended_at_values = [record.model.ended_at for record in records if record.model.ended_at is not None]
         started_at = min(started_at_values) if started_at_values else None
         ended_at = max(ended_at_values) if ended_at_values else None
 
@@ -1407,27 +1276,15 @@ class RoundsService:
         else:
             # Fallback when Redis is down: use round_number comparison
             # If we have data for rounds > this round_number, this round must be finished
-            logger.info(
-                f"Redis unavailable, using fallback for round {round_number} (latest={latest_round_number})"
-            )
+            logger.info(f"Redis unavailable, using fallback for round {round_number} (latest={latest_round_number})")
             if latest_round_number > round_number:
                 status = "finished"
-                logger.info(
-                    f"✅ Marked round {round_number} as finished (latest_round={latest_round_number})"
-                )
+                logger.info(f"✅ Marked round {round_number} as finished (latest_round={latest_round_number})")
         total_tasks = sum(record.model.n_tasks or 0 for record in records)
-        completed_tasks = sum(
-            self._estimate_completed_tasks(record.model) for record in records
-        )
+        completed_tasks = sum(self._estimate_completed_tasks(record.model) for record in records)
 
-        progress_ratio = (
-            1.0
-            if status == "finished"
-            else (min(1.0, completed_tasks / total_tasks) if total_tasks else 0.0)
-        )
-        current_block = int(
-            start_block + (end_block_value - start_block) * progress_ratio
-        )
+        progress_ratio = 1.0 if status == "finished" else (min(1.0, completed_tasks / total_tasks) if total_tasks else 0.0)
+        current_block = int(start_block + (end_block_value - start_block) * progress_ratio)
         current_block = min(current_block, end_block_value)
         blocks_remaining = max(end_block_value - current_block, 0)
 
@@ -1459,17 +1316,15 @@ class RoundsService:
             "blocksRemaining": blocks_remaining,
             "progress": round(progress_ratio, 3),
             "validatorRoundCount": len(records),
-            "validatorRounds": [
-                self._summarize_validator_round(record) for record in records
-            ],
+            "validatorRounds": [self._summarize_validator_round(record) for record in records],
         }
-        
+
         # Add season and round info if available
         if season_number is not None:
             result["season"] = season_number
         if round_in_season is not None:
             result["roundInSeason"] = round_in_season
-            
+
         return result
 
     @staticmethod
@@ -1547,9 +1402,7 @@ class RoundsService:
                         started_at = created_at.timestamp()
                     else:
                         try:
-                            started_at = (
-                                float(created_at) if created_at is not None else None
-                            )
+                            started_at = float(created_at) if created_at is not None else None
                         except (TypeError, ValueError):
                             started_at = None
 
@@ -1619,12 +1472,8 @@ class RoundsService:
                 elapsed = round_obj.ended_at - round_obj.started_at
                 elapsed_values.append(elapsed)
 
-        safe_end_candidates = [
-            value for value in end_block_candidates if isinstance(value, (int, float))
-        ]
-        end_block_value = (
-            int(max(safe_end_candidates)) if safe_end_candidates else start_block
-        )
+        safe_end_candidates = [value for value in end_block_candidates if isinstance(value, (int, float))]
+        end_block_value = int(max(safe_end_candidates)) if safe_end_candidates else start_block
         is_completed = all(status == "finished" for status in statuses if status)
 
         if total_tasks:
@@ -1635,27 +1484,15 @@ class RoundsService:
             progress_ratio = 1.0
 
         try:
-            current_block = int(
-                start_block + (end_block_value - start_block) * progress_ratio
-            )
+            current_block = int(start_block + (end_block_value - start_block) * progress_ratio)
         except TypeError:
             current_block = start_block
         current_block = min(current_block, end_block_value)
         blocks_remaining = max(end_block_value - current_block, 0)
 
-        average_elapsed = (
-            sum(elapsed_values) / len(elapsed_values) if elapsed_values else None
-        )
-        average_task_time = (
-            (average_elapsed / completed_tasks)
-            if average_elapsed and completed_tasks
-            else 0.0
-        )
-        estimated_seconds_remaining = (
-            blocks_remaining * (average_task_time / total_tasks)
-            if total_tasks and average_task_time
-            else 0.0
-        )
+        average_elapsed = sum(elapsed_values) / len(elapsed_values) if elapsed_values else None
+        average_task_time = (average_elapsed / completed_tasks) if average_elapsed and completed_tasks else 0.0
+        estimated_seconds_remaining = blocks_remaining * (average_task_time / total_tasks) if total_tasks and average_task_time else 0.0
 
         return {
             "startBlock": start_block,
@@ -1700,16 +1537,9 @@ class RoundsService:
             return [], 0
 
         latest_round_number = self._determine_latest_round_number(grouped)
-        entries = [
-            self._build_round_day_overview_from_records(
-                number, group, latest_round_number
-            )
-            for number, group in grouped.items()
-        ]
+        entries = [self._build_round_day_overview_from_records(number, group, latest_round_number) for number, group in grouped.items()]
 
-        entries = [
-            entry for entry in entries if entry.get("validatorRoundCount", 0) > 0
-        ]
+        entries = [entry for entry in entries if entry.get("validatorRoundCount", 0) > 0]
 
         if status:
             entries = [entry for entry in entries if entry["status"] == status]
@@ -1777,20 +1607,13 @@ class RoundsService:
         """
         try:
             from app.services.chain_state import get_current_block_estimate
-            from app.services.round_calc import (
-                compute_round_number,
-                compute_boundaries_for_round,
-                progress_for_block,
-            )
         except Exception:
             get_current_block_estimate = None  # type: ignore
-            compute_round_number = None  # type: ignore
-            compute_boundaries_for_round = None  # type: ignore
-            progress_for_block = None  # type: ignore
 
         # Chain-based path using cached estimate only (no live fetch per request)
         if get_current_block_estimate is not None:
             from app.services.round_calc import compute_season_number, compute_round_number_in_season
+
             current_block = get_current_block_estimate()
             if current_block is not None and int(current_block) > 0:
                 try:
@@ -1798,20 +1621,18 @@ class RoundsService:
                     season = compute_season_number(int(current_block))
                     round_length = int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
                     round_in_season = compute_round_number_in_season(int(current_block), round_length)
-                    
+
                     if season > 0 and round_in_season > 0:
                         # Create unique ID: season * 10000 + round_in_season
                         number = season * 10000 + round_in_season
-                        
+
                         # If we have DB records for this chain-derived round, aggregate
                         try:
                             records, _ = await self._fetch_round_records_by_number(number)
                         except Exception:
                             records = []
                         if records:
-                            return self._build_round_day_overview_from_records(
-                                number, records, number
-                            )
+                            return self._build_round_day_overview_from_records(number, records, number)
                 except Exception:
                     pass
                 # Don't synthesize a minimal overview for rounds without data
@@ -1838,12 +1659,8 @@ class RoundsService:
             latest_round_number,
         )
 
-    async def get_round_overview(
-        self, round_identifier: Union[str, int]
-    ) -> Dict[str, Any]:
-        aggregated = await self._fetch_aggregated_round(
-            round_identifier, include_details=False
-        )
+    async def get_round_overview(self, round_identifier: Union[str, int]) -> Dict[str, Any]:
+        aggregated = await self._fetch_aggregated_round(round_identifier, include_details=False)
         current = await self.get_current_round_overview()
         latest_round_number = current["round"] if current else aggregated.round_number
         records = [entry.record for entry in aggregated.validator_rounds]
@@ -1853,15 +1670,11 @@ class RoundsService:
             latest_round_number,
         )
 
-    async def get_round_statistics(
-        self, round_identifier: Union[str, int]
-    ) -> Dict[str, Any]:
+    async def get_round_statistics(self, round_identifier: Union[str, int]) -> Dict[str, Any]:
         aggregated = await self._fetch_aggregated_round(round_identifier)
         cache_key: Optional[str] = None
         if self._is_final_round(aggregated) and settings.ENABLE_FINAL_ROUND_CACHE:
-            cache_key = self._round_cache_key(
-                "round:statistics", aggregated.round_number
-            )
+            cache_key = self._round_cache_key("round:statistics", aggregated.round_number)
             cached_payload = redis_cache.get(cache_key)
             if cached_payload is not None and "winnerAverageScore" in cached_payload:
                 return cached_payload
@@ -1881,15 +1694,15 @@ class RoundsService:
         # Preferir validator Autoppia (UID 83 en producción) en caso de duda
         winner_uid: Optional[int] = None
         winner_average = 0.0
-        
+
         round_number = aggregated.round_number
         if round_number is not None:
             # Buscar validator_round_ids de este round, priorizando Autoppia (UID 83)
             validator_round_ids = [entry.validator_round_id for entry in aggregated.validator_rounds]
-            
+
             # Ordenar para priorizar Autoppia (validator_83 en producción)
             validator_round_ids.sort(key=lambda x: (0 if "validator_83" in x else 1, x))
-            
+
             # Buscar el top miner (post_consensus_rank = 1) empezando por Autoppia
             top_summary = None
             for validator_round_id in validator_round_ids:
@@ -1906,7 +1719,7 @@ class RoundsService:
                 if candidate and candidate.post_consensus_avg_reward is not None and candidate.post_consensus_avg_reward > 0.0:
                     top_summary = candidate
                     break  # Usar el primero encontrado (prioriza Autoppia)
-            
+
             # Si no encontramos con rank=1, buscar el miner con mayor post_consensus_avg_reward
             if top_summary is None:
                 for validator_round_id in validator_round_ids:
@@ -1923,11 +1736,11 @@ class RoundsService:
                     if candidate and candidate.post_consensus_avg_reward and candidate.post_consensus_avg_reward > 0.0:
                         top_summary = candidate
                         break
-            
+
             if top_summary and top_summary.post_consensus_avg_reward:
                 winner_uid = top_summary.miner_uid
                 winner_average = float(top_summary.post_consensus_avg_reward)
-        
+
         # Fallback: usar miner_aggregates si no encontramos en summary
         if winner_uid is None or winner_average == 0.0:
             for uid, aggregate in miner_aggregates.items():
@@ -1942,7 +1755,7 @@ class RoundsService:
         if round_number is not None:
             validator_round_ids = [entry.validator_round_id for entry in aggregated.validator_rounds]
             validator_round_ids.sort(key=lambda x: (0 if "validator_83" in x else 1, x))
-            
+
             for validator_round_id in validator_round_ids:
                 result = await self.session.execute(
                     select(ValidatorRoundSummaryORM)
@@ -1957,25 +1770,17 @@ class RoundsService:
                 if top_summary and top_summary.post_consensus_avg_reward:
                     top_score = float(top_summary.post_consensus_avg_reward)
                     break
-        
+
         # Fallback: usar max de scores si no encontramos en summary
         if top_score == 0.0:
             top_score = max(scores) if scores else 0.0
-        
+
         # validator_average_top: promedio de los top scores de cada validator (local)
-        validator_average_top = (
-            sum(validator_top_scores) / len(validator_top_scores)
-            if validator_top_scores
-            else (sum(scores) / len(scores) if scores else 0.0)
-        )
+        validator_average_top = sum(validator_top_scores) / len(validator_top_scores) if validator_top_scores else (sum(scores) / len(scores) if scores else 0.0)
         success_rate = (success_tasks / total_tasks * 100.0) if total_tasks else 0.0
         average_duration = sum(durations) / len(durations) if durations else 0.0
         total_emission = int(total_stake * 0.05) if total_stake else 0
-        average_tasks_per_validator_per_miner = (
-            sum(tasks_per_validator) / len(tasks_per_validator)
-            if tasks_per_validator
-            else 0.0
-        )
+        average_tasks_per_validator_per_miner = sum(tasks_per_validator) / len(tasks_per_validator) if tasks_per_validator else 0.0
 
         payload = {
             "roundId": aggregated.round_number,
@@ -2053,11 +1858,7 @@ class RoundsService:
                     continue
 
                 if miner_entry.get("isSota"):
-                    key = (
-                        entry_data.validator_round_id
-                        or str(entry_data.validator_uid)
-                        or str(miner_entry.get("uid"))
-                    )
+                    key = entry_data.validator_round_id or str(entry_data.validator_uid) or str(miner_entry.get("uid"))
                     existing = benchmark_map.get(key)
                     if existing is None:
                         record = dict(miner_entry)
@@ -2070,10 +1871,7 @@ class RoundsService:
                         if miner_entry["score"] > existing.get("score", 0.0):
                             existing.update(miner_entry)
                         sources = existing.get("validatorSources") or []
-                        if (
-                            miner_entry.get("validatorId")
-                            and miner_entry["validatorId"] not in sources
-                        ):
+                        if miner_entry.get("validatorId") and miner_entry["validatorId"] not in sources:
                             sources.append(miner_entry["validatorId"])
                         existing["validatorSources"] = sources
                 else:
@@ -2116,15 +1914,11 @@ class RoundsService:
         self,
         round_identifier: Union[str, int],
     ) -> Dict[str, Any]:
-        aggregated = await self._fetch_aggregated_round(
-            round_identifier, include_details=True
-        )
+        aggregated = await self._fetch_aggregated_round(round_identifier, include_details=True)
 
         cache_key: Optional[str] = None
         if self._is_final_round(aggregated) and settings.ENABLE_FINAL_ROUND_CACHE:
-            cache_key = self._round_cache_key(
-                "round:validators", aggregated.round_number
-            )
+            cache_key = self._round_cache_key("round:validators", aggregated.round_number)
             cached_payload = redis_cache.get(cache_key)
             if cached_payload is not None:
                 return cached_payload
@@ -2145,21 +1939,12 @@ class RoundsService:
                 runs = contexts_by_validator.get(validator.uid, [])
                 valid_runs = [run for run in runs if not run.run.is_sota]
                 if valid_runs:
-                    total_tasks_avg = sum(
-                        run.run.n_tasks_total or len(run.tasks) or 0
-                        for run in valid_runs
-                    ) / len(valid_runs)
+                    total_tasks_avg = sum(run.run.n_tasks_total or len(run.tasks) or 0 for run in valid_runs) / len(valid_runs)
                     completed_tasks_avg = sum(
                         (
                             run.run.n_tasks_completed
                             if run.run.n_tasks_completed is not None
-                            else len(
-                        [
-                            er
-                            for er in run.evaluations
-                            if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5
-                        ]
-                            )
+                            else len([er for er in run.evaluations if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5])
                         )
                         for run in valid_runs
                     ) / len(valid_runs)
@@ -2168,18 +1953,11 @@ class RoundsService:
                     completed_tasks_avg = float(round_obj.n_tasks or 0)
                 total_tasks = int(round(total_tasks_avg))
                 completed_tasks = int(round(completed_tasks_avg))
-                miner_ids = {
-                    run.run.miner_uid
-                    for run in runs
-                    if run.run.miner_uid is not None and not run.run.is_sota
-                }
+                miner_ids = {run.run.miner_uid for run in runs if run.run.miner_uid is not None and not run.run.is_sota}
                 total_miners = len(miner_ids)
                 if total_miners == 0:
                     snapshot_ids = {
-                        snapshot.miner_uid
-                        for snapshot in getattr(round_obj, "miners", []) or []
-                        if getattr(snapshot, "miner_uid", None) is not None
-                        and not getattr(snapshot, "is_sota", False)
+                        snapshot.miner_uid for snapshot in getattr(round_obj, "miners", []) or [] if getattr(snapshot, "miner_uid", None) is not None and not getattr(snapshot, "is_sota", False)
                     }
                     total_miners = len(snapshot_ids)
                     if total_miners == 0 and round_obj.n_miners:
@@ -2187,37 +1965,22 @@ class RoundsService:
                             total_miners = int(round(round_obj.n_miners))
                         except (TypeError, ValueError):
                             total_miners = 0
-                active_miners = len(
-                    [
-                        run
-                        for run in runs
-                        if (run.run.n_tasks_completed or 0) > 0
-                        and not run.run.is_sota
-                        and run.run.miner_uid is not None
-                    ]
-                )
+                active_miners = len([run for run in runs if (run.run.n_tasks_completed or 0) > 0 and not run.run.is_sota and run.run.miner_uid is not None])
                 scores: List[float] = []
                 for run in runs:
                     score = run.run.avg_eval_score
                     if score is None and run.evaluations:
-                        score = sum(
-                            getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in run.evaluations
-                        ) / len(run.evaluations)
+                        score = sum(getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in run.evaluations) / len(run.evaluations)
                     if score is not None:
                         scores.append(score)
-                average_score = sum(scores) / len(scores) if scores else 0.0
                 top_score = max(scores) if scores else 0.0
-                completion_rate = (
-                    (completed_tasks_avg / total_tasks_avg) if total_tasks_avg else 0.0
-                )
+                completion_rate = (completed_tasks_avg / total_tasks_avg) if total_tasks_avg else 0.0
 
                 status = "inactive"
                 if runs:
                     first = runs[0]
                     if first.run.ended_at:
-                        if (
-                            datetime.now(timezone.utc).timestamp() - first.run.ended_at
-                        ) > 3600:
+                        if (datetime.now(timezone.utc).timestamp() - first.run.ended_at) > 3600:
                             status = "inactive"
                         else:
                             status = "active"
@@ -2235,30 +1998,12 @@ class RoundsService:
                     fallback_name=validator.name,
                     use_fresh_data=use_fresh,
                 )
-                validator_name = (
-                    validator.name
-                    or profile.get("name")
-                    or (
-                        f"Validator {validator.uid}"
-                        if validator.uid is not None
-                        else "Validator"
-                    )
-                )
+                validator_name = validator.name or profile.get("name") or (f"Validator {validator.uid}" if validator.uid is not None else "Validator")
                 hotkey = profile.get("hotkey") or validator.hotkey
-                icon = resolve_validator_image(
-                    validator_name, existing=profile.get("image_url")
-                )
+                icon = resolve_validator_image(validator_name, existing=profile.get("image_url"))
 
-                weight = (
-                    float(validator.stake)
-                    if validator.stake is not None
-                    else float(profile.get("stake") or 0.0)
-                )
-                trust = (
-                    float(validator.vtrust)
-                    if validator.vtrust is not None
-                    else float(profile.get("vtrust") or 0.0)
-                )
+                weight = float(validator.stake) if validator.stake is not None else float(profile.get("stake") or 0.0)
+                trust = float(validator.vtrust) if validator.vtrust is not None else float(profile.get("vtrust") or 0.0)
                 version_text = validator.version or profile.get("version")
 
                 # ✅ Leer directamente de validator_round_summary_miners para este validator
@@ -2271,35 +2016,28 @@ class RoundsService:
                     .order_by(ValidatorRoundSummaryORM.local_rank.asc())
                 )
                 all_summaries = all_summaries_result.scalars().all()
-                
+
                 # Construir mapa de miner_uid -> summary para acceso rápido
-                summary_by_miner: Dict[int, ValidatorRoundSummaryORM] = {
-                    summary.miner_uid: summary for summary in all_summaries if summary.miner_uid is not None
-                }
-                
+                summary_by_miner: Dict[int, ValidatorRoundSummaryORM] = {summary.miner_uid: summary for summary in all_summaries if summary.miner_uid is not None}
+
                 # Buscar el top miner (local_rank = 1)
-                top_summary = next(
-                    (s for s in all_summaries if s.local_rank == 1),
-                    None
-                )
-                
+                top_summary = next((s for s in all_summaries if s.local_rank == 1), None)
+
                 top_miner_entry: Optional[Dict[str, Any]] = None
                 top_score_from_summary: Optional[float] = None
                 local_avg_eval_time: Optional[float] = None
-                
+
                 if top_summary:
                     # Usar datos de validator_round_summary_miners
                     top_score_from_summary = float(top_summary.local_avg_reward or 0.0)
                     local_avg_eval_time = float(top_summary.local_avg_eval_time or 0.0) if top_summary.local_avg_eval_time else None
-                    
+
                     # Buscar el run del top miner para construir top_miner_entry
                     top_miner_uid = top_summary.miner_uid
                     if top_miner_uid is not None:
                         for run in runs:
                             if run.run.miner_uid == top_miner_uid and not run.run.is_sota:
-                                top_miner_entry = self._build_miner_performance(
-                                    run, round_obj, weights
-                                )
+                                top_miner_entry = self._build_miner_performance(run, round_obj, weights)
                                 # ✅ Sobrescribir el score con local_avg_reward del summary
                                 if top_miner_entry:
                                     top_miner_entry["score"] = round(top_score_from_summary, 3)
@@ -2314,31 +2052,27 @@ class RoundsService:
                                 continue
                             run_score = run.run.avg_eval_score
                             if run_score is None and run.evaluations:
-                                run_score = sum(
-                                    getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in run.evaluations
-                                ) / len(run.evaluations)
+                                run_score = sum(getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in run.evaluations) / len(run.evaluations)
                             run_score = run_score or 0.0
                             if run_score > best_score:
                                 best_score = run_score
                                 best_run = run
                         if best_run is not None:
-                            top_miner_entry = self._build_miner_performance(
-                                best_run, round_obj, weights
-                            )
+                            top_miner_entry = self._build_miner_performance(best_run, round_obj, weights)
                             top_score_from_summary = best_score
 
                 # Usar top_score_from_summary si está disponible, sino usar top_score calculado
                 final_top_score = top_score_from_summary if top_score_from_summary is not None else top_score
-                
+
                 # ✅ Construir lista de miners con local_avg_reward de validator_round_summary_miners
                 miners_list: List[Dict[str, Any]] = []
                 for run in runs:
                     if run.run.is_sota or run.run.miner_uid is None:
                         continue
-                    
+
                     miner_uid = run.run.miner_uid
                     miner_entry = self._build_miner_performance(run, round_obj, weights)
-                    
+
                     # ✅ Sobrescribir score con local_avg_reward del summary si existe
                     if miner_uid in summary_by_miner:
                         summary = summary_by_miner[miner_uid]
@@ -2350,9 +2084,9 @@ class RoundsService:
                         if summary.local_avg_eval_time:
                             miner_entry["avgEvalTime"] = _truncate_decimal(float(summary.local_avg_eval_time), 2)  # Time (truncado a 2 decimales)
                             miner_entry["eval_time"] = _truncate_decimal(float(summary.local_avg_eval_time), 2)  # Time también como eval_time
-                    
+
                     miners_list.append(miner_entry)
-                
+
                 # Ordenar por score descendente
                 miners_list.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
@@ -2370,9 +2104,7 @@ class RoundsService:
                     "activeMiners": active_miners,
                     "weight": int(weight),
                     "trust": round(trust, 3),
-                    "version": (
-                        version_text if version_text else None
-                    ),  # Keep as string: "10.1.0"
+                    "version": (version_text if version_text else None),  # Keep as string: "10.1.0"
                     "stake": int(weight),
                     "emission": int(weight * 0.05),
                     "lastSeen": last_seen,
@@ -2401,15 +2133,9 @@ class RoundsService:
     ) -> Dict[str, Any]:
         data = await self.get_round_validators(round_identifier)
         for validator in data["validators"]:
-            if (
-                validator["id"] == str(validator_identifier)
-                or validator["id"].split("-", 1)[-1] == str(validator_identifier)
-                or validator.get("validatorRoundId") == str(validator_identifier)
-            ):
+            if validator["id"] == str(validator_identifier) or validator["id"].split("-", 1)[-1] == str(validator_identifier) or validator.get("validatorRoundId") == str(validator_identifier):
                 return validator
-        raise ValueError(
-            f"Validator {validator_identifier} not found in round {round_identifier}"
-        )
+        raise ValueError(f"Validator {validator_identifier} not found in round {round_identifier}")
 
     async def get_round_activity(
         self,
@@ -2425,16 +2151,8 @@ class RoundsService:
         since_dt = _parse_iso8601(since)
 
         aggregated_key = f"round_{aggregated.round_number}"
-        start_candidates = [
-            entry.round.started_at
-            for entry in aggregated.validator_rounds
-            if entry.round.started_at is not None
-        ]
-        end_candidates = [
-            entry.round.ended_at
-            for entry in aggregated.validator_rounds
-            if entry.round.ended_at is not None
-        ]
+        start_candidates = [entry.round.started_at for entry in aggregated.validator_rounds if entry.round.started_at is not None]
+        end_candidates = [entry.round.ended_at for entry in aggregated.validator_rounds if entry.round.ended_at is not None]
         started_ts = _iso_timestamp(min(start_candidates) if start_candidates else None)
         events.append(
             {
@@ -2512,9 +2230,7 @@ class RoundsService:
                             "id": f"{ctx.run.agent_run_id}_{evaluation.task_id}",
                             "type": "task_completed",
                             "message": f"Task {evaluation.task_id} evaluated",
-                            "timestamp": _iso_timestamp(
-                                eval_ts or ctx.run.ended_at or ctx.run.started_at
-                            ),
+                            "timestamp": _iso_timestamp(eval_ts or ctx.run.ended_at or ctx.run.started_at),
                             "metadata": {
                                 "minerUid": ctx.run.miner_uid,
                                 "validatorId": f"validator-{_get_validator_uid_from_context(ctx) or 'unknown'}",
@@ -2562,8 +2278,6 @@ class RoundsService:
         try:
             from app.services.chain_state import get_current_block_estimate
             from app.services.round_calc import (
-                compute_boundaries_for_round,
-                progress_for_block,
                 block_to_epoch,
             )
 
@@ -2582,56 +2296,55 @@ class RoundsService:
                     round_in_season = int(parts[1])
                 except ValueError:
                     pass
-        
+
         if current_block is not None or (season is not None and round_in_season is not None):
             # If we have season/round, fetch from database directly
             if season is not None and round_in_season is not None:
                 # Fetch round records directly from database using season/round
                 from app.db.models import RoundORM
                 from sqlalchemy import select
-                
-                stmt = select(RoundORM).where(
-                    RoundORM.season_number == season,
-                    RoundORM.round_number_in_season == round_in_season
-                )
+
+                stmt = select(RoundORM).where(RoundORM.season_number == season, RoundORM.round_number_in_season == round_in_season)
                 result_db = await self.session.execute(stmt)
                 round_rows = result_db.scalars().all()
-                
+
                 if not round_rows:
                     raise ValueError(f"Round not found: Season {season}, Round {round_in_season}")
-                
+
                 # Use the first round row (should be unique per season/round)
                 round_row = round_rows[0]
-                
+
                 # Get real start_block and end_block from database
                 from app.services.round_calc import _round_blocks
+
                 start_block = round_row.start_block
                 end_block = round_row.end_block or (start_block + _round_blocks())
                 start_epoch = block_to_epoch(start_block)
                 end_epoch = block_to_epoch(end_block)
-                
+
                 statuses = [round_row.status or "finished"]
                 aggregated_status = _aggregate_status(statuses)
-                
+
             else:
                 round_number = await self._resolve_round_number(round_identifier)
                 records, _ = await self._fetch_round_records_by_number(round_number)
                 if not records:
                     raise ValueError(f"Round {round_identifier} not found")
-                
+
                 # Get round data from first record
                 from app.services.round_calc import _round_blocks
+
                 round_row = records[0].model
                 start_block = round_row.start_block
                 end_block = round_row.end_block or (start_block + _round_blocks())
                 start_epoch = block_to_epoch(start_block)
                 end_epoch = block_to_epoch(end_block)
-                
+
                 statuses = [record.model.status or "finished" for record in records]
                 aggregated_status = _aggregate_status(statuses)
-                
+
                 # Extract season/round from round_row if available
-                if hasattr(round_row, 'season_number') and hasattr(round_row, 'round_number_in_season'):
+                if hasattr(round_row, "season_number") and hasattr(round_row, "round_number_in_season"):
                     season = round_row.season_number
                     round_in_season = round_row.round_number_in_season
 
@@ -2652,41 +2365,35 @@ class RoundsService:
                     display_block = start_block
 
             seconds_remaining = blocks_remaining * 12
-            
+
             # ✅ Calcular roundId: usar round_number si está disponible, sino calcular como season * 10000 + round_in_season
             round_id = None
-            if hasattr(round_row, 'round_number') and round_row.round_number is not None:
+            if hasattr(round_row, "round_number") and round_row.round_number is not None:
                 round_id = round_row.round_number
             elif season is not None and round_in_season is not None:
                 round_id = season * 10000 + round_in_season
-            
+
             # ✅ Obtener nextRound y previousRound usando season/round
             previous_round = None
             next_round = None
             if season is not None and round_in_season is not None:
                 from app.db.models import RoundORM
-                from sqlalchemy import select, func, and_
-                
+                from sqlalchemy import select, func
+
                 # Previous round: same season, round_in_season - 1
-                stmt_prev = select(RoundORM).where(
-                    RoundORM.season_number == season,
-                    RoundORM.round_number_in_season == round_in_season - 1
-                ).limit(1)
+                stmt_prev = select(RoundORM).where(RoundORM.season_number == season, RoundORM.round_number_in_season == round_in_season - 1).limit(1)
                 result_prev = await self.session.execute(stmt_prev)
                 prev_row = result_prev.scalar_one_or_none()
                 if prev_row:
                     previous_round = f"{season}/{round_in_season - 1}"
-                
+
                 # Next round: same season, round_in_season + 1
-                stmt_next = select(RoundORM).where(
-                    RoundORM.season_number == season,
-                    RoundORM.round_number_in_season == round_in_season + 1
-                ).limit(1)
+                stmt_next = select(RoundORM).where(RoundORM.season_number == season, RoundORM.round_number_in_season == round_in_season + 1).limit(1)
                 result_next = await self.session.execute(stmt_next)
                 next_row = result_next.scalar_one_or_none()
                 if next_row:
                     next_round = f"{season}/{round_in_season + 1}"
-            
+
             result = {
                 "roundId": round_id,
                 "season": season,
@@ -2705,45 +2412,35 @@ class RoundsService:
                 "nextRound": next_round,
                 "previousRound": previous_round,
             }
-            
+
             return result
 
-        aggregated = await self._fetch_aggregated_round(
-            round_identifier, include_details=False
-        )
+        aggregated = await self._fetch_aggregated_round(round_identifier, include_details=False)
 
         # Fallback to task-based estimate when chain is unavailable
         records = [entry.record for entry in aggregated.validator_rounds]
         total_tasks = sum(record.model.n_tasks or 0 for record in records)
-        completed_tasks = sum(
-            self._estimate_completed_tasks(record.model) for record in records
-        )
-        progress = self._compute_aggregated_progress(
-            records, completed_tasks, total_tasks
-        )
-        
+        completed_tasks = sum(self._estimate_completed_tasks(record.model) for record in records)
+        progress = self._compute_aggregated_progress(records, completed_tasks, total_tasks)
+
         # ✅ Obtener status y nextRound/previousRound
         statuses = [record.model.status or "finished" for record in records]
         aggregated_status = _aggregate_status(statuses)
-        
+
         round_number = aggregated.round_number
         from sqlalchemy import select, func
         from app.db.models import RoundORM
-        
+
         # Buscar round anterior (round_number < current, más cercano)
-        stmt_prev = select(func.max(RoundORM.round_number)).where(
-            RoundORM.round_number < round_number
-        )
+        stmt_prev = select(func.max(RoundORM.round_number)).where(RoundORM.round_number < round_number)
         result_prev = await self.session.execute(stmt_prev)
         previous_round = result_prev.scalar_one_or_none()
-        
+
         # Buscar round siguiente (round_number > current, más cercano)
-        stmt_next = select(func.min(RoundORM.round_number)).where(
-            RoundORM.round_number > round_number
-        )
+        stmt_next = select(func.min(RoundORM.round_number)).where(RoundORM.round_number > round_number)
         result_next = await self.session.execute(stmt_next)
         next_round = result_next.scalar_one_or_none()
-        
+
         return {
             "roundId": aggregated.round_number,
             "currentBlock": progress.get("currentBlock", 0),
@@ -2751,12 +2448,8 @@ class RoundsService:
             "endBlock": progress.get("endBlock", 0),
             "blocksRemaining": progress.get("blocksRemaining", 0),
             "progress": progress.get("progress", 0.0),
-            "estimatedTimeRemaining": progress.get(
-                "estimatedTimeRemaining", _time_remaining(0)
-            ),
-            "lastUpdated": progress.get(
-                "lastUpdated", datetime.now(timezone.utc).isoformat()
-            ),
+            "estimatedTimeRemaining": progress.get("estimatedTimeRemaining", _time_remaining(0)),
+            "lastUpdated": progress.get("lastUpdated", datetime.now(timezone.utc).isoformat()),
             "status": aggregated_status,  # ✅ Agregar status
             "nextRound": int(next_round) if next_round is not None else None,  # ✅ Agregar nextRound
             "previousRound": int(previous_round) if previous_round is not None else None,  # ✅ Agregar previousRound
@@ -2783,12 +2476,8 @@ class RoundsService:
             network_pairs.append((entry, "network"))
 
         effective_limit = max(limit, len(best_by_validator))
-        selected_pairs: List[Tuple[Dict[str, Any], str]] = network_pairs[
-            :effective_limit
-        ]
-        seen_keys = {
-            (entry.get("validatorId"), entry.get("uid")) for entry, _ in selected_pairs
-        }
+        selected_pairs: List[Tuple[Dict[str, Any], str]] = network_pairs[:effective_limit]
+        seen_keys = {(entry.get("validatorId"), entry.get("uid")) for entry, _ in selected_pairs}
 
         for performance in best_by_validator.values():
             key = (performance.get("validatorId"), performance.get("uid"))
@@ -2842,9 +2531,7 @@ class RoundsService:
             for entry in aggregated.validator_rounds:
                 weights = entry.round.weights or {}
                 for ctx in entry.contexts:
-                    miner_entries.append(
-                        self._build_miner_performance(ctx, entry.round, weights)
-                    )
+                    miner_entries.append(self._build_miner_performance(ctx, entry.round, weights))
             miner_entries.sort(key=lambda item: item.get("avg_reward") or item.get("consensus_reward") or 0.0, reverse=True)
             top_miners = [
                 {
@@ -2883,17 +2570,11 @@ class RoundsService:
                     timestamps.append(created_at.timestamp())
 
         timestamps = sorted(set(timestamps))
-        start_candidates = [
-            entry.round.started_at
-            for entry in aggregated.validator_rounds
-            if entry.round.started_at is not None
-        ]
+        start_candidates = [entry.round.started_at for entry in aggregated.validator_rounds if entry.round.started_at is not None]
         if not timestamps and start_candidates:
             timestamps = [min(start_candidates)]
 
-        start_block = min(
-            entry.round.start_block for entry in aggregated.validator_rounds
-        )
+        start_block = min(entry.round.start_block for entry in aggregated.validator_rounds)
         end_block_candidates: List[int] = []
         for entry in aggregated.validator_rounds:
             end_block = entry.round.end_block
@@ -2904,9 +2585,7 @@ class RoundsService:
         end_block_value = max(end_block_candidates)
         block_span = max(1, end_block_value - start_block)
 
-        total_tasks = (
-            sum(entry.round.n_tasks or 0 for entry in aggregated.validator_rounds) or 1
-        )
+        total_tasks = sum(entry.round.n_tasks or 0 for entry in aggregated.validator_rounds) or 1
 
         for ts in timestamps:
             completed_tasks = 0
@@ -2939,21 +2618,13 @@ class RoundsService:
         self,
         round_identifier: Union[str, int],
     ) -> Dict[str, Any]:
-        aggregated = await self._fetch_aggregated_round(
-            round_identifier, include_details=False
-        )
+        aggregated = await self._fetch_aggregated_round(round_identifier, include_details=False)
         statistics = await self.get_round_statistics(round_identifier)
         records = [entry.record for entry in aggregated.validator_rounds]
         total_tasks = sum(record.model.n_tasks or 0 for record in records)
-        completed_tasks = sum(
-            self._estimate_completed_tasks(record.model) for record in records
-        )
-        progress = self._compute_aggregated_progress(
-            records, completed_tasks, total_tasks
-        )
-        status = _aggregate_status(
-            [entry.round.status or "finished" for entry in aggregated.validator_rounds]
-        )
+        completed_tasks = sum(self._estimate_completed_tasks(record.model) for record in records)
+        progress = self._compute_aggregated_progress(records, completed_tasks, total_tasks)
+        status = _aggregate_status([entry.round.status or "finished" for entry in aggregated.validator_rounds])
 
         progress_ratio = progress.get("progress", 0.0)
         time_remaining_metrics = progress.get("estimatedTimeRemaining") or {}
@@ -2965,11 +2636,7 @@ class RoundsService:
             "status": status,
             "progress": round(progress_ratio, 3),
             "totalMiners": statistics.get("totalMiners", 0),
-            "timeRemaining": (
-                None
-                if progress_ratio >= 1
-                else f"{hours_remaining}h {minutes_remaining}m"
-            ),
+            "timeRemaining": (None if progress_ratio >= 1 else f"{hours_remaining}h {minutes_remaining}m"),
         }
 
     async def _load_tasks_for_rounds(
@@ -3006,11 +2673,7 @@ class RoundsService:
             run_row,
             parent_round_row=parent_round_row,
             include_details=include_details,
-            tasks_for_round=(
-                tasks_by_round.get(run_row.validator_round_id)
-                if tasks_by_round
-                else None
-            ),
+            tasks_for_round=(tasks_by_round.get(run_row.validator_round_id) if tasks_by_round else None),
         )
 
         tasks = context.tasks if include_details else []
@@ -3041,10 +2704,7 @@ class RoundsService:
             # Using getattr to safely access the relationship
             round_row = getattr(run_row, "validator_round", None)
             if round_row is None:
-                raise ValueError(
-                    f"Agent run {run_row.agent_run_id} is missing round relationship. "
-                    f"Ensure validator_round is loaded with selectinload before calling this method."
-                )
+                raise ValueError(f"Agent run {run_row.agent_run_id} is missing round relationship. Ensure validator_round is loaded with selectinload before calling this method.")
 
         round_model = self._deserialize_round(round_row)
         agent_run_model = self._deserialize_agent_run(
@@ -3078,11 +2738,7 @@ class RoundsService:
         if include_details and tasks_for_round is not None:
             task_lookup = tasks_for_round
             if agent_run_model.task_ids:
-                tasks = [
-                    task_lookup[task_id]
-                    for task_id in agent_run_model.task_ids
-                    if task_id in task_lookup
-                ]
+                tasks = [task_lookup[task_id] for task_id in agent_run_model.task_ids if task_id in task_lookup]
             else:
                 tasks = list(task_lookup.values())
         else:
@@ -3095,7 +2751,7 @@ class RoundsService:
             task_solutions_attr = getattr(run_row, "task_solutions", None)
             if task_solutions_attr is not None:
                 task_solutions = self._convert_task_solutions(list(task_solutions_attr))
-        
+
         evaluations = []
         if include_details:
             # Ensure evaluations is loaded (should be via selectinload)
@@ -3117,14 +2773,10 @@ class RoundsService:
         if score is None:
             score = getattr(context.run, "avg_eval_score", None)
         if score is None and context.evaluations:
-            score = sum(getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in context.evaluations) / len(
-                context.evaluations
-            )
+            score = sum(getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in context.evaluations) / len(context.evaluations)
         # If still None and we have evaluations list, calculate from there
         if score is None and hasattr(context, "evaluations") and context.evaluations:
-            scores = [
-                getattr(e, "eval_score", getattr(e, "final_score", 0.0)) for e in context.evaluations if getattr(e, "eval_score", getattr(e, "final_score", None)) is not None
-            ]
+            scores = [getattr(e, "eval_score", getattr(e, "final_score", 0.0)) for e in context.evaluations if getattr(e, "eval_score", getattr(e, "final_score", None)) is not None]
             if scores:
                 score = sum(scores) / len(scores)
         try:
@@ -3141,11 +2793,7 @@ class RoundsService:
             grouped[round_id].append(context)
 
         for context_list in grouped.values():
-            ranked_candidates = [
-                ctx
-                for ctx in context_list
-                if not ctx.run.is_sota and ctx.run.miner_uid is not None
-            ]
+            ranked_candidates = [ctx for ctx in context_list if not ctx.run.is_sota and ctx.run.miner_uid is not None]
             if not ranked_candidates:
                 continue
             ranked_candidates.sort(key=self._context_score, reverse=True)
@@ -3164,20 +2812,14 @@ class RoundsService:
         contexts: List[AgentRunContext],
     ) -> None:
         round_model = record.model
-        non_sota_contexts = [
-            ctx
-            for ctx in contexts
-            if not ctx.run.is_sota and ctx.run.miner_uid is not None
-        ]
+        non_sota_contexts = [ctx for ctx in contexts if not ctx.run.is_sota and ctx.run.miner_uid is not None]
 
         all_scores = [self._context_score(ctx) for ctx in non_sota_contexts]
         average_score = sum(all_scores) / len(all_scores) if all_scores else None
         top_score = max(all_scores) if all_scores else None
 
         desired_winners = round_model.n_winners or min(3, len(non_sota_contexts))
-        sorted_contexts = sorted(
-            non_sota_contexts, key=self._context_score, reverse=True
-        )
+        sorted_contexts = sorted(non_sota_contexts, key=self._context_score, reverse=True)
         selected_contexts = sorted_contexts[:desired_winners]
 
         winners: List[Dict[str, Any]] = []
@@ -3223,19 +2865,13 @@ class RoundsService:
     ) -> Dict[str, Any]:
         miner_uid = context.run.miner_uid if context.run.miner_uid is not None else -1
         miner_info = self._resolve_miner_info(context, round_obj)
-        name = (
-            miner_info.agent_name
-            if miner_info and miner_info.agent_name
-            else f"Miner {miner_uid}"
-        )
+        name = miner_info.agent_name if miner_info and miner_info.agent_name else f"Miner {miner_uid}"
         hotkey = miner_info.hotkey if miner_info else None
         image_url = resolve_agent_image(miner_info)
 
         score = context.run.avg_eval_score
         if score is None and context.evaluations:
-            score = sum(getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in context.evaluations) / len(
-                context.evaluations
-            )
+            score = sum(getattr(er, "eval_score", getattr(er, "final_score", 0.0)) for er in context.evaluations) / len(context.evaluations)
         score = score or 0.0
 
         duration = context.run.elapsed_sec
@@ -3246,14 +2882,12 @@ class RoundsService:
         tasks_total = context.run.n_tasks_total or len(context.tasks)
         success_tasks = context.run.n_tasks_completed
         if success_tasks is None:
-            success_tasks = len(
-                [er for er in context.evaluations if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5]
-            )
+            success_tasks = len([er for er in context.evaluations if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5])
 
         success = (context.run.n_tasks_failed or 0) == 0
         if tasks_total:
             success = success and success_tasks >= tasks_total
-        
+
         # Get miner weight (for emission calculation)
         miner_weight = 0.0
         if context.run.miner_uid is not None and str(context.run.miner_uid) in weights:
@@ -3262,25 +2896,22 @@ class RoundsService:
             miner_weight = weights[str(context.run.agent_run_id)]
         miner_stake = int(miner_weight) if miner_weight > 1 else int(miner_weight * 1000)
         emission = int(miner_stake * 0.05)
-        
+
         # Get VALIDATOR stake (for weighted scoring)
         # Try multiple sources in order of preference
         validator_stake = 0.0
-        
+
         # 1. Try validator_info (primary validator for this round)
         if round_obj.validator_info and round_obj.validator_info.stake:
             validator_stake = float(round_obj.validator_info.stake)
-        
+
         # 2. Try validators list
         if validator_stake == 0 and round_obj.validators:
             validator_uid = _get_validator_uid_from_context(context)
-            validator = next(
-                (v for v in round_obj.validators if v.uid == validator_uid),
-                None
-            )
+            validator = next((v for v in round_obj.validators if v.uid == validator_uid), None)
             if validator and validator.stake:
                 validator_stake = float(validator.stake)
-        
+
         # Fallback: if stake is still 0, use equal weight (1.0)
         # This happens in local dev or when validator snapshots aren't saved
         if validator_stake == 0:
@@ -3306,14 +2937,7 @@ class RoundsService:
 
     @staticmethod
     def _round_cache_key(prefix: str, round_number: int, *components: Any) -> str:
-        extras = (
-            ":".join(
-                json.dumps(component, sort_keys=True, default=str)
-                for component in components
-            )
-            if components
-            else ""
-        )
+        extras = ":".join(json.dumps(component, sort_keys=True, default=str) for component in components) if components else ""
         if extras:
             return f"{prefix}:{round_number}:{extras}"
         return f"{prefix}:{round_number}"
@@ -3332,9 +2956,7 @@ class RoundsService:
             stmt = select(RoundORM)
             if load_relationships:
                 stmt = stmt.options(
-                    selectinload(RoundORM.agent_runs).selectinload(
-                        AgentEvaluationRunORM.task_solutions
-                    ),
+                    selectinload(RoundORM.agent_runs).selectinload(AgentEvaluationRunORM.task_solutions),
                     selectinload(RoundORM.agent_runs).selectinload(
                         AgentEvaluationRunORM.evaluations  # Relación correcta: evaluations, no evaluation_results
                     ),
@@ -3416,7 +3038,7 @@ class RoundsService:
         round_number = None
         if round_row.season_number is not None and round_row.round_number_in_season is not None:
             round_number = int(round_row.season_number) * 10000 + int(round_row.round_number_in_season)
-        
+
         profile = self._build_validator_profile(
             round_row=round_row,
             validator_uid=validator_uid,
@@ -3598,7 +3220,7 @@ class RoundsService:
             # rank and weight obtained from validator_round_summary_miners
             metadata=metadata,
         )
-        
+
         # Set validator_uid, validator_hotkey, is_sota, version, rank, weight as extra attributes for compatibility
         if validator_uid is not None:
             run_model.validator_uid = validator_uid
@@ -3664,11 +3286,7 @@ class RoundsService:
                     if isinstance(action_payload.get("attributes"), dict):
                         attributes = dict(action_payload.get("attributes") or {})
                     else:
-                        attributes = {
-                            key: value
-                            for key, value in action_payload.items()
-                            if key != "type"
-                        }
+                        attributes = {key: value for key, value in action_payload.items() if key != "type"}
                     actions.append(Action(type=action_type, attributes=attributes))
 
                 solutions.append(
@@ -3712,19 +3330,12 @@ class RoundsService:
                         validator_hotkey=evaluation_row.validator_hotkey,
                         eval_score=getattr(evaluation_row, "eval_score", getattr(evaluation_row, "final_score", 0.0)),
                         reward=getattr(evaluation_row, "reward", getattr(evaluation_row, "eval_score", getattr(evaluation_row, "final_score", 0.0))),
-                        execution_history=(
-                            evaluation_row.execution_history_record.execution_history
-                            if evaluation_row.execution_history_record
-                            else []
-                        ),
+                        execution_history=(evaluation_row.execution_history_record.execution_history if evaluation_row.execution_history_record else []),
                         feedback=evaluation_row.feedback,
                         evaluation_time=evaluation_row.evaluation_time or 0.0,
                         gif_recording=evaluation_row.gif_recording,
                         metadata=evaluation_row.meta or {},
-                        llm_cost=evaluation_row.llm_cost,
-                        llm_tokens=evaluation_row.llm_tokens,
-                        llm_provider=evaluation_row.llm_provider,
-                        llm_model=evaluation_row.llm_model,
+                        **llm_summary_from_usage(evaluation_row.llm_usage or []),
                         llm_usage=[
                             {
                                 "provider": u.provider,
@@ -3744,78 +3355,90 @@ class RoundsService:
                 )
         return evaluations
 
-    async def get_aggregated_metrics(
-        self, season: int, round_in_season: int
-    ) -> Dict[str, Any]:
+    async def get_aggregated_metrics(self, season: int, round_in_season: int) -> Dict[str, Any]:
         """
         Obtiene métricas agregadas (post-consensus) y por validator (local) desde validator_round_summary_miners.
-        
+
         Args:
             season: Número de la temporada (e.g., 1)
             round_in_season: Número del round dentro de la temporada (e.g., 1)
-        
+
         Retorna:
         - aggregated: winner (uid, name, image, hotkey), avg_winner_score, avg_eval_time, miners_evaluated, tasks_evaluated (todo post-consensus, filtrando por Autoppia UID 83)
         - validators: lista de validators con sus métricas locales
         """
-        
-        stmt = select(RoundORM.validator_round_id).where(
-            RoundORM.season_number == season,
-            RoundORM.round_number_in_season == round_in_season
-        )
+
+        stmt = select(RoundORM.validator_round_id).where(RoundORM.season_number == season, RoundORM.round_number_in_season == round_in_season)
         result = await self.session.execute(stmt)
         validator_round_ids = [row[0] for row in result.all()]
-        
+
         if not validator_round_ids:
             raise ValueError(f"Round not found: Season {season}, Round {round_in_season}")
-        
+
         # Buscar validator_round_id de Autoppia (UID 83) para métricas agregadas
         autoppia_validator_round_id = None
         for validator_round_id in validator_round_ids:
             # Buscar si este validator_round tiene validator_uid = 83
-            stmt_validator = select(ValidatorRoundValidatorORM.validator_uid).where(
-                ValidatorRoundValidatorORM.validator_round_id == validator_round_id,
-                ValidatorRoundValidatorORM.validator_uid == 83,
-            ).limit(1)
+            stmt_validator = (
+                select(ValidatorRoundValidatorORM.validator_uid)
+                .where(
+                    ValidatorRoundValidatorORM.validator_round_id == validator_round_id,
+                    ValidatorRoundValidatorORM.validator_uid == 83,
+                )
+                .limit(1)
+            )
             result_validator = await self.session.execute(stmt_validator)
             if result_validator.scalar_one_or_none():
                 autoppia_validator_round_id = validator_round_id
                 break
-        
+
         # Si no encontramos Autoppia, usar el primero disponible
         if not autoppia_validator_round_id:
             autoppia_validator_round_id = validator_round_ids[0]
-        
+
         # Obtener winner (post_consensus_rank = 1) desde Autoppia
         winner_summary = None
         if autoppia_validator_round_id:
-            stmt_winner = select(ValidatorRoundSummaryORM).where(
-                ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
-                ValidatorRoundSummaryORM.post_consensus_rank == 1,
-            ).limit(1)
+            stmt_winner = (
+                select(ValidatorRoundSummaryORM)
+                .where(
+                    ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
+                    ValidatorRoundSummaryORM.post_consensus_rank == 1,
+                )
+                .limit(1)
+            )
             result_winner = await self.session.execute(stmt_winner)
             winner_summary = result_winner.scalar_one_or_none()
-        
+
         # Si no hay rank=1, buscar el mayor post_consensus_avg_reward
         if not winner_summary:
-            stmt_winner = select(ValidatorRoundSummaryORM).where(
-                ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
-                ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None),
-            ).order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc()).limit(1)
+            stmt_winner = (
+                select(ValidatorRoundSummaryORM)
+                .where(
+                    ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
+                    ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None),
+                )
+                .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc())
+                .limit(1)
+            )
             result_winner = await self.session.execute(stmt_winner)
             winner_summary = result_winner.scalar_one_or_none()
-        
+
         # Construir winner con name, image, hotkey y métricas
         winner_data = None
         if winner_summary and winner_summary.miner_uid is not None:
             # Buscar miner info desde validator_round_miners
-            stmt_miner = select(ValidatorRoundMinerORM).where(
-                ValidatorRoundMinerORM.validator_round_id == autoppia_validator_round_id,
-                ValidatorRoundMinerORM.miner_uid == winner_summary.miner_uid,
-            ).limit(1)
+            stmt_miner = (
+                select(ValidatorRoundMinerORM)
+                .where(
+                    ValidatorRoundMinerORM.validator_round_id == autoppia_validator_round_id,
+                    ValidatorRoundMinerORM.miner_uid == winner_summary.miner_uid,
+                )
+                .limit(1)
+            )
             result_miner = await self.session.execute(stmt_miner)
             miner_snapshot = result_miner.scalar_one_or_none()
-            
+
             winner_data = {
                 "uid": winner_summary.miner_uid,
                 "name": miner_snapshot.name if miner_snapshot else f"Miner {winner_summary.miner_uid}",
@@ -3825,14 +3448,14 @@ class RoundsService:
                 "avg_eval_score": _truncate_decimal(float(winner_summary.post_consensus_avg_eval_score or 0.0), 4),
                 "avg_eval_time": _truncate_decimal(float(winner_summary.post_consensus_avg_eval_time or 0.0), 2),
             }
-        
+
         # Obtener métricas agregadas (post-consensus) desde Autoppia
         aggregated_metrics = {
             "winner": winner_data,
             "miners_evaluated": 0,
             "tasks_evaluated": 0,
         }
-        
+
         # Contar miners únicos y tasks desde post_consensus (desde Autoppia)
         if autoppia_validator_round_id:
             # Contar TODOS los mineros únicos (sin filtrar por tareas recibidas)
@@ -3846,7 +3469,7 @@ class RoundsService:
             miners_count_row = result_miners_count.first()
             if miners_count_row:
                 aggregated_metrics["miners_evaluated"] = int(miners_count_row.miners_count or 0)
-            
+
             # Contar tasks (solo de mineros que tienen tareas recibidas)
             stmt_tasks_count = select(
                 func.sum(ValidatorRoundSummaryORM.post_consensus_tasks_received).label("tasks_received"),
@@ -3859,37 +3482,50 @@ class RoundsService:
             tasks_count_row = result_tasks_count.first()
             if tasks_count_row:
                 aggregated_metrics["tasks_evaluated"] = int(tasks_count_row.tasks_success or tasks_count_row.tasks_received or 0)
-        
+
         # Obtener métricas por validator (LOCAL)
         validators_list = []
         for validator_round_id in validator_round_ids:
             # Obtener validator info
-            stmt_validator = select(ValidatorRoundValidatorORM).where(
-                ValidatorRoundValidatorORM.validator_round_id == validator_round_id,
-            ).limit(1)
+            stmt_validator = (
+                select(ValidatorRoundValidatorORM)
+                .where(
+                    ValidatorRoundValidatorORM.validator_round_id == validator_round_id,
+                )
+                .limit(1)
+            )
             result_validator = await self.session.execute(stmt_validator)
             validator_info = result_validator.scalar_one_or_none()
-            
+
             if not validator_info:
                 continue
-            
+
             # Obtener top miner local (local_rank = 1)
-            stmt_top = select(ValidatorRoundSummaryORM).where(
-                ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
-                ValidatorRoundSummaryORM.local_rank == 1,
-            ).limit(1)
+            stmt_top = (
+                select(ValidatorRoundSummaryORM)
+                .where(
+                    ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                    ValidatorRoundSummaryORM.local_rank == 1,
+                )
+                .limit(1)
+            )
             result_top = await self.session.execute(stmt_top)
             top_summary = result_top.scalar_one_or_none()
-            
+
             # Si no hay rank=1, buscar el mayor local_avg_reward
             if not top_summary:
-                stmt_top = select(ValidatorRoundSummaryORM).where(
-                    ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
-                    ValidatorRoundSummaryORM.local_avg_reward.isnot(None),
-                ).order_by(ValidatorRoundSummaryORM.local_avg_reward.desc()).limit(1)
+                stmt_top = (
+                    select(ValidatorRoundSummaryORM)
+                    .where(
+                        ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                        ValidatorRoundSummaryORM.local_avg_reward.isnot(None),
+                    )
+                    .order_by(ValidatorRoundSummaryORM.local_avg_reward.desc())
+                    .limit(1)
+                )
                 result_top = await self.session.execute(stmt_top)
                 top_summary = result_top.scalar_one_or_none()
-            
+
             # Contar miners y tasks locales
             # Contar TODOS los mineros únicos (sin filtrar por tareas recibidas)
             stmt_local_miners_count = select(
@@ -3900,7 +3536,7 @@ class RoundsService:
             )
             result_local_miners_count = await self.session.execute(stmt_local_miners_count)
             local_miners_count_row = result_local_miners_count.first()
-            
+
             # Contar tasks (solo de mineros que tienen tareas recibidas)
             stmt_local_tasks_count = select(
                 func.sum(ValidatorRoundSummaryORM.local_tasks_received).label("tasks_received"),
@@ -3911,28 +3547,36 @@ class RoundsService:
             )
             result_local_tasks_count = await self.session.execute(stmt_local_tasks_count)
             local_tasks_count_row = result_local_tasks_count.first()
-            
+
             # ✅ Obtener TODOS los miners de este validator desde validator_round_summary_miners
-            stmt_all_miners = select(ValidatorRoundSummaryORM).where(
-                ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
-            ).order_by(ValidatorRoundSummaryORM.local_rank.asc().nulls_last())
+            stmt_all_miners = (
+                select(ValidatorRoundSummaryORM)
+                .where(
+                    ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                )
+                .order_by(ValidatorRoundSummaryORM.local_rank.asc().nulls_last())
+            )
             result_all_miners = await self.session.execute(stmt_all_miners)
             all_miners_summaries = result_all_miners.scalars().all()
-            
+
             # Construir lista de miners con sus datos
             miners_list = []
             for miner_summary in all_miners_summaries:
                 if miner_summary.miner_uid is None:
                     continue
-                
+
                 # Buscar miner snapshot para obtener name e image
-                stmt_miner = select(ValidatorRoundMinerORM).where(
-                    ValidatorRoundMinerORM.validator_round_id == validator_round_id,
-                    ValidatorRoundMinerORM.miner_uid == miner_summary.miner_uid,
-                ).limit(1)
+                stmt_miner = (
+                    select(ValidatorRoundMinerORM)
+                    .where(
+                        ValidatorRoundMinerORM.validator_round_id == validator_round_id,
+                        ValidatorRoundMinerORM.miner_uid == miner_summary.miner_uid,
+                    )
+                    .limit(1)
+                )
                 result_miner = await self.session.execute(stmt_miner)
                 miner_snapshot = result_miner.scalar_one_or_none()
-                
+
                 miner_data = {
                     "uid": miner_summary.miner_uid,
                     "name": miner_snapshot.name if miner_snapshot else f"Miner {miner_summary.miner_uid}",
@@ -3944,12 +3588,13 @@ class RoundsService:
                     "local_avg_eval_time": _truncate_decimal(float(miner_summary.local_avg_eval_time or 0.0), 2),
                 }
                 miners_list.append(miner_data)
-            
+
             # Resolver imagen del validador
             from app.utils.images import resolve_validator_image
+
             validator_name = validator_info.name or f"Validator {validator_info.validator_uid}"
             validator_image = resolve_validator_image(validator_name)
-            
+
             validator_data = {
                 "validator_uid": validator_info.validator_uid,
                 "validator_name": validator_name,
@@ -3962,32 +3607,36 @@ class RoundsService:
                 "local_tasks_evaluated": int(local_tasks_count_row.tasks_success or local_tasks_count_row.tasks_received or 0) if local_tasks_count_row else 0,
                 "miners": miners_list,  # ✅ Lista completa de miners
             }
-            
+
             # Agregar winner local si existe
             if top_summary and top_summary.miner_uid is not None:
-                stmt_miner = select(ValidatorRoundMinerORM).where(
-                    ValidatorRoundMinerORM.validator_round_id == validator_round_id,
-                    ValidatorRoundMinerORM.miner_uid == top_summary.miner_uid,
-                ).limit(1)
+                stmt_miner = (
+                    select(ValidatorRoundMinerORM)
+                    .where(
+                        ValidatorRoundMinerORM.validator_round_id == validator_round_id,
+                        ValidatorRoundMinerORM.miner_uid == top_summary.miner_uid,
+                    )
+                    .limit(1)
+                )
                 result_miner = await self.session.execute(stmt_miner)
                 miner_snapshot = result_miner.scalar_one_or_none()
-                
+
                 validator_data["winner"] = {
                     "uid": top_summary.miner_uid,
                     "name": miner_snapshot.name if miner_snapshot else f"Miner {top_summary.miner_uid}",
                     "image": miner_snapshot.image_url if miner_snapshot else None,
                     "hotkey": top_summary.miner_hotkey or (miner_snapshot.miner_hotkey if miner_snapshot else None),
                 }
-            
+
             validators_list.append(validator_data)
-        
+
         return {
             "season": season,
             "round_in_season": round_in_season,
             "post_consensus_summary": aggregated_metrics,
             "validators": validators_list,
         }
-    
+
     async def get_available_rounds(self) -> List[str]:
         """
         Get list of available rounds from validator_rounds table.
@@ -3995,28 +3644,22 @@ class RoundsService:
         """
         stmt = (
             select(RoundORM.season_number, RoundORM.round_number_in_season)
-            .where(
-                RoundORM.season_number.isnot(None),
-                RoundORM.round_number_in_season.isnot(None)
-            )
+            .where(RoundORM.season_number.isnot(None), RoundORM.round_number_in_season.isnot(None))
             .distinct()
-            .order_by(
-                RoundORM.season_number.desc(),
-                RoundORM.round_number_in_season.desc()
-            )
+            .order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
         )
         result = await self.session.execute(stmt)
         rounds = [f"{row[0]}/{row[1]}" for row in result.all() if row[0] is not None and row[1] is not None]
         return rounds
-    
+
     async def get_round_miners_for_autoppia(self, round_identifier: Union[str, int]) -> Dict[str, Any]:
         """
         Get miners for a specific round from validator_round_summary_miners,
         filtered by Autoppia validator (UID 83) and using post_consensus data.
-        
+
         Args:
             round_identifier: Round identifier in format "season/round" (e.g., "1/1") or legacy round_number
-        
+
         Returns:
         {
             "round": round_identifier,
@@ -4033,7 +3676,7 @@ class RoundsService:
         }
         """
         AUTOPPIA_UID = 83
-        
+
         # Parse round_identifier to get season and round_in_season
         season = None
         round_in_season = None
@@ -4045,16 +3688,13 @@ class RoundsService:
                     round_in_season = int(parts[1])
                 except ValueError:
                     pass
-        
+
         # Find validator_round_id for Autoppia (UID 83) in this round
         # Need to join with ValidatorRoundValidatorORM to get validator_uid
         if season is not None and round_in_season is not None:
             stmt_validator_round = (
                 select(RoundORM.validator_round_id)
-                .join(
-                    ValidatorRoundValidatorORM,
-                    RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
-                )
+                .join(ValidatorRoundValidatorORM, RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
                 .where(
                     RoundORM.season_number == season,
                     RoundORM.round_number_in_season == round_in_season,
@@ -4069,10 +3709,7 @@ class RoundsService:
                 round_in_season = round_identifier % 10000
                 stmt_validator_round = (
                     select(RoundORM.validator_round_id)
-                    .join(
-                        ValidatorRoundValidatorORM,
-                        RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
-                    )
+                    .join(ValidatorRoundValidatorORM, RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
                     .where(
                         RoundORM.season_number == season,
                         RoundORM.round_number_in_season == round_in_season,
@@ -4082,49 +3719,32 @@ class RoundsService:
                 )
             else:
                 raise ValueError(f"Invalid round identifier: {round_identifier}")
-        
+
         result_validator_round = await self.session.execute(stmt_validator_round)
         validator_round_id = result_validator_round.scalar_one_or_none()
-        
+
         if not validator_round_id:
             # If Autoppia not found, try to find any validator_round_id for this round
-            logger.warning(
-                f"Autopia validator (UID {AUTOPPIA_UID}) not found for round {round_identifier}. "
-                f"Trying to find any validator for this round..."
-            )
-            
+            logger.warning(f"Autopia validator (UID {AUTOPPIA_UID}) not found for round {round_identifier}. Trying to find any validator for this round...")
+
             # Find any validator_round_id for this round (from validator_rounds table)
             if season is not None and round_in_season is not None:
-                stmt_fallback = (
-                    select(RoundORM.validator_round_id)
-                    .where(
-                        RoundORM.season_number == season,
-                        RoundORM.round_number_in_season == round_in_season
-                    )
-                    .limit(1)
-                )
+                stmt_fallback = select(RoundORM.validator_round_id).where(RoundORM.season_number == season, RoundORM.round_number_in_season == round_in_season).limit(1)
             else:
-                stmt_fallback = (
-                    select(RoundORM.validator_round_id)
-                    .limit(1)
-                )
+                stmt_fallback = select(RoundORM.validator_round_id).limit(1)
             result_fallback = await self.session.execute(stmt_fallback)
             validator_round_id = result_fallback.scalar_one_or_none()
-            
+
             if not validator_round_id:
                 # No validator found for this round
-                logger.warning(
-                    f"No validator rounds found for round {round_identifier}"
-                )
+                logger.warning(f"No validator rounds found for round {round_identifier}")
                 return {
                     "round": round_identifier,
                     "miners": [],
                 }
             else:
-                logger.info(
-                    f"Using fallback validator_round_id {validator_round_id} for round {round_identifier}"
-                )
-        
+                logger.info(f"Using fallback validator_round_id {validator_round_id} for round {round_identifier}")
+
         # Get all miners from validator_round_summary_miners for this validator_round_id
         # BUT only include miners that have an agent_run (to be consistent with /agent-runs endpoint)
         # Also exclude burn UID which should never have agent_runs
@@ -4135,7 +3755,7 @@ class RoundsService:
                 and_(
                     ValidatorRoundSummaryORM.validator_round_id == AgentEvaluationRunORM.validator_round_id,
                     ValidatorRoundSummaryORM.miner_uid == AgentEvaluationRunORM.miner_uid,
-                )
+                ),
             )
             .where(
                 ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
@@ -4149,10 +3769,11 @@ class RoundsService:
         )
         result_summary = await self.session.execute(stmt_summary)
         summaries = result_summary.scalars().all()
-        
+
         # If no summaries, get miners from evaluations directly (fallback when consensus not available)
         if not summaries:
             from app.db.models import EvaluationORM
+
             # Get miners from evaluations for this round
             stmt_eval_miners = (
                 select(
@@ -4170,10 +3791,11 @@ class RoundsService:
             )
             result_eval_miners = await self.session.execute(stmt_eval_miners)
             eval_miners = result_eval_miners.all()
-            
+
             if eval_miners:
                 # Create mock summary objects from evaluation data
                 from types import SimpleNamespace
+
                 summaries = []
                 for rank, (miner_uid, avg_score, avg_time, tasks_count) in enumerate(eval_miners, start=1):
                     mock_summary = SimpleNamespace(
@@ -4184,34 +3806,29 @@ class RoundsService:
                         post_consensus_avg_eval_time=float(avg_time or 0.0),
                     )
                     summaries.append(mock_summary)
-        
+
         if not summaries:
-            logger.warning(
-                f"No miner summaries found for validator_round_id {validator_round_id} (Autopia UID {AUTOPPIA_UID})"
-            )
-        
+            logger.warning(f"No miner summaries found for validator_round_id {validator_round_id} (Autopia UID {AUTOPPIA_UID})")
+
         # Get miner snapshots for image URLs
         miner_uids = [s.miner_uid for s in summaries if s.miner_uid is not None]
         miner_snapshots = {}
         if miner_uids:
-            stmt_miners = (
-                select(ValidatorRoundMinerORM)
-                .where(
-                    ValidatorRoundMinerORM.validator_round_id == validator_round_id,
-                    ValidatorRoundMinerORM.miner_uid.in_(miner_uids),
-                )
+            stmt_miners = select(ValidatorRoundMinerORM).where(
+                ValidatorRoundMinerORM.validator_round_id == validator_round_id,
+                ValidatorRoundMinerORM.miner_uid.in_(miner_uids),
             )
             result_miners = await self.session.execute(stmt_miners)
             for miner_snapshot in result_miners.scalars().all():
                 if miner_snapshot.miner_uid is not None:
                     miner_snapshots[miner_snapshot.miner_uid] = miner_snapshot
-        
+
         # Build miners list
         miners_list = []
         for summary in summaries:
             if summary.miner_uid is None:
                 continue
-            
+
             miner_snapshot = miner_snapshots.get(summary.miner_uid)
             miner_image = None
             if miner_snapshot:
@@ -4220,6 +3837,7 @@ class RoundsService:
                 # If image_url is None, use resolve_agent_image with a MinerInfo-like object
                 if not miner_image:
                     from app.models.core import MinerInfo
+
                     # Create MinerInfo with empty string for agent_image if it's required
                     miner_info = MinerInfo(
                         uid=summary.miner_uid,
@@ -4229,36 +3847,36 @@ class RoundsService:
                         is_sota=miner_snapshot.is_sota or False,
                     )
                     miner_image = resolve_agent_image(miner_info, existing=None)
-            
+
             # Get miner name from snapshot
             miner_name = None
             if miner_snapshot:
                 miner_name = miner_snapshot.name or f"Miner {summary.miner_uid}"
             else:
                 miner_name = f"Miner {summary.miner_uid}"
-            
-            miners_list.append({
-                "uid": summary.miner_uid,
-                "name": miner_name,
-                "image": miner_image,
-                "post_consensus_avg_reward": _truncate_decimal(float(summary.post_consensus_avg_reward or 0.0), 4),
-                "post_consensus_rank": summary.post_consensus_rank or 0,
-            })
-        
+
+            miners_list.append(
+                {
+                    "uid": summary.miner_uid,
+                    "name": miner_name,
+                    "image": miner_image,
+                    "post_consensus_avg_reward": _truncate_decimal(float(summary.post_consensus_avg_reward or 0.0), 4),
+                    "post_consensus_rank": summary.post_consensus_rank or 0,
+                }
+            )
+
         return {
             "round": round_identifier,
             "miners": miners_list,
         }
-    
-    async def get_miner_round_details(
-        self, round_identifier: Union[str, int], miner_uid: int
-    ) -> Dict[str, Any]:
+
+    async def get_miner_round_details(self, round_identifier: Union[str, int], miner_uid: int) -> Dict[str, Any]:
         """
         Get detailed information about a specific miner in a specific round.
-        
+
         Args:
             round_identifier: Round identifier in format "season/round" (e.g., "1/1") or legacy round_number
-        
+
         Returns:
         {
             "miner": {
@@ -4305,12 +3923,7 @@ class RoundsService:
                 round_num = int(round_identifier)
                 # Query to find the first round with this round_number_in_season
                 # (assuming the user means the latest season with this round)
-                stmt_find = (
-                    select(RoundORM.season_number, RoundORM.round_number_in_season)
-                    .where(RoundORM.round_number_in_season == round_num)
-                    .order_by(RoundORM.season_number.desc())
-                    .limit(1)
-                )
+                stmt_find = select(RoundORM.season_number, RoundORM.round_number_in_season).where(RoundORM.round_number_in_season == round_num).order_by(RoundORM.season_number.desc()).limit(1)
                 result_find = await self.session.execute(stmt_find)
                 found = result_find.first()
                 if found:
@@ -4318,37 +3931,25 @@ class RoundsService:
                     round_in_season = found[1]
             except (ValueError, TypeError):
                 pass
-        
+
         if season is None or round_in_season is None:
             raise ValueError(f"Invalid round identifier: {round_identifier}")
-        
+
         # Get all validator_round_ids for this round
-        stmt_rounds = (
-            select(RoundORM.validator_round_id)
-            .where(
-                RoundORM.season_number == season,
-                RoundORM.round_number_in_season == round_in_season
-            )
-        )
+        stmt_rounds = select(RoundORM.validator_round_id).where(RoundORM.season_number == season, RoundORM.round_number_in_season == round_in_season)
         result_rounds = await self.session.execute(stmt_rounds)
         validator_round_ids = [row[0] for row in result_rounds.all()]
-        
+
         if not validator_round_ids:
             raise ValueError(f"No validators found for round {round_identifier}")
-        
+
         # Get post-consensus summary for this miner from any validator (they should be the same)
         # Prioritize Autopia (UID 83) if available
         AUTOPPIA_UID = 83
         stmt_summary_autoppia = (
             select(ValidatorRoundSummaryORM)
-            .join(
-                RoundORM,
-                ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
-            )
-            .join(
-                ValidatorRoundValidatorORM,
-                RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
-            )
+            .join(RoundORM, ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id)
+            .join(ValidatorRoundValidatorORM, RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
             .where(
                 RoundORM.season_number == season,
                 RoundORM.round_number_in_season == round_in_season,
@@ -4360,7 +3961,7 @@ class RoundsService:
         )
         result_summary = await self.session.execute(stmt_summary_autoppia)
         summary = result_summary.scalar_one_or_none()
-        
+
         # If Autopia not found, get from any validator
         if not summary:
             stmt_summary = (
@@ -4374,11 +3975,12 @@ class RoundsService:
             )
             result_summary = await self.session.execute(stmt_summary)
             summary = result_summary.scalar_one_or_none()
-        
+
         # If no summary data, get from evaluations directly (fallback when consensus not available)
         if not summary:
             # Import EvaluationORM here to avoid scope issues
             from app.db.models import EvaluationORM
+
             # Get miner data from evaluations
             stmt_eval = (
                 select(
@@ -4398,10 +4000,11 @@ class RoundsService:
             )
             result_eval = await self.session.execute(stmt_eval)
             eval_row = result_eval.first()
-            
+
             if eval_row:
                 # Create a mock summary object with evaluation data
                 from types import SimpleNamespace
+
                 summary = SimpleNamespace(
                     validator_round_id=eval_row.validator_round_id,
                     miner_uid=miner_uid,
@@ -4414,10 +4017,10 @@ class RoundsService:
                     local_avg_eval_score=float(eval_row.avg_eval_score or 0.0),
                     local_avg_eval_time=float(eval_row.avg_eval_time or 0.0),
                 )
-        
+
         if not summary:
             raise ValueError(f"Miner {miner_uid} not found in round {round_identifier}")
-        
+
         # Get miner snapshot for name, hotkey, image
         stmt_miner = (
             select(ValidatorRoundMinerORM)
@@ -4429,12 +4032,12 @@ class RoundsService:
         )
         result_miner = await self.session.execute(stmt_miner)
         miner_snapshot = result_miner.scalar_one_or_none()
-        
+
         miner_name = f"Miner {miner_uid}"
         miner_hotkey = None
         miner_image = None
         miner_github_url = None
-        
+
         if miner_snapshot:
             miner_name = miner_snapshot.name or miner_name
             miner_hotkey = miner_snapshot.miner_hotkey
@@ -4442,6 +4045,7 @@ class RoundsService:
             miner_github_url = miner_snapshot.github_url
             if not miner_image:
                 from app.models.core import MinerInfo
+
                 miner_info = MinerInfo(
                     uid=miner_uid,
                     hotkey=miner_snapshot.miner_hotkey or "",
@@ -4450,39 +4054,30 @@ class RoundsService:
                     is_sota=miner_snapshot.is_sota or False,
                 )
                 miner_image = resolve_agent_image(miner_info, existing=None)
-        
+
         # Get all summaries for this miner across all validators to get validator count
         # If no summaries, count distinct validators from validator_round_validators (fallback)
-        stmt_all_summaries = (
-            select(ValidatorRoundSummaryORM)
-            .where(
-                ValidatorRoundSummaryORM.validator_round_id.in_(validator_round_ids),
-                ValidatorRoundSummaryORM.miner_uid == miner_uid,
-            )
+        stmt_all_summaries = select(ValidatorRoundSummaryORM).where(
+            ValidatorRoundSummaryORM.validator_round_id.in_(validator_round_ids),
+            ValidatorRoundSummaryORM.miner_uid == miner_uid,
         )
         result_all_summaries = await self.session.execute(stmt_all_summaries)
         all_summaries = result_all_summaries.scalars().all()
         validators_count = len(all_summaries)
         if validators_count == 0:
             # Fallback: count distinct validators from validator_round_validators
-            stmt_validators = (
-                select(func.count(func.distinct(ValidatorRoundValidatorORM.validator_uid)))
-                .where(
-                    ValidatorRoundValidatorORM.validator_round_id.in_(validator_round_ids),
-                )
+            stmt_validators = select(func.count(func.distinct(ValidatorRoundValidatorORM.validator_uid))).where(
+                ValidatorRoundValidatorORM.validator_round_id.in_(validator_round_ids),
             )
             result_validators = await self.session.execute(stmt_validators)
             validators_count = result_validators.scalar() or 1
-        
+
         # Get evaluations for this miner in this round to calculate totals and performance by website
         from app.db.models import EvaluationORM, TaskORM
-        
+
         stmt_evaluations = (
             select(EvaluationORM, TaskORM)
-            .join(
-                TaskORM,
-                EvaluationORM.task_id == TaskORM.task_id
-            )
+            .join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
             .where(
                 EvaluationORM.validator_round_id.in_(validator_round_ids),
                 EvaluationORM.miner_uid == miner_uid,
@@ -4490,22 +4085,15 @@ class RoundsService:
         )
         result_evaluations = await self.session.execute(stmt_evaluations)
         evaluations_with_tasks = result_evaluations.all()
-        
+
         # Calculate totals from actual evaluations
         total_tasks_received = len(evaluations_with_tasks)
-        total_tasks_success = sum(
-            1 for eval_orm, _ in evaluations_with_tasks
-            if (getattr(eval_orm, "eval_score", getattr(eval_orm, "final_score", 0.0)) or 0.0) >= 0.5
-        )
-        avg_tasks_per_validator = (
-            total_tasks_received / validators_count if validators_count > 0 else 0.0
-        )
-        
+        total_tasks_success = sum(1 for eval_orm, _ in evaluations_with_tasks if (getattr(eval_orm, "eval_score", getattr(eval_orm, "final_score", 0.0)) or 0.0) >= 0.5)
+        avg_tasks_per_validator = total_tasks_received / validators_count if validators_count > 0 else 0.0
+
         # Group by website
-        website_stats: Dict[str, Dict[str, int]] = defaultdict(
-            lambda: {"tasks_received": 0, "tasks_success": 0}
-        )
-        
+        website_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {"tasks_received": 0, "tasks_success": 0})
+
         for evaluation, task in evaluations_with_tasks:
             # Get website from task
             website = None
@@ -4514,61 +4102,58 @@ class RoundsService:
             elif task.url:
                 # Extract website from URL if needed
                 from urllib.parse import urlparse
+
                 parsed = urlparse(task.url)
                 website = parsed.netloc or parsed.path.split("/")[0] if parsed.path else "unknown"
             else:
                 website = "unknown"
-            
+
             website_stats[website]["tasks_received"] += 1
             eval_score = getattr(evaluation, "eval_score", getattr(evaluation, "final_score", 0.0)) or 0.0
             if eval_score >= 0.5:
                 website_stats[website]["tasks_success"] += 1
-        
+
         # Build performance by website
         performance_by_website = []
         for website, stats in website_stats.items():
             tasks_received = stats["tasks_received"]
             tasks_success = stats["tasks_success"]
-            success_rate = (
-                (tasks_success / tasks_received) if tasks_received > 0 else 0.0
+            success_rate = (tasks_success / tasks_received) if tasks_received > 0 else 0.0
+
+            performance_by_website.append(
+                {
+                    "website": website,
+                    "tasks_received": tasks_received,
+                    "tasks_success": tasks_success,
+                    "success_rate": _truncate_decimal(success_rate, 4),
+                }
             )
-            
-            performance_by_website.append({
-                "website": website,
-                "tasks_received": tasks_received,
-                "tasks_success": tasks_success,
-                "success_rate": _truncate_decimal(success_rate, 4),
-            })
-        
+
         # Sort by tasks_received descending
         performance_by_website.sort(key=lambda x: x["tasks_received"], reverse=True)
-        
+
         # Build validators data with only the miner's information for each validator
         validators_data = []
         try:
             # Use the same validator_round_ids we already found earlier in the method
             # (validator_round_ids is already calculated above)
             logger.warning(f"[DEBUG] Using {len(validator_round_ids)} validator_round_ids for round {round_identifier}, miner {miner_uid}")
-            
+
             if not validator_round_ids:
                 logger.warning(f"[DEBUG] No validator_round_ids found for round {round_identifier}")
-            
+
             for validator_round_id in validator_round_ids:
                 # Get validator snapshot for this validator_round_id
-                stmt_validator = (
-                    select(ValidatorRoundValidatorORM)
-                    .where(ValidatorRoundValidatorORM.validator_round_id == validator_round_id)
-                    .limit(1)
-                )
+                stmt_validator = select(ValidatorRoundValidatorORM).where(ValidatorRoundValidatorORM.validator_round_id == validator_round_id).limit(1)
                 result_validator = await self.session.execute(stmt_validator)
                 validator_snapshot = result_validator.scalar_one_or_none()
-                
+
                 if not validator_snapshot:
                     logger.warning(f"[DEBUG] No validator snapshot found for validator_round_id {validator_round_id}")
                     continue
-                
+
                 logger.warning(f"[DEBUG] Processing validator {validator_snapshot.validator_uid}, validator_round_id: {validator_round_id}")
-                
+
                 # Get summary for this miner in this validator's round
                 stmt_miner_summary = (
                     select(ValidatorRoundSummaryORM)
@@ -4580,27 +4165,25 @@ class RoundsService:
                 )
                 result_miner_summary = await self.session.execute(stmt_miner_summary)
                 miner_summary = result_miner_summary.scalar_one_or_none()
-                
+
                 # If no summary, try to get from evaluations (fallback)
                 if not miner_summary:
                     from app.db.models import EvaluationORM
                     from types import SimpleNamespace
+
                     # Get miner data from evaluations for this validator
-                    stmt_eval = (
-                        select(
-                            func.avg(EvaluationORM.eval_score).label("avg_eval_score"),
-                            func.avg(EvaluationORM.evaluation_time).label("avg_eval_time"),
-                            func.count(EvaluationORM.evaluation_id).label("tasks_received"),
-                        )
-                        .where(
-                            EvaluationORM.validator_round_id == validator_round_id,
-                            EvaluationORM.miner_uid == miner_uid,
-                            EvaluationORM.miner_uid != settings.BURN_UID,
-                        )
+                    stmt_eval = select(
+                        func.avg(EvaluationORM.eval_score).label("avg_eval_score"),
+                        func.avg(EvaluationORM.evaluation_time).label("avg_eval_time"),
+                        func.count(EvaluationORM.evaluation_id).label("tasks_received"),
+                    ).where(
+                        EvaluationORM.validator_round_id == validator_round_id,
+                        EvaluationORM.miner_uid == miner_uid,
+                        EvaluationORM.miner_uid != settings.BURN_UID,
                     )
                     result_eval = await self.session.execute(stmt_eval)
                     eval_row = result_eval.first()
-                    
+
                     if eval_row and eval_row.tasks_received > 0:
                         # Create a mock summary object with evaluation data
                         miner_summary = SimpleNamespace(
@@ -4617,11 +4200,13 @@ class RoundsService:
                         )
                     else:
                         # Miner not evaluated by this validator, skip
-                        logger.warning(f"[DEBUG] Miner {miner_uid} not found in validator_round_summary_miners or evaluations for validator_round_id {validator_round_id} (validator {validator_snapshot.validator_uid})")
+                        logger.warning(
+                            f"[DEBUG] Miner {miner_uid} not found in validator_round_summary_miners or evaluations for validator_round_id {validator_round_id} (validator {validator_snapshot.validator_uid})"
+                        )
                         continue
-                
+
                 logger.warning(f"[DEBUG] Found miner summary for miner {miner_uid} in validator {validator_snapshot.validator_uid}: rank={miner_summary.local_rank}")
-                
+
                 # Get agent_run_id for this miner in this validator's round
                 stmt_agent_run = (
                     select(AgentEvaluationRunORM.agent_run_id)
@@ -4633,34 +4218,29 @@ class RoundsService:
                 )
                 result_agent_run = await self.session.execute(stmt_agent_run)
                 agent_run_id = result_agent_run.scalar_one_or_none()
-                
+
                 # Count unique tasks evaluated for this miner in this validator's round
                 # Each task should have one evaluation (1-1 relationship)
                 # So we count distinct task_ids to get the number of tasks received
                 from app.db.models import EvaluationORM
-                stmt_unique_tasks = (
-                    select(func.count(func.distinct(EvaluationORM.task_id)))
-                    .where(
-                        EvaluationORM.validator_round_id == validator_round_id,
-                        EvaluationORM.miner_uid == miner_uid,
-                    )
+
+                stmt_unique_tasks = select(func.count(func.distinct(EvaluationORM.task_id))).where(
+                    EvaluationORM.validator_round_id == validator_round_id,
+                    EvaluationORM.miner_uid == miner_uid,
                 )
                 result_unique_tasks = await self.session.execute(stmt_unique_tasks)
                 local_tasks_received = result_unique_tasks.scalar_one_or_none() or 0
-                
+
                 # Count successful evaluations (eval_score >= 0.5) for unique tasks
                 # We need to count distinct task_ids where at least one evaluation is successful
-                stmt_successful_tasks = (
-                    select(func.count(func.distinct(EvaluationORM.task_id)))
-                    .where(
-                        EvaluationORM.validator_round_id == validator_round_id,
-                        EvaluationORM.miner_uid == miner_uid,
-                        EvaluationORM.eval_score >= 0.5,
-                    )
+                stmt_successful_tasks = select(func.count(func.distinct(EvaluationORM.task_id))).where(
+                    EvaluationORM.validator_round_id == validator_round_id,
+                    EvaluationORM.miner_uid == miner_uid,
+                    EvaluationORM.eval_score >= 0.5,
                 )
                 result_successful_tasks = await self.session.execute(stmt_successful_tasks)
                 local_tasks_success = result_successful_tasks.scalar_one_or_none() or 0
-                
+
                 # Ensure tasks_success does not exceed tasks_received
                 if local_tasks_success > local_tasks_received:
                     logger.warning(
@@ -4669,35 +4249,29 @@ class RoundsService:
                         f"Setting tasks_success to tasks_received."
                     )
                     local_tasks_success = local_tasks_received
-                
+
                 # Get total miners evaluated by this validator
-                stmt_miners_count = (
-                    select(func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid)))
-                    .where(
-                        ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
-                        ValidatorRoundSummaryORM.miner_uid.isnot(None),
-                    )
+                stmt_miners_count = select(func.count(func.distinct(ValidatorRoundSummaryORM.miner_uid))).where(
+                    ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                    ValidatorRoundSummaryORM.miner_uid.isnot(None),
                 )
                 result_miners_count = await self.session.execute(stmt_miners_count)
                 local_miners_evaluated = result_miners_count.scalar_one_or_none() or 0
-                
+
                 # If no summary data, count from evaluations (fallback)
                 if local_miners_evaluated == 0:
-                    stmt_miners_eval = (
-                        select(func.count(func.distinct(EvaluationORM.miner_uid)))
-                        .where(
-                            EvaluationORM.validator_round_id == validator_round_id,
-                            EvaluationORM.miner_uid.isnot(None),
-                            EvaluationORM.miner_uid != settings.BURN_UID,
-                        )
+                    stmt_miners_eval = select(func.count(func.distinct(EvaluationORM.miner_uid))).where(
+                        EvaluationORM.validator_round_id == validator_round_id,
+                        EvaluationORM.miner_uid.isnot(None),
+                        EvaluationORM.miner_uid != settings.BURN_UID,
                     )
                     result_miners_eval = await self.session.execute(stmt_miners_eval)
                     local_miners_evaluated = result_miners_eval.scalar_one_or_none() or 0
-                
+
                 # Get validator image
                 validator_name = validator_snapshot.name or f"Validator {validator_snapshot.validator_uid}"
                 validator_image = resolve_validator_image(validator_name, existing=validator_snapshot.image_url)
-                
+
                 validator_data = {
                     "validator_uid": validator_snapshot.validator_uid,
                     "validator_name": validator_snapshot.name or f"Validator {validator_snapshot.validator_uid}",
@@ -4711,24 +4285,25 @@ class RoundsService:
                     "local_tasks_success": local_tasks_success,
                     "local_miners_evaluated": int(local_miners_evaluated),
                 }
-                
+
                 # Add agent_run_id if available
                 if agent_run_id:
                     validator_data["agent_run_id"] = agent_run_id
-                
+
                 validators_data.append(validator_data)
                 logger.warning(f"[DEBUG] Added validator {validator_snapshot.validator_uid} to validators_data. Total: {len(validators_data)}")
-            
+
             # Sort: Autoppia (UID 83 or 124) first
             validators_data.sort(key=lambda v: (v["validator_uid"] not in (83, 124), v["validator_uid"]))
             logger.warning(f"[DEBUG] Final validators_data count: {len(validators_data)}")
-            
+
         except Exception as e:
             logger.error(f"[DEBUG] Failed to fetch validators data for round {round_identifier}, miner {miner_uid}: {e}", exc_info=True)
             import traceback
+
             logger.error(f"[DEBUG] Traceback: {traceback.format_exc()}")
             # Continue without validators data if there's an error
-        
+
         # Get post_consensus_summary if needed
         post_consensus_summary_data = None
         try:
@@ -4736,7 +4311,7 @@ class RoundsService:
             post_consensus_summary_data = aggregated_metrics.get("post_consensus_summary", {})
         except Exception as e:
             logger.warning(f"Failed to fetch post_consensus_summary for round {round_identifier}: {e}")
-        
+
         result = {
             "miner": {
                 "uid": miner_uid,
@@ -4747,38 +4322,32 @@ class RoundsService:
             },
             "round": round_identifier,
             "post_consensus_rank": summary.post_consensus_rank or 0,
-            "post_consensus_avg_reward": _truncate_decimal(
-                float(summary.post_consensus_avg_reward or 0.0), 4
-            ),
-            "post_consensus_avg_eval_score": _truncate_decimal(
-                float(summary.post_consensus_avg_eval_score or 0.0), 4
-            ),
-            "post_consensus_avg_eval_time": _truncate_decimal(
-                float(summary.post_consensus_avg_eval_time or 0.0), 2
-            ),
+            "post_consensus_avg_reward": _truncate_decimal(float(summary.post_consensus_avg_reward or 0.0), 4),
+            "post_consensus_avg_eval_score": _truncate_decimal(float(summary.post_consensus_avg_eval_score or 0.0), 4),
+            "post_consensus_avg_eval_time": _truncate_decimal(float(summary.post_consensus_avg_eval_time or 0.0), 2),
             "tasks_received": total_tasks_received,
             "tasks_success": total_tasks_success,
             "validators_count": validators_count,
             "avg_tasks_per_validator": _truncate_decimal(avg_tasks_per_validator, 2),
             "performanceByWebsite": performance_by_website,
         }
-        
+
         # Add validators and post_consensus_summary if available
         if validators_data is not None:
             result["validators"] = validators_data
         if post_consensus_summary_data is not None:
             result["post_consensus_summary"] = post_consensus_summary_data
-        
+
         return result
 
     async def get_miner_historical(self, miner_uid: int, season: Optional[int] = None) -> Dict[str, Any]:
         """
         Get historical statistics for a miner across all rounds or for a specific season.
-        
+
         Args:
             miner_uid: Miner UID
             season: Optional season number to filter by. If None, returns data for all seasons.
-        
+
         Returns:
             - Summary statistics (rounds won/lost, total tasks, etc.)
             - Performance by website with use cases breakdown
@@ -4789,7 +4358,7 @@ class RoundsService:
         # FILTRADO POR VALIDADOR AUTOPPIA (UID 83 o 124 - solo estos validators marcan el alpha)
         # También incluir validator 60 (testing/development)
         autoppia_uids = [0, 60, 83, 124]  # 0 = test/dev, 60 = testing, 83/124 = production Autoppia validators
-        
+
         stmt_summaries = (
             select(
                 ValidatorRoundSummaryORM,
@@ -4798,32 +4367,28 @@ class RoundsService:
                 RoundORM.start_epoch,
                 RoundORM.end_epoch,
             )
-            .join(
-                RoundORM,
-                ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
-            )
-            .join(
-                ValidatorRoundValidatorORM,
-                RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
-            )
+            .join(RoundORM, ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id)
+            .join(ValidatorRoundValidatorORM, RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
             .where(ValidatorRoundSummaryORM.miner_uid == miner_uid)
             .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))  # Autoppia validators + test/dev
         )
-        
+
         # Filter by season if provided
         if season is not None:
             stmt_summaries = stmt_summaries.where(RoundORM.season_number == season)
-        
+
         stmt_summaries = stmt_summaries.order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
         result_summaries = await self.session.execute(stmt_summaries)
         summaries_with_rounds = result_summaries.all()
-        
+
         # If no summaries, try to get data from evaluations directly (fallback)
         if not summaries_with_rounds:
             from app.db.models import EvaluationORM
+
             # Get rounds from evaluations for this miner
             # Use case from sqlalchemy (already imported at top of file)
             from sqlalchemy import case as sql_case
+
             stmt_eval_rounds = (
                 select(
                     EvaluationORM.validator_round_id,
@@ -4836,25 +4401,19 @@ class RoundsService:
                     func.sum(sql_case((EvaluationORM.eval_score >= 0.5, 1), else_=0)).label("tasks_success"),
                     func.avg(EvaluationORM.evaluation_time).label("avg_time"),
                 )
-                .join(
-                    RoundORM,
-                    EvaluationORM.validator_round_id == RoundORM.validator_round_id
-                )
-                .join(
-                    ValidatorRoundValidatorORM,
-                    RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
-                )
+                .join(RoundORM, EvaluationORM.validator_round_id == RoundORM.validator_round_id)
+                .join(ValidatorRoundValidatorORM, RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
                 .where(
                     EvaluationORM.miner_uid == miner_uid,
                     EvaluationORM.miner_uid != settings.BURN_UID,
                     ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids),
                 )
             )
-            
+
             # Filter by season if provided
             if season is not None:
                 stmt_eval_rounds = stmt_eval_rounds.where(RoundORM.season_number == season)
-            
+
             stmt_eval_rounds = stmt_eval_rounds.group_by(
                 EvaluationORM.validator_round_id,
                 RoundORM.season_number,
@@ -4862,16 +4421,17 @@ class RoundsService:
                 RoundORM.start_epoch,
                 RoundORM.end_epoch,
             ).order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
-            
+
             result_eval_rounds = await self.session.execute(stmt_eval_rounds)
             eval_rounds = result_eval_rounds.all()
-            
+
             if not eval_rounds:
                 raise ValueError(f"Miner {miner_uid} not found in any round")
-            
+
             # Create mock summary objects from evaluation data
             from types import SimpleNamespace
             from sqlalchemy import case
+
             summaries_with_rounds = []
             for eval_row in eval_rounds:
                 validator_round_id = eval_row[0]
@@ -4883,7 +4443,7 @@ class RoundsService:
                 tasks_count = int(eval_row[6] or 0)
                 tasks_success = int(eval_row[7] or 0)
                 avg_time = float(eval_row[8] or 0.0)
-                
+
                 # Create a mock summary object with all required attributes
                 mock_summary = SimpleNamespace(
                     validator_round_id=validator_round_id,
@@ -4900,12 +4460,12 @@ class RoundsService:
                     weight=0.0,
                 )
                 summaries_with_rounds.append((mock_summary, season_num, round_num, start_epoch, end_epoch))
-        
+
         # Get miner info from first summary
         first_summary = summaries_with_rounds[0][0]
         first_validator_round_id = first_summary.validator_round_id
-        miner_hotkey = getattr(first_summary, 'miner_hotkey', None) or ""
-        
+        miner_hotkey = getattr(first_summary, "miner_hotkey", None) or ""
+
         # Get miner snapshot for name and image
         stmt_miner = (
             select(ValidatorRoundMinerORM)
@@ -4917,15 +4477,12 @@ class RoundsService:
         )
         result_miner = await self.session.execute(stmt_miner)
         miner_snapshot = result_miner.scalar_one_or_none()
-        
+
         # If no snapshot found, try to get from any round for this miner
         if not miner_snapshot:
             stmt_miner_any = (
                 select(ValidatorRoundMinerORM)
-                .join(
-                    RoundORM,
-                    ValidatorRoundMinerORM.validator_round_id == RoundORM.validator_round_id
-                )
+                .join(RoundORM, ValidatorRoundMinerORM.validator_round_id == RoundORM.validator_round_id)
                 .where(
                     ValidatorRoundMinerORM.miner_uid == miner_uid,
                 )
@@ -4935,18 +4492,15 @@ class RoundsService:
             stmt_miner_any = stmt_miner_any.limit(1)
             result_miner_any = await self.session.execute(stmt_miner_any)
             miner_snapshot = result_miner_any.scalar_one_or_none()
-            
+
             # If still no snapshot, try to get hotkey from evaluations
             if not miner_snapshot and miner_hotkey == "":
                 from app.db.models import EvaluationORM
-                stmt_hotkey = (
-                    select(EvaluationORM.miner_hotkey)
-                    .where(EvaluationORM.miner_uid == miner_uid)
-                    .limit(1)
-                )
+
+                stmt_hotkey = select(EvaluationORM.miner_hotkey).where(EvaluationORM.miner_uid == miner_uid).limit(1)
                 result_hotkey = await self.session.execute(stmt_hotkey)
                 miner_hotkey = result_hotkey.scalar_one_or_none() or ""
-        
+
         miner_name = miner_snapshot.name if miner_snapshot else f"Miner {miner_uid}"
         miner_image = ""
         if miner_snapshot:
@@ -4957,7 +4511,7 @@ class RoundsService:
                 agent_image=miner_snapshot.image_url or "",
             )
             miner_image = resolve_agent_image(miner_info, existing=miner_snapshot.image_url)
-        
+
         # Aggregate statistics
         rounds_participated = set()
         rounds_won = 0
@@ -4975,19 +4529,13 @@ class RoundsService:
         best_rank_round = None
         total_alpha_earned = 0.0
         total_tao_earned = 0.0
-        
+
         # Get current subnet_price from the most recent round of validator 83 or 124
         # This will be used to convert total alpha to TAO at the end
         stmt_latest_subnet_price = (
             select(ValidatorRoundSummaryORM.subnet_price)
-            .join(
-                RoundORM,
-                ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id
-            )
-            .join(
-                ValidatorRoundValidatorORM,
-                RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id
-            )
+            .join(RoundORM, ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id)
+            .join(ValidatorRoundValidatorORM, RoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
             .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))
             .where(ValidatorRoundSummaryORM.subnet_price.isnot(None))
             .order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
@@ -4995,7 +4543,7 @@ class RoundsService:
         )
         result_latest_price = await self.session.execute(stmt_latest_subnet_price)
         latest_subnet_price = result_latest_price.scalar_one_or_none()
-        
+
         # Performance by website
         website_stats: Dict[str, Dict[str, Any]] = defaultdict(
             lambda: {
@@ -5004,23 +4552,25 @@ class RoundsService:
                 "failed": 0,
                 "total_duration": 0.0,
                 "duration_count": 0,
-                "use_cases": defaultdict(lambda: {
-                    "tasks": 0,
-                    "successful": 0,
-                    "failed": 0,
-                    "total_duration": 0.0,
-                    "duration_count": 0,
-                })
+                "use_cases": defaultdict(
+                    lambda: {
+                        "tasks": 0,
+                        "successful": 0,
+                        "failed": 0,
+                        "total_duration": 0.0,
+                        "duration_count": 0,
+                    }
+                ),
             }
         )
-        
+
         # Rounds history
         rounds_history = []
-        
+
         # Process each summary (one per validator per round)
         # Group by season_number and round_number_in_season to get unique rounds
         rounds_data: Dict[str, Dict[str, Any]] = {}
-        
+
         for summary_row in summaries_with_rounds:
             summary = summary_row[0]
             season_number = summary_row[1]
@@ -5029,11 +4579,11 @@ class RoundsService:
             end_epoch = summary_row[4] if len(summary_row) > 4 else None
             if season_number is None or round_number_in_season is None:
                 continue
-            
+
             # Use "season/round" format as key
             round_key = f"{season_number}/{round_number_in_season}"
             rounds_participated.add(round_key)
-            
+
             # Get post-consensus data (should be same for all summaries in same round)
             if round_key not in rounds_data:
                 rounds_data[round_key] = {
@@ -5050,36 +4600,33 @@ class RoundsService:
                     "subnet_price": summary.subnet_price,
                     "weight": summary.weight or 0.0,
                 }
-            
+
             # Update validators count
             rounds_data[round_key]["validators_count"] += 1
-            
+
             # Calculate tasks failed
             tasks_received = summary.post_consensus_tasks_received or 0
             tasks_success = summary.post_consensus_tasks_success or 0
             tasks_failed = tasks_received - tasks_success
-            rounds_data[round_key]["tasks_failed"] = max(
-                rounds_data[round_key]["tasks_failed"],
-                tasks_failed
-            )
-            
+            rounds_data[round_key]["tasks_failed"] = max(rounds_data[round_key]["tasks_failed"], tasks_failed)
+
             # Track best score and rank (only process once per round, when first creating the entry)
             if "_processed" not in rounds_data[round_key]:
                 score = summary.post_consensus_avg_reward or 0.0
                 rank = summary.post_consensus_rank or 0
-                
+
                 if score > best_score:
                     best_score = score
                     best_score_round = round_key
-                
+
                 if rank > 0 and (best_rank is None or rank < best_rank):
                     best_rank = rank
                     best_rank_round = round_key
-                
+
                 scores.append(score)
                 if rank > 0:
                     ranks.append(rank)
-                
+
                 # Calculate alpha earned for ALL rounds where miner has weight (not just winners)
                 # Formula: alpha = ALPHA_EMISSION_PER_EPOCH * round_epochs * weight
                 # We calculate alpha for every round where weight > 0
@@ -5091,13 +4638,13 @@ class RoundsService:
                     else:
                         # Fallback to configured round size if epochs not available
                         round_epochs = settings.ROUND_SIZE_EPOCHS
-                    
+
                     # Calculate alpha earned for this round (weight * 148 * round_epochs)
                     alpha_earned = settings.ALPHA_EMISSION_PER_EPOCH * round_epochs * weight
                     total_alpha_earned += alpha_earned
-                
+
                 rounds_data[round_key]["_processed"] = True
-        
+
         # Convert total alpha to TAO using current subnet_price
         # Use the most recent subnet_price from validator 83 or 124
         if latest_subnet_price and total_alpha_earned > 0:
@@ -5105,60 +4652,51 @@ class RoundsService:
         else:
             # If no subnet_price available, set to 0
             total_tao_earned = 0.0
-        
+
         # Count rounds won/lost and build rounds history
         for round_data in rounds_data.values():
             # Remove internal flag
             round_data.pop("_processed", None)
-            
+
             if round_data["is_winner"]:
                 rounds_won += 1
             else:
                 rounds_lost += 1
-            
+
             total_tasks += round_data["tasks_received"]
             total_tasks_successful += round_data["tasks_success"]
             total_tasks_failed += round_data["tasks_failed"]
-            
+
             if round_data["post_consensus_avg_eval_time"]:
                 total_duration += round_data["post_consensus_avg_eval_time"]
                 duration_count += 1
-            
+
             rounds_history.append(round_data)
-        
+
         # Get task-level data for website/use case breakdown
         # OPTIMIZED: Use SQL aggregations instead of fetching all rows
         # Extract use_case name from JSONB field using PostgreSQL JSONB operators
         # Use .astext to extract text from JSONB (equivalent to ->> operator in PostgreSQL)
-        use_case_name_expr = func.coalesce(
-            func.nullif(TaskORM.use_case['name'].astext, ''),
-            func.nullif(TaskORM.use_case['slug'].astext, ''),
-            'Unknown'
-        ).label('use_case_name')
-        
+        use_case_name_expr = func.coalesce(func.nullif(TaskORM.use_case["name"].astext, ""), func.nullif(TaskORM.use_case["slug"].astext, ""), "Unknown").label("use_case_name")
+
         # Aggregate by website and use_case in SQL
         stmt_aggregated = (
             select(
-                func.coalesce(TaskORM.web_project_id, 'unknown').label('website'),
+                func.coalesce(TaskORM.web_project_id, "unknown").label("website"),
                 use_case_name_expr,
-                func.count(EvaluationORM.evaluation_id).label('tasks'),
-                func.sum(
-                    case((EvaluationORM.eval_score >= 0.5, 1), else_=0)
-                ).label('successful'),
-                func.avg(EvaluationORM.evaluation_time).label('avg_duration'),
-                func.sum(EvaluationORM.evaluation_time).label('total_duration'),
+                func.count(EvaluationORM.evaluation_id).label("tasks"),
+                func.sum(case((EvaluationORM.eval_score >= 0.5, 1), else_=0)).label("successful"),
+                func.avg(EvaluationORM.evaluation_time).label("avg_duration"),
+                func.sum(EvaluationORM.evaluation_time).label("total_duration"),
             )
-            .join(
-                TaskORM,
-                EvaluationORM.task_id == TaskORM.task_id
-            )
+            .join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
             .where(EvaluationORM.miner_uid == miner_uid)
             .group_by(TaskORM.web_project_id, use_case_name_expr)
         )
-        
+
         result_aggregated = await self.session.execute(stmt_aggregated)
         aggregated_rows = result_aggregated.all()
-        
+
         # Process aggregated results (much fewer rows than individual evaluations)
         for row in aggregated_rows:
             website = row.website or "unknown"
@@ -5168,7 +4706,7 @@ class RoundsService:
             failed_count = tasks_count - successful_count
             avg_duration = float(row.avg_duration or 0.0)
             total_duration = float(row.total_duration or 0.0)
-            
+
             # Website-level stats (aggregate across all use cases)
             website_stats[website]["tasks"] += tasks_count
             website_stats[website]["successful"] += successful_count
@@ -5177,7 +4715,7 @@ class RoundsService:
                 # total_duration already comes summed from SQL, so we can use it directly
                 website_stats[website]["total_duration"] += total_duration
                 website_stats[website]["duration_count"] += tasks_count
-            
+
             # Use case-level stats
             website_stats[website]["use_cases"][use_case_name]["tasks"] += tasks_count
             website_stats[website]["use_cases"][use_case_name]["successful"] += successful_count
@@ -5186,7 +4724,7 @@ class RoundsService:
                 # total_duration already comes summed from SQL, so we can use it directly
                 website_stats[website]["use_cases"][use_case_name]["total_duration"] += total_duration
                 website_stats[website]["use_cases"][use_case_name]["duration_count"] += tasks_count
-        
+
         # Collect task details grouped by website/use case
         score_expr = func.coalesce(EvaluationORM.eval_score, 0.0).label("score")
         task_details_stmt = (
@@ -5200,11 +4738,7 @@ class RoundsService:
                 func.coalesce(TaskORM.web_project_id, "unknown").label("website"),
                 func.coalesce(TaskORM.prompt, "").label("prompt"),
                 use_case_name_expr,
-                func.concat(
-                    RoundORM.season_number.cast(String),
-                    '/',
-                    RoundORM.round_number_in_season.cast(String)
-                ).label("round_number"),
+                func.concat(RoundORM.season_number.cast(String), "/", RoundORM.round_number_in_season.cast(String)).label("round_number"),
             )
             .join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
             .join(RoundORM, TaskORM.validator_round_id == RoundORM.validator_round_id)
@@ -5224,62 +4758,50 @@ class RoundsService:
                     "round": row.round_number,
                     "score": _truncate_decimal(score_value, 4),
                     "status": "successful" if score_value >= 0.5 else "failed",
-                    "evaluationTime": _truncate_decimal(
-                        float(row.evaluation_time or 0.0), 2
-                    ),
+                    "evaluationTime": _truncate_decimal(float(row.evaluation_time or 0.0), 2),
                     "url": row.url,
                     "prompt": row.prompt or "",
                 }
             )
-        
+
         # Build performance by website
         performance_by_website = []
         for website, stats in website_stats.items():
-            avg_duration = (
-                stats["total_duration"] / stats["duration_count"]
-                if stats["duration_count"] > 0
-                else 0.0
-            )
-            
+            avg_duration = stats["total_duration"] / stats["duration_count"] if stats["duration_count"] > 0 else 0.0
+
             use_cases_list = []
             for use_case_name, uc_stats in stats["use_cases"].items():
-                uc_avg_duration = (
-                    uc_stats["total_duration"] / uc_stats["duration_count"]
-                    if uc_stats["duration_count"] > 0
-                    else 0.0
+                uc_avg_duration = uc_stats["total_duration"] / uc_stats["duration_count"] if uc_stats["duration_count"] > 0 else 0.0
+                use_cases_list.append(
+                    {
+                        "useCase": use_case_name,
+                        "tasks": uc_stats["tasks"],
+                        "successful": uc_stats["successful"],
+                        "failed": uc_stats["failed"],
+                        "averageDuration": _truncate_decimal(uc_avg_duration, 2),
+                        "taskDetails": tasks_by_use_case.get((website, use_case_name), []),
+                    }
                 )
-                use_cases_list.append({
-                    "useCase": use_case_name,
-                    "tasks": uc_stats["tasks"],
-                    "successful": uc_stats["successful"],
-                    "failed": uc_stats["failed"],
-                    "averageDuration": _truncate_decimal(uc_avg_duration, 2),
-                    "taskDetails": tasks_by_use_case.get((website, use_case_name), []),
-                })
-            
-            performance_by_website.append({
-                "website": website,
-                "tasks": stats["tasks"],
-                "successful": stats["successful"],
-                "failed": stats["failed"],
-                "averageDuration": _truncate_decimal(avg_duration, 2),
-                "useCases": use_cases_list,
-            })
-        
+
+            performance_by_website.append(
+                {
+                    "website": website,
+                    "tasks": stats["tasks"],
+                    "successful": stats["successful"],
+                    "failed": stats["failed"],
+                    "averageDuration": _truncate_decimal(avg_duration, 2),
+                    "useCases": use_cases_list,
+                }
+            )
+
         # Sort by tasks descending
         performance_by_website.sort(key=lambda x: x["tasks"], reverse=True)
-        
+
         # Calculate averages
-        average_duration = (
-            total_duration / duration_count if duration_count > 0 else 0.0
-        )
-        average_score = (
-            sum(scores) / len(scores) if scores else 0.0
-        )
-        overall_success_rate = (
-            total_tasks_successful / total_tasks if total_tasks > 0 else 0.0
-        )
-        
+        average_duration = total_duration / duration_count if duration_count > 0 else 0.0
+        average_score = sum(scores) / len(scores) if scores else 0.0
+        overall_success_rate = total_tasks_successful / total_tasks if total_tasks > 0 else 0.0
+
         # Build result
         result = {
             "miner": {
@@ -5309,14 +4831,14 @@ class RoundsService:
             "performanceByWebsite": performance_by_website,
             "roundsHistory": sorted(rounds_history, key=lambda x: x["round"], reverse=True),
         }
-        
+
         return result
 
     async def get_latest_round_and_top_miner(self) -> Optional[Dict[str, Any]]:
         """
         Get the latest round and the top miner (post_consensus_rank = 1) for that round.
         Returns None if no rounds exist.
-        
+
         This is a lightweight query optimized for the initial redirect.
         Only considers Autoppia validators (83 or 124) for consistency.
         In TESTING mode, also includes validator 60.
@@ -5324,7 +4846,7 @@ class RoundsService:
         # FILTRADO POR VALIDADOR AUTOPPIA (UID 83 o 124)
         # También incluir validator 60 (testing/development)
         autoppia_uids = [83, 124, 60]
-        
+
         # Get latest round that already has post-consensus rankings (post_consensus_rank = 1)
         # Only from Autoppia validators
         # In TESTING mode, also try to find rounds with local_rank = 1 if no post_consensus_rank exists
@@ -5350,10 +4872,7 @@ class RoundsService:
                 ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids),  # Solo Autoppia (83 o 124)
                 ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,  # Exclude burn UID
             )
-            .order_by(
-                RoundORM.season_number.desc(),
-                RoundORM.round_number_in_season.desc()
-            )
+            .order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
             .limit(1)
         )
 
@@ -5384,10 +4903,7 @@ class RoundsService:
                     ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids),
                     ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
                 )
-                .order_by(
-                    RoundORM.season_number.desc(),
-                    RoundORM.round_number_in_season.desc()
-                )
+                .order_by(RoundORM.season_number.desc(), RoundORM.round_number_in_season.desc())
                 .limit(1)
             )
             result_fallback = await self.session.execute(stmt_fallback)
@@ -5396,7 +4912,7 @@ class RoundsService:
         # If still no data from summary, get top miner from evaluations directly (fallback)
         if row is None:
             from sqlalchemy import func
-            
+
             stmt_eval_fallback = (
                 select(
                     RoundORM.season_number,
