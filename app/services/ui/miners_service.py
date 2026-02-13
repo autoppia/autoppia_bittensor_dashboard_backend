@@ -64,13 +64,7 @@ class MinersService:
 
         if search:
             lowered = search.lower()
-            miners = [
-                miner
-                for miner in miners
-                if lowered in miner.name.lower()
-                or lowered in miner.hotkey.lower()
-                or lowered in miner.id.lower()
-            ]
+            miners = [miner for miner in miners if lowered in miner.name.lower() or lowered in miner.hotkey.lower() or lowered in miner.id.lower()]
 
         miners = self._sort_miners(miners, sort_by, sort_order)
 
@@ -128,26 +122,14 @@ class MinersService:
         github = miner_info.github if miner_info else None
         description = ""  # description field removed from ValidatorRoundMinerORM
         taostats_url = build_taostats_miner_url(hotkey) or ""
-        average_score = (
-            aggregate.total_score / aggregate.total_runs if aggregate.total_runs else 0.0
-        )
-        current_score = (
-            aggregate.latest_round_score
-            if aggregate.latest_round_score is not None
-            else average_score
-        )
-        success_rate = (
-            (aggregate.successful_runs / aggregate.total_runs) * 100 if aggregate.total_runs else 0.0
-        )
+        average_score = aggregate.total_score / aggregate.total_runs if aggregate.total_runs else 0.0
+        current_score = aggregate.latest_round_score if aggregate.latest_round_score is not None else average_score
+        success_rate = (aggregate.successful_runs / aggregate.total_runs) * 100 if aggregate.total_runs else 0.0
         best_score = aggregate.best_score
-        average_duration = (
-            sum(aggregate.durations) / len(aggregate.durations) if aggregate.durations else 0.0
-        )
+        average_duration = sum(aggregate.durations) / len(aggregate.durations) if aggregate.durations else 0.0
 
         last_seen_iso = _ts_to_iso(aggregate.last_seen)
-        created_iso = _ts_to_iso(
-            aggregate.first_seen if aggregate.first_seen != float("inf") else aggregate.last_seen
-        )
+        created_iso = _ts_to_iso(aggregate.first_seen if aggregate.first_seen != float("inf") else aggregate.last_seen)
         status = self._determine_status(aggregate)
 
         return Miner(
@@ -272,9 +254,7 @@ class MinersService:
                 filtered.durations.append(duration)
 
             filtered.total_tasks += len(context.tasks)
-            filtered.success_tasks += len(
-                [er for er in context.evaluations if er.final_score >= 0.5]
-            )
+            filtered.success_tasks += len([er for er in context.evaluations if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5])
 
             if context.run.rank is not None:
                 filtered.ranks.append(context.run.rank)
@@ -299,10 +279,7 @@ class MinersService:
         time_range: Dict[str, str],
     ) -> MinerPerformanceMetrics:
         score_distribution = ScoreDistribution(**metrics.scoreDistribution.model_dump())
-        trend = [
-            PerformanceTrend(**item.model_dump())
-            for item in metrics.performanceTrend
-        ]
+        trend = [PerformanceTrend(**item.model_dump()) for item in metrics.performanceTrend]
 
         return MinerPerformanceMetrics(
             uid=uid,

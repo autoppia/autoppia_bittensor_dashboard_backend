@@ -18,6 +18,7 @@ from app.db.models import (
     RoundORM,
     ValidatorRoundMinerORM,
     ValidatorRoundSummaryORM,
+    ValidatorRoundValidatorORM,
 )
 
 from app.config import settings
@@ -194,7 +195,14 @@ class AgentRunsService:
         filters.append(AgentEvaluationRunORM.miner_uid != settings.BURN_UID)
 
         if validator_uid is not None:
-            filters.append(AgentEvaluationRunORM.validator_uid == validator_uid)
+            # AgentEvaluationRunORM no longer has validator_uid; derive round IDs from validator snapshots.
+            stmt_validator_rounds = select(ValidatorRoundValidatorORM.validator_round_id).where(ValidatorRoundValidatorORM.validator_uid == validator_uid)
+            result_validator_rounds = await self.session.execute(stmt_validator_rounds)
+            validator_round_ids_for_uid = [row[0] for row in result_validator_rounds.all()]
+            if validator_round_ids_for_uid:
+                filters.append(AgentEvaluationRunORM.validator_round_id.in_(validator_round_ids_for_uid))
+            else:
+                filters.append(False)
         if miner_uid is not None:
             filters.append(AgentEvaluationRunORM.miner_uid == miner_uid)
         if start_ts is not None:
@@ -231,7 +239,6 @@ class AgentRunsService:
                     func.lower(AgentEvaluationRunORM.agent_run_id).like(like_pattern),
                     func.lower(AgentEvaluationRunORM.miner_hotkey).like(like_pattern),
                     func.lower(AgentEvaluationRunORM.validator_hotkey).like(like_pattern),
-                    cast(AgentEvaluationRunORM.validator_uid, String).like(like_pattern),
                     cast(AgentEvaluationRunORM.miner_uid, String).like(like_pattern),
                 )
             )

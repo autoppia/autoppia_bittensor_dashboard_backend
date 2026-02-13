@@ -69,36 +69,34 @@ async def get_latest_round_top_miner(
     session: AsyncSession = Depends(get_session),
 ):
     """
-    Get redirect URL for the latest round and top miner.
-    Used for initial redirect when accessing /subnet36/agents without parameters.
-    
-    Returns a redirect URL instead of raw data.
-    This endpoint uses Redis cache (30s TTL) for ultra-fast responses.
-    Only considers Autoppia validators (83 or 124) for consistency.
+    Get latest round and top miner for initial redirect when accessing /subnet36/agents.
+
+    Returns JSON { round: "season/round", miner_uid, miner_hotkey }.
+    Frontend performs the redirect. Only considers Autoppia validators (83, 124, 60).
     """
     from app.services.redis_cache import redis_cache
-    from fastapi.responses import RedirectResponse
-    
+
     # Try Redis cache first
-    cache_key = "latest_round_top_miner_url"
-    cached_url = redis_cache.get(cache_key)
-    if cached_url is not None:
-        return RedirectResponse(url=cached_url, status_code=302)
-    
+    cache_key = "latest_round_top_miner_data"
+    cached = redis_cache.get(cache_key)
+    if cached is not None:
+        return {"success": True, "data": cached}
+
     # Cache miss - fetch from database
     rounds_service = await _rounds_service(session)
     try:
         data = await rounds_service.get_latest_round_and_top_miner()
         if data is None:
             raise HTTPException(status_code=404, detail="No rounds available")
-        
-        # Build redirect URL: /subnet36/agents/{miner_uid}?season={season}&round={round}
-        redirect_url = f"/subnet36/agents/{data['miner_uid']}?season={data['round'].split('/')[0]}&round={data['round'].split('/')[1]}"
-        
-        # Cache in Redis for 30 seconds
-        redis_cache.set(cache_key, redirect_url, ttl=30)
-        
-        return RedirectResponse(url=redirect_url, status_code=302)
+
+        payload = {
+            "round": data["round"],
+            "miner_uid": data["miner_uid"],
+            "miner_hotkey": data.get("miner_hotkey"),
+        }
+        redis_cache.set(cache_key, payload, ttl=30)
+
+        return {"success": True, "data": payload}
     except HTTPException:
         raise
     except Exception as exc:
@@ -108,17 +106,20 @@ async def get_latest_round_top_miner(
 
 @router.get("/rounds")
 async def get_rounds_data(
-    round_number: Optional[int] = Query(None, description="Round number to get miners for"),
+    round_number: Optional[int] = Query(None, description="Legacy round number"),
+    round_identifier: Optional[str] = Query(None, description="Round in format 'season/round' (e.g. '83/20')"),
     session: AsyncSession = Depends(get_session),
 ):
     """
     Get available rounds and miners for a selected round (or first round if none selected).
-    
-    Returns: 
+
+    Use round_identifier (e.g. "83/20") when available; fallback to round_number for legacy.
+
+    Returns:
     {
-        "rounds": [round_number, ...],
+        "rounds": ["season/round", ...],
         "round_selected": {
-            "round": round_number,
+            "round": "season/round",
             "miners": [...]
         } | null
     }
@@ -127,24 +128,24 @@ async def get_rounds_data(
     try:
         # Get all available rounds
         rounds = await rounds_service.get_available_rounds()
-        
-        # Determine which round to get miners for
-        target_round = round_number
+
+        # Prefer round_identifier (season/round), else round_number (legacy)
+        target_round = round_identifier if round_identifier else round_number
         if target_round is None and rounds:
             # If no round specified, use the first (latest) round
             target_round = rounds[0]
-        
+
         # Get miners for target round if available
         round_selected = None
         if target_round is not None:
             round_selected = await rounds_service.get_round_miners_for_autoppia(target_round)
-        
+
         return {
             "success": True,
             "data": {
                 "rounds": rounds,
                 "round_selected": round_selected,
-            }
+            },
         }
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -161,7 +162,7 @@ async def get_miner_round_details(
 ):
     """
     Get detailed information about a specific miner in a specific round.
-    
+
     Returns miner info, post-consensus metrics, tasks statistics, and performance by website.
     """
     rounds_service = await _rounds_service(session)
@@ -183,7 +184,7 @@ async def get_miner_historical(
 ):
     """
     Get historical statistics for a miner across all rounds or for a specific season.
-    
+
     Returns:
         - Summary statistics (rounds won/lost, total tasks, etc.)
         - Performance by website with use cases breakdown

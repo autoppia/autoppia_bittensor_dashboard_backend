@@ -384,7 +384,7 @@ class OverviewService:
                         select(
                             AgentEvaluationRunORM.agent_run_id,
                             AgentEvaluationRunORM.miner_uid,
-                            func.avg(EvaluationORM.final_score).label("avg_score"),
+                            func.avg(EvaluationORM.eval_score).label("avg_score"),
                         )
                         .join(
                             EvaluationORM,
@@ -465,7 +465,7 @@ class OverviewService:
                             stmt = (
                                 select(
                                     AgentEvaluationRunORM.miner_uid,
-                                    func.avg(EvaluationORM.final_score).label("avg_score"),
+                                    func.avg(EvaluationORM.eval_score).label("avg_score"),
                                 )
                                 .join(
                                     EvaluationORM,
@@ -501,10 +501,10 @@ class OverviewService:
         top_miner_name = None
         top_score = 0.0
 
-        # Query: Get the latest FINISHED validator_round_id from validator 83 or 124 (Autoppia)
-        # Then get the top miner from that specific round (2 optimized queries instead of 6)
+        # Query: Get the latest FINISHED validator_round_id from Autoppia validators
+        # 60 = dev/test, 83/124 = production
         try:
-            autoppia_uids = [83, 124]
+            autoppia_uids = [60, 83, 124]
             logger.info(
                 "Starting optimized query for top miner from Autoppia validators: %s",
                 autoppia_uids,
@@ -987,11 +987,9 @@ class OverviewService:
 
         # Query SQL simplificada usando las nuevas tablas
         # Para cada round_number, obtenemos el miner_uid con el máximo post_consensus_avg_reward
-        # FILTRADO POR VALIDADOR AUTOPPIA (UID 83 o 124 - usa el que tenga datos)
+        # FILTRADO POR VALIDADOR AUTOPPIA (60=dev, 83/124=prod)
 
-        # Primero intentar detectar qué validador tiene datos disponibles
-        # Preferir UID 83 (producción) sobre 124 (desarrollo)
-        autoppia_uids = [83, 124]
+        autoppia_uids = [60, 83, 124]
 
         # Subquery para obtener el máximo post_consensus_avg_reward por season_number y round_number_in_season
         # Solo del validador Autoppia (UID 83 o 124)
@@ -1113,7 +1111,7 @@ class OverviewService:
                     subnet36=round(float(post_consensus_reward), 3),  # Mantener por compatibilidad
                     post_consensus_reward=round(float(post_consensus_reward), 3),
                     winnerUid=int(miner_uid) if miner_uid is not None else None,
-                    winnerName=str(miner_name) if miner_name else None,
+                    winnerName="Burned" if miner_uid == 5 else (str(miner_name) if miner_name else None),
                     openai_cua=None,
                     anthropic_cua=None,
                     browser_use=None,
@@ -1461,7 +1459,7 @@ class OverviewService:
         Performance optimization: Uses AVG() in PostgreSQL instead of
         loading all evaluation results into Python memory.
         """
-        stmt = select(func.avg(EvaluationORM.final_score))
+        stmt = select(func.avg(EvaluationORM.eval_score))
         result = await self.session.scalar(stmt)
         return float(result or 0.0)
 

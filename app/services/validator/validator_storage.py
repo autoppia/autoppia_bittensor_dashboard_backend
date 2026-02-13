@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
+import uuid
 
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -245,6 +246,220 @@ class ValidatorRoundPersistenceService:
         self.session.add(row)
         await self.session.flush()
         return row
+
+    async def _clone_previous_evaluations_if_unchanged(
+        self,
+        *,
+        round_row: ValidatorRoundORM,
+        agent_run_row: AgentEvaluationRunORM,
+    ) -> int:
+        """
+        If the miner's github_url is unchanged from the previous run, clone the
+        latest evaluations into the new agent run (new IDs, new round/task IDs).
+
+        Returns number of evaluations cloned.
+        """
+        from sqlalchemy.orm import selectinload
+        from app.db.models import (
+            AgentEvaluationRunORM,
+            ValidatorRoundMinerORM,
+            TaskORM,
+            TaskSolutionORM,
+            EvaluationORM,
+            EvaluationExecutionHistoryORM,
+        )
+
+        miner_uid = agent_run_row.miner_uid
+        miner_hotkey = agent_run_row.miner_hotkey
+
+        # Resolve current snapshot github_url for this run
+        stmt_cur_snap = select(ValidatorRoundMinerORM).where(ValidatorRoundMinerORM.validator_round_id == round_row.validator_round_id)
+        if miner_uid is not None:
+            stmt_cur_snap = stmt_cur_snap.where(ValidatorRoundMinerORM.miner_uid == miner_uid)
+        elif miner_hotkey:
+            stmt_cur_snap = stmt_cur_snap.where(ValidatorRoundMinerORM.miner_hotkey == miner_hotkey)
+        cur_snap = await self.session.scalar(stmt_cur_snap)
+        current_github = (cur_snap.github_url or "").strip() if cur_snap else ""
+        if not current_github:
+            return 0
+
+        # Skip if there are already evaluations for this run
+        existing_eval = await self.session.scalar(select(EvaluationORM).where(EvaluationORM.agent_run_id == agent_run_row.agent_run_id).limit(1))
+        if existing_eval is not None:
+            return 0
+
+        # Find most recent previous run for this miner
+        stmt_prev = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.validator_round_id != round_row.validator_round_id)
+        if miner_uid is not None:
+            stmt_prev = stmt_prev.where(AgentEvaluationRunORM.miner_uid == miner_uid)
+        elif miner_hotkey:
+            stmt_prev = stmt_prev.where(AgentEvaluationRunORM.miner_hotkey == miner_hotkey)
+        else:
+            return 0
+
+        stmt_prev = stmt_prev.order_by(AgentEvaluationRunORM.started_at.desc(), AgentEvaluationRunORM.id.desc()).limit(1)
+        prev_run = await self.session.scalar(stmt_prev)
+        if prev_run is None:
+            return 0
+
+        # Do not clone across seasons (tasks change). Require same season.
+        try:
+            prev_round_row = await self._get_round_row(prev_run.validator_round_id)
+            if prev_round_row and prev_round_row.season_number != round_row.season_number:
+                return 0
+        except Exception:
+            # If season lookup fails, be conservative and skip cloning.
+            return 0
+
+        # Compare github_url from previous snapshot
+        stmt_prev_snap = select(ValidatorRoundMinerORM).where(ValidatorRoundMinerORM.validator_round_id == prev_run.validator_round_id)
+        if miner_uid is not None:
+            stmt_prev_snap = stmt_prev_snap.where(ValidatorRoundMinerORM.miner_uid == miner_uid)
+        elif miner_hotkey:
+            stmt_prev_snap = stmt_prev_snap.where(ValidatorRoundMinerORM.miner_hotkey == miner_hotkey)
+        prev_snap = await self.session.scalar(stmt_prev_snap)
+        prev_github = (prev_snap.github_url or "").strip() if prev_snap else ""
+        if not prev_github or prev_github != current_github:
+            return 0
+
+        # Load tasks for current and previous rounds
+        current_tasks = await self.session.scalars(select(TaskORM).where(TaskORM.validator_round_id == round_row.validator_round_id))
+        prev_tasks = await self.session.scalars(select(TaskORM).where(TaskORM.validator_round_id == prev_run.validator_round_id))
+
+        current_task_map: Dict[str, TaskORM] = {}
+        for task in current_tasks:
+            base_id = _strip_round_prefix(task.task_id, round_row.validator_round_id)
+            if base_id:
+                current_task_map[base_id] = task
+
+        prev_task_map: Dict[str, TaskORM] = {}
+        for task in prev_tasks:
+            base_id = _strip_round_prefix(task.task_id, prev_run.validator_round_id)
+            if base_id:
+                prev_task_map[base_id] = task
+
+        if not current_task_map or not prev_task_map:
+            return 0
+
+        prev_evals = await self.session.scalars(
+            select(EvaluationORM)
+            .where(EvaluationORM.agent_run_id == prev_run.agent_run_id)
+            .options(
+                selectinload(EvaluationORM.task_solution),
+                selectinload(EvaluationORM.execution_history_record),
+                selectinload(EvaluationORM.llm_usage),
+            )
+        )
+
+        cloned = 0
+        for prev_eval in prev_evals:
+            base_id = _strip_round_prefix(prev_eval.task_id, prev_run.validator_round_id)
+            if not base_id:
+                continue
+            current_task = current_task_map.get(base_id)
+            if current_task is None:
+                continue
+
+            new_solution_id = _make_solution_id(miner_uid)
+            new_evaluation_id = _make_evaluation_id(miner_uid)
+
+            prev_solution = prev_eval.task_solution
+            solution_row = TaskSolutionORM(
+                solution_id=new_solution_id,
+                task_id=current_task.task_id,
+                agent_run_id=agent_run_row.agent_run_id,
+                validator_round_id=round_row.validator_round_id,
+                validator_uid=round_row.validator_snapshot.validator_uid if round_row.validator_snapshot else prev_eval.validator_uid,
+                validator_hotkey=round_row.validator_snapshot.validator_hotkey if round_row.validator_snapshot else prev_eval.validator_hotkey,
+                miner_uid=agent_run_row.miner_uid,
+                miner_hotkey=agent_run_row.miner_hotkey,
+                actions=list(getattr(prev_solution, "actions", []) or []),
+            )
+            self.session.add(solution_row)
+            await self.session.flush()
+
+            evaluation_row = EvaluationORM(
+                evaluation_id=new_evaluation_id,
+                validator_round_id=round_row.validator_round_id,
+                agent_run_id=agent_run_row.agent_run_id,
+                task_id=current_task.task_id,
+                task_solution_id=new_solution_id,
+                miner_uid=agent_run_row.miner_uid,
+                miner_hotkey=agent_run_row.miner_hotkey,
+                validator_uid=round_row.validator_snapshot.validator_uid if round_row.validator_snapshot else prev_eval.validator_uid,
+                validator_hotkey=round_row.validator_snapshot.validator_hotkey if round_row.validator_snapshot else prev_eval.validator_hotkey,
+                eval_score=prev_eval.eval_score,
+                reward=prev_eval.reward,
+                evaluation_time=prev_eval.evaluation_time,
+                feedback=prev_eval.feedback,
+                gif_recording=prev_eval.gif_recording,
+                meta=dict(prev_eval.meta or {}),
+            )
+            self.session.add(evaluation_row)
+            await self.session.flush()
+
+            if prev_eval.execution_history_record and prev_eval.execution_history_record.execution_history:
+                self.session.add(
+                    EvaluationExecutionHistoryORM(
+                        evaluations_id=evaluation_row.id,
+                        execution_history=list(prev_eval.execution_history_record.execution_history),
+                    )
+                )
+
+            if prev_eval.llm_usage:
+                usage_items = [
+                    {
+                        "provider": u.provider,
+                        "model": u.model,
+                        "tokens": u.tokens,
+                        "cost": u.cost,
+                    }
+                    for u in prev_eval.llm_usage
+                ]
+                await self._sync_llm_usage(evaluation_row, usage_items)
+
+            cloned += 1
+
+        if cloned:
+            await self.session.refresh(agent_run_row, ["evaluations", "task_solutions"])
+            metrics = self._compute_agent_run_stats(agent_run_row)
+            agent_run_row.total_tasks = metrics["total_tasks"]
+            agent_run_row.success_tasks = metrics["success_tasks"]
+            agent_run_row.failed_tasks = metrics["failed_tasks"]
+            agent_run_row.average_score = metrics["average_score"]
+            agent_run_row.average_execution_time = metrics["average_execution_time"]
+            agent_run_row.average_reward = metrics["average_reward"]
+
+            logger.info(
+                "Cloned %d evaluations from agent_run_id=%s to agent_run_id=%s (miner_uid=%s github unchanged)",
+                cloned,
+                prev_run.agent_run_id,
+                agent_run_row.agent_run_id,
+                miner_uid,
+            )
+
+        return cloned
+
+
+def _strip_round_prefix(task_id: str, round_id: str) -> Optional[str]:
+    prefix = f"{round_id}_"
+    if task_id.startswith(prefix):
+        return task_id[len(prefix) :]
+    return None
+
+
+def _make_solution_id(miner_uid: Optional[int]) -> str:
+    suffix = uuid.uuid4().hex
+    if miner_uid is None:
+        return f"task_solution_{suffix}"
+    return f"task_solution_{miner_uid}_{suffix}"
+
+
+def _make_evaluation_id(miner_uid: Optional[int]) -> str:
+    suffix = uuid.uuid4().hex
+    if miner_uid is None:
+        return f"evaluation_{suffix}"
+    return f"evaluation_{miner_uid}_{suffix}"
 
     async def get_round_by_validator_and_number(
         self,
@@ -707,6 +922,23 @@ class ValidatorRoundPersistenceService:
                 if run_row.started_at is not None:
                     elapsed = max(0.0, float(ended_at) - float(run_row.started_at))
                     run_row.elapsed_sec = elapsed
+
+            # If this run has no evaluations, attempt to clone from previous run
+            # when github_url is unchanged (carry-over behavior).
+            if not run_row.evaluations:
+                try:
+                    cloned = await self._clone_previous_evaluations_if_unchanged(
+                        round_row=round_row,
+                        agent_run_row=run_row,
+                    )
+                    if cloned:
+                        await self.session.refresh(run_row, ["evaluations", "task_solutions"])
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to clone evaluations for agent_run_id=%s in finish_round: %s",
+                        run_row.agent_run_id,
+                        exc,
+                    )
 
             metrics = self._compute_agent_run_stats(run_row)
             run_row.total_tasks = metrics["total_tasks"]
