@@ -33,11 +33,11 @@ from app.models.core import (
 from app.models.ui.agent_runs import Action
 from app.models.ui.evaluations import (
     EvaluationDetail,
-    EvaluationDetailResponse,
     EvaluationListItem,
     EvaluationStatus,
     EvaluationTaskInfo,
 )
+from app.services.service_utils import llm_summary_from_usage
 from app.services.ui.rounds_service import (
     RoundsService,
     _get_validator_uid_from_context,
@@ -58,11 +58,7 @@ def _format_agent_id(miner_uid: Optional[int]) -> str:
 
 
 def _format_validator_id(validator_uid: Optional[int]) -> str:
-    return (
-        f"validator-{validator_uid}"
-        if validator_uid is not None
-        else "validator-unknown"
-    )
+    return f"validator-{validator_uid}" if validator_uid is not None else "validator-unknown"
 
 
 def _round_id_to_int(round_id: str) -> int:
@@ -121,7 +117,7 @@ class EvaluationsService:
     ) -> Dict[str, object]:
         """
         Lista evaluaciones con paginación optimizada en SQL.
-        
+
         OPTIMIZACIONES APLICADAS:
         1. Filtros aplicados en SQL (no en Python)
         2. Paginación en SQL (no en memoria)
@@ -130,62 +126,50 @@ class EvaluationsService:
         5. Usa índices compuestos para mejorar rendimiento
         """
         from sqlalchemy import func, and_
-        
+
         skip = (page - 1) * limit
 
         # Construir query base con filtros en SQL
         stmt = select(EvaluationORM)
-        
+
         # Aplicar filtros en SQL (no en Python)
         filters = []
-        
+
         if run_id:
             filters.append(EvaluationORM.agent_run_id == run_id)
-        
+
         if task_id:
             filters.append(EvaluationORM.task_id == task_id)
-        
+
         if round_id is not None:
             filters.append(EvaluationORM.validator_round_id == f"round_{round_id:03d}")
-        
+
         # Filtro por agent_id (miner) - requiere JOIN con miner_evaluation_runs
         if agent_id:
             miner_uid = _parse_identifier(agent_id)
-            stmt = stmt.join(
-                AgentEvaluationRunORM,
-                EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id
-            )
+            stmt = stmt.join(AgentEvaluationRunORM, EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id)
             filters.append(AgentEvaluationRunORM.miner_uid == miner_uid)
-        
+
         # Filtro por validator_id
         if validator_id:
             validator_uid = _parse_identifier(validator_id)
             filters.append(EvaluationORM.validator_uid == validator_uid)
-        
+
         # Aplicar todos los filtros
         if filters:
             stmt = stmt.where(and_(*filters))
-        
+
         # Contar total ANTES de paginar (optimizado con índices)
-        count_stmt = select(func.count()).select_from(
-            stmt.with_only_columns(EvaluationORM.id).subquery()
-        )
+        count_stmt = select(func.count()).select_from(stmt.with_only_columns(EvaluationORM.id).subquery())
         total = await self.session.scalar(count_stmt) or 0
-        
+
         # Aplicar paginación en SQL
         stmt = (
-            stmt
-            .options(
+            stmt.options(
                 # Cargar relaciones necesarias
-                selectinload(EvaluationORM.agent_run).selectinload(
-                    AgentEvaluationRunORM.validator_round
-                ),
-                selectinload(EvaluationORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.miner_snapshots),
-                selectinload(EvaluationORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.validator_snapshot),
+                selectinload(EvaluationORM.agent_run).selectinload(AgentEvaluationRunORM.validator_round),
+                selectinload(EvaluationORM.agent_run).selectinload(AgentEvaluationRunORM.validator_round).selectinload(RoundORM.miner_snapshots),
+                selectinload(EvaluationORM.agent_run).selectinload(AgentEvaluationRunORM.validator_round).selectinload(RoundORM.validator_snapshot),
                 selectinload(EvaluationORM.task),
                 selectinload(EvaluationORM.task_solution),
                 # NO cargar execution_history_record (muy pesado)
@@ -198,7 +182,7 @@ class EvaluationsService:
         # Ejecutar query paginado
         result = await self.session.scalars(stmt)
         evaluation_rows = result.all()
-        
+
         # Construir items
         items = []
         for evaluation_row in evaluation_rows:
@@ -207,9 +191,7 @@ class EvaluationsService:
                 item = self._build_list_item(context)
                 items.append(item)
             except Exception as e:
-                logger.warning(
-                    f"Error building context for evaluation {evaluation_row.evaluation_id}: {e}"
-                )
+                logger.warning(f"Error building context for evaluation {evaluation_row.evaluation_id}: {e}")
                 continue
 
         return {
@@ -232,8 +214,7 @@ class EvaluationsService:
             )
             .join(
                 ValidatorRoundMinerORM,
-                (ValidatorRoundMinerORM.validator_round_id == EvaluationORM.validator_round_id)
-                & (ValidatorRoundMinerORM.miner_uid == EvaluationORM.miner_uid),
+                (ValidatorRoundMinerORM.validator_round_id == EvaluationORM.validator_round_id) & (ValidatorRoundMinerORM.miner_uid == EvaluationORM.miner_uid),
             )
             .where(ValidatorRoundORM.season_number == season)
             .where(ValidatorRoundMinerORM.is_sota.is_(True))
@@ -255,15 +236,10 @@ class EvaluationsService:
                     "eval_score": evaluation_row.eval_score,
                     "reward": evaluation_row.reward,
                     "evaluation_time": evaluation_row.evaluation_time,
-                    "llm_cost": evaluation_row.llm_cost,
-                    "llm_tokens": evaluation_row.llm_tokens,
-                    "llm_provider": evaluation_row.llm_provider,
-                    "llm_model": evaluation_row.llm_model,
+                    **llm_summary_from_usage(getattr(evaluation_row, "llm_usage", None) or []),
                     "season": season_number,
                     "round_in_season": round_number_in_season,
-                    "created_at": evaluation_row.created_at.isoformat()
-                    if evaluation_row.created_at
-                    else None,
+                    "created_at": evaluation_row.created_at.isoformat() if evaluation_row.created_at else None,
                 }
             )
 
@@ -273,12 +249,8 @@ class EvaluationsService:
         stmt = (
             select(EvaluationORM)
             .options(
-                selectinload(EvaluationORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.miner_snapshots),
-                selectinload(EvaluationORM.agent_run)
-                .selectinload(AgentEvaluationRunORM.validator_round)
-                .selectinload(RoundORM.validator_snapshot),  # 1:1 relationship (singular)
+                selectinload(EvaluationORM.agent_run).selectinload(AgentEvaluationRunORM.validator_round).selectinload(RoundORM.miner_snapshots),
+                selectinload(EvaluationORM.agent_run).selectinload(AgentEvaluationRunORM.validator_round).selectinload(RoundORM.validator_snapshot),  # 1:1 relationship (singular)
                 selectinload(EvaluationORM.task),
                 selectinload(EvaluationORM.task_solution),
             )
@@ -294,9 +266,7 @@ class EvaluationsService:
         max_retries = 2
         for attempt in range(max_retries):
             try:
-                stmt = select(EvaluationORM).where(
-                    EvaluationORM.evaluation_id == evaluation_id
-                )
+                stmt = select(EvaluationORM).where(EvaluationORM.evaluation_id == evaluation_id)
                 result_rows = await self.session.scalars(stmt)
                 rows = list(result_rows)
                 if not rows:
@@ -339,14 +309,10 @@ class EvaluationsService:
     def _build_context(self, evaluation_row: EvaluationORM) -> EvaluationContext:
         agent_run_row = evaluation_row.agent_run
         if agent_run_row is None:
-            raise ValueError(
-                f"Evaluation {evaluation_row.evaluation_id} missing agent run relationship"
-            )
+            raise ValueError(f"Evaluation {evaluation_row.evaluation_id} missing agent run relationship")
         round_row = agent_run_row.validator_round
         if round_row is None:
-            raise ValueError(
-                f"Agent run {agent_run_row.agent_run_id} missing round relationship"
-            )
+            raise ValueError(f"Agent run {agent_run_row.agent_run_id} missing round relationship")
 
         round_model = self.rounds_service._deserialize_round(round_row)
         agent_run_model = self.rounds_service._deserialize_agent_run(
@@ -356,16 +322,12 @@ class EvaluationsService:
 
         task_row = evaluation_row.task
         if task_row is None:
-            raise ValueError(
-                f"Evaluation {evaluation_row.evaluation_id} missing task relationship"
-            )
+            raise ValueError(f"Evaluation {evaluation_row.evaluation_id} missing task relationship")
         task_model = self._deserialize_task(task_row)
 
         solution_row = evaluation_row.task_solution
         if solution_row is None:
-            raise ValueError(
-                f"Evaluation {evaluation_row.evaluation_id} missing task solution relationship"
-            )
+            raise ValueError(f"Evaluation {evaluation_row.evaluation_id} missing task solution relationship")
         solution_model = self._deserialize_task_solution(solution_row)
 
         evaluation_model = self._deserialize_evaluation(evaluation_row)
@@ -389,13 +351,13 @@ class EvaluationsService:
         updated = context.agent_run.ended_at or created
 
         validator_uid = _get_validator_uid_from_context(context)
-        
+
         # Get season from round model
-        season = getattr(context.round, 'season_number', None)
+        season = getattr(context.round, "season_number", None)
         if season is None and round_int >= 10000:
             # Fallback: extract from legacy round_number format
             season = round_int // 10000
-        
+
         return EvaluationListItem(
             evaluationId=context.evaluation.evaluation_id,
             runId=context.agent_run.agent_run_id,
@@ -408,9 +370,7 @@ class EvaluationsService:
             status=status,
             score=_safe_round(eval_score),
             reward=_safe_round(reward),
-            responseTime=_safe_round(
-                getattr(context.evaluation, "evaluation_time", 0.0)
-            ),
+            responseTime=_safe_round(getattr(context.evaluation, "evaluation_time", 0.0)),
             createdAt=self._format_timestamp(created),
             updatedAt=self._format_timestamp(updated),
         )
@@ -423,11 +383,7 @@ class EvaluationsService:
             prompt=context.task.prompt,
             scope=context.task.scope,
             useCase=self._extract_use_case(context.task),
-            useCaseMetadata=(
-                dict(context.task.use_case)
-                if isinstance(context.task.use_case, dict)
-                else {}
-            ),
+            useCaseMetadata=(dict(context.task.use_case) if isinstance(context.task.use_case, dict) else {}),
         )
 
         actions: List[Action] = []
@@ -533,15 +489,11 @@ class EvaluationsService:
         data.setdefault("stats", evaluation_row.stats)
         data.setdefault("gif_recording", evaluation_row.gif_recording)
         data.setdefault("metadata", evaluation_row.meta)
-        # LLM usage tracking
-        data.setdefault("llm_cost", evaluation_row.llm_cost)
-        data.setdefault("llm_tokens", evaluation_row.llm_tokens)
-        data.setdefault("llm_provider", evaluation_row.llm_provider)
-        data.setdefault("llm_model", evaluation_row.llm_model)
         try:
             from sqlalchemy import inspect
 
             if "llm_usage" not in inspect(evaluation_row).unloaded:
+                usage_list = evaluation_row.llm_usage or []
                 data.setdefault(
                     "llm_usage",
                     [
@@ -551,10 +503,19 @@ class EvaluationsService:
                             "tokens": u.tokens,
                             "cost": u.cost,
                         }
-                        for u in (evaluation_row.llm_usage or [])
+                        for u in usage_list
                     ],
                 )
+                summary = llm_summary_from_usage(usage_list)
+                data.setdefault("llm_cost", summary["llm_cost"])
+                data.setdefault("llm_tokens", summary["llm_tokens"])
+                data.setdefault("llm_provider", summary["llm_provider"])
+                data.setdefault("llm_model", summary["llm_model"])
+            else:
+                for k, v in llm_summary_from_usage(None).items():
+                    data.setdefault(k, v)
         except Exception:
-            pass
+            for k, v in llm_summary_from_usage(None).items():
+                data.setdefault(k, v)
         result = Evaluation(**data)
         return result
