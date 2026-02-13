@@ -33,8 +33,6 @@ from app.services.validator.validator_auth import (
 from app.data import get_validator_metadata
 from app.services.chain_state import get_current_block
 from app.services.round_calc import (
-    compute_round_number,
-    compute_boundaries_for_round,
     is_inside_window,
 )
 from app.config import settings
@@ -43,6 +41,7 @@ from app.utils.images import (
     resolve_validator_image,
     sanitize_miner_image,
 )
+
 # Snapshot functionality removed
 # from app.services.snapshot_service import SnapshotService
 from app.services.validator.validator_storage import (
@@ -98,16 +97,14 @@ class StartRoundRequest(BaseModel):
             raise ValueError("season_number is required to start a validator round")
         if round_model.round_number_in_season is None:
             raise ValueError("round_number_in_season is required to start a validator round")
-        
+
         # Validate that the season and round match the start_block
         from app.services.round_calc import compute_season_number
+
         expected_season = compute_season_number(round_model.start_block)
         if round_model.season_number != expected_season:
-            raise ValueError(
-                f"season_number mismatch: got {round_model.season_number}, "
-                f"expected {expected_season} for start_block {round_model.start_block}"
-            )
-        
+            raise ValueError(f"season_number mismatch: got {round_model.season_number}, expected {expected_season} for start_block {round_model.start_block}")
+
         return round_model
 
 
@@ -177,9 +174,7 @@ class RoundMetadata(BaseModel):
 
 class FinishRoundRequest(BaseModel):
     status: str = Field(default="finished", description="Final status for the round")
-    ended_at: float | None = Field(
-        default=None, description="Epoch timestamp when the round finished"
-    )
+    ended_at: float | None = Field(default=None, description="Epoch timestamp when the round finished")
     agent_runs: list[FinishRoundAgentRun] = Field(default_factory=list)
     round_metadata: RoundMetadata | None = Field(default=None, alias="round")
     local_evaluation: Dict[str, Any] | None = None
@@ -199,9 +194,7 @@ async def validator_auth_check() -> dict[str, Any]:
 async def start_round(
     payload: StartRoundRequest,
     request: Request,
-    force: bool = Query(
-        False, description="TESTING-only override to skip chain round/window checks"
-    ),
+    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
     """Register a new validator round along with validator identity and snapshot."""
@@ -226,10 +219,7 @@ async def start_round(
         validator_round.validator_round_id,
         "validator_snapshot.validator_round_id",
     )
-    if (
-        validator_snapshot.validator_uid != validator_round.validator_uid
-        or validator_snapshot.validator_hotkey != validator_round.validator_hotkey
-    ):
+    if validator_snapshot.validator_uid != validator_round.validator_uid or validator_snapshot.validator_hotkey != validator_round.validator_hotkey:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Validator snapshot identity does not match validator round metadata",
@@ -262,10 +252,11 @@ async def start_round(
 
     # Calculate boundaries from start_block (round boundaries are based on start_block)
     from app.services.round_calc import _round_blocks, block_to_epoch
+
     round_blocks = _round_blocks()
     calculated_start_block = validator_round.start_block
     calculated_end_block = calculated_start_block + round_blocks
-    
+
     # Allow testing override ONLY for window timing
     testing_override = settings.TESTING and bool(force)
     if testing_override:
@@ -311,7 +302,7 @@ async def start_round(
         validator_snapshot.name,
         existing=validator_snapshot.image_url,
     )
-    
+
     # Copy coldkey from validator_round to validator_snapshot if not already set
     if validator_snapshot.validator_coldkey is None and validator_round.validator_coldkey:
         validator_snapshot.validator_coldkey = validator_round.validator_coldkey
@@ -346,9 +337,7 @@ async def start_round(
                     "message": "Validator round created",
                     "validator_round_id": validator_round.validator_round_id,
                 }
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except RoundConflictError as exc:
         # Si ya existe un round con ese season_number y round_number_in_season para este validator,
         # BORRAR todos los datos del round anterior y crear uno nuevo
@@ -356,6 +345,7 @@ async def start_round(
             # Try to find existing round by season and round_in_season
             from sqlalchemy import select
             from app.db.models import ValidatorRoundORM, ValidatorRoundValidatorORM
+
             stmt = (
                 select(ValidatorRoundORM)
                 .join(
@@ -373,8 +363,7 @@ async def start_round(
             existing = None
         if existing is not None:
             logger.warning(
-                "Validator %s (hotkey=%s) already has season=%s, round_in_season=%s with round_id=%s; "
-                "deleting ALL data for this validator and season/round to allow new start",
+                "Validator %s (hotkey=%s) already has season=%s, round_in_season=%s with round_id=%s; deleting ALL data for this validator and season/round to allow new start",
                 validator_round.validator_uid,
                 validator_round.validator_hotkey,
                 validator_round.season_number,
@@ -417,8 +406,7 @@ async def start_round(
                 ) from inner_exc
 
             logger.info(
-                "Successfully replaced round for validator %s (season=%s, round_in_season=%s): "
-                "old_round_id=%s -> new_round_id=%s",
+                "Successfully replaced round for validator %s (season=%s, round_in_season=%s): old_round_id=%s -> new_round_id=%s",
                 validator_round.validator_uid,
                 validator_round.season_number,
                 validator_round.round_number_in_season,
@@ -429,13 +417,9 @@ async def start_round(
                 "message": "Validator round created (replaced existing round)",
                 "validator_round_id": validator_round.validator_round_id,
             }
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     logger.info(
         "Started validator round %s (season=%s, round_in_season=%s, validator_uid=%s)",
@@ -458,9 +442,7 @@ async def set_tasks(
     validator_round_id: str,
     payload: SetTasksRequest,
     request: Request,
-    force: bool = Query(
-        False, description="TESTING-only override to skip chain round/window checks"
-    ),
+    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
     """Add or replace task definitions for a validator round."""
@@ -502,16 +484,21 @@ async def set_tasks(
 
             # Calculate boundaries from start_block (no longer using round_number)
             from app.services.round_calc import _round_blocks, block_to_epoch
+
             round_blocks = _round_blocks()
             calculated_start_block = round_row.start_block
             calculated_end_block = calculated_start_block + round_blocks
-            
-            bounds = type('RoundBoundaries', (), {
-                'start_block': calculated_start_block,
-                'end_block': calculated_end_block,
-                'start_epoch': block_to_epoch(calculated_start_block),
-                'end_epoch': block_to_epoch(calculated_end_block),
-            })()
+
+            bounds = type(
+                "RoundBoundaries",
+                (),
+                {
+                    "start_block": calculated_start_block,
+                    "end_block": calculated_end_block,
+                    "start_epoch": block_to_epoch(calculated_start_block),
+                    "end_epoch": block_to_epoch(calculated_end_block),
+                },
+            )()
             if not is_inside_window(current_block, bounds):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -525,18 +512,12 @@ async def set_tasks(
 
         # Idempotent: allow existing tasks to be skipped silently
         # Session already has a transaction from get_session dependency
-        count = await service.add_tasks(
-            validator_round_id, payload.tasks, allow_existing=True
-        )
+        count = await service.add_tasks(validator_round_id, payload.tasks, allow_existing=True)
         await session.commit()
     except DuplicateIdentifierError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     logger.info("Stored %d tasks for validator round %s", count, validator_round_id)
     return {"message": "Tasks stored", "count": count}
@@ -550,9 +531,7 @@ async def start_agent_run(
     validator_round_id: str,
     payload: StartAgentRunRequest,
     request: Request,
-    force: bool = Query(
-        False, description="TESTING-only override to skip chain round/window checks"
-    ),
+    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
     """Register the beginning of an agent evaluation run."""
@@ -574,10 +553,7 @@ async def start_agent_run(
         existing_run = await service._get_agent_run_row(agent_run.agent_run_id)  # type: ignore[attr-defined]
         # validator_uid and validator_hotkey removed from agent_evaluation_runs
         # Validation is done via validator_round_id matching
-        if (
-            existing_run is not None
-            and existing_run.validator_round_id == validator_round_id
-        ):
+        if existing_run is not None and existing_run.validator_round_id == validator_round_id:
             logger.info(
                 "Agent run %s already registered (round %s); treating as idempotent",
                 agent_run.agent_run_id,
@@ -587,12 +563,13 @@ async def start_agent_run(
                 "message": "Agent run registered",
                 "agent_run_id": agent_run.agent_run_id,
             }
-        
+
         # CRITICAL: Check if there's already an agent_run for this miner in this round
         # An agent run should be unique per (validator_round_id, miner_uid)
         # This prevents creating multiple agent runs when the validator calls start_agent_run multiple times
         if agent_run.miner_uid is not None:
             from app.db.models import AgentEvaluationRunORM
+
             stmt_existing = (
                 select(AgentEvaluationRunORM)
                 .where(
@@ -603,7 +580,7 @@ async def start_agent_run(
             )
             result_existing = await session.execute(stmt_existing)
             existing_for_miner = result_existing.scalar_one_or_none()
-            
+
             if existing_for_miner:
                 # There's already an agent_run for this miner in this round
                 # Return the existing one instead of creating a duplicate
@@ -649,16 +626,21 @@ async def start_agent_run(
                 )
         # Calculate boundaries from start_block (no longer using round_number)
         from app.services.round_calc import _round_blocks, block_to_epoch
+
         round_blocks = _round_blocks()
         calculated_start_block = round_row.start_block
         calculated_end_block = calculated_start_block + round_blocks
-        
-        bounds = type('RoundBoundaries', (), {
-            'start_block': calculated_start_block,
-            'end_block': calculated_end_block,
-            'start_epoch': block_to_epoch(calculated_start_block),
-            'end_epoch': block_to_epoch(calculated_end_block),
-        })()
+
+        bounds = type(
+            "RoundBoundaries",
+            (),
+            {
+                "start_block": calculated_start_block,
+                "end_block": calculated_end_block,
+                "start_epoch": block_to_epoch(calculated_start_block),
+                "end_epoch": block_to_epoch(calculated_end_block),
+            },
+        )()
 
         # Allow testing override ONLY for window timing, not round number validation
         testing_override = settings.TESTING and bool(force)
@@ -704,29 +686,18 @@ async def start_agent_run(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="miner_identity.uid must match agent_run.miner_uid",
                 )
-            if (
-                expected_hotkey
-                and identity.hotkey
-                and expected_hotkey != identity.hotkey
-            ):
+            if expected_hotkey and identity.hotkey and expected_hotkey != identity.hotkey:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="miner_identity.hotkey must match agent_run.miner_hotkey",
                 )
             # Snapshot consistency (if provided)
-            if (
-                miner_snapshot.miner_uid is not None
-                and miner_snapshot.miner_uid != expected_uid
-            ):
+            if miner_snapshot.miner_uid is not None and miner_snapshot.miner_uid != expected_uid:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="miner_snapshot.miner_uid must match agent_run.miner_uid",
                 )
-            if (
-                miner_snapshot.miner_hotkey is not None
-                and expected_hotkey is not None
-                and miner_snapshot.miner_hotkey != expected_hotkey
-            ):
+            if miner_snapshot.miner_hotkey is not None and expected_hotkey is not None and miner_snapshot.miner_hotkey != expected_hotkey:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="miner_snapshot.miner_hotkey must match agent_run.miner_hotkey",
@@ -759,24 +730,13 @@ async def start_agent_run(
                 existing_run.validator_round_id,
                 validator_round_id,
             )
-            detail = (
-                f"agent_run_id {agent_run.agent_run_id} is already registered "
-                f"to validator_round {existing_run.validator_round_id}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail=detail
-            ) from exc
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+            detail = f"agent_run_id {agent_run.agent_run_id} is already registered to validator_round {existing_run.validator_round_id}"
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except RoundConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     logger.info(
         "Registered agent run %s (validator_round_id=%s)",
@@ -795,134 +755,114 @@ async def add_evaluations_batch(
     agent_run_id: str,
     request: Request,
     payload: list[AddEvaluationRequest] = Body(..., description="List of evaluation requests"),
-    force: bool = Query(
-        False, description="TESTING-only override to skip chain round/window checks"
-    ),
+    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
     """Persist multiple evaluation data (tasks, solutions, and evaluations) in a single transaction."""
     service = ValidatorRoundPersistenceService(session)
-    
+
     if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Batch cannot be empty"
-        )
-    
-    # Process each evaluation in the batch
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Batch cannot be empty")
+
+    # Process each evaluation in the batch. Use a savepoint per item so one failure
+    # does not abort the whole transaction (InFailedSQLTransactionError on next query).
     evaluations_created = 0
     errors = []
-    
+
     try:
         for idx, eval_request in enumerate(payload):
             try:
-                # Merge evaluation_result (if provided) into evaluation so reward/time fields are not dropped
-                request_payload = eval_request
-                eval_result_payload: Dict[str, Any] | None = None
-                if isinstance(getattr(request_payload, "evaluation_result", None), dict):
-                    eval_result_payload = request_payload.evaluation_result  # type: ignore[assignment]
-                
-                if eval_result_payload:
-                    merged_eval_data = request_payload.evaluation.model_dump(
-                        mode="json", exclude_none=True
-                    )
-                    # evaluation_result values (e.g., reward, stats) take precedence
-                    merged_eval_data.update(eval_result_payload)
-                    request_payload = AddEvaluationRequest(
-                        task=request_payload.task,
-                        task_solution=request_payload.task_solution,
-                        evaluation=Evaluation(**merged_eval_data),
-                        evaluation_result=eval_result_payload,
-                    )
-                
-                task = request_payload.task
-                task_solution = request_payload.task_solution
-                evaluation = request_payload.evaluation
-                
-                # Validate round matches
-                expected_fields = [
-                    (task.validator_round_id, "task.validator_round_id"),
-                    (task_solution.validator_round_id, "task_solution.validator_round_id"),
-                    (evaluation.validator_round_id, "evaluation.validator_round_id"),
-                ]
-                for value, label in expected_fields:
-                    _require_round_match(value, validator_round_id, f"[batch {idx}] {label}")
-                
-                _require_round_match(
-                    task_solution.task_id, task.task_id, f"[batch {idx}] task_solution.task_id"
-                )
-                _require_round_match(evaluation.task_id, task.task_id, f"[batch {idx}] evaluation.task_id")
-                _require_round_match(
-                    task_solution.agent_run_id, agent_run_id, f"[batch {idx}] task_solution.agent_run_id"
-                )
-                _require_round_match(
-                    evaluation.agent_run_id, agent_run_id, f"[batch {idx}] evaluation.agent_run_id"
-                )
-                _require_round_match(
-                    evaluation.task_solution_id,
-                    task_solution.solution_id,
-                    f"[batch {idx}] evaluation.task_solution_id",
-                )
-                
-                # Cross-check validator identity on payloads matches the round
-                round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
-                _ensure_request_matches_round_owner(request, round_row)
-                check_pairs = [
-                    (
-                        task_solution.validator_uid,
-                        task_solution.validator_hotkey,
-                        "task_solution",
-                    ),
-                    (evaluation.validator_uid, evaluation.validator_hotkey, "evaluation"),
-                ]
-                if not round_row.validator_snapshot:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Validator snapshot not found for round",
-                    )
-                for uid_value, hotkey_value, label in check_pairs:
-                    if uid_value is not None and int(uid_value) != int(round_row.validator_snapshot.validator_uid):
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"[batch {idx}] {label}.validator_uid must match the round's validator_uid",
+                async with session.begin_nested():
+                    # Merge evaluation_result (if provided) into evaluation so reward/time fields are not dropped
+                    request_payload = eval_request
+                    eval_result_payload: Dict[str, Any] | None = None
+                    if isinstance(getattr(request_payload, "evaluation_result", None), dict):
+                        eval_result_payload = request_payload.evaluation_result  # type: ignore[assignment]
+
+                    if eval_result_payload:
+                        merged_eval_data = request_payload.evaluation.model_dump(mode="json", exclude_none=True)
+                        merged_eval_data.update(eval_result_payload)
+                        request_payload = AddEvaluationRequest(
+                            task=request_payload.task,
+                            task_solution=request_payload.task_solution,
+                            evaluation=Evaluation(**merged_eval_data),
+                            evaluation_result=eval_result_payload,
                         )
-                    if hotkey_value and hotkey_value != round_row.validator_snapshot.validator_hotkey:
+
+                    task = request_payload.task
+                    task_solution = request_payload.task_solution
+                    evaluation = request_payload.evaluation
+
+                    expected_fields = [
+                        (task.validator_round_id, "task.validator_round_id"),
+                        (task_solution.validator_round_id, "task_solution.validator_round_id"),
+                        (evaluation.validator_round_id, "evaluation.validator_round_id"),
+                    ]
+                    for value, label in expected_fields:
+                        _require_round_match(value, validator_round_id, f"[batch {idx}] {label}")
+
+                    _require_round_match(task_solution.task_id, task.task_id, f"[batch {idx}] task_solution.task_id")
+                    _require_round_match(evaluation.task_id, task.task_id, f"[batch {idx}] evaluation.task_id")
+                    _require_round_match(task_solution.agent_run_id, agent_run_id, f"[batch {idx}] task_solution.agent_run_id")
+                    _require_round_match(evaluation.agent_run_id, agent_run_id, f"[batch {idx}] evaluation.agent_run_id")
+                    _require_round_match(
+                        evaluation.task_solution_id,
+                        task_solution.solution_id,
+                        f"[batch {idx}] evaluation.task_solution_id",
+                    )
+
+                    round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+                    _ensure_request_matches_round_owner(request, round_row)
+                    check_pairs = [
+                        (
+                            task_solution.validator_uid,
+                            task_solution.validator_hotkey,
+                            "task_solution",
+                        ),
+                        (evaluation.validator_uid, evaluation.validator_hotkey, "evaluation"),
+                    ]
+                    if not round_row.validator_snapshot:
                         raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"[batch {idx}] {label}.validator_hotkey must match the round's validator_hotkey",
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Validator snapshot not found for round",
                         )
-                
-                # Persist evaluation
-                # Note: add_evaluation() does flush() internally to update agent_run stats
-                # This ensures stats are updated after each evaluation in the batch
-                await service.add_evaluation(
-                    validator_round_id=validator_round_id,
-                    agent_run_id=agent_run_id,
-                    task=task,
-                    task_solution=task_solution,
-                    evaluation=evaluation,
-                )
-                evaluations_created += 1
-                
+                    for uid_value, hotkey_value, label in check_pairs:
+                        if uid_value is not None and int(uid_value) != int(round_row.validator_snapshot.validator_uid):
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"[batch {idx}] {label}.validator_uid must match the round's validator_uid",
+                            )
+                        if hotkey_value and hotkey_value != round_row.validator_snapshot.validator_hotkey:
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"[batch {idx}] {label}.validator_hotkey must match the round's validator_hotkey",
+                            )
+
+                    await service.add_evaluation(
+                        validator_round_id=validator_round_id,
+                        agent_run_id=agent_run_id,
+                        task=task,
+                        task_solution=task_solution,
+                        evaluation=evaluation,
+                    )
+                    evaluations_created += 1
+
             except DuplicateIdentifierError as exc:
-                # Skip duplicates (idempotency)
-                # Duplicates are already persisted, so we count them as "created" for stats purposes
+                # Skip duplicates (idempotency); savepoint was rolled back, duplicate already in DB
                 logger.info(f"Batch evaluation {idx} already exists: {exc}")
-                evaluations_created += 1  # Count as created since it already exists
+                evaluations_created += 1
                 continue
             except Exception as exc:
                 error_msg = f"Batch evaluation {idx} failed: {str(exc)}"
                 logger.error(error_msg, exc_info=True)
                 errors.append(error_msg)
-                # Continue with remaining evaluations instead of failing the entire batch
-                # Note: Previous evaluations in the batch are already flushed but not committed
-                # They will be committed at the end if no critical error occurs
-        
+                # Savepoint rolled back by begin_nested(); main transaction still valid, continue
+
         # Commit all changes in a single transaction
         # All evaluations that were successfully added (via add_evaluation) are now committed
         # This includes all flushes done inside add_evaluation() calls
         await session.commit()
-        
+
         # Final refresh of agent_run to ensure stats are up-to-date after commit
         # This is a safety measure, though stats should already be updated by add_evaluation()
         try:
@@ -933,28 +873,25 @@ async def add_evaluations_batch(
         except Exception:
             # Non-critical: stats should already be correct from add_evaluation()
             pass
-        
+
         result = {
             "message": f"Batch evaluations processed: {evaluations_created} created",
             "evaluations_created": evaluations_created,
             "total_requested": len(payload),
         }
-        
+
         if errors:
             result["errors"] = errors
             result["message"] += f", {len(errors)} failed"
-        
+
         return result
-        
+
     except HTTPException:
         raise
     except Exception as exc:
         await session.rollback()
         logger.exception("Failed to process batch evaluations")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process batch evaluations: {str(exc)}"
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to process batch evaluations: {str(exc)}") from exc
 
 
 @router.post(
@@ -966,9 +903,7 @@ async def add_evaluation(
     agent_run_id: str,
     payload: AddEvaluationRequest,
     request: Request,
-    force: bool = Query(
-        False, description="TESTING-only override to skip chain round/window checks"
-    ),
+    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
     """Persist evaluation data (task, solution, and evaluation with artefacts)."""
@@ -991,9 +926,7 @@ async def add_evaluation(
                 eval_result_payload = maybe_eval_result
 
         if eval_result_payload:
-            merged_eval_data = request_payload.evaluation.model_dump(
-                mode="json", exclude_none=True
-            )
+            merged_eval_data = request_payload.evaluation.model_dump(mode="json", exclude_none=True)
             # evaluation_result values (e.g., reward, stats) take precedence
             merged_eval_data.update(eval_result_payload)
             request_payload = AddEvaluationRequest(
@@ -1016,9 +949,7 @@ async def add_evaluation(
                 )
 
                 def _norm_type(t: str) -> str:
-                    key = (t or "other").lower().replace("action", "").replace(
-                        "-", "_"
-                    ).strip() or "other"
+                    key = (t or "other").lower().replace("action", "").replace("-", "_").strip() or "other"
                     if key in {"type", "type_text", "sendkeysiwa"}:
                         return "input"
                     return key
@@ -1033,23 +964,17 @@ async def add_evaluation(
                         new_actions.append(CoreAction(type=str(ra), attributes={}))
 
                 # Replace only if current attrs look empty
-                if all(
-                    (getattr(a, "attributes", None) in (None, {}, []) for a in ts.actions)
-                ):
+                if all((getattr(a, "attributes", None) in (None, {}, []) for a in ts.actions)):
                     request_payload = AddEvaluationRequest(
                         task=request_payload.task,
                         task_solution=CoreTaskSolution(
                             **{
                                 **request_payload.task_solution.model_dump(mode="json"),
-                                "actions": [
-                                    a.model_dump(mode="json") for a in new_actions
-                                ],
+                                "actions": [a.model_dump(mode="json") for a in new_actions],
                             }
                         ),
                         evaluation=request_payload.evaluation,
-                        evaluation_result=getattr(
-                            request_payload, "evaluation_result", None
-                        ),
+                        evaluation_result=getattr(request_payload, "evaluation_result", None),
                     )
         except Exception:
             # Non-fatal: fall back to original payload
@@ -1067,16 +992,10 @@ async def add_evaluation(
         for value, label in expected_fields:
             _require_round_match(value, validator_round_id, label)
 
-        _require_round_match(
-            task_solution.task_id, task.task_id, "task_solution.task_id"
-        )
+        _require_round_match(task_solution.task_id, task.task_id, "task_solution.task_id")
         _require_round_match(evaluation.task_id, task.task_id, "evaluation.task_id")
-        _require_round_match(
-            task_solution.agent_run_id, agent_run_id, "task_solution.agent_run_id"
-        )
-        _require_round_match(
-            evaluation.agent_run_id, agent_run_id, "evaluation.agent_run_id"
-        )
+        _require_round_match(task_solution.agent_run_id, agent_run_id, "task_solution.agent_run_id")
+        _require_round_match(evaluation.agent_run_id, agent_run_id, "evaluation.agent_run_id")
         _require_round_match(
             evaluation.task_solution_id,
             task_solution.solution_id,
@@ -1114,9 +1033,7 @@ async def add_evaluation(
         # Early idempotency: if the entire bundle already exists for this round/run,
         # return success before enforcing window checks to allow safe replays.
         try:
-            existing_solution = await service.get_task_solution_row(
-                task_solution.solution_id
-            )
+            existing_solution = await service.get_task_solution_row(task_solution.solution_id)
             existing_eval = await service.get_evaluation_row(evaluation.evaluation_id)
         except Exception:
             existing_solution = existing_eval = None
@@ -1155,16 +1072,21 @@ async def add_evaluation(
                 )
             # Calculate boundaries from start_block (no longer using round_number)
             from app.services.round_calc import _round_blocks, block_to_epoch
+
             round_blocks = _round_blocks()
             calculated_start_block = round_row.start_block
             calculated_end_block = calculated_start_block + round_blocks
-            
-            bounds = type('RoundBoundaries', (), {
-                'start_block': calculated_start_block,
-                'end_block': calculated_end_block,
-                'start_epoch': block_to_epoch(calculated_start_block),
-                'end_epoch': block_to_epoch(calculated_end_block),
-            })()
+
+            bounds = type(
+                "RoundBoundaries",
+                (),
+                {
+                    "start_block": calculated_start_block,
+                    "end_block": calculated_end_block,
+                    "start_epoch": block_to_epoch(calculated_start_block),
+                    "end_epoch": block_to_epoch(calculated_end_block),
+                },
+            )()
             if not is_inside_window(current_block, bounds):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -1187,13 +1109,9 @@ async def add_evaluation(
         await session.commit()
     except DuplicateIdentifierError as exc:
         # Conflicting duplicate (belongs to another round/run), surface as 409
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     logger.info(
         "Stored evaluation %s for task %s (agent_run_id=%s)",
@@ -1266,9 +1184,7 @@ async def finish_round(
                 if payload.agent_runs
                 else None
             ),
-            round_metadata=(
-                payload.round_metadata.model_dump() if payload.round_metadata else None
-            ),
+            round_metadata=(payload.round_metadata.model_dump() if payload.round_metadata else None),
             local_evaluation=payload.local_evaluation,
             post_consensus_evaluation=payload.post_consensus_evaluation,
             ipfs_uploaded=payload.ipfs_uploaded,
@@ -1296,6 +1212,4 @@ async def finish_round(
         }
 
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

@@ -49,9 +49,7 @@ elif driver in {"postgres"}:
     # Convert generic 'postgres' to 'postgresql+asyncpg'
     database_url = str(url.set(drivername="postgresql+asyncpg"))
 else:
-    raise ValueError(
-        f"Unsupported database driver: {driver}. Only PostgreSQL is supported."
-    )
+    raise ValueError(f"Unsupported database driver: {driver}. Only PostgreSQL is supported.")
 
 # Log the resolved driver/DSN that will actually be used
 try:
@@ -93,10 +91,13 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     try:
         yield session
     finally:
+        # Roll back any failed or uncommitted transaction so the connection is not
+        # returned to the pool in "aborted transaction" state (InFailedSQLTransactionError).
+        try:
+            await session.rollback()
+        except Exception:  # noqa: S110
+            pass
         # Handle connection errors during session close gracefully
-        # These errors occur when concurrent operations leave the connection
-        # in an inconsistent state. We catch and log them but don't propagate,
-        # as the connection pool will handle broken connections automatically.
         try:
             await session.close()
         except (
