@@ -532,6 +532,46 @@ class ValidatorRoundPersistenceService:
     ) -> None:
         """Mark a validator round as completed."""
         round_row = await self._ensure_round_exists(validator_round_id)
+
+        # If round metadata was provided by the validator, persist boundary fields.
+        # This is the only place end_block/end_epoch are communicated back to the backend.
+        if round_metadata and isinstance(round_metadata, dict):
+            try:
+                rb = round_metadata.get("start_block")
+                if rb is not None and int(rb) > 0 and (getattr(round_row, "start_block", None) in (None, 0)):
+                    round_row.start_block = int(rb)
+            except Exception:
+                pass
+            try:
+                rb = round_metadata.get("end_block")
+                if rb is not None and int(rb) > 0 and (getattr(round_row, "end_block", None) in (None, 0)):
+                    round_row.end_block = int(rb)
+            except Exception:
+                pass
+            try:
+                re = round_metadata.get("start_epoch")
+                if re is not None and int(re) > 0 and (getattr(round_row, "start_epoch", None) in (None, 0)):
+                    round_row.start_epoch = int(re)
+            except Exception:
+                pass
+            try:
+                re = round_metadata.get("end_epoch")
+                if re is not None and int(re) > 0 and (getattr(round_row, "end_epoch", None) in (None, 0)):
+                    round_row.end_epoch = int(re)
+            except Exception:
+                pass
+            try:
+                rs = round_metadata.get("started_at")
+                if rs is not None and (getattr(round_row, "started_at", None) in (None, 0)):
+                    round_row.started_at = float(rs)
+            except Exception:
+                pass
+            try:
+                ra = round_metadata.get("ended_at")
+                if ra is not None and (getattr(round_row, "ended_at", None) in (None, 0)):
+                    round_row.ended_at = float(ra)
+            except Exception:
+                pass
         # Ensure start/end epoch are populated even when testing overrides bypassed chain-boundary fill
         try:
             if getattr(round_row, "start_epoch", None) is None or getattr(round_row, "end_epoch", None) is None:
