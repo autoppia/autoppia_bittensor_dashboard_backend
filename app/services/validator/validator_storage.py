@@ -1521,16 +1521,10 @@ class ValidatorRoundPersistenceService:
         }
 
     def _llm_usage_from_evaluation(self, evaluation: Evaluation) -> Any:
-        """Return llm_usage list; if empty, build one entry from scalar llm_* fields (subnet compat)."""
+        """Return llm_usage list from evaluation (single source of truth)."""
         usage = getattr(evaluation, "llm_usage", None)
-        if usage and (isinstance(usage, list) and len(usage) > 0):
+        if usage and isinstance(usage, list) and len(usage) > 0:
             return usage
-        cost = getattr(evaluation, "llm_cost", None)
-        tokens = getattr(evaluation, "llm_tokens", None)
-        provider = getattr(evaluation, "llm_provider", None)
-        model = getattr(evaluation, "llm_model", None)
-        if cost is not None or tokens is not None or provider is not None or model is not None:
-            return [{"provider": provider, "model": model, "tokens": tokens, "cost": cost}]
         return None
 
     def _normalize_llm_usage(self, usage: Any) -> list[dict[str, Any]]:

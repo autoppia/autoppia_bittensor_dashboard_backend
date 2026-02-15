@@ -1089,14 +1089,7 @@ class TasksService:
         if context.evaluation:
             eval_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0))
             eval_meta = getattr(context.evaluation, "meta", None) or {}
-            llm_model = (
-                getattr(context.evaluation, "llm_model", None)
-                or eval_meta.get("llm_model")
-                or eval_meta.get("model")
-                or eval_meta.get("llm_model_name")
-                or eval_meta.get("model_name")
-                or eval_meta.get("llm")
-            )
+            llm_model = eval_meta.get("llm_model") or eval_meta.get("model") or eval_meta.get("llm_model_name") or eval_meta.get("model_name") or eval_meta.get("llm")
             llm_usage = getattr(context.evaluation, "llm_usage", None) or []
             try:
                 llm_usage_list = list(llm_usage)
@@ -1118,9 +1111,9 @@ class TasksService:
                 hasRecording=bool(context.evaluation.gif_recording),
                 reward=getattr(context.evaluation, "reward", None),
                 llmModel=str(llm_model) if llm_model else single_model,
-                llmCost=getattr(context.evaluation, "llm_cost", None) or total_cost,
-                llmTokens=getattr(context.evaluation, "llm_tokens", None) or total_tokens,
-                llmProvider=getattr(context.evaluation, "llm_provider", None) or single_provider,
+                llmCost=total_cost,
+                llmTokens=total_tokens,
+                llmProvider=single_provider,
                 llmUsage=llm_usage_list or None,
             )
 
