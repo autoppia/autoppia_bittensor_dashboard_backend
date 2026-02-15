@@ -431,6 +431,25 @@ class Action(BaseModel):
     type: str = Field(..., description="Action type identifier")
     attributes: Dict[str, Any] = Field(default_factory=dict, description="Serialized action attributes")
 
+    model_config = {"extra": "allow"}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_extra_into_attributes(cls, values: Any):
+        if not isinstance(values, dict):
+            return values
+        attrs = values.get("attributes")
+        if not isinstance(attrs, dict):
+            attrs = {}
+        for key, val in values.items():
+            if key in {"type", "attributes"}:
+                continue
+            if val is None:
+                continue
+            attrs.setdefault(key, val)
+        values["attributes"] = attrs
+        return values
+
 
 class TaskSolution(BaseModel):
     """Agent response to a specific task within a validator round."""
