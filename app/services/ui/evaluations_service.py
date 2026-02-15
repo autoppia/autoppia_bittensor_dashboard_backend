@@ -506,16 +506,9 @@ class EvaluationsService:
                         for u in usage_list
                     ],
                 )
-                summary = llm_summary_from_usage(usage_list)
-                data.setdefault("llm_cost", summary["llm_cost"])
-                data.setdefault("llm_tokens", summary["llm_tokens"])
-                data.setdefault("llm_provider", summary["llm_provider"])
-                data.setdefault("llm_model", summary["llm_model"])
             else:
-                for k, v in llm_summary_from_usage(None).items():
-                    data.setdefault(k, v)
+                pass
         except Exception:
-            for k, v in llm_summary_from_usage(None).items():
-                data.setdefault(k, v)
+            pass
         result = Evaluation(**data)
         return result
