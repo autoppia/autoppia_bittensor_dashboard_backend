@@ -15,7 +15,6 @@ from sqlalchemy.orm import selectinload, defer
 from app.db.models import (
     AgentEvaluationRunORM,
     EvaluationORM,
-    RoundORM,
     TaskORM,
     TaskSolutionORM,
     ValidatorRoundORM,
@@ -131,16 +130,10 @@ def _format_agent_id(miner_uid: Optional[int]) -> str:
 
 
 def _format_validator_id(validator_uid: Optional[int]) -> str:
-    return (
-        f"validator-{validator_uid}"
-        if validator_uid is not None
-        else "validator-unknown"
-    )
+    return f"validator-{validator_uid}" if validator_uid is not None else "validator-unknown"
 
 
-def _normalize_media_url(
-    value: Optional[str], mime: str = "image/gif"
-) -> Optional[str]:
+def _normalize_media_url(value: Optional[str], mime: str = "image/gif") -> Optional[str]:
     if not value:
         return None
     candidate = str(value).strip()
@@ -222,13 +215,13 @@ class TasksService:
                 sort_order=sort_order,
                 include_facets=include_facets,
             )
-            
+
             # Try to get from cache
             cached_result = redis_cache.get(cache_key)
             if cached_result is not None:
                 logger.debug(f"Cache hit for tasks_search_light: {cache_key}")
                 return cached_result
-            
+
             # Execute query
             logger.debug(f"Cache miss for tasks_search_light: {cache_key}")
             result = await self._list_tasks_light(
@@ -249,11 +242,11 @@ class TasksService:
                 sort_order=sort_order,
                 include_facets=include_facets,
             )
-            
+
             # Cache result (TTL: 60 seconds for search results)
             if result is not None:
                 redis_cache.set(cache_key, result, ttl=60)
-            
+
             return result
 
         # Only show tasks that have evaluations (i.e., completed tasks with agent_runs)
@@ -262,7 +255,8 @@ class TasksService:
             .where(TaskORM.task_id.in_(select(EvaluationORM.task_id).distinct()))
             .options(
                 selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluations).options(
+                selectinload(TaskORM.evaluations)
+                .options(
                     defer(EvaluationORM.feedback),
                     defer(EvaluationORM.gif_recording),
                     defer(EvaluationORM.meta),
@@ -323,12 +317,8 @@ class TasksService:
                     continue
 
             ui_task = self._build_ui_task(context)
-            evaluation_score = (
-                getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
-            )
-            run_start_ts = (
-                context.agent_run.started_at or context.round.started_at or 0.0
-            )
+            evaluation_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
+            run_start_ts = context.agent_run.started_at or context.round.started_at or 0.0
 
             if status and ui_task.status.value.lower() != status.lower():
                 continue
@@ -346,12 +336,7 @@ class TasksService:
             if query_lower:
                 prompt = context.task.prompt or ""
                 url = context.task.url or ""
-                if (
-                    query_lower not in prompt.lower()
-                    and query_lower not in url.lower()
-                    and query_lower not in ui_task.taskId.lower()
-                    and query_lower not in ui_task.agentRunId.lower()
-                ):
+                if query_lower not in prompt.lower() and query_lower not in url.lower() and query_lower not in ui_task.taskId.lower() and query_lower not in ui_task.agentRunId.lower():
                     continue
 
             items.append(ui_task)
@@ -381,28 +366,10 @@ class TasksService:
 
         if include_facets:
             result["facets"] = {
-                "websites": [
-                    {"name": name, "count": count}
-                    for name, count in sorted(
-                        website_counts.items(), key=lambda item: item[1], reverse=True
-                    )
-                ],
-                "useCases": [
-                    {"name": name, "count": count}
-                    for name, count in sorted(
-                        use_case_counts.items(), key=lambda item: item[1], reverse=True
-                    )
-                ],
-                "statuses": [
-                    {"name": name, "count": count}
-                    for name, count in sorted(
-                        status_counts.items(), key=lambda item: item[1], reverse=True
-                    )
-                ],
-                "scoreRanges": [
-                    {"name": name, "count": score_buckets.get(name, 0)}
-                    for name, _, _ in score_ranges
-                ],
+                "websites": [{"name": name, "count": count} for name, count in sorted(website_counts.items(), key=lambda item: item[1], reverse=True)],
+                "useCases": [{"name": name, "count": count} for name, count in sorted(use_case_counts.items(), key=lambda item: item[1], reverse=True)],
+                "statuses": [{"name": name, "count": count} for name, count in sorted(status_counts.items(), key=lambda item: item[1], reverse=True)],
+                "scoreRanges": [{"name": name, "count": score_buckets.get(name, 0)} for name, _, _ in score_ranges],
             }
 
         return result
@@ -423,7 +390,7 @@ class TasksService:
     # ------------------------------------------------------------------
     # Helper methods for extracting validator/miner info
     # ------------------------------------------------------------------
-    
+
     @staticmethod
     def _get_validator_name(run: Optional[AgentEvaluationRunORM], round_row: Optional[ValidatorRoundORM]) -> Optional[str]:
         """Extract validator name from agent_run or round snapshots."""
@@ -436,7 +403,7 @@ class TasksService:
         if hasattr(run, "validator") and run.validator:
             return getattr(run.validator, "name", None)
         return None
-    
+
     @staticmethod
     def _get_validator_image(run: Optional[AgentEvaluationRunORM], round_row: Optional[ValidatorRoundORM]) -> Optional[str]:
         """Extract validator image from agent_run or round snapshots."""
@@ -449,7 +416,7 @@ class TasksService:
         if hasattr(run, "validator") and run.validator:
             return getattr(run.validator, "image", None)
         return None
-    
+
     @staticmethod
     def _get_miner_name(run: Optional[AgentEvaluationRunORM], round_row: Optional[ValidatorRoundORM]) -> Optional[str]:
         """Extract miner name from agent_run or round snapshots."""
@@ -462,7 +429,7 @@ class TasksService:
         if hasattr(run, "miner") and run.miner:
             return getattr(run.miner, "agent_name", None)
         return None
-    
+
     @staticmethod
     def _get_miner_image(run: Optional[AgentEvaluationRunORM], round_row: Optional[ValidatorRoundORM]) -> Optional[str]:
         """Extract miner image from agent_run or round snapshots."""
@@ -502,10 +469,7 @@ class TasksService:
         from sqlalchemy import func
 
         # Start from EVALUATIONS (one row per task+miner) instead of tasks
-        base_stmt = (
-            select(EvaluationORM)
-            .join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
-        )
+        base_stmt = select(EvaluationORM).join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
         filters = []
 
         if website:
@@ -543,25 +507,18 @@ class TasksService:
             filters.append(EvaluationORM.eval_score >= min_score)
         if max_score is not None:
             filters.append(EvaluationORM.eval_score <= max_score)
-        
+
         if use_case:
             # Filter by use_case name in JSON field
             # Normalize use_case: handle both "ADD BOOK" and "ADD_BOOK"
             use_case_normalized = use_case.upper().replace(" ", "_")
             # Use PostgreSQL JSON operator to filter
             # use_case is stored as {"name": "ADD_BOOK", ...}
-            filters.append(
-                func.upper(func.replace(TaskORM.use_case["name"].astext, " ", "_"))
-                == use_case_normalized
-            )
+            filters.append(func.upper(func.replace(TaskORM.use_case["name"].astext, " ", "_")) == use_case_normalized)
 
         if query:
             like = f"%{query}%"
-            filters.append(
-                TaskORM.prompt.ilike(like)
-                | TaskORM.url.ilike(like)
-                | TaskORM.task_id.ilike(like)
-            )
+            filters.append(TaskORM.prompt.ilike(like) | TaskORM.url.ilike(like) | TaskORM.task_id.ilike(like))
         if start_date:
             filters.append(TaskORM.created_at >= start_date)
         if end_date:
@@ -579,20 +536,13 @@ class TasksService:
         elif sort_by.lower() == "score":
             sort_column = EvaluationORM.eval_score
 
-        order_expr = (
-            sort_column.desc()
-            if sort_order.lower() == "desc"
-            else sort_column.asc()
-        )
+        order_expr = sort_column.desc() if sort_order.lower() == "desc" else sort_column.asc()
         # Optimize COUNT: build count query without ORDER BY (faster)
         # COUNT doesn't need ordering, so we avoid the subquery overhead
-        count_stmt = (
-            select(func.count(EvaluationORM.id))
-            .select_from(EvaluationORM.__table__.join(TaskORM.__table__, EvaluationORM.task_id == TaskORM.task_id))
-        )
+        count_stmt = select(func.count(EvaluationORM.id)).select_from(EvaluationORM.__table__.join(TaskORM.__table__, EvaluationORM.task_id == TaskORM.task_id))
         if filters:
             count_stmt = count_stmt.where(*filters)
-        
+
         # Execute COUNT and pagination in parallel would be ideal, but for now do sequentially
         # The COUNT is still needed for pagination UI, but we make it faster by avoiding subquery
         total = (await self.session.execute(count_stmt)).scalar_one()
@@ -609,11 +559,7 @@ class TasksService:
                 "total": 0,
                 "page": page,
                 "limit": limit,
-                "facets": (
-                    {"websites": [], "useCases": [], "statuses": [], "scoreRanges": []}
-                    if include_facets
-                    else None
-                ),
+                "facets": ({"websites": [], "useCases": [], "statuses": [], "scoreRanges": []} if include_facets else None),
             }
 
         # Get unique task_ids and agent_run_ids from the paginated evaluations
@@ -626,23 +572,16 @@ class TasksService:
         tasks_by_id: Dict[str, TaskORM] = {t.task_id: t for t in task_rows_list}
 
         # Fetch solutions for these evaluations
-        solution_stmt = select(TaskSolutionORM).where(
-            TaskSolutionORM.task_id.in_(task_ids),
-            TaskSolutionORM.agent_run_id.in_(agent_run_ids_from_evals)
-        )
+        solution_stmt = select(TaskSolutionORM).where(TaskSolutionORM.task_id.in_(task_ids), TaskSolutionORM.agent_run_id.in_(agent_run_ids_from_evals))
         solution_rows_list = await self.session.scalars(solution_stmt)
-        solutions_by_key: Dict[tuple[str, str], TaskSolutionORM] = {
-            (sol.task_id, sol.agent_run_id): sol for sol in solution_rows_list
-        }
+        solutions_by_key: Dict[tuple[str, str], TaskSolutionORM] = {(sol.task_id, sol.agent_run_id): sol for sol in solution_rows_list}
 
         # Fetch agent runs for these evaluations with validator and miner info
         from sqlalchemy.orm import selectinload
+
         agent_runs_by_id: Dict[str, AgentEvaluationRunORM] = {}
         if agent_run_ids_from_evals:
-            run_rows = await self.session.scalars(
-                select(AgentEvaluationRunORM)
-                .where(AgentEvaluationRunORM.agent_run_id.in_(agent_run_ids_from_evals))
-            )
+            run_rows = await self.session.scalars(select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id.in_(agent_run_ids_from_evals)))
             agent_runs_by_id = {run.agent_run_id: run for run in run_rows}
 
         # Fetch round info for these evaluations
@@ -661,12 +600,7 @@ class TasksService:
 
         def _use_case_name(raw: Any) -> str:
             if isinstance(raw, dict):
-                return str(
-                    raw.get("name")
-                    or raw.get("use_case")
-                    or raw.get("useCase")
-                    or "Unknown"
-                )
+                return str(raw.get("name") or raw.get("use_case") or raw.get("useCase") or "Unknown")
             if raw is None:
                 return "Unknown"
             return str(raw)
@@ -685,22 +619,14 @@ class TasksService:
             task_row = tasks_by_id.get(ev.task_id)
             if not task_row:
                 continue
-            
+
             sol = solutions_by_key.get((ev.task_id, ev.agent_run_id))
             run = agent_runs_by_id.get(ev.agent_run_id)
             round_row = round_map.get(ev.validator_round_id)
 
             score = getattr(ev, "eval_score", getattr(ev, "final_score", 0.0)) if ev else 0.0
-            duration = (
-                ev.evaluation_time
-                if ev and ev.evaluation_time is not None
-                else (run.elapsed_sec if run else 0.0)
-            )
-            status_val = (
-                TaskStatus.COMPLETED
-                if ev and score >= 0.5
-                else (TaskStatus.FAILED if ev else TaskStatus.PENDING)
-            )
+            duration = ev.evaluation_time if ev and ev.evaluation_time is not None else (run.elapsed_sec if run else 0.0)
+            status_val = TaskStatus.COMPLETED if ev and score >= 0.5 else (TaskStatus.FAILED if ev else TaskStatus.PENDING)
 
             # Filters that depend on run/eval info (applied after enrichment)
             if agent_run_id and ev.agent_run_id != agent_run_id:
@@ -730,13 +656,7 @@ class TasksService:
                 UITask(
                     taskId=task_row.task_id,
                     evaluationId=ev.evaluation_id if ev else None,
-                    agentRunId=(
-                        run.agent_run_id
-                        if run
-                        else (
-                            ev.agent_run_id if ev else sol.agent_run_id if sol else ""
-                        )
-                    ),
+                    agentRunId=(run.agent_run_id if run else (ev.agent_run_id if ev else sol.agent_run_id if sol else "")),
                     roundNumber=getattr(round_row, "round_number_in_season", None),
                     season=getattr(round_row, "season_number", None),
                     website=task_row.url,
@@ -748,9 +668,7 @@ class TasksService:
                     score=score,
                     successRate=int(score * 100),
                     duration=int(duration or 0),
-                    startTime=_ts(run.started_at if run else None)
-                    or _ts(round_row.start_epoch if round_row else None)
-                    or _ts(task_row.created_at.timestamp()),
+                    startTime=_ts(run.started_at if run else None) or _ts(round_row.start_epoch if round_row else None) or _ts(task_row.created_at.timestamp()),
                     endTime=_ts(run.ended_at if run else None),
                     createdAt=task_row.created_at,
                     updatedAt=task_row.updated_at,
@@ -770,7 +688,6 @@ class TasksService:
             reverse = sort_order.lower() == "desc"
             items.sort(key=lambda t: t.score, reverse=reverse)
 
-        total_filtered = len(items)
         result: Dict[str, Any] = {
             "tasks": [task.model_dump() for task in items],
             "total": total,  # Use SQL count (total evaluations in DB matching filters)
@@ -799,28 +716,10 @@ class TasksService:
                         break
 
             result["facets"] = {
-                "websites": [
-                    {"name": k, "count": v}
-                    for k, v in sorted(
-                        website_counts.items(), key=lambda i: i[1], reverse=True
-                    )
-                ],
-                "useCases": [
-                    {"name": k, "count": v}
-                    for k, v in sorted(
-                        use_case_counts.items(), key=lambda i: i[1], reverse=True
-                    )
-                ],
-                "statuses": [
-                    {"name": k, "count": v}
-                    for k, v in sorted(
-                        status_counts.items(), key=lambda i: i[1], reverse=True
-                    )
-                ],
-                "scoreRanges": [
-                    {"name": name, "count": score_buckets.get(name, 0)}
-                    for name, _, _ in score_ranges
-                ],
+                "websites": [{"name": k, "count": v} for k, v in sorted(website_counts.items(), key=lambda i: i[1], reverse=True)],
+                "useCases": [{"name": k, "count": v} for k, v in sorted(use_case_counts.items(), key=lambda i: i[1], reverse=True)],
+                "statuses": [{"name": k, "count": v} for k, v in sorted(status_counts.items(), key=lambda i: i[1], reverse=True)],
+                "scoreRanges": [{"name": name, "count": score_buckets.get(name, 0)} for name, _, _ in score_ranges],
             }
 
         return result
@@ -830,7 +729,8 @@ class TasksService:
             select(TaskORM)
             .options(
                 selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluations).options(
+                selectinload(TaskORM.evaluations)
+                .options(
                     defer(EvaluationORM.feedback),
                     defer(EvaluationORM.gif_recording),
                     defer(EvaluationORM.meta),
@@ -845,68 +745,56 @@ class TasksService:
             raise ValueError(f"Task {task_id} not found")
         context_cache: Dict[str, AgentRunContext] = {}
         return await self._build_context(task_row, context_cache)
-    
+
     async def get_task_by_evaluation_id(self, evaluation_id: str) -> TaskContext:
         """Get task context from an evaluation_id."""
         # Get the evaluation
-        eval_stmt = select(EvaluationORM).where(
-            EvaluationORM.evaluation_id == evaluation_id
-        )
+        eval_stmt = select(EvaluationORM).where(EvaluationORM.evaluation_id == evaluation_id)
         eval_row = await self.session.scalar(eval_stmt)
         if not eval_row:
             raise ValueError(f"Evaluation {evaluation_id} not found")
-        
+
         # Get the task
         task_stmt = (
             select(TaskORM)
             .options(
                 selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluations).options(
+                selectinload(TaskORM.evaluations)
+                .options(
                     defer(EvaluationORM.feedback),
                     defer(EvaluationORM.gif_recording),
                     defer(EvaluationORM.meta),
-                ).selectinload(
-                    EvaluationORM.execution_history_record
-                ),
+                )
+                .selectinload(EvaluationORM.execution_history_record),
             )
             .where(TaskORM.task_id == eval_row.task_id)
         )
         task_row = await self.session.scalar(task_stmt)
         if not task_row:
             raise ValueError(f"Task {eval_row.task_id} not found")
-        
+
         # Get the agent_run context
         agent_run_id = eval_row.agent_run_id
         context = await self.rounds_service.get_agent_run_context(agent_run_id)
-        
+
         # Find the specific task, solution, and evaluation in the context
-        task_model = next(
-            (t for t in context.tasks if t.task_id == eval_row.task_id),
-            None
-        )
+        task_model = next((t for t in context.tasks if t.task_id == eval_row.task_id), None)
         if not task_model:
             task_model = self._deserialize_task(task_row)
         else:
             # Ensure web_version is set from database if missing in context task
             if not task_model.web_version and task_row.web_version:
                 task_model.web_version = task_row.web_version
-        
-        solution_model = next(
-            (s for s in context.task_solutions if s.task_id == eval_row.task_id),
-            None
-        )
-        
-        evaluation_model = next(
-            (e for e in context.evaluations if e.evaluation_id == evaluation_id),
-            None
-        )
+
+        solution_model = next((s for s in context.task_solutions if s.task_id == eval_row.task_id), None)
+
+        evaluation_model = next((e for e in context.evaluations if e.evaluation_id == evaluation_id), None)
         if evaluation_model is None:
             evaluation_model = self._deserialize_evaluation(eval_row)
         if evaluation_model and not getattr(evaluation_model, "llm_usage", None):
             from app.db.models import EvaluationLLMUsageORM
-            usage_stmt = select(EvaluationLLMUsageORM).where(
-                EvaluationLLMUsageORM.evaluation_id == evaluation_id
-            )
+
+            usage_stmt = select(EvaluationLLMUsageORM).where(EvaluationLLMUsageORM.evaluation_id == evaluation_id)
             usage_rows = await self.session.scalars(usage_stmt)
             usage_list = [
                 {
@@ -919,7 +807,7 @@ class TasksService:
             ]
             if usage_list:
                 setattr(evaluation_model, "llm_usage", usage_list)
-        
+
         return TaskContext(
             round=context.round,
             agent_run=context.run,
@@ -944,25 +832,11 @@ class TasksService:
                 continue
 
         total = len(contexts)
-        completed = len(
-            [
-                ctx
-                for ctx in contexts
-                if ctx.evaluation and getattr(ctx.evaluation, "eval_score", getattr(ctx.evaluation, "final_score", 0.0)) >= 0.5
-            ]
-        )
-        failed = len(
-            [
-                ctx
-                for ctx in contexts
-                if ctx.evaluation and getattr(ctx.evaluation, "eval_score", getattr(ctx.evaluation, "final_score", 0.0)) < 0.5
-            ]
-        )
+        completed = len([ctx for ctx in contexts if ctx.evaluation and getattr(ctx.evaluation, "eval_score", getattr(ctx.evaluation, "final_score", 0.0)) >= 0.5])
+        failed = len([ctx for ctx in contexts if ctx.evaluation and getattr(ctx.evaluation, "eval_score", getattr(ctx.evaluation, "final_score", 0.0)) < 0.5])
 
         scores = [getattr(ctx.evaluation, "eval_score", getattr(ctx.evaluation, "final_score", 0.0)) for ctx in contexts if ctx.evaluation]
-        durations = [
-            ctx.evaluation.evaluation_time for ctx in contexts if ctx.evaluation
-        ]
+        durations = [ctx.evaluation.evaluation_time for ctx in contexts if ctx.evaluation]
 
         average_score = sum(scores) / len(scores) if scores else 0.0
         average_duration = sum(durations) / len(durations) if durations else 0.0
@@ -989,12 +863,8 @@ class TasksService:
 
         performance_over_time: List[Dict[str, Any]] = []
         for context in contexts:
-            evaluation_score = (
-                getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
-            )
-            evaluation_duration = (
-                context.evaluation.evaluation_time if context.evaluation else 0.0
-            )
+            evaluation_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
+            evaluation_duration = context.evaluation.evaluation_time if context.evaluation else 0.0
             completed_flag = evaluation_score >= 0.5
 
             website = context.task.url
@@ -1031,12 +901,8 @@ class TasksService:
                 tasks=int(values["tasks"]),
                 successful=int(values["successful"]),
                 failed=int(values["failed"]),
-                averageScore=(
-                    (values["score"] / values["tasks"]) if values["tasks"] else 0.0
-                ),
-                averageDuration=(
-                    (values["duration"] / values["tasks"]) if values["tasks"] else 0.0
-                ),
+                averageScore=((values["score"] / values["tasks"]) if values["tasks"] else 0.0),
+                averageDuration=((values["duration"] / values["tasks"]) if values["tasks"] else 0.0),
             )
             for website, values in website_stats.items()
         ]
@@ -1047,12 +913,8 @@ class TasksService:
                 tasks=int(values["tasks"]),
                 successful=int(values["successful"]),
                 failed=int(values["failed"]),
-                averageScore=(
-                    (values["score"] / values["tasks"]) if values["tasks"] else 0.0
-                ),
-                averageDuration=(
-                    (values["duration"] / values["tasks"]) if values["tasks"] else 0.0
-                ),
+                averageScore=((values["score"] / values["tasks"]) if values["tasks"] else 0.0),
+                averageDuration=((values["duration"] / values["tasks"]) if values["tasks"] else 0.0),
             )
             for use_case, values in use_case_stats.items()
         ]
@@ -1083,9 +945,7 @@ class TasksService:
         compared_tasks = [self._build_ui_task(ctx) for ctx in contexts]
         best = max(compared_tasks, key=lambda t: t.score, default=None)
         fastest = min(compared_tasks, key=lambda t: t.duration, default=None)
-        most_actions = max(
-            compared_tasks, key=lambda t: len(t.actions or []), default=None
-        )
+        most_actions = max(compared_tasks, key=lambda t: len(t.actions or []), default=None)
         best_success = max(
             compared_tasks,
             key=lambda t: t.successRate,
@@ -1131,9 +991,7 @@ class TasksService:
             try:
                 status_lower = str(context.round.status or "").lower()
                 if status_lower in {"completed", "finished", "complete"}:
-                    bounds = compute_boundaries_for_round(
-                        int(context.round.round_number or 0)
-                    )
+                    bounds = compute_boundaries_for_round(int(context.round.round_number or 0))
                     end_epoch_val = int(bounds.end_epoch)
                     if start_epoch_val is None:
                         start_epoch_val = int(bounds.start_epoch)
@@ -1145,9 +1003,7 @@ class TasksService:
             roundNumber=context.round.round_number,
             status=context.round.status,
             startedAt=_parse_iso(context.round.started_at),
-            endedAt=(
-                _parse_iso(context.round.ended_at) if context.round.ended_at else None
-            ),
+            endedAt=(_parse_iso(context.round.ended_at) if context.round.ended_at else None),
             startEpoch=start_epoch_val,
             endEpoch=end_epoch_val,
         )
@@ -1156,11 +1012,7 @@ class TasksService:
         validator_uid = _get_validator_uid_from_context(context)
         if context.round.validators:
             validator_model = next(
-                (
-                    val
-                    for val in context.round.validators
-                    if val.uid == validator_uid
-                ),
+                (val for val in context.round.validators if val.uid == validator_uid),
                 context.round.validators[0],
             )
         elif getattr(context.round, "validator_info", None):
@@ -1194,30 +1046,16 @@ class TasksService:
 
         miner_model = context.agent_run.miner_info
         miner_summary = TaskMinerSummary(
-            uid=(
-                abs(int(miner_model.uid))
-                if (miner_model and miner_model.uid is not None)
-                else abs(int(context.agent_run.miner_uid))
-            ),
+            uid=(abs(int(miner_model.uid)) if (miner_model and miner_model.uid is not None) else abs(int(context.agent_run.miner_uid))),
             hotkey=miner_model.hotkey if miner_model else None,
-            name=(
-                miner_model.agent_name
-                if miner_model and miner_model.agent_name
-                else _format_agent_id(context.agent_run.miner_uid)
-            ),
+            name=(miner_model.agent_name if miner_model and miner_model.agent_name else _format_agent_id(context.agent_run.miner_uid)),
             github=getattr(miner_model, "github", None) if miner_model else None,
             image=resolve_agent_image(miner_model),
             isSota=context.agent_run.is_sota,
         )
 
-        started_at_dt = datetime.fromtimestamp(
-            context.agent_run.started_at, tz=timezone.utc
-        )
-        ended_at_dt = (
-            datetime.fromtimestamp(context.agent_run.ended_at, tz=timezone.utc)
-            if context.agent_run.ended_at
-            else None
-        )
+        started_at_dt = datetime.fromtimestamp(context.agent_run.started_at, tz=timezone.utc)
+        ended_at_dt = datetime.fromtimestamp(context.agent_run.ended_at, tz=timezone.utc) if context.agent_run.ended_at else None
         if context.agent_run.elapsed_sec is not None:
             duration = _safe_int(context.agent_run.elapsed_sec)
         elif ended_at_dt:
@@ -1226,15 +1064,9 @@ class TasksService:
             duration = None
 
         if context.evaluation:
-            evaluation_status = (
-                TaskStatus.COMPLETED
-                if getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) >= 0.5
-                else TaskStatus.FAILED
-            )
+            evaluation_status = TaskStatus.COMPLETED if getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) >= 0.5 else TaskStatus.FAILED
         elif context.agent_run.ended_at:
-            evaluation_status = (
-                TaskStatus.FAILED if task.score < 0.5 else TaskStatus.COMPLETED
-            )
+            evaluation_status = TaskStatus.FAILED if task.score < 0.5 else TaskStatus.COMPLETED
         else:
             evaluation_status = TaskStatus.RUNNING
 
@@ -1247,8 +1079,7 @@ class TasksService:
             startedAt=started_at_dt,
             endedAt=ended_at_dt,
             duration=duration,
-            taskCount=context.agent_run.n_tasks_total
-            or len(context.agent_run.task_ids or []),
+            taskCount=context.agent_run.n_tasks_total or len(context.agent_run.task_ids or []),
             completedTasks=context.agent_run.n_tasks_completed,
             failedTasks=context.agent_run.n_tasks_failed,
             averageScore=context.agent_run.avg_eval_score,
@@ -1271,26 +1102,10 @@ class TasksService:
                 llm_usage_list = list(llm_usage)
             except Exception:
                 llm_usage_list = []
-            total_tokens = (
-                sum(int(u.get("tokens") or 0) for u in llm_usage_list)
-                if llm_usage_list
-                else None
-            )
-            total_cost = (
-                sum(float(u.get("cost") or 0.0) for u in llm_usage_list)
-                if llm_usage_list
-                else None
-            )
-            single_provider = (
-                llm_usage_list[0].get("provider")
-                if len(llm_usage_list) == 1
-                else None
-            )
-            single_model = (
-                llm_usage_list[0].get("model")
-                if len(llm_usage_list) == 1
-                else None
-            )
+            total_tokens = sum(int(u.get("tokens") or 0) for u in llm_usage_list) if llm_usage_list else None
+            total_cost = sum(float(u.get("cost") or 0.0) for u in llm_usage_list) if llm_usage_list else None
+            single_provider = llm_usage_list[0].get("provider") if len(llm_usage_list) == 1 else None
+            single_model = llm_usage_list[0].get("model") if len(llm_usage_list) == 1 else None
             evaluation_summary = TaskEvaluationSummary(
                 evaluationId=context.evaluation.evaluation_id,
                 finalScore=eval_score,
@@ -1347,22 +1162,14 @@ class TasksService:
         if context.round.validators:
             validator_uid = _get_validator_uid_from_context(context)
             validator = next(
-                (
-                    val
-                    for val in context.round.validators
-                    if val.uid == validator_uid
-                ),
+                (val for val in context.round.validators if val.uid == validator_uid),
                 context.round.validators[0],
             )
 
         validator_uid = _get_validator_uid_from_context(context)
         validator_info = ValidatorInfo(
             id=_format_validator_id(validator_uid) if validator_uid else "unknown",
-            name=(
-                validator.name
-                if validator and validator.name
-                else _format_validator_id(validator_uid) if validator_uid else "unknown"
-            ),
+            name=(validator.name if validator and validator.name else _format_validator_id(validator_uid) if validator_uid else "unknown"),
             image="https://placehold.co/64x64?text=V",
             description="",
             website="",
@@ -1372,20 +1179,14 @@ class TasksService:
         miner = context.agent_run.miner_info
         agent_info = AgentInfo(
             id=_format_agent_id(context.agent_run.miner_uid),
-            name=(
-                miner.agent_name
-                if miner and miner.agent_name
-                else _format_agent_id(context.agent_run.miner_uid)
-            ),
+            name=(miner.agent_name if miner and miner.agent_name else _format_agent_id(context.agent_run.miner_uid)),
             type="sota" if context.agent_run.is_sota else "miner",
             image=resolve_agent_image(miner),
             description=miner.description if miner and miner.description else "",
         )
 
         evaluation_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
-        task_status = (
-            TaskStatus.COMPLETED if evaluation_score >= 0.5 else TaskStatus.FAILED
-        )
+        task_status = TaskStatus.COMPLETED if evaluation_score >= 0.5 else TaskStatus.FAILED
 
         task_info = TaskInfo(
             id=context.task.task_id,
@@ -1395,9 +1196,7 @@ class TasksService:
             score=evaluation_score,
         )
 
-        return PersonasData(
-            round=round_info, validator=validator_info, agent=agent_info, task=task_info
-        )
+        return PersonasData(round=round_info, validator=validator_info, agent=agent_info, task=task_info)
 
     def build_task_statistics(self, context: TaskContext) -> TaskStatistics:
         evaluation_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
@@ -1481,11 +1280,7 @@ class TasksService:
 
         return TaskResults(
             taskId=context.task.task_id,
-            status=(
-                "completed"
-                if context.evaluation and getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) >= 0.5
-                else "failed"
-            ),
+            status=("completed" if context.evaluation and getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) >= 0.5 else "failed"),
             score=getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0,
             duration=_safe_int(getattr(context.evaluation, "evaluation_time", 0.0)),
             actions=action_models,
@@ -1514,23 +1309,25 @@ class TasksService:
             # Get attributes
             attributes: Dict[str, Any] = {}
             if hasattr(action, "attributes"):
-                attributes = getattr(action, "attributes", {}) or {}
+                attributes = dict(getattr(action, "attributes", {}) or {})
             elif isinstance(action, dict):
-                attributes = action.get("attributes", {}) or {}
+                attributes = dict(action.get("attributes", {}) or {})
+            # IWA format: url, text, selector etc. están a nivel superior; fusionar en attributes
+            if isinstance(action_dict, dict):
+                _iwa_keys = ("url", "text", "value", "query", "keys", "to", "from", "title", "go_back", "go_forward", "deltaX", "deltaY", "selector", "x", "y", "time_seconds", "keys")
+                for key in _iwa_keys:
+                    if key not in attributes and action_dict.get(key) is not None:
+                        attributes[key] = action_dict[key]
 
             # Extract and normalize type
-            raw_type = getattr(action, "type", None) or action_dict.get(
-                "type", ActionType.OTHER.value
-            )
+            raw_type = getattr(action, "type", None) or action_dict.get("type", ActionType.OTHER.value)
             if isinstance(raw_type, ActionType):
                 raw_type_value = raw_type.value
             else:
                 raw_type_value = str(raw_type).lower()
 
             # Convert "NavigateAction" → "navigate", "ClickAction" → "click", etc.
-            normalized_type_key = (
-                raw_type_value.replace("action", "").replace("-", "_").strip()
-            )
+            normalized_type_key = raw_type_value.replace("action", "").replace("-", "_").strip()
 
             alias_map = {
                 # Navigation actions
@@ -1634,9 +1431,7 @@ class TasksService:
                     selector = str(selector_obj)
 
             if not selector:
-                sel_attr = (
-                    attributes.get("selector") if isinstance(attributes, dict) else None
-                )
+                sel_attr = attributes.get("selector") if isinstance(attributes, dict) else None
                 if isinstance(sel_attr, dict):
                     selector = sel_attr.get("value") or str(sel_attr)
                 else:
@@ -1670,9 +1465,7 @@ class TasksService:
                 or attributes.get("duration")
             )
             try:
-                duration = (
-                    float(duration_candidate) if duration_candidate is not None else 0.0
-                )
+                duration = float(duration_candidate) if duration_candidate is not None else 0.0
             except (TypeError, ValueError):
                 duration = 0.0
 
@@ -1683,11 +1476,7 @@ class TasksService:
             else:
                 success_flag = bool(getattr(action, "success", True))
 
-            error_message = (
-                str(attributes.get("error"))
-                if attributes.get("error") is not None
-                else None
-            )
+            error_message = str(attributes.get("error")) if attributes.get("error") is not None else None
 
             # Build metadata from the complete action object
             metadata = {
@@ -1715,9 +1504,7 @@ class TasksService:
         base_ts = context.agent_run.started_at or context.round.started_at or 0.0
         timestamp = _parse_iso(base_ts)
 
-        screenshot_url = _normalize_media_url(
-            getattr(context.task, "screenshot", None), mime="image/png"
-        )
+        screenshot_url = _normalize_media_url(getattr(context.task, "screenshot", None), mime="image/png")
         if screenshot_url:
             screenshots.append(
                 TaskScreenshot(
@@ -1730,9 +1517,7 @@ class TasksService:
             )
 
         if context.evaluation:
-            gif_url = _normalize_media_url(
-                getattr(context.evaluation, "gif_recording", None), mime="image/gif"
-            )
+            gif_url = _normalize_media_url(getattr(context.evaluation, "gif_recording", None), mime="image/gif")
         else:
             gif_url = None
 
@@ -1756,9 +1541,7 @@ class TasksService:
             for index, entry in enumerate(context.evaluation.execution_history):
                 logs.append(
                     TaskLog(
-                        timestamp=datetime.fromtimestamp(
-                            base_ts + index, tz=timezone.utc
-                        ),
+                        timestamp=datetime.fromtimestamp(base_ts + index, tz=timezone.utc),
                         level=LogLevel.INFO,
                         message=str(entry),
                         metadata={"taskId": context.task.task_id},
@@ -1773,9 +1556,7 @@ class TasksService:
             for index, action in enumerate(context.solution.actions):
                 timeline.append(
                     TaskTimeline(
-                        timestamp=datetime.fromtimestamp(
-                            base_ts + index, tz=timezone.utc
-                        ),
+                        timestamp=datetime.fromtimestamp(base_ts + index, tz=timezone.utc),
                         action=getattr(action, "type", "action"),
                         duration=float(getattr(action, "duration", 0.0)),
                         success=bool(getattr(action, "success", True)),
@@ -1788,9 +1569,7 @@ class TasksService:
         return {
             "duration": _safe_int(getattr(context.evaluation, "evaluation_time", 0.0)),
             "actionsPerSecond": 0.0,
-            "averageActionDuration": self._average_action_duration(
-                self._build_ui_task(context).actions
-            ),
+            "averageActionDuration": self._average_action_duration(self._build_ui_task(context).actions),
             "totalWaitTime": 0.0,
             "totalNavigationTime": 0.0,
             "memoryUsage": [],
@@ -1842,47 +1621,23 @@ class TasksService:
         solution_model = None
         if context.task_solutions:
             solution_model = next(
-                (
-                    solution
-                    for solution in context.task_solutions
-                    if solution.task_id == task_row.task_id
-                ),
+                (solution for solution in context.task_solutions if solution.task_id == task_row.task_id),
                 None,
             )
         if solution_model is None and task_row.task_solutions:
-            matching_solutions = [
-                solution_row
-                for solution_row in task_row.task_solutions
-                if solution_row.agent_run_id == agent_run_id
-            ]
-            target_solution = (
-                matching_solutions[0]
-                if matching_solutions
-                else task_row.task_solutions[0]
-            )
+            matching_solutions = [solution_row for solution_row in task_row.task_solutions if solution_row.agent_run_id == agent_run_id]
+            target_solution = matching_solutions[0] if matching_solutions else task_row.task_solutions[0]
             solution_model = self._deserialize_task_solution(target_solution)
 
         evaluation_model = None
         if context.evaluations:
             evaluation_model = next(
-                (
-                    evaluation
-                    for evaluation in context.evaluations
-                    if evaluation.task_id == task_row.task_id
-                ),
+                (evaluation for evaluation in context.evaluations if evaluation.task_id == task_row.task_id),
                 None,
             )
         if evaluation_model is None and task_row.evaluations:
-            matching_evaluations = [
-                evaluation_row
-                for evaluation_row in task_row.evaluations
-                if evaluation_row.agent_run_id == agent_run_id
-            ]
-            target_evaluation = (
-                matching_evaluations[0]
-                if matching_evaluations
-                else task_row.evaluations[0]
-            )
+            matching_evaluations = [evaluation_row for evaluation_row in task_row.evaluations if evaluation_row.agent_run_id == agent_run_id]
+            target_evaluation = matching_evaluations[0] if matching_evaluations else task_row.evaluations[0]
             evaluation_model = self._deserialize_evaluation(target_evaluation)
 
         return TaskContext(
@@ -1922,11 +1677,7 @@ class TasksService:
         validator_image = None
         if context.round.validators:
             validator_model = next(
-                (
-                    v
-                    for v in context.round.validators
-                    if v.uid == _get_validator_uid_from_context(context)
-                ),
+                (v for v in context.round.validators if v.uid == _get_validator_uid_from_context(context)),
                 context.round.validators[0] if context.round.validators else None,
             )
             if validator_model:
@@ -1944,8 +1695,8 @@ class TasksService:
             miner_image = resolve_agent_image(context.agent_run.miner_info)
 
         # Get season and round from round context
-        season = getattr(context.round, 'season_number', None)
-        round_in_season = getattr(context.round, 'round_number_in_season', None)
+        season = getattr(context.round, "season_number", None)
+        round_in_season = getattr(context.round, "round_number_in_season", None)
 
         return UITask(
             taskId=context.task.task_id,
@@ -2043,21 +1794,20 @@ class TasksService:
         Returns: actions, screenshots, task_details, results, info
         """
         context = await self.get_task_by_evaluation_id(evaluation_id)
-        
+
         # Build all data
         actions = self.build_actions(context)
         screenshots = self.build_screenshots(context)
-        logs = self.build_logs(context)
-        
+
         # Build task_details without actions, screenshots, logs
         task_details = self._build_task_details_clean(context)
-        
+
         # Build results without actions, screenshots, logs
         results = self._build_results_clean(context, actions)
-        
+
         # Build info object
         info = self._build_info(context)
-        
+
         return {
             "actions": [action.model_dump() for action in actions],
             "screenshots": [shot.model_dump() for shot in screenshots],
@@ -2065,7 +1815,7 @@ class TasksService:
             "result": results,
             "info": info,
         }
-    
+
     def _build_task_details_clean(self, context: TaskContext) -> Dict[str, Any]:
         """Build task details without actions, screenshots, logs."""
         task_details = self.build_task_detail(context)
@@ -2075,36 +1825,36 @@ class TasksService:
         task_dict.pop("screenshots", None)
         task_dict.pop("logs", None)
         return task_dict
-    
+
     def _build_results_clean(self, context: TaskContext, actions: List[TaskAction]) -> Dict[str, Any]:
         """Build result (singular) without actions, screenshots, logs, summary, taskId."""
         # Get evaluation score and convert to binary (0 or 1)
         eval_score_raw = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
         eval_score = 1.0 if eval_score_raw >= 0.5 else 0.0
-        
+
         # Get evaluation time
         eval_time = _safe_int(getattr(context.evaluation, "evaluation_time", 0.0)) if context.evaluation else 0
-        
+
         # Determine status
         status = "completed" if eval_score >= 0.5 else "failed"
-        
+
         return {
             "status": status,
             "eval_score": eval_score,
             "eval_time": eval_time,
         }
-    
+
     def _build_info(self, context: TaskContext) -> Dict[str, Any]:
         """Build info object with evaluationId, taskId, miner_run_id, round, validator, miner."""
         # Get evaluation ID
         evaluation_id = context.evaluation.evaluation_id if context.evaluation else None
-        
+
         # Get task ID
         task_id = context.task.task_id
-        
+
         # Get miner_run_id (agentRunId)
         miner_run_id = context.agent_run.agent_run_id
-        
+
         # Build round info
         start_epoch_val = getattr(context.round, "start_epoch", None)
         end_epoch_val = getattr(context.round, "end_epoch", None)
@@ -2112,15 +1862,13 @@ class TasksService:
             try:
                 status_lower = str(context.round.status or "").lower()
                 if status_lower in {"completed", "finished", "complete"}:
-                    bounds = compute_boundaries_for_round(
-                        int(context.round.round_number or 0)
-                    )
+                    bounds = compute_boundaries_for_round(int(context.round.round_number or 0))
                     end_epoch_val = int(bounds.end_epoch)
                     if start_epoch_val is None:
                         start_epoch_val = int(bounds.start_epoch)
             except Exception:  # noqa: BLE001
                 pass
-        
+
         round_info = {
             "validatorRoundId": context.round.validator_round_id,
             "roundNumber": context.round.round_number,
@@ -2130,22 +1878,18 @@ class TasksService:
             "startEpoch": start_epoch_val,
             "endEpoch": end_epoch_val,
         }
-        
+
         # Build validator info
         validator_uid = _get_validator_uid_from_context(context)
         validator_model: Optional[ValidatorInfo] = None
         if context.round.validators:
             validator_model = next(
-                (
-                    val
-                    for val in context.round.validators
-                    if val.uid == validator_uid
-                ),
+                (val for val in context.round.validators if val.uid == validator_uid),
                 context.round.validators[0],
             )
         elif getattr(context.round, "validator_info", None):
             validator_model = context.round.validator_info
-        
+
         if validator_model is None:
             validator_model = ValidatorInfo(
                 uid=validator_uid or 0,
@@ -2156,7 +1900,7 @@ class TasksService:
                 name=None,
                 version=None,
             )
-        
+
         validator_info = {
             "uid": abs(int(validator_model.uid)) if validator_model.uid is not None else 0,
             "hotkey": validator_model.hotkey,
@@ -2170,26 +1914,18 @@ class TasksService:
                 existing=getattr(validator_model, "image_url", None),
             ),
         }
-        
+
         # Build miner info
         miner_model = context.agent_run.miner_info
         miner_info = {
-            "uid": (
-                abs(int(miner_model.uid))
-                if (miner_model and miner_model.uid is not None)
-                else abs(int(context.agent_run.miner_uid))
-            ),
+            "uid": (abs(int(miner_model.uid)) if (miner_model and miner_model.uid is not None) else abs(int(context.agent_run.miner_uid))),
             "hotkey": miner_model.hotkey if miner_model else None,
-            "name": (
-                miner_model.agent_name
-                if miner_model and miner_model.agent_name
-                else _format_agent_id(context.agent_run.miner_uid)
-            ),
+            "name": (miner_model.agent_name if miner_model and miner_model.agent_name else _format_agent_id(context.agent_run.miner_uid)),
             "github": getattr(miner_model, "github", None) if miner_model else None,
             "image": resolve_agent_image(miner_model),
             "isSota": context.agent_run.is_sota,
         }
-        
+
         return {
             "evaluationId": evaluation_id,
             "taskId": task_id,
@@ -2203,9 +1939,7 @@ class TasksService:
     def _sort_tasks(tasks: List[UITask], sort_by: str, sort_order: str) -> List[UITask]:
         reverse = sort_order.lower() == "desc"
         try:
-            return sorted(
-                tasks, key=lambda task: getattr(task, sort_by), reverse=reverse
-            )
+            return sorted(tasks, key=lambda task: getattr(task, sort_by), reverse=reverse)
         except Exception:  # noqa: BLE001
             return tasks
 
