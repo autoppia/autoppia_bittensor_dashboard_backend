@@ -2,6 +2,7 @@
 """
 Advanced logging middleware for detailed request/response tracking.
 """
+
 from __future__ import annotations
 
 import json
@@ -11,9 +12,33 @@ from typing import Callable
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import StreamingResponse
 
 logger = logging.getLogger("app.requests")
+
+_REDACT_KEYS = {
+    "gif_recording",
+    "recording",
+    "screenshot_before",
+    "screenshot_after",
+    "prev_html",
+    "current_html",
+}
+
+
+def _scrub_body(value, *, _key: str | None = None):
+    """Redact large/base64 fields and truncate long strings in request logs."""
+    if _key in _REDACT_KEYS:
+        if isinstance(value, (str, bytes)):
+            size = len(value)
+            return f"<redacted:{_key} size={size}>"
+        return f"<redacted:{_key}>"
+    if isinstance(value, dict):
+        return {k: _scrub_body(v, _key=k) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_body(v) for v in value]
+    if isinstance(value, str) and len(value) > 1000:
+        return value[:1000] + f"... (truncated {len(value)} chars)"
+    return value
 
 
 class DetailedLoggingMiddleware(BaseHTTPMiddleware):
@@ -28,9 +53,7 @@ class DetailedLoggingMiddleware(BaseHTTPMiddleware):
     - Handles errors gracefully
     """
 
-    def __init__(
-        self, app, log_request_body: bool = True, log_response_body: bool = True
-    ):
+    def __init__(self, app, log_request_body: bool = True, log_response_body: bool = True):
         super().__init__(app)
         self.log_request_body = log_request_body
         self.log_response_body = log_response_body
@@ -62,7 +85,7 @@ class DetailedLoggingMiddleware(BaseHTTPMiddleware):
                 if body_bytes:
                     try:
                         request_body = json.loads(body_bytes)
-                        log_data["body"] = request_body
+                        log_data["body"] = _scrub_body(request_body)
                     except json.JSONDecodeError:
                         # If not JSON, log as string (truncated if too long)
                         body_str = body_bytes.decode("utf-8", errors="replace")
@@ -93,9 +116,7 @@ class DetailedLoggingMiddleware(BaseHTTPMiddleware):
                             response_body = json.loads(response_body_bytes)
                         except json.JSONDecodeError:
                             # Not JSON, log as string (truncated)
-                            body_str = response_body_bytes.decode(
-                                "utf-8", errors="replace"
-                            )
+                            body_str = response_body_bytes.decode("utf-8", errors="replace")
                             if len(body_str) > 1000:
                                 body_str = body_str[:1000] + "... (truncated)"
                             response_body = body_str
@@ -127,17 +148,11 @@ class DetailedLoggingMiddleware(BaseHTTPMiddleware):
                     response_log["error"] = error
 
                 if status_code >= 500:
-                    logger.error(
-                        f"← {method} {path} {status_code} | {json.dumps(response_log, default=str)}"
-                    )
+                    logger.error(f"← {method} {path} {status_code} | {json.dumps(response_log, default=str)}")
                 elif status_code >= 400:
-                    logger.warning(
-                        f"← {method} {path} {status_code} | {json.dumps(response_log, default=str)}"
-                    )
+                    logger.warning(f"← {method} {path} {status_code} | {json.dumps(response_log, default=str)}")
                 else:
-                    logger.info(
-                        f"← {method} {path} {status_code} | {json.dumps(response_log, default=str)}"
-                    )
+                    logger.info(f"← {method} {path} {status_code} | {json.dumps(response_log, default=str)}")
 
         # This should never be None if we reach here (exception would have been raised)
         if response is None:
