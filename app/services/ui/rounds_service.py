@@ -1284,8 +1284,12 @@ class RoundsService:
         completed_tasks = sum(self._estimate_completed_tasks(record.model) for record in records)
 
         progress_ratio = 1.0 if status == "finished" else (min(1.0, completed_tasks / total_tasks) if total_tasks else 0.0)
-        current_block = int(start_block + (end_block_value - start_block) * progress_ratio)
-        current_block = min(current_block, end_block_value)
+        # Current Block = bloque real de la blockchain (no debe cambiar según la ronda)
+        if current_block_est is not None:
+            current_block = int(current_block_est)
+        else:
+            current_block = int(start_block + (end_block_value - start_block) * progress_ratio)
+            current_block = min(current_block, end_block_value)
         blocks_remaining = max(end_block_value - current_block, 0)
 
         round_key = f"round_{round_number}"
@@ -1483,11 +1487,19 @@ class RoundsService:
         if is_completed:
             progress_ratio = 1.0
 
+        # Current Block = bloque real de la blockchain (no debe cambiar según la ronda)
         try:
-            current_block = int(start_block + (end_block_value - start_block) * progress_ratio)
-        except TypeError:
-            current_block = start_block
-        current_block = min(current_block, end_block_value)
+            current_block_est = get_current_block_estimate()
+        except Exception:
+            current_block_est = None
+        if current_block_est is not None:
+            current_block = int(current_block_est)
+        else:
+            try:
+                current_block = int(start_block + (end_block_value - start_block) * progress_ratio)
+            except TypeError:
+                current_block = start_block
+            current_block = min(current_block, end_block_value)
         blocks_remaining = max(end_block_value - current_block, 0)
 
         average_elapsed = sum(elapsed_values) / len(elapsed_values) if elapsed_values else None
@@ -2352,7 +2364,8 @@ class RoundsService:
             if aggregated_status == "finished":
                 progress_value = 1.0
                 blocks_remaining = 0
-                display_block = end_block
+                # Current Block = bloque real de la blockchain (no el end_block de la ronda)
+                display_block = int(current_block) if current_block is not None else end_block
             else:
                 # Active or evaluating_finished: use real current block
                 if current_block is not None:
@@ -3415,6 +3428,7 @@ class RoundsService:
                 .where(
                     ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
                     ValidatorRoundSummaryORM.post_consensus_rank == 1,
+                    ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
                 )
                 .limit(1)
             )
@@ -3428,6 +3442,7 @@ class RoundsService:
                 .where(
                     ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
                     ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None),
+                    ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
                 )
                 .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc())
                 .limit(1)
@@ -3475,6 +3490,7 @@ class RoundsService:
             ).where(
                 ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
                 ValidatorRoundSummaryORM.miner_uid.isnot(None),
+                ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
             )
             result_miners_count = await self.session.execute(stmt_miners_count)
             miners_count_row = result_miners_count.first()
@@ -3488,6 +3504,7 @@ class RoundsService:
             ).where(
                 ValidatorRoundSummaryORM.validator_round_id == autoppia_validator_round_id,
                 ValidatorRoundSummaryORM.post_consensus_tasks_received.isnot(None),
+                ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
             )
             result_tasks_count = await self.session.execute(stmt_tasks_count)
             tasks_count_row = result_tasks_count.first()
@@ -3517,6 +3534,7 @@ class RoundsService:
                 .where(
                     ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
                     ValidatorRoundSummaryORM.local_rank == 1,
+                    ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
                 )
                 .limit(1)
             )
@@ -3530,6 +3548,7 @@ class RoundsService:
                     .where(
                         ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
                         ValidatorRoundSummaryORM.local_avg_reward.isnot(None),
+                        ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
                     )
                     .order_by(ValidatorRoundSummaryORM.local_avg_reward.desc())
                     .limit(1)
@@ -3544,6 +3563,7 @@ class RoundsService:
             ).where(
                 ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
                 ValidatorRoundSummaryORM.miner_uid.isnot(None),
+                ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
             )
             result_local_miners_count = await self.session.execute(stmt_local_miners_count)
             local_miners_count_row = result_local_miners_count.first()
@@ -3555,6 +3575,7 @@ class RoundsService:
             ).where(
                 ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
                 ValidatorRoundSummaryORM.local_tasks_received.isnot(None),
+                ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
             )
             result_local_tasks_count = await self.session.execute(stmt_local_tasks_count)
             local_tasks_count_row = result_local_tasks_count.first()
@@ -3564,6 +3585,7 @@ class RoundsService:
                 select(ValidatorRoundSummaryORM)
                 .where(
                     ValidatorRoundSummaryORM.validator_round_id == validator_round_id,
+                    ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
                 )
                 .order_by(ValidatorRoundSummaryORM.local_rank.asc().nulls_last())
             )
@@ -3573,7 +3595,7 @@ class RoundsService:
             # Construir lista de miners con sus datos
             miners_list = []
             for miner_summary in all_miners_summaries:
-                if miner_summary.miner_uid is None:
+                if miner_summary.miner_uid is None or miner_summary.miner_uid == settings.BURN_UID:
                     continue
 
                 # Buscar miner snapshot para obtener name e image

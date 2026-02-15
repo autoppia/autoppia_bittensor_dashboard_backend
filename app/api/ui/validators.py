@@ -22,6 +22,7 @@ from app.db.models import (
 from app.services.redis_cache import cache
 from app.utils.images import resolve_validator_image
 from app.services.metagraph_service import get_validator_data, MetagraphError
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,19 +43,21 @@ async def get_validator_details(
     round: Optional[str] = Query(None, description="Filter by round (format: 'season/round', e.g., '1/1')"),
     website: Optional[str] = Query(None, description="Filter evaluations table by website (e.g., 'AutoCinema')"),
     useCase: Optional[str] = Query(None, description="Filter evaluations table by use case (e.g., 'SEARCH_FILM')"),
-    limit: Optional[int] = Query(DEFAULT_EVALUATIONS_LIMIT, ge=1, le=MAX_EVALUATIONS_LIMIT, description=f"Limit number of evaluations to process. Default: {DEFAULT_EVALUATIONS_LIMIT}, Max: {MAX_EVALUATIONS_LIMIT}"),
+    limit: Optional[int] = Query(
+        DEFAULT_EVALUATIONS_LIMIT, ge=1, le=MAX_EVALUATIONS_LIMIT, description=f"Limit number of evaluations to process. Default: {DEFAULT_EVALUATIONS_LIMIT}, Max: {MAX_EVALUATIONS_LIMIT}"
+    ),
     session: AsyncSession = Depends(get_session),
 ):
     """
     Get detailed statistics for a validator, aggregated by web and use case.
-    
+
     Args:
         uid: Validator UID
         round: Optional round filter in "season/round" format (e.g., "1/1"). If not provided, returns all rounds.
         website: Optional website filter for evaluations table (e.g., "AutoCinema", "AutoBooks")
         useCase: Optional use case filter for evaluations table (e.g., "SEARCH_FILM", "CONTACT_BOOK")
         limit: Optional limit on number of evaluations to process (max 500000)
-    
+
     Returns:
     - Validator info (uid, hotkey, stake, weight, lastRoundEvaluated)
     - Global aggregated stats (totalEvaluations, counts for score=1, score=0, null, failed)
@@ -62,7 +65,7 @@ async def get_validator_details(
     - Stats by web (with nested stats by use case)
     - Available rounds list for this validator
     """
-    
+
     # Parse round parameter if provided
     season_filter = None
     round_filter = None
@@ -74,7 +77,7 @@ async def get_validator_details(
                 round_filter = int(parts[1])
         except (ValueError, AttributeError):
             pass  # Ignore invalid format
-    
+
     # Get validator information from the most recent validator snapshot
     validator_snapshot_query = (
         select(ValidatorRoundValidatorORM)
@@ -85,7 +88,7 @@ async def get_validator_details(
     )
     validator_snapshot_result = await session.execute(validator_snapshot_query)
     validator_snapshot = validator_snapshot_result.scalar_one_or_none()
-    
+
     # Get stake from metagraph (preferred) or DB (fallback)
     # This ensures consistency with the overview/validators list endpoint
     # Stake is in RAO (not converted to TAO) to match overview endpoint
@@ -97,7 +100,7 @@ async def get_validator_details(
             logger.debug(f"Validator {uid} stake from metagraph: {validator_stake:.2f} RAO")
     except MetagraphError:
         logger.debug(f"Metagraph data unavailable for validator {uid}, using DB fallback")
-    
+
     # Fallback to DB if metagraph data not available
     # Note: DB stake might be in TAO, so we need to convert it to RAO for consistency
     if validator_stake is None:
@@ -112,7 +115,7 @@ async def get_validator_details(
         )
         stake_result = await session.execute(stake_query)
         recent_stake = stake_result.scalar_one_or_none()
-        
+
         if recent_stake is not None:
             db_stake = float(recent_stake)
             # If DB stake is very small (< 1), assume it's in TAO and convert to RAO
@@ -132,11 +135,11 @@ async def get_validator_details(
             else:
                 validator_stake = db_stake
                 logger.debug(f"Validator {uid} stake from snapshot: {validator_stake:.2f} RAO")
-    
+
     # Log for debugging (can be removed in production)
     if validator_stake == 0:
         logger.debug(f"Validator {uid} stake is 0 (this may be correct if validator has no stake)")
-    
+
     # Get available rounds for this validator (return as "season/round" strings)
     rounds_query = (
         select(ValidatorRoundORM.season_number, ValidatorRoundORM.round_number_in_season)
@@ -147,7 +150,7 @@ async def get_validator_details(
     )
     rounds_result = await session.execute(rounds_query)
     available_rounds = [f"{season}/{round_num}" for season, round_num in rounds_result.all() if season is not None and round_num is not None]
-    
+
     # Agregación en SQL para evitar traer todas las evaluaciones a Python
     use_case_name_expr = func.coalesce(
         TaskORM.use_case["name"].astext,
@@ -175,48 +178,34 @@ async def get_validator_details(
         .join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
         .where(EvaluationORM.validator_uid == uid)
     )
-    
+
     # Aplicar filtros opcionales
     if website is not None:
         base_evaluations_query = base_evaluations_query.where(TaskORM.web_project_id == website)
-    
+
     # Filtro de useCase en SQL (JSONB -> 'name')
     if useCase is not None:
         use_case_normalized = useCase.upper().replace(" ", "_")
-        base_evaluations_query = base_evaluations_query.where(
-            func.upper(func.replace(TaskORM.use_case["name"].astext, " ", "_")) == use_case_normalized
-        )
-    
+        base_evaluations_query = base_evaluations_query.where(func.upper(func.replace(TaskORM.use_case["name"].astext, " ", "_")) == use_case_normalized)
+
     # Filtro por round
     if season_filter is not None and round_filter is not None:
-        base_evaluations_query = (
-            base_evaluations_query
-            .join(ValidatorRoundORM, EvaluationORM.validator_round_id == ValidatorRoundORM.validator_round_id)
-            .where(
-                and_(
-                    ValidatorRoundORM.season_number == season_filter,
-                    ValidatorRoundORM.round_number_in_season == round_filter
-                )
-            )
+        base_evaluations_query = base_evaluations_query.join(ValidatorRoundORM, EvaluationORM.validator_round_id == ValidatorRoundORM.validator_round_id).where(
+            and_(ValidatorRoundORM.season_number == season_filter, ValidatorRoundORM.round_number_in_season == round_filter)
         )
-    
+
     # Aplicar límite configurable (por defecto 500k)
     base_evaluations_query = base_evaluations_query.limit(limit)
 
     evaluations_subquery = base_evaluations_query.subquery()
 
     # Agregados globales
-    global_counts_stmt = (
-        select(
-            func.count().label("total"),
-            func.count().filter(evaluations_subquery.c.eval_score >= 0.5).label("success"),
-            func.count().filter(
-                and_(evaluations_subquery.c.eval_score < 0.5, evaluations_subquery.c.eval_score.isnot(None))
-            ).label("zero"),
-            func.count().filter(evaluations_subquery.c.eval_score.is_(None)).label("null_count"),
-        )
-        .select_from(evaluations_subquery)
-    )
+    global_counts_stmt = select(
+        func.count().label("total"),
+        func.count().filter(evaluations_subquery.c.eval_score >= 0.5).label("success"),
+        func.count().filter(and_(evaluations_subquery.c.eval_score < 0.5, evaluations_subquery.c.eval_score.isnot(None))).label("zero"),
+        func.count().filter(evaluations_subquery.c.eval_score.is_(None)).label("null_count"),
+    ).select_from(evaluations_subquery)
     global_counts_row = (await session.execute(global_counts_stmt)).one()
     total_evaluations_processed = int(global_counts_row.total or 0)
 
@@ -231,9 +220,7 @@ async def get_validator_details(
             func.max(evaluations_subquery.c.task_prompt).label("task_prompt"),
             func.count().label("total"),
             func.count().filter(evaluations_subquery.c.eval_score >= 0.5).label("success"),
-            func.count().filter(
-                and_(evaluations_subquery.c.eval_score < 0.5, evaluations_subquery.c.eval_score.isnot(None))
-            ).label("zero"),
+            func.count().filter(and_(evaluations_subquery.c.eval_score < 0.5, evaluations_subquery.c.eval_score.isnot(None))).label("zero"),
             func.count().filter(evaluations_subquery.c.eval_score.is_(None)).label("null_count"),
         )
         .select_from(evaluations_subquery)
@@ -246,7 +233,7 @@ async def get_validator_details(
         )
     )
     grouped_rows = (await session.execute(grouped_stmt)).all()
-    
+
     # Get last round for this validator (needed even if no evaluations)
     last_round_query = (
         select(ValidatorRoundORM)
@@ -258,11 +245,9 @@ async def get_validator_details(
     last_round_result = await session.execute(last_round_query)
     last_round = last_round_result.scalar_one_or_none()
     last_round_number = (
-        f"{last_round.season_number}/{last_round.round_number_in_season}"
-        if last_round and last_round.season_number is not None and last_round.round_number_in_season is not None
-        else None
+        f"{last_round.season_number}/{last_round.round_number_in_season}" if last_round and last_round.season_number is not None and last_round.round_number_in_season is not None else None
     )
-    
+
     # Determine which round to use for winner lookup
     # If round filter is provided, use that round; otherwise use last FINISHED round
     target_round = None
@@ -271,13 +256,7 @@ async def get_validator_details(
         target_round_query = (
             select(ValidatorRoundORM)
             .join(ValidatorRoundValidatorORM, ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
-            .where(
-                and_(
-                    ValidatorRoundValidatorORM.validator_uid == uid,
-                    ValidatorRoundORM.season_number == season_filter,
-                    ValidatorRoundORM.round_number_in_season == round_filter
-                )
-            )
+            .where(and_(ValidatorRoundValidatorORM.validator_uid == uid, ValidatorRoundORM.season_number == season_filter, ValidatorRoundORM.round_number_in_season == round_filter))
             .limit(1)
         )
         target_round_result = await session.execute(target_round_query)
@@ -288,19 +267,13 @@ async def get_validator_details(
         last_finished_round_query = (
             select(ValidatorRoundORM)
             .join(ValidatorRoundValidatorORM, ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
-            .where(
-                and_(
-                    ValidatorRoundValidatorORM.validator_uid == uid,
-                    ValidatorRoundORM.ended_at.isnot(None),
-                    ValidatorRoundORM.status == 'finished'
-                )
-            )
+            .where(and_(ValidatorRoundValidatorORM.validator_uid == uid, ValidatorRoundORM.ended_at.isnot(None), ValidatorRoundORM.status == "finished"))
             .order_by(ValidatorRoundORM.season_number.desc(), ValidatorRoundORM.round_number_in_season.desc())
             .limit(1)
         )
         last_finished_round_result = await session.execute(last_finished_round_query)
         target_round = last_finished_round_result.scalar_one_or_none()
-    
+
     # Get winner of target round for this validator
     last_round_winner = None
     last_round_winner_reward = None
@@ -308,7 +281,7 @@ async def get_validator_details(
     last_round_winner_name = None
     last_round_winner_image = None
     last_round_winner_hotkey = None
-    
+
     if target_round:
         # Get the winner from ValidatorRoundSummaryORM for this validator's target round (rondas finalizadas)
         winner_query = (
@@ -317,34 +290,28 @@ async def get_validator_details(
             .where(
                 and_(
                     ValidatorRoundORM.validator_round_id == target_round.validator_round_id,
-                    ValidatorRoundSummaryORM.post_consensus_rank == 1
+                    ValidatorRoundSummaryORM.post_consensus_rank == 1,
+                    ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
                 )
             )
             .limit(1)
         )
         winner_result = await session.execute(winner_query)
         winner = winner_result.scalar_one_or_none()
-        
+
         if winner:
             last_round_winner = winner.miner_uid
             last_round_winner_reward = winner.post_consensus_avg_reward
             last_round_winner_weight = winner.weight
             last_round_winner_hotkey = winner.miner_hotkey
-            
+
             # Get miner snapshot for name and image
             miner_snapshot_query = (
-                select(ValidatorRoundMinerORM)
-                .where(
-                    and_(
-                        ValidatorRoundMinerORM.validator_round_id == target_round.validator_round_id,
-                        ValidatorRoundMinerORM.miner_uid == winner.miner_uid
-                    )
-                )
-                .limit(1)
+                select(ValidatorRoundMinerORM).where(and_(ValidatorRoundMinerORM.validator_round_id == target_round.validator_round_id, ValidatorRoundMinerORM.miner_uid == winner.miner_uid)).limit(1)
             )
             miner_snapshot_result = await session.execute(miner_snapshot_query)
             miner_snapshot = miner_snapshot_result.scalar_one_or_none()
-            
+
             if miner_snapshot:
                 last_round_winner_name = miner_snapshot.name
                 last_round_winner_image = miner_snapshot.image_url
@@ -353,37 +320,37 @@ async def get_validator_details(
             # buscar el top miner en AgentEvaluationRunORM por average_reward
             top_run_query = (
                 select(AgentEvaluationRunORM)
-                .where(AgentEvaluationRunORM.validator_round_id == target_round.validator_round_id)
+                .where(
+                    and_(
+                        AgentEvaluationRunORM.validator_round_id == target_round.validator_round_id,
+                        AgentEvaluationRunORM.miner_uid != settings.BURN_UID,
+                    )
+                )
                 .order_by(AgentEvaluationRunORM.average_reward.desc())
                 .limit(1)
             )
             top_run_result = await session.execute(top_run_query)
             top_run = top_run_result.scalar_one_or_none()
-            
+
             if top_run:
                 last_round_winner = top_run.miner_uid
                 last_round_winner_reward = top_run.average_reward
                 last_round_winner_weight = None  # Weight no disponible para rondas activas
                 last_round_winner_hotkey = top_run.miner_hotkey
-                
+
                 # Get miner snapshot for name and image
                 miner_snapshot_query = (
                     select(ValidatorRoundMinerORM)
-                    .where(
-                        and_(
-                            ValidatorRoundMinerORM.validator_round_id == target_round.validator_round_id,
-                            ValidatorRoundMinerORM.miner_uid == top_run.miner_uid
-                        )
-                    )
+                    .where(and_(ValidatorRoundMinerORM.validator_round_id == target_round.validator_round_id, ValidatorRoundMinerORM.miner_uid == top_run.miner_uid))
                     .limit(1)
                 )
                 miner_snapshot_result = await session.execute(miner_snapshot_query)
                 miner_snapshot = miner_snapshot_result.scalar_one_or_none()
-                
+
                 if miner_snapshot:
                     last_round_winner_name = miner_snapshot.name
                     last_round_winner_image = miner_snapshot.image_url
-    
+
     # Get miners data for the target round
     miners_list = []
     unique_miners_count = 0
@@ -392,54 +359,50 @@ async def get_validator_details(
         # This includes ALL miners that participated, even those with 0 reward
         miners_query = (
             select(ValidatorRoundSummaryORM)
-            .where(ValidatorRoundSummaryORM.validator_round_id == target_round.validator_round_id)
-            .order_by(
-                ValidatorRoundSummaryORM.post_consensus_rank.asc().nulls_last(),
-                ValidatorRoundSummaryORM.post_consensus_avg_reward.desc().nulls_last()
+            .where(
+                and_(
+                    ValidatorRoundSummaryORM.validator_round_id == target_round.validator_round_id,
+                    ValidatorRoundSummaryORM.miner_uid != settings.BURN_UID,
+                )
             )
+            .order_by(ValidatorRoundSummaryORM.post_consensus_rank.asc().nulls_last(), ValidatorRoundSummaryORM.post_consensus_avg_reward.desc().nulls_last())
         )
         miners_result = await session.execute(miners_query)
         miners_summaries = miners_result.scalars().all()
-        
+
         # Get unique miner UIDs
         unique_miner_uids = set()
         for summary in miners_summaries:
-            if summary.miner_uid is not None:
+            if summary.miner_uid is not None and summary.miner_uid != settings.BURN_UID:
                 unique_miner_uids.add(summary.miner_uid)
-        
+
         unique_miners_count = len(unique_miner_uids)
-        
+
         # Get miner snapshots for names and images
         if unique_miner_uids:
-            miner_snapshots_query = (
-                select(ValidatorRoundMinerORM)
-                .where(
-                    and_(
-                        ValidatorRoundMinerORM.validator_round_id == target_round.validator_round_id,
-                        ValidatorRoundMinerORM.miner_uid.in_(unique_miner_uids)
-                    )
-                )
+            miner_snapshots_query = select(ValidatorRoundMinerORM).where(
+                and_(ValidatorRoundMinerORM.validator_round_id == target_round.validator_round_id, ValidatorRoundMinerORM.miner_uid.in_(unique_miner_uids))
             )
             miner_snapshots_result = await session.execute(miner_snapshots_query)
             miner_snapshots = miner_snapshots_result.scalars().all()
-            
+
             # Create a map of miner_uid -> snapshot
             miner_snapshot_map = {snapshot.miner_uid: snapshot for snapshot in miner_snapshots}
-            
+
             # Build miners list with post-consensus scores
             for summary in miners_summaries:
-                if summary.miner_uid is None:
+                if summary.miner_uid is None or summary.miner_uid == settings.BURN_UID:
                     continue
-                
+
                 snapshot = miner_snapshot_map.get(summary.miner_uid)
-                
+
                 # Use post-consensus data (includes miners with 0 reward)
                 reward = float(summary.post_consensus_avg_reward) if summary.post_consensus_avg_reward is not None else 0.0
                 eval_score = float(summary.post_consensus_avg_eval_score) if summary.post_consensus_avg_eval_score is not None else 0.0
                 eval_time = float(summary.post_consensus_avg_eval_time) if summary.post_consensus_avg_eval_time is not None else 0.0
                 tasks_completed = summary.post_consensus_tasks_success or 0
                 tasks_total = summary.post_consensus_tasks_received or 0
-                
+
                 miner_data = {
                     "uid": summary.miner_uid,
                     "name": snapshot.name if snapshot else None,
@@ -453,9 +416,9 @@ async def get_validator_details(
                     "tasksTotal": tasks_total,
                 }
                 miners_list.append(miner_data)
-            
+
             # Already sorted by rank and reward in the query
-    
+
     if total_evaluations_processed == 0:
         # Return empty response if no evaluations found
         return JSONResponse(
@@ -488,10 +451,7 @@ async def get_validator_details(
                         "lastRoundWinnerImage": last_round_winner_image,
                         "lastRoundWinnerHotkey": last_round_winner_hotkey,
                     },
-                    "validatorImage": resolve_validator_image(
-                        validator_snapshot.name if validator_snapshot else None,
-                        existing=validator_snapshot.image_url if validator_snapshot else None
-                    ),
+                    "validatorImage": resolve_validator_image(validator_snapshot.name if validator_snapshot else None, existing=validator_snapshot.image_url if validator_snapshot else None),
                     "webs": [],
                     "availableRounds": available_rounds,
                     "roundDetails": {
@@ -500,11 +460,11 @@ async def get_validator_details(
                     },
                     "totalEvaluationsProcessed": 0,
                     "hasMore": False,
-                }
+                },
             },
-            headers={"Cache-Control": "public, max-age=60"}
+            headers={"Cache-Control": "public, max-age=60"},
         )
-    
+
     # Aggregate statistics using SQL results
     global_stats = {
         "totalEvaluations": total_evaluations_processed,
@@ -513,90 +473,96 @@ async def get_validator_details(
         "nullCount": int(global_counts_row.null_count or 0),
         "failedCount": 0,
     }
-    
+
     # Group by web and use_case from grouped rows
-    web_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
-        "webName": None,
-        "webId": None,
-        "webVersion": None,
-        "totalEvaluations": 0,
-        "successCount": 0,
-        "zeroCount": 0,
-        "nullCount": 0,
-        "failedCount": 0,
-        "useCases": defaultdict(lambda: {
-            "useCaseName": None,
-            "useCaseId": None,
+    web_stats: Dict[str, Dict[str, Any]] = defaultdict(
+        lambda: {
+            "webName": None,
+            "webId": None,
+            "webVersion": None,
             "totalEvaluations": 0,
             "successCount": 0,
             "zeroCount": 0,
             "nullCount": 0,
             "failedCount": 0,
-            "tasks": [],
-        }),
-    })
-    
+            "useCases": defaultdict(
+                lambda: {
+                    "useCaseName": None,
+                    "useCaseId": None,
+                    "totalEvaluations": 0,
+                    "successCount": 0,
+                    "zeroCount": 0,
+                    "nullCount": 0,
+                    "failedCount": 0,
+                    "tasks": [],
+                }
+            ),
+        }
+    )
+
     for row in grouped_rows:
         web_id = row.web_id or "unknown"
         web_version = row.web_version
         use_case_id = row.use_case_id or "unknown"
         use_case_name = row.use_case_name or use_case_id
-        
+
         total = int(row.total or 0)
         success = int(row.success or 0)
         zero = int(row.zero or 0)
         null_count = int(row.null_count or 0)
         failed = 0  # failedCount remains for schema compatibility
-        
+
         web_entry = web_stats[web_id]
         if web_entry["webId"] is None:
             web_entry["webId"] = web_id
             web_entry["webName"] = web_id
             web_entry["webVersion"] = web_version
-        
+
         web_entry["totalEvaluations"] += total
         web_entry["successCount"] += success
         web_entry["zeroCount"] += zero
         web_entry["nullCount"] += null_count
-        
+
         use_case_key = f"{web_id}:{use_case_id}"
         use_case_stats = web_entry["useCases"][use_case_key]
         if use_case_stats["useCaseId"] is None:
             use_case_stats["useCaseId"] = use_case_id
             use_case_stats["useCaseName"] = use_case_name
-        
+
         use_case_stats["totalEvaluations"] += total
         use_case_stats["successCount"] += success
         use_case_stats["zeroCount"] += zero
         use_case_stats["nullCount"] += null_count
-        
+
         task_total = total
         task_success = success
         task_zero = zero
         task_null = null_count
         task_failed = failed
-        
-        use_case_stats["tasks"].append({
-            "taskId": row.task_id,
-            "taskPrompt": row.task_prompt or "",
-            "totalEvaluations": task_total,
-            "successCount": task_success,
-            "zeroCount": task_zero,
-            "nullCount": task_null,
-            "failedCount": task_failed,
-            "successPct": (task_success / task_total * 100) if task_total > 0 else 0.0,
-            "zeroPct": (task_zero / task_total * 100) if task_total > 0 else 0.0,
-            "nullPct": (task_null / task_total * 100) if task_total > 0 else 0.0,
-            "failedPct": (task_failed / task_total * 100) if task_total > 0 else 0.0,
-        })
-    
+
+        use_case_stats["tasks"].append(
+            {
+                "taskId": row.task_id,
+                "taskPrompt": row.task_prompt or "",
+                "totalEvaluations": task_total,
+                "successCount": task_success,
+                "zeroCount": task_zero,
+                "nullCount": task_null,
+                "failedCount": task_failed,
+                "successPct": (task_success / task_total * 100) if task_total > 0 else 0.0,
+                "zeroPct": (task_zero / task_total * 100) if task_total > 0 else 0.0,
+                "nullPct": (task_null / task_total * 100) if task_total > 0 else 0.0,
+                "failedPct": (task_failed / task_total * 100) if task_total > 0 else 0.0,
+            }
+        )
+
     # Calculate percentages for global stats
     total = global_stats["totalEvaluations"]
     global_stats["successPct"] = (global_stats["successCount"] / total * 100) if total > 0 else 0.0
     global_stats["zeroPct"] = (global_stats["zeroCount"] / total * 100) if total > 0 else 0.0
     global_stats["nullPct"] = (global_stats["nullCount"] / total * 100) if total > 0 else 0.0
     global_stats["failedPct"] = (global_stats["failedCount"] / total * 100) if total > 0 else 0.0
-    
+
     # Calculate percentages for web and use case stats, and convert to list format
     webs_list = []
     for web_id, web_data in web_stats.items():
@@ -605,7 +571,7 @@ async def get_validator_details(
         web_data["zeroPct"] = (web_data["zeroCount"] / web_total * 100) if web_total > 0 else 0.0
         web_data["nullPct"] = (web_data["nullCount"] / web_total * 100) if web_total > 0 else 0.0
         web_data["failedPct"] = (web_data["failedCount"] / web_total * 100) if web_total > 0 else 0.0
-        
+
         use_cases_list = []
         for use_case_key, use_case_data in web_data["useCases"].items():
             uc_total = use_case_data["totalEvaluations"]
@@ -615,11 +581,11 @@ async def get_validator_details(
             use_case_data["failedPct"] = (use_case_data["failedCount"] / uc_total * 100) if uc_total > 0 else 0.0
             use_case_data["tasks"].sort(key=lambda t: t.get("successCount", 0), reverse=True)
             use_cases_list.append(use_case_data)
-        
+
         use_cases_list.sort(key=lambda uc: uc.get("successCount", 0), reverse=True)
         web_data["useCases"] = use_cases_list
         webs_list.append(web_data)
-    
+
     # Sort webs by specific order
     WEB_ORDER = {
         "autocinema": 1,
@@ -637,7 +603,7 @@ async def get_validator_details(
         "autodrive": 13,
         "autohealth": 14,
     }
-    
+
     def get_web_order(web_id: str) -> int:
         """Get order for web_id based on web name"""
         web_id_lower = web_id.lower()
@@ -645,12 +611,12 @@ async def get_validator_details(
             if web_name in web_id_lower:
                 return order
         return 999
-    
+
     webs_list.sort(key=lambda w: get_web_order(w.get("webId", "")))
-    
+
     # Contar total de evaluaciones procesadas vs total disponible
     has_more = limit is not None and total_evaluations_processed >= limit
-    
+
     # Build response
     response_data = {
         "success": True,
@@ -671,10 +637,7 @@ async def get_validator_details(
                 "lastRoundWinnerImage": last_round_winner_image,
                 "lastRoundWinnerHotkey": last_round_winner_hotkey,
             },
-            "validatorImage": resolve_validator_image(
-                validator_snapshot.name if validator_snapshot else None,
-                existing=validator_snapshot.image_url if validator_snapshot else None
-            ),
+            "validatorImage": resolve_validator_image(validator_snapshot.name if validator_snapshot else None, existing=validator_snapshot.image_url if validator_snapshot else None),
             "webs": webs_list,
             "availableRounds": available_rounds,
             "roundDetails": {
@@ -683,11 +646,11 @@ async def get_validator_details(
             },
             "totalEvaluationsProcessed": total_evaluations_processed,
             "hasMore": has_more,
-        }
+        },
     }
-    
+
     # Devolver JSONResponse con headers de caché HTTP
     return JSONResponse(
         content=response_data,
-        headers={"Cache-Control": "public, max-age=60"}  # Cache HTTP por 60 segundos
+        headers={"Cache-Control": "public, max-age=60"},  # Cache HTTP por 60 segundos
     )
