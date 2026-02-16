@@ -22,6 +22,12 @@ _REDACT_KEYS = {
     "screenshot_after",
     "prev_html",
     "current_html",
+    "payload",
+    "steps",
+    "execution_history",
+    "raw",
+    "html",
+    "screenshot_base64",
 }
 
 

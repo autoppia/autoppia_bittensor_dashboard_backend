@@ -24,9 +24,7 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "local").lower().strip()
 
 # Validate environment
 if ENVIRONMENT not in ("local", "development", "production"):
-    raise ValueError(
-        f"Invalid ENVIRONMENT: {ENVIRONMENT}. Must be 'local', 'development', or 'production'"
-    )
+    raise ValueError(f"Invalid ENVIRONMENT: {ENVIRONMENT}. Must be 'local', 'development', or 'production'")
 
 # TESTING mode: Independent of ENVIRONMENT
 # TESTING=true → use testing round config (ROUND_SIZE_EPOCHS=0.347)
@@ -100,7 +98,7 @@ class Settings(BaseSettings):
     # ═══════════════════════════════════════════════════════════════════════════
     # Reads from .env with environment suffix:
     # ROUND_SIZE_EPOCHS_LOCAL, ROUND_SIZE_EPOCHS_DEVELOPMENT, etc.
-    # 
+    #
     # TESTING mode: Use same ROUND_SIZE_EPOCHS as validator (0.347 for testing, 3.0 for production)
     # This ensures round_number calculation matches between backend and validator
     # When TESTING=true: ROUND_SIZE_EPOCHS=0.347 (matches validator testing mode)
@@ -156,6 +154,7 @@ class Settings(BaseSettings):
     AWS_S3_BUCKET: str = _env_var("AWS_S3_BUCKET", "")
     AWS_S3_ENDPOINT_URL: Optional[str] = os.getenv("AWS_S3_ENDPOINT_URL")
     AWS_S3_GIF_PREFIX: str = os.getenv("AWS_S3_GIF_PREFIX", "gifs")
+    AWS_S3_TASK_LOG_PREFIX: str = os.getenv("AWS_S3_TASK_LOG_PREFIX", "task-logs")
     AWS_S3_PUBLIC_BASE_URL: Optional[str] = _env_var("AWS_S3_PUBLIC_BASE_URL", "")
 
     # Authentication
@@ -229,28 +228,18 @@ class Settings(BaseSettings):
     redis_password_raw: ClassVar[str] = _env_var("REDIS_PASSWORD", "")
     REDIS_PASSWORD: Optional[str] = redis_password_raw if redis_password_raw else None
     REDIS_SOCKET_TIMEOUT: int = int(_env_var("REDIS_SOCKET_TIMEOUT", "2"))
-    REDIS_SOCKET_CONNECT_TIMEOUT: int = int(
-        _env_var("REDIS_SOCKET_CONNECT_TIMEOUT", "2")
-    )
+    REDIS_SOCKET_CONNECT_TIMEOUT: int = int(_env_var("REDIS_SOCKET_CONNECT_TIMEOUT", "2"))
     # Default TTL for completed/immutable rounds and tasks (7 days)
-    REDIS_FINAL_DATA_TTL: int = int(
-        _env_var("REDIS_FINAL_DATA_TTL", str(7 * 24 * 3600))
-    )
+    REDIS_FINAL_DATA_TTL: int = int(_env_var("REDIS_FINAL_DATA_TTL", str(7 * 24 * 3600)))
 
     # Server Configuration
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
 
     # UI caching toggles
-    ENABLE_FINAL_ROUND_CACHE: bool = _str_to_bool(
-        os.getenv("ENABLE_FINAL_ROUND_CACHE", "true")
-    )
-    ENABLE_CURRENT_ROUND_CACHE: bool = _str_to_bool(
-        os.getenv("ENABLE_CURRENT_ROUND_CACHE", "true")
-    )
-    _AGENT_AGGREGATE_REQUIRE_DEFAULT = (
-        "true" if ENVIRONMENT == "production" else "false"
-    )
+    ENABLE_FINAL_ROUND_CACHE: bool = _str_to_bool(os.getenv("ENABLE_FINAL_ROUND_CACHE", "true"))
+    ENABLE_CURRENT_ROUND_CACHE: bool = _str_to_bool(os.getenv("ENABLE_CURRENT_ROUND_CACHE", "true"))
+    _AGENT_AGGREGATE_REQUIRE_DEFAULT = "true" if ENVIRONMENT == "production" else "false"
     AGENT_AGGREGATES_REQUIRE_WARM_CACHE: bool = _str_to_bool(
         os.getenv(
             "AGENT_AGGREGATES_REQUIRE_WARM_CACHE",
@@ -259,9 +248,7 @@ class Settings(BaseSettings):
     )
 
     # Overview cache warmer (precalienta endpoints críticos cada 10 min)
-    ENABLE_OVERVIEW_CACHE_WARMER: bool = _str_to_bool(
-        os.getenv("ENABLE_OVERVIEW_CACHE_WARMER", "true")
-    )
+    ENABLE_OVERVIEW_CACHE_WARMER: bool = _str_to_bool(os.getenv("ENABLE_OVERVIEW_CACHE_WARMER", "true"))
 
     # Subnet price fallback (alpha → τ). Used when on-chain query fails.
     SUBNET_PRICE_FALLBACK: float = float(_env_var("SUBNET_PRICE_FALLBACK", "0.004178"))
@@ -280,9 +267,7 @@ class Settings(BaseSettings):
         # Build DATABASE_URL from components if not explicitly set
         if not self.DATABASE_URL:
             user = quote_plus(self.POSTGRES_USER)
-            password = (
-                quote_plus(self.POSTGRES_PASSWORD) if self.POSTGRES_PASSWORD else ""
-            )
+            password = quote_plus(self.POSTGRES_PASSWORD) if self.POSTGRES_PASSWORD else ""
             auth = f"{user}:{password}@" if password else f"{user}@"
             self.DATABASE_URL = f"postgresql+asyncpg://{auth}{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
@@ -292,6 +277,8 @@ class Settings(BaseSettings):
 
         if self.AWS_S3_GIF_PREFIX:
             self.AWS_S3_GIF_PREFIX = self.AWS_S3_GIF_PREFIX.strip("/") or "gifs"
+        if self.AWS_S3_TASK_LOG_PREFIX:
+            self.AWS_S3_TASK_LOG_PREFIX = self.AWS_S3_TASK_LOG_PREFIX.strip("/") or "task-logs"
 
         # Normalize log level strings
         def _norm(v: Optional[str], default: str) -> str:

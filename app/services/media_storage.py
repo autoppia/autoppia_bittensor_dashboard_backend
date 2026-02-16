@@ -1,9 +1,12 @@
-"""Media storage utilities for handling GIF uploads."""
+"""Media storage utilities for handling GIF uploads and task logs."""
+
 from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from functools import lru_cache
+from typing import Optional
 
 import boto3
 from botocore.client import BaseClient
@@ -50,6 +53,10 @@ def _gif_prefix() -> str:
     return settings.AWS_S3_GIF_PREFIX.strip("/")
 
 
+def _task_log_prefix() -> str:
+    return settings.AWS_S3_TASK_LOG_PREFIX.strip("/")
+
+
 def build_gif_key(evaluation_id: str) -> str:
     """Return the object key used for storing an evaluation GIF."""
     filename = f"{evaluation_id}.gif"
@@ -57,6 +64,28 @@ def build_gif_key(evaluation_id: str) -> str:
     if prefix:
         return f"{prefix}/{filename}"
     return filename
+
+
+def build_task_log_key(
+    task_id: str,
+    agent_run_id: str,
+    *,
+    season: Optional[int] = None,
+    round_in_season: Optional[int] = None,
+    validator_round_id: Optional[str] = None,
+) -> str:
+    """Return the object key used for storing a per-task execution log."""
+    safe_task_id = str(task_id).replace("/", "_")
+    safe_agent_run_id = str(agent_run_id).replace("/", "_")
+    filename = f"{safe_task_id}_{safe_agent_run_id}.json.gz"
+    parts = [_task_log_prefix()]
+    if season is not None and round_in_season is not None:
+        parts.append(f"season={season}")
+        parts.append(f"round={round_in_season}")
+    if validator_round_id:
+        parts.append(f"validator_round_id={validator_round_id}")
+    parts.append(filename)
+    return "/".join([p for p in parts if p])
 
 
 def build_public_url(object_key: str) -> str:
@@ -93,11 +122,54 @@ async def store_gif(evaluation_id: str, data: bytes) -> str:
     return object_key
 
 
+async def store_task_log(
+    *,
+    task_id: str,
+    agent_run_id: str,
+    data: bytes,
+    season: Optional[int] = None,
+    round_in_season: Optional[int] = None,
+    validator_round_id: Optional[str] = None,
+) -> str:
+    """Upload a gzipped JSON task log to S3 and return the object key."""
+    client = get_s3_client()
+    object_key = build_task_log_key(
+        task_id,
+        agent_run_id,
+        season=season,
+        round_in_season=round_in_season,
+        validator_round_id=validator_round_id,
+    )
+    bucket = settings.AWS_S3_BUCKET
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    logger.debug(
+        "Uploading task log for task %s to s3://%s/%s (bytes=%d)",
+        task_id,
+        bucket,
+        object_key,
+        len(data),
+    )
+    await asyncio.to_thread(
+        client.put_object,
+        Bucket=bucket,
+        Key=object_key,
+        Body=data,
+        ContentType="application/json",
+        ContentEncoding="gzip",
+        Metadata={"uploaded_at": timestamp},
+    )
+
+    return object_key
+
+
 __all__ = [
     "GifStorageConfigError",
     "build_gif_key",
+    "build_task_log_key",
     "build_public_url",
     "get_s3_client",
     "reset_s3_client_cache",
     "store_gif",
+    "store_task_log",
 ]

@@ -4,8 +4,7 @@ These models match the API specifications provided by the frontend team.
 """
 
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
-from datetime import datetime
+from pydantic import BaseModel
 
 
 # --- Base Response Models ---
@@ -69,15 +68,15 @@ class ValidatorInfo(BaseModel):
     emission: int
     validatorRoundId: Optional[str] = None
     roundNumber: Optional[int] = None
+    lastSeenSeason: Optional[int] = None
+    lastSeenRoundInSeason: Optional[int] = None
     lastRoundWinner: Optional[Dict[str, Any]] = None
 
 
 class ValidatorsListResponse(BaseResponse):
     """Response model for validators list endpoint."""
 
-    data: Optional[Dict[str, Any]] = (
-        None  # Contains validators list, total, page, limit
-    )
+    data: Optional[Dict[str, Any]] = None  # Contains validators list, total, page, limit
 
 
 class ValidatorDetailResponse(BaseResponse):

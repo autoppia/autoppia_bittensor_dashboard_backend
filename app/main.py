@@ -1,4 +1,5 @@
 # app/main.py
+# ruff: noqa: E402
 from __future__ import annotations
 
 # ── Configure logging FIRST (before any DB/ORM imports) ────────────────────────
@@ -31,6 +32,7 @@ from app.api.ui.subnets import router as subnets_router
 from app.api.ui.tasks import router as tasks_router
 from app.api.ui.validators import router as validators_router
 from app.api.validator.validator_round import router as validator_rounds_router
+from app.api.validator.task_logs import router as task_logs_router
 from app.api.external.tasks import router as external_tasks_router
 from app.db.session import init_db, get_session
 from app.services.idempotency import get_cache_stats
@@ -97,14 +99,13 @@ async def log_requests(request: Request, call_next):
     logger.info(f"{request.method} {request.url.path} - {client}")
     resp = await call_next(request)
     elapsed = time.time() - start
-    logger.info(
-        f"{request.method} {request.url.path} - {resp.status_code} - {elapsed:.3f}s"
-    )
+    logger.info(f"{request.method} {request.url.path} - {resp.status_code} - {elapsed:.3f}s")
     return resp
 
 
 # Routers
 app.include_router(validator_rounds_router)
+app.include_router(task_logs_router)
 app.include_router(rounds_router)
 app.include_router(legacy_rounds_router)
 app.include_router(agent_runs_router)
@@ -254,7 +255,7 @@ async def on_startup():
     try:
         await init_db()
         logger.info("SQL schema ready")
-        
+
         # Log round configuration (matches validator config)
         logger.info("=" * 80)
         logger.info("🔧 BACKEND ROUND CONFIGURATION")
@@ -264,7 +265,7 @@ async def on_startup():
         logger.info(f"⏱️  Round Size: {settings.ROUND_SIZE_EPOCHS} epochs")
         logger.info(f"📦 Blocks per Round: {int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)}")
         logger.info("=" * 80)
-        
+
         logger.info(f"API server ready on {settings.HOST}:{settings.PORT}")
         logger.info("API documentation available at /docs")
         # NOTE: Background updaters (metagraph, price, block) are now run as a separate PM2 process
@@ -273,9 +274,7 @@ async def on_startup():
         logger.info("ℹ️  Background updaters disabled (run as separate PM2 process)")
 
         # Overview cache warmer is also disabled - use external cron/PM2 if needed
-        logger.info(
-            "ℹ️  Overview cache warmer disabled (use external process if needed)"
-        )
+        logger.info("ℹ️  Overview cache warmer disabled (use external process if needed)")
 
     except Exception as e:
         logger.error(f"Failed to initialize application: {e}", exc_info=True)
@@ -295,22 +294,19 @@ async def on_shutdown():
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    
+
     # Get CORS origins from settings
     from app.config import settings
+
     origin = request.headers.get("origin")
     allowed_origins = settings.CORS_ORIGINS
-    
+
     # Check if origin is allowed
     headers = {}
-    if origin and (origin in allowed_origins or any(
-        re.match(pattern, origin) 
-        for pattern in [settings.CORS_ALLOW_ORIGIN_REGEX] 
-        if settings.CORS_ALLOW_ORIGIN_REGEX
-    )):
+    if origin and (origin in allowed_origins or any(re.match(pattern, origin) for pattern in [settings.CORS_ALLOW_ORIGIN_REGEX] if settings.CORS_ALLOW_ORIGIN_REGEX)):
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
-    
+
     return JSONResponse(
         status_code=500,
         content={
