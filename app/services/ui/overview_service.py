@@ -324,6 +324,22 @@ class OverviewService:
             metrics_round_model = target_records[0][0].model
             metrics_season = getattr(metrics_round_model, "season_number", None)
             metrics_round_in_season = getattr(metrics_round_model, "round_number_in_season", None)
+        # Ensure current round is strictly after latest finished round in the same season.
+        if (
+            metrics_season is not None
+            and metrics_round_in_season is not None
+            and current_season == metrics_season
+            and current_round_in_season is not None
+            and current_round_in_season <= metrics_round_in_season
+        ):
+            logger.warning(
+                "Current round-in-season (%s) <= latest finished (%s) for season %s; correcting to %s",
+                current_round_in_season,
+                metrics_round_in_season,
+                metrics_season,
+                metrics_round_in_season + 1,
+            )
+            current_round_in_season = metrics_round_in_season + 1
 
         # This top_score is for aggregating scores from contexts (legacy, not used for top miner)
         context_top_score = 0.0
