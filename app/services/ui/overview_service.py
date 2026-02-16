@@ -147,10 +147,28 @@ class OverviewService:
         if cached is not None:
             cached_top_uid = getattr(cached, "topMinerUid", None)
             cached_top_reward = getattr(cached, "topReward", 0)
+            cached_current_round = getattr(cached, "currentRound", 0)
+            cached_current_season = getattr(cached, "currentSeason", None)
+            cached_current_round_in_season = getattr(cached, "currentRoundInSeason", None)
             logger.info("Returning cached overview metrics (topMinerUid=%s, topReward=%s)", cached_top_uid, cached_top_reward)
             # If cache has null/0 values, invalidate and recompute
             if cached_top_uid is None and cached_top_reward == 0.0:
                 logger.warning("Cache has null/0 values - invalidating and recomputing")
+                redis_cache.delete(cache_key)
+            # If cache lacks season/round-in-season while currentRound is present, recompute
+            elif cached_current_round and (cached_current_season is None or cached_current_round_in_season is None):
+                logger.warning(
+                    "Cache missing current season/round-in-season (currentRound=%s) - invalidating and recomputing",
+                    cached_current_round,
+                )
+                redis_cache.delete(cache_key)
+            # If cache has a global currentRound different from round-in-season, recompute
+            elif cached_current_round and cached_current_round_in_season and cached_current_round != cached_current_round_in_season:
+                logger.warning(
+                    "Cache currentRound=%s differs from currentRoundInSeason=%s - invalidating and recomputing",
+                    cached_current_round,
+                    cached_current_round_in_season,
+                )
                 redis_cache.delete(cache_key)
             else:
                 return cached
@@ -668,6 +686,9 @@ class OverviewService:
                     pass
                 # Fallback to context-based count
 
+        # UI expects season-scoped rounds. Prefer round-in-season when available.
+        current_round_for_ui = current_round_in_season if current_round_in_season is not None and current_round_in_season > 0 else current_round_value
+
         metrics = OverviewMetrics(
             topReward=round(top_score, 3),
             topMinerUid=top_miner_uid,
@@ -675,7 +696,7 @@ class OverviewService:
             totalWebsites=total_websites,
             totalValidators=len(validators),
             totalMiners=total_miners_count,
-            currentRound=current_round_value,
+            currentRound=current_round_for_ui,
             currentSeason=current_season,
             currentRoundInSeason=current_round_in_season,
             metricsRound=display_metrics_round_number,
