@@ -34,7 +34,11 @@ from app.models.ui.overview import (
 )
 from app.services.ui.rounds_service import AgentRunContext, RoundRecord, RoundsService
 from app.services.chain_state import get_current_block_estimate
-from app.services.round_calc import compute_round_number
+from app.services.round_calc import (
+    compute_round_number,
+    compute_round_number_in_season,
+    compute_season_number,
+)
 from app.services.redis_cache import redis_cache
 from app.services.metagraph_service import get_all_validators_data, MetagraphError
 from app.config import settings
@@ -220,6 +224,17 @@ class OverviewService:
         current_season = None
         current_round_in_season = None
         current_round_model = None
+        if current_block is not None:
+            try:
+                round_block_length = int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
+                current_round_in_season = compute_round_number_in_season(
+                    current_block,
+                    round_block_length,
+                )
+                # compute_season_number expects a start block, but the same formula works for current block
+                current_season = compute_season_number(current_block)
+            except Exception as exc:
+                logger.warning("Failed to compute current season/round-in-season from blockchain: %s", exc)
 
         # Fallback: if we can't get blockchain round, use max from DB
         if current_round_value <= 0:
@@ -228,12 +243,14 @@ class OverviewService:
                 current_round_value = max(current_round_candidates)
                 logger.warning(f"Using fallback current round from DB max: {current_round_value}")
 
-        # Find the current round model to extract season/round_in_season
+        # Find the current round model to extract season/round_in_season (fallback only)
         for record, _ in records_with_contexts:
             if _round_number(record) == current_round_value:
                 current_round_model = record.model
-                current_season = getattr(current_round_model, "season_number", None)
-                current_round_in_season = getattr(current_round_model, "round_number_in_season", None)
+                if current_season is None:
+                    current_season = getattr(current_round_model, "season_number", None)
+                if current_round_in_season is None:
+                    current_round_in_season = getattr(current_round_model, "round_number_in_season", None)
                 break
 
         # Latest finished round should be current - 1
