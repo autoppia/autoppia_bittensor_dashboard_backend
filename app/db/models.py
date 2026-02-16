@@ -503,6 +503,44 @@ class EvaluationLLMUsageORM(TimestampMixin, Base):
 
 
 # ---------------------------------------------------------------------------
+# Task execution logs (backoffice)
+# ---------------------------------------------------------------------------
+
+
+class TaskExecutionLogORM(TimestampMixin, Base):
+    """S3-backed execution log metadata for a task/agent_run pair."""
+
+    __tablename__ = "task_execution_logs"
+    __table_args__ = (
+        UniqueConstraint("task_id", "agent_run_id", name="uq_task_execution_log"),
+        Index("ix_task_execution_logs_round", "validator_round_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("tasks.task_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_run_id: Mapped[str] = mapped_column(
+        ForeignKey("miner_evaluation_runs.agent_run_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    validator_round_id: Mapped[str] = mapped_column(
+        ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    validator_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    season: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    round_in_season: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    payload_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    payload_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+# ---------------------------------------------------------------------------
 # Optimization tables (Materialized Views)
 # ---------------------------------------------------------------------------
 
@@ -518,6 +556,7 @@ __all__ = [
     "EvaluationResultORM",
     "EvaluationExecutionHistoryORM",
     "EvaluationLLMUsageORM",
+    "TaskExecutionLogORM",
     "RoundORM",
 ]
 

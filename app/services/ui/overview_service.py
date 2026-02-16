@@ -1750,8 +1750,12 @@ class OverviewService:
             # If validator has never participated, show current blockchain round
             if last_entry is not None:
                 round_number = last_entry[0].model.round_number or _round_id_to_int(last_entry[0].model.validator_round_id)
+                last_seen_season = getattr(last_entry[0].model, "season_number", None)
+                last_seen_round_in_season = getattr(last_entry[0].model, "round_number_in_season", None)
             else:
                 round_number = current_round_number or None
+                last_seen_season = None
+                last_seen_round_in_season = None
 
             display_name = validator_info.name if validator_info and validator_info.name else None
             if not display_name and display_round:
@@ -1901,6 +1905,8 @@ class OverviewService:
                 "completedTasks": int(completed_tasks),
                 "validatorRoundId": validator_round_id,
                 "roundNumber": round_number,
+                "lastSeenSeason": last_seen_season,
+                "lastSeenRoundInSeason": last_seen_round_in_season,
                 "validatorUid": validator_uid,
             }
 
