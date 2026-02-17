@@ -394,10 +394,6 @@ class Task(BaseModel):
         default_factory=list,
         description="Collection of validation tests associated with the task",
     )
-    relevant_data: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional contextual data the agent may need to solve the task",
-    )
     use_case: Any = Field(default=None, description="Associated use case metadata for the task")
 
     _original_prompt: str = PrivateAttr(default="")
@@ -408,12 +404,6 @@ class Task(BaseModel):
         original_prompt = data.get("original_prompt", data.get("prompt", ""))
         super().__init__(**data)
         object.__setattr__(self, "_original_prompt", original_prompt)
-
-    @property
-    def prompt_with_relevant_data(self) -> str:
-        if self.relevant_data:
-            return f"{self.prompt}\n Relevant data you may need: {self.relevant_data}"
-        return self.prompt
 
     @property
     def original_prompt(self) -> str:

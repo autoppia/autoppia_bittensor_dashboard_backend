@@ -1555,16 +1555,11 @@ class OverviewService:
     def _normalize_task_meta(
         prompt: Optional[str],
         url: Optional[str],
-        relevant_data: Optional[Dict[str, Any]],
         use_case: Optional[Any],
     ) -> Dict[str, Optional[str]]:
         """Normalize task metadata into the structure consumed by the UI."""
 
-        website: Optional[str] = None
-        if isinstance(relevant_data, dict):
-            website = relevant_data.get("website") or None
-        if not website:
-            website = url
+        website: Optional[str] = url
 
         # Map localhost port to friendly name
         if website:
@@ -1590,7 +1585,6 @@ class OverviewService:
             select(
                 TaskORM.prompt,
                 TaskORM.url,
-                TaskORM.relevant_data,
                 TaskORM.use_case,
             )
             .join(EvaluationORM, EvaluationORM.task_id == TaskORM.task_id)
@@ -1602,8 +1596,8 @@ class OverviewService:
         row = result.first()
         if not row:
             return None
-        prompt, url, relevant_data, use_case = row
-        return self._normalize_task_meta(prompt, url, relevant_data, use_case)
+        prompt, url, use_case = row
+        return self._normalize_task_meta(prompt, url, use_case)
 
     @rollback_on_error
     async def _latest_task_meta(self, validator_round_id: str) -> Optional[Dict[str, Optional[str]]]:
@@ -1617,7 +1611,6 @@ class OverviewService:
             select(
                 TaskORM.prompt,
                 TaskORM.url,
-                TaskORM.relevant_data,
                 TaskORM.use_case,
             )
             .where(TaskORM.validator_round_id == validator_round_id)
@@ -1631,8 +1624,8 @@ class OverviewService:
         row = result.first()
         if not row:
             return None
-        prompt, url, relevant_data, use_case = row
-        return self._normalize_task_meta(prompt, url, relevant_data, use_case)
+        prompt, url, use_case = row
+        return self._normalize_task_meta(prompt, url, use_case)
 
     @rollback_on_error
     async def _aggregate_validators(self) -> Dict[str, Dict[str, Any]]:

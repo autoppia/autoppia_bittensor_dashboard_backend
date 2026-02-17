@@ -6,7 +6,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import httpx
 from httpx import ASGITransport, AsyncClient
@@ -24,7 +24,6 @@ from app.models.core import (
     ValidatorRoundMiner,
     Task,
     TaskSolution,
-    TestResult,
     Validator,
     ValidatorRound,
     ValidatorRoundSubmissionRequest,
@@ -32,7 +31,6 @@ from app.models.core import (
 )
 from app.services.validator.validator_storage import (
     PersistenceResult,
-    RoundConflictError,
     ValidatorRoundPersistenceService,
 )
 from app.utils.images import FALLBACK_MINER_IMAGES, normalize_asset_path
@@ -46,10 +44,7 @@ MAX_MINER_UID = 255
 
 # Static GIF used for seeded evaluations so the UI has media to render.
 # If needed later, this can be made configurable via settings.
-SEED_GIF_URL = (
-    "https://autoppia-subnet.s3.eu-west-1.amazonaws.com/gifs/"
-    "evaluation_51_9ff54518-99d8-4262-bab4-2a549032ba7c_81cb33c33048.gif"
-)
+SEED_GIF_URL = "https://autoppia-subnet.s3.eu-west-1.amazonaws.com/gifs/evaluation_51_9ff54518-99d8-4262-bab4-2a549032ba7c_81cb33c33048.gif"
 
 
 def _asset_url(path: Optional[str]) -> Optional[str]:
@@ -73,9 +68,7 @@ def _get_fastapi_app():
     # In local/test runs we seed through the in-process ASGI app. The
     # validator endpoints normally require signed headers; for synthetic
     # seed data we bypass auth to avoid needing real keypairs.
-    if getattr(_settings, "TESTING", False) and not getattr(
-        _settings, "AUTH_DISABLED", False
-    ):
+    if getattr(_settings, "TESTING", False) and not getattr(_settings, "AUTH_DISABLED", False):
         try:
             _settings.AUTH_DISABLED = True  # type: ignore[attr-defined]
             logger.info("Validator auth disabled for seeding (TESTING=true)")
@@ -151,20 +144,11 @@ class SeedPayload:
 
     @property
     def task_solutions(self) -> List[TaskSolution]:
-        return [
-            solution
-            for bundle in self.agent_bundles
-            for solution in bundle.task_solutions
-        ]
+        return [solution for bundle in self.agent_bundles for solution in bundle.task_solutions]
 
     @property
     def evaluations(self) -> List[Evaluation]:
-        return [
-            evaluation
-            for bundle in self.agent_bundles
-            for evaluation in bundle.evaluations
-        ]
-
+        return [evaluation for bundle in self.agent_bundles for evaluation in bundle.evaluations]
 
 
 def _try_fetch_metagraph(
@@ -201,9 +185,7 @@ def _build_validator_seed_records() -> Dict[int, ValidatorSeedRecord]:
     for uid, metadata in VALIDATOR_DIRECTORY.items():
         meta_hotkey = metadata.get("hotkey")
         meta_coldkey = metadata.get("coldkey")
-        metagraph_hotkey, metagraph_coldkey = metagraph_records.get(
-            uid, (meta_hotkey, meta_coldkey)
-        )
+        metagraph_hotkey, metagraph_coldkey = metagraph_records.get(uid, (meta_hotkey, meta_coldkey))
 
         if metagraph_hotkey is None:
             metagraph_hotkey = meta_hotkey or f"validator_hotkey_{uid}"
@@ -243,17 +225,10 @@ def _fallback_miner_seed_records(
 ) -> List[MinerSeedRecord]:
     providers = ["TensorOps", "SynapseX", "AutoMiner Labs", "NeuraForge"]
     records: List[MinerSeedRecord] = []
-    available_uids = [
-        uid
-        for uid in range(MIN_MINER_UID, MAX_MINER_UID + 1)
-        if uid not in exclude_uids and uid not in used_uids
-    ]
+    available_uids = [uid for uid in range(MIN_MINER_UID, MAX_MINER_UID + 1) if uid not in exclude_uids and uid not in used_uids]
 
     if len(available_uids) < count:
-        raise ValueError(
-            f"Unable to allocate {count} synthetic miners within UID range "
-            f"[{MIN_MINER_UID}, {MAX_MINER_UID}]"
-        )
+        raise ValueError(f"Unable to allocate {count} synthetic miners within UID range [{MIN_MINER_UID}, {MAX_MINER_UID}]")
 
     for index, uid in enumerate(available_uids[:count]):
         provider = providers[index % len(providers)]
@@ -273,9 +248,7 @@ def _fallback_miner_seed_records(
     return records
 
 
-def _build_miner_seed_records(
-    num_miners: int, exclude_uids: set[int]
-) -> List[MinerSeedRecord]:
+def _build_miner_seed_records(num_miners: int, exclude_uids: set[int]) -> List[MinerSeedRecord]:
     metagraph_records = _try_fetch_metagraph()
     records: List[MinerSeedRecord] = []
     used_uids: set[int] = set()
@@ -283,21 +256,12 @@ def _build_miner_seed_records(
     def _is_within_range(uid: int) -> bool:
         return MIN_MINER_UID <= uid <= MAX_MINER_UID
 
-    available_capacity = sum(
-        1 for uid in range(MIN_MINER_UID, MAX_MINER_UID + 1) if uid not in exclude_uids
-    )
+    available_capacity = sum(1 for uid in range(MIN_MINER_UID, MAX_MINER_UID + 1) if uid not in exclude_uids)
     if num_miners > available_capacity:
-        raise ValueError(
-            f"Cannot seed {num_miners} miners; only {available_capacity} UIDs remain "
-            f"in range [{MIN_MINER_UID}, {MAX_MINER_UID}]."
-        )
+        raise ValueError(f"Cannot seed {num_miners} miners; only {available_capacity} UIDs remain in range [{MIN_MINER_UID}, {MAX_MINER_UID}].")
 
     # Skip metagraph UIDs that are not positive or that are explicitly excluded.
-    metagraph_uids = [
-        uid
-        for uid in metagraph_records.keys()
-        if uid > 0 and uid not in exclude_uids and _is_within_range(uid)
-    ]
+    metagraph_uids = [uid for uid in metagraph_records.keys() if uid > 0 and uid not in exclude_uids and _is_within_range(uid)]
     for uid in sorted(metagraph_uids):
         hotkey, coldkey = metagraph_records[uid]
         if uid in exclude_uids or uid in used_uids:
@@ -373,9 +337,6 @@ def _build_miner_identity_and_snapshot(
         hotkey=record.hotkey,
         coldkey=record.coldkey,
     )
-
-    first_seen = now_ts - random.uniform(3600, 72_000)
-    last_seen = now_ts - random.uniform(0, 1800)
 
     snapshot = ValidatorRoundMiner(
         validator_round_id=validator_round_id,
@@ -563,9 +524,7 @@ TASK_LIBRARY: List[TaskTemplate] = [
 ]
 
 
-def _build_tasks(
-    validator_round_id: str, num_tasks: int
-) -> Tuple[List[Task], List[TaskTemplate]]:
+def _build_tasks(validator_round_id: str, num_tasks: int) -> Tuple[List[Task], List[TaskTemplate]]:
     tasks: List[Task] = []
     templates: List[TaskTemplate] = []
 
@@ -581,10 +540,6 @@ def _build_tasks(
             prompt=template.prompt,
             specifications={"browser": "chromium"},
             tests=[],
-            relevant_data={
-                "website": template.website_slug,
-                "use_case": template.use_case_slug,
-            },
             use_case={
                 "name": template.use_case_label,
                 "slug": template.use_case_slug,
@@ -605,9 +560,7 @@ def _build_agent_run_bundle(
     base_started_at: float,
     index: int,
 ) -> AgentRunBundle:
-    agent_run_id = (
-        f"{validator_round.validator_round_id}-run-{miner_identity.uid or index}"
-    )
+    agent_run_id = f"{validator_round.validator_round_id}-run-{miner_identity.uid or index}"
     task_count = len(tasks)
 
     run_start = base_started_at + index * 15
@@ -773,11 +726,7 @@ def build_seed_payload(
         "evaluations": sum(len(bundle.evaluations) for bundle in agent_bundles),
     }
     top_score = max((bundle.average_score for bundle in agent_bundles), default=None)
-    avg_score = (
-        sum(bundle.average_score for bundle in agent_bundles) / len(agent_bundles)
-        if agent_bundles
-        else None
-    )
+    avg_score = sum(bundle.average_score for bundle in agent_bundles) / len(agent_bundles) if agent_bundles else None
 
     # Store removed fields in metadata instead
     validator_round = validator_round.model_copy(
@@ -818,9 +767,7 @@ def build_submission_request(payload: SeedPayload) -> ValidatorRoundSubmissionRe
 
 async def _determine_next_round_number() -> int:
     async with AsyncSessionLocal() as session:
-        stmt = select(ValidatorRoundORM.round_number).order_by(
-            ValidatorRoundORM.round_number.desc()
-        )
+        stmt = select(ValidatorRoundORM.round_number).order_by(ValidatorRoundORM.round_number.desc())
         round_numbers = await session.scalars(stmt)
         for number in round_numbers:
             if number is not None:
@@ -836,18 +783,14 @@ async def _guard_duplicate_round(validator_uid: int, round_number: int) -> None:
 
 def _ensure_response(response: httpx.Response, context: str) -> Dict[str, Any]:
     if response.status_code >= 400:
-        raise RuntimeError(
-            f"{context} failed with status={response.status_code} body={response.text}"
-        )
+        raise RuntimeError(f"{context} failed with status={response.status_code} body={response.text}")
     return response.json()
 
 
 def _compute_round_outcome(
     payload: SeedPayload,
 ) -> Tuple[List[Dict[str, Any]], List[float], Dict[str, float]]:
-    sorted_bundles = sorted(
-        payload.agent_bundles, key=lambda bundle: bundle.average_score, reverse=True
-    )
+    sorted_bundles = sorted(payload.agent_bundles, key=lambda bundle: bundle.average_score, reverse=True)
     n_winners = min(payload.validator_round.n_winners or 3, len(sorted_bundles))
     winners_data: List[Dict[str, Any]] = []
     winner_scores: List[float] = []
@@ -863,11 +806,7 @@ def _compute_round_outcome(
         winner_scores.append(bundle.average_score)
 
     total_score = sum(bundle.average_score for bundle in sorted_bundles) or 1.0
-    weights = {
-        str(bundle.agent_run.miner_uid): round(bundle.average_score / total_score, 4)
-        for bundle in sorted_bundles
-        if bundle.agent_run.miner_uid is not None
-    }
+    weights = {str(bundle.agent_run.miner_uid): round(bundle.average_score / total_score, 4) for bundle in sorted_bundles if bundle.agent_run.miner_uid is not None}
 
     return winners_data, winner_scores, weights
 
@@ -897,15 +836,9 @@ async def seed_validator_round(
 
     async def _persist_with_client(http_client: AsyncClient) -> PersistenceResult:
         start_body = {
-            "validator_identity": payload.validator_identity.model_dump(
-                mode="json", exclude_none=True
-            ),
-            "validator_round": payload.validator_round.model_dump(
-                mode="json", exclude_none=True
-            ),
-            "validator_snapshot": payload.validator_snapshot.model_dump(
-                mode="json", exclude_none=True
-            ),
+            "validator_identity": payload.validator_identity.model_dump(mode="json", exclude_none=True),
+            "validator_round": payload.validator_round.model_dump(mode="json", exclude_none=True),
+            "validator_snapshot": payload.validator_snapshot.model_dump(mode="json", exclude_none=True),
         }
         _ensure_response(
             await http_client.post(
@@ -916,12 +849,7 @@ async def seed_validator_round(
             "start_round",
         )
 
-        tasks_body = {
-            "tasks": [
-                task.model_dump(mode="json", exclude_none=True)
-                for task in payload.tasks
-            ]
-        }
+        tasks_body = {"tasks": [task.model_dump(mode="json", exclude_none=True) for task in payload.tasks]}
         _ensure_response(
             await http_client.post(
                 f"/api/v1/validator-rounds/{validator_round_id}/tasks",
@@ -935,15 +863,9 @@ async def seed_validator_round(
 
         for bundle in payload.agent_bundles:
             start_run_body = {
-                "agent_run": bundle.agent_run.model_dump(
-                    mode="json", exclude_none=True
-                ),
-                "miner_identity": bundle.miner_identity.model_dump(
-                    mode="json", exclude_none=True
-                ),
-                "miner_snapshot": bundle.miner_snapshot.model_dump(
-                    mode="json", exclude_none=True
-                ),
+                "agent_run": bundle.agent_run.model_dump(mode="json", exclude_none=True),
+                "miner_identity": bundle.miner_identity.model_dump(mode="json", exclude_none=True),
+                "miner_snapshot": bundle.miner_snapshot.model_dump(mode="json", exclude_none=True),
             }
             _ensure_response(
                 await http_client.post(
@@ -961,9 +883,7 @@ async def seed_validator_round(
                 task = tasks_by_id[evaluation.task_id]
                 body = {
                     "task": task.model_dump(mode="json", exclude_none=True),
-                    "task_solution": task_solution.model_dump(
-                        mode="json", exclude_none=True
-                    ),
+                    "task_solution": task_solution.model_dump(mode="json", exclude_none=True),
                     "evaluation_result": evaluation.model_dump(mode="json", exclude_none=True),
                 }
                 _ensure_response(
@@ -996,19 +916,11 @@ async def seed_validator_round(
         saved_entities: Dict[str, Any] = {
             "validator_round": payload.validator_round.validator_round_id,
             "validator_snapshots": [payload.validator_snapshot.validator_hotkey],
-            "miner_snapshots": [
-                snapshot.miner_hotkey for snapshot in payload.miner_snapshots
-            ],
-            "agent_evaluation_runs": [
-                bundle.agent_run.agent_run_id for bundle in payload.agent_bundles
-            ],
+            "miner_snapshots": [snapshot.miner_hotkey for snapshot in payload.miner_snapshots],
+            "agent_evaluation_runs": [bundle.agent_run.agent_run_id for bundle in payload.agent_bundles],
             "tasks": [task.task_id for task in payload.tasks],
-            "task_solutions": [
-                solution.solution_id for solution in payload.task_solutions
-            ],
-            "evaluations": [
-                evaluation.evaluation_id for evaluation in payload.evaluations
-            ],
+            "task_solutions": [solution.solution_id for solution in payload.task_solutions],
+            "evaluations": [evaluation.evaluation_id for evaluation in payload.evaluations],
         }
 
         return PersistenceResult(
@@ -1020,9 +932,7 @@ async def seed_validator_round(
 
     if client is None:
         transport = ASGITransport(app=_get_fastapi_app())
-        async with AsyncClient(
-            transport=transport, base_url="http://seed-server"
-        ) as owned_client:
+        async with AsyncClient(transport=transport, base_url="http://seed-server") as owned_client:
             return await _persist_with_client(owned_client)
 
     return await _persist_with_client(client)

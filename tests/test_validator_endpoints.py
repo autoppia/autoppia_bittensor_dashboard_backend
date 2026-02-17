@@ -102,7 +102,6 @@ def _make_submission_payload(prefix: str = "001") -> dict:
         "prompt": "Execute integration test task.",
         "specifications": {"browser": "chrome"},
         "tests": [],
-        "relevant_data": {},
         "use_case": {"name": "Example"},
     }
 
@@ -126,9 +125,7 @@ def _make_submission_payload(prefix: str = "001") -> dict:
         "miner_uid": miner_uid,
         "validator_uid": validator_uid,
         "final_score": 0.92,
-        "test_results_matrix": [
-            [{"success": True, "extra_data": {"confidence": 0.99}}]
-        ],
+        "test_results_matrix": [[{"success": True, "extra_data": {"confidence": 0.99}}]],
         "execution_history": [{"action": "click", "selector": "#submit"}],
         "feedback": None,
         "web_agent_id": "agent",
@@ -292,26 +289,16 @@ async def test_round_submission_flow(client, db_session):
     assert body["success"] is True
     assert body["validator_round_id"] == payload["round"]["validator_round_id"]
 
-    round_row = await db_session.scalar(
-        select(RoundORM).where(
-            RoundORM.validator_round_id == payload["round"]["validator_round_id"]
-        )
-    )
+    round_row = await db_session.scalar(select(RoundORM).where(RoundORM.validator_round_id == payload["round"]["validator_round_id"]))
     assert round_row is not None
     assert round_row.validator_uid == payload["round"]["validator_info"]["uid"]
     assert round_row.data["status"] == "in_progress"
 
     round_count = await db_session.scalar(select(func.count()).select_from(RoundORM))
-    run_count = await db_session.scalar(
-        select(func.count()).select_from(AgentEvaluationRunORM)
-    )
+    run_count = await db_session.scalar(select(func.count()).select_from(AgentEvaluationRunORM))
     task_count = await db_session.scalar(select(func.count()).select_from(TaskORM))
-    solution_count = await db_session.scalar(
-        select(func.count()).select_from(TaskSolutionORM)
-    )
-    evaluation_count = await db_session.scalar(
-        select(func.count()).select_from(EvaluationResultORM)
-    )
+    solution_count = await db_session.scalar(select(func.count()).select_from(TaskSolutionORM))
+    evaluation_count = await db_session.scalar(select(func.count()).select_from(EvaluationResultORM))
     assert round_count == 1
     assert run_count == 1
     assert task_count == 1
@@ -328,14 +315,9 @@ async def test_round_submission_rejects_duplicate_round_numbers(client):
     duplicate_payload = deepcopy(base_payload)
     duplicate_payload["round"]["validator_round_id"] = "round_150_dup"
 
-    duplicate_payload["agent_evaluation_runs"][0][
-        "validator_round_id"
-    ] = "round_150_dup"
+    duplicate_payload["agent_evaluation_runs"][0]["validator_round_id"] = "round_150_dup"
     duplicate_payload["agent_evaluation_runs"][0]["agent_run_id"] = "agent_run_150_dup"
-    duplicate_payload["agent_evaluation_runs"][0]["task_ids"] = [
-        f"{task_id}_dup"
-        for task_id in duplicate_payload["agent_evaluation_runs"][0]["task_ids"]
-    ]
+    duplicate_payload["agent_evaluation_runs"][0]["task_ids"] = [f"{task_id}_dup" for task_id in duplicate_payload["agent_evaluation_runs"][0]["task_ids"]]
 
     duplicate_payload["tasks"][0]["validator_round_id"] = "round_150_dup"
     duplicate_payload["tasks"][0]["task_id"] = "task_150_dup"
@@ -358,9 +340,7 @@ async def test_round_submission_rejects_duplicate_round_numbers(client):
 
 
 @pytest.mark.asyncio
-async def test_start_round_is_idempotent_on_duplicate_round_numbers(
-    client, monkeypatch
-):
+async def test_start_round_is_idempotent_on_duplicate_round_numbers(client, monkeypatch):
     payload = _make_submission_payload("303")
     round_data = {**payload["round"]}
     start_payload = {
@@ -381,9 +361,7 @@ async def test_start_round_is_idempotent_on_duplicate_round_numbers(
         lambda: inside_round(int(round_data["round"])),
     )
 
-    first_start = await client.post(
-        "/api/v1/validator-rounds/start", json=start_payload
-    )
+    first_start = await client.post("/api/v1/validator-rounds/start", json=start_payload)
     assert first_start.status_code == 200
     existing_id = first_start.json().get("validator_round_id")
 
@@ -393,9 +371,7 @@ async def test_start_round_is_idempotent_on_duplicate_round_numbers(
         "round": duplicate_round_data,
     }
 
-    duplicate_response = await client.post(
-        "/api/v1/validator-rounds/start", json=duplicate_payload
-    )
+    duplicate_response = await client.post("/api/v1/validator-rounds/start", json=duplicate_payload)
     assert duplicate_response.status_code == 200
     dup_body = duplicate_response.json()
     assert dup_body.get("validator_round_id") == existing_id
@@ -467,44 +443,26 @@ async def test_progressive_validator_flow(client, db_session, monkeypatch):
     assert finish_response.status_code == 200
 
     # Verify persistence state
-    round_row = await db_session.scalar(
-        select(RoundORM).where(RoundORM.validator_round_id == validator_round_id)
-    )
+    round_row = await db_session.scalar(select(RoundORM).where(RoundORM.validator_round_id == validator_round_id))
     assert round_row is not None
     assert round_row.data["status"] == "finished"
     assert round_row.data["summary"]["tasks"] == 1
 
-    agent_run_row = await db_session.scalar(
-        select(AgentEvaluationRunORM).where(
-            AgentEvaluationRunORM.agent_run_id == agent_run["agent_run_id"]
-        )
-    )
+    agent_run_row = await db_session.scalar(select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == agent_run["agent_run_id"]))
     assert agent_run_row is not None
     assert agent_run_row.validator_uid == agent_run["validator_uid"]
 
-    task_row = await db_session.scalar(
-        select(TaskORM).where(TaskORM.task_id == task["task_id"])
-    )
+    task_row = await db_session.scalar(select(TaskORM).where(TaskORM.task_id == task["task_id"]))
     assert task_row is not None
     assert task_row.validator_round_id == validator_round_id
 
-    solution_row = await db_session.scalar(
-        select(TaskSolutionORM).where(
-            TaskSolutionORM.solution_id == task_solution["solution_id"]
-        )
-    )
+    solution_row = await db_session.scalar(select(TaskSolutionORM).where(TaskSolutionORM.solution_id == task_solution["solution_id"]))
     assert solution_row is not None
     assert solution_row.validator_uid == task_solution["validator_uid"]
 
-    evaluation_row = await db_session.scalar(
-        select(EvaluationResultORM).where(
-            EvaluationResultORM.evaluation_id == evaluation["evaluation_id"]
-        )
-    )
+    evaluation_row = await db_session.scalar(select(EvaluationResultORM).where(EvaluationResultORM.evaluation_id == evaluation["evaluation_id"]))
     assert evaluation_row is not None
-    assert evaluation_row.data["final_score"] == pytest.approx(
-        evaluation["final_score"]
-    )
+    assert evaluation_row.data["final_score"] == pytest.approx(evaluation["final_score"])
 
     # Idempotency: repeat progressive calls with the same payloads
     again_start = await client.post(
@@ -565,9 +523,7 @@ async def test_start_agent_run_idempotent_outside_window(client, monkeypatch):
         json={"validator_round_id": vrid, "round": round_data},
     )
     assert start_response.status_code == 200
-    tasks_response = await client.post(
-        f"/api/v1/validator-rounds/{vrid}/tasks", json={"tasks": [task]}
-    )
+    tasks_response = await client.post(f"/api/v1/validator-rounds/{vrid}/tasks", json={"tasks": [task]})
     assert tasks_response.status_code == 200
 
     # Start agent run inside window
@@ -701,7 +657,7 @@ async def test_add_evaluation_partial_upsert_completes(client, db_session, monke
     assert first.status_code == 200
 
     # Delete only the task_solution row to simulate a partial crash
-    deleted = await db_session.execute(
+    await db_session.execute(
         TaskSolutionORM.__table__.delete().where(TaskSolutionORM.solution_id == task_solution["solution_id"])  # type: ignore[attr-defined]
     )
     # Remove the solution (harder case): now re-post should recreate solution, evaluation, and result
@@ -717,17 +673,9 @@ async def test_add_evaluation_partial_upsert_completes(client, db_session, monke
     assert second.status_code == 200
 
     # Verify rows exist again
-    sol_row = await db_session.scalar(
-        select(TaskSolutionORM).where(
-            TaskSolutionORM.solution_id == task_solution["solution_id"]
-        )
-    )
+    sol_row = await db_session.scalar(select(TaskSolutionORM).where(TaskSolutionORM.solution_id == task_solution["solution_id"]))
     assert sol_row is not None
-    eval_row = await db_session.scalar(
-        select(EvaluationResultORM).where(
-            EvaluationResultORM.evaluation_id == evaluation["evaluation_id"]
-        )
-    )
+    eval_row = await db_session.scalar(select(EvaluationResultORM).where(EvaluationResultORM.evaluation_id == evaluation["evaluation_id"]))
     assert eval_row is not None
 
 
@@ -782,9 +730,7 @@ async def test_finish_round_idempotent_repeat(client, monkeypatch, db_session):
         },
     )
     assert second_finish.status_code == 200
-    round_row = await db_session.scalar(
-        select(RoundORM).where(RoundORM.validator_round_id == vrid)
-    )
+    round_row = await db_session.scalar(select(RoundORM).where(RoundORM.validator_round_id == vrid))
     assert round_row is not None
     assert float(round_row.ended_at) == pytest.approx(9999.0)
 
@@ -813,14 +759,7 @@ async def test_rounds_endpoint_returns_data(client, monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert isinstance(body, list)
-    assert any(
-        any(
-            validator_round["validatorRoundId"]
-            == payload["round"]["validator_round_id"]
-            for validator_round in item.get("validatorRounds", [])
-        )
-        for item in body
-    )
+    assert any(any(validator_round["validatorRoundId"] == payload["round"]["validator_round_id"] for validator_round in item.get("validatorRounds", [])) for item in body)
 
 
 @pytest.mark.asyncio
@@ -839,11 +778,7 @@ async def test_round_detail_and_agent_run_endpoints(client):
     round_payload = detail_body["data"]["round"]
     assert round_payload["round"] == payload["round"]["round"]
     validator_entry = next(
-        (
-            entry
-            for entry in round_payload.get("validatorRounds", [])
-            if entry["validatorRoundId"] == validator_round_id
-        ),
+        (entry for entry in round_payload.get("validatorRounds", []) if entry["validatorRoundId"] == validator_round_id),
         None,
     )
     assert validator_entry is not None
@@ -883,10 +818,7 @@ async def test_round_detail_accepts_numeric_identifier(client):
     assert detail_body["success"] is True
     round_payload = detail_body["data"]["round"]
     assert round_payload["round"] == numeric_identifier
-    assert any(
-        entry["validatorRoundId"] == validator_round_id
-        for entry in round_payload.get("validatorRounds", [])
-    )
+    assert any(entry["validatorRoundId"] == validator_round_id for entry in round_payload.get("validatorRounds", []))
 
 
 @pytest.mark.asyncio
@@ -972,10 +904,7 @@ async def test_evaluations_endpoints(client):
     assert list_response.status_code == 200
     evaluations = list_response.json()
     assert evaluations["success"] is True
-    assert any(
-        item["evaluationId"] == evaluation_id
-        for item in evaluations["data"]["evaluations"]
-    )
+    assert any(item["evaluationId"] == evaluation_id for item in evaluations["data"]["evaluations"])
 
     detail_response = await client.get(f"/api/v1/evaluations/{evaluation_id}")
     assert detail_response.status_code == 200
@@ -1166,32 +1095,24 @@ async def test_overview_endpoints(client):
     assert "timeRange" in leaderboard["data"]
 
     # Test with "7D" (legacy format - still supported)
-    leaderboard_7d_response = await client.get(
-        "/api/v1/overview/leaderboard", params={"timeRange": "7D"}
-    )
+    leaderboard_7d_response = await client.get("/api/v1/overview/leaderboard", params={"timeRange": "7D"})
     assert leaderboard_7d_response.status_code == 200
     leaderboard_7d = leaderboard_7d_response.json()
     assert leaderboard_7d["success"] is True
     assert len(leaderboard_7d["data"]["leaderboard"]) <= 7
 
     # Test with "7R" (new rounds format)
-    leaderboard_7r_response = await client.get(
-        "/api/v1/overview/leaderboard", params={"timeRange": "7R"}
-    )
+    leaderboard_7r_response = await client.get("/api/v1/overview/leaderboard", params={"timeRange": "7R"})
     assert leaderboard_7r_response.status_code == 200
     leaderboard_7r = leaderboard_7r_response.json()
     assert leaderboard_7r["success"] is True
     assert len(leaderboard_7r["data"]["leaderboard"]) <= 7
 
-    leaderboard_all_response = await client.get(
-        "/api/v1/overview/leaderboard", params={"timeRange": "all"}
-    )
+    leaderboard_all_response = await client.get("/api/v1/overview/leaderboard", params={"timeRange": "all"})
     assert leaderboard_all_response.status_code == 200
     leaderboard_all = leaderboard_all_response.json()
     assert leaderboard_all["success"] is True
-    assert len(leaderboard_all["data"]["leaderboard"]) >= len(
-        leaderboard_7d["data"]["leaderboard"]
-    )
+    assert len(leaderboard_all["data"]["leaderboard"]) >= len(leaderboard_7d["data"]["leaderboard"])
 
     filter_response = await client.get("/api/v1/overview/validators/filter")
     assert filter_response.status_code == 200
@@ -1204,15 +1125,11 @@ async def test_overview_endpoints(client):
 async def test_overview_metrics_uses_previous_round_when_current_active(client):
     # Seed two completed rounds to provide historical context.
     payload_round_1 = _make_submission_payload("201")
-    response_round_1 = await submit_round_via_validator_endpoints(
-        client, payload_round_1
-    )
+    response_round_1 = await submit_round_via_validator_endpoints(client, payload_round_1)
     assert response_round_1.status_code == 200
 
     payload_round_2 = _make_submission_payload("202")
-    response_round_2 = await submit_round_via_validator_endpoints(
-        client, payload_round_2
-    )
+    response_round_2 = await submit_round_via_validator_endpoints(client, payload_round_2)
     assert response_round_2.status_code == 200
 
     # Seed a new active round by omitting ended_at so it remains running.
@@ -1220,9 +1137,7 @@ async def test_overview_metrics_uses_previous_round_when_current_active(client):
     payload_round_3["round"]["ended_at"] = None
     payload_round_3["round"]["status"] = "active"
     payload_round_3["agent_evaluation_runs"][0]["ended_at"] = None
-    response_round_3 = await submit_round_via_validator_endpoints(
-        client, payload_round_3
-    )
+    response_round_3 = await submit_round_via_validator_endpoints(client, payload_round_3)
     assert response_round_3.status_code == 200
 
     metrics_response = await client.get("/api/v1/overview")

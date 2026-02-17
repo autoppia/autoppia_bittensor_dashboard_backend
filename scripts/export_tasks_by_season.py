@@ -50,15 +50,12 @@ def _task_to_benchmark_payload(task: TaskORM) -> Dict[str, Any]:
         "original_prompt": task.prompt,
         "specifications": dict(task.specifications or {}),
         "tests": list(task.tests or []),
-        "relevant_data": dict(task.relevant_data or {}),
         "use_case": dict(task.use_case or {}),
         "should_record": False,
     }
 
 
-async def _fetch_tasks_by_season(
-    session: AsyncSession, season: int
-) -> Iterable[TaskORM]:
+async def _fetch_tasks_by_season(session: AsyncSession, season: int) -> Iterable[TaskORM]:
     stmt = (
         select(TaskORM)
         .join(

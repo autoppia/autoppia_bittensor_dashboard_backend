@@ -305,7 +305,6 @@ class TaskORM(TimestampMixin, Base):
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     specifications: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     tests: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
-    relevant_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     use_case: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="tasks")
@@ -325,7 +324,6 @@ class TaskORM(TimestampMixin, Base):
             "prompt": self.prompt,
             "specifications": dict(self.specifications or {}),
             "tests": list(self.tests or []),
-            "relevant_data": dict(self.relevant_data or {}),
             "use_case": dict(self.use_case or {}),
         }
 

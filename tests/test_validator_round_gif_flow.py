@@ -24,9 +24,7 @@ ICON48_GIF_BYTES = base64.b64decode("".join(ICON48_GIF_BASE64.split()))
 @pytest.mark.asyncio
 async def test_validator_round_flow_with_gif_upload(client, db_session, monkeypatch):
     original_prefix = settings.AWS_S3_GIF_PREFIX
-    prefixed_value = (
-        "tests" if not original_prefix else f"tests/{original_prefix.strip('/')}"
-    )
+    prefixed_value = "tests" if not original_prefix else f"tests/{original_prefix.strip('/')}"
     settings.AWS_S3_GIF_PREFIX = prefixed_value
 
     try:
@@ -63,7 +61,6 @@ async def test_validator_round_flow_with_gif_upload(client, db_session, monkeypa
                     "prompt": "Validate GIF upload workflow.",
                     "specifications": {},
                     "tests": [],
-                    "relevant_data": {},
                     "use_case": {"name": "GifFlow"},
                 }
             ],
@@ -107,9 +104,7 @@ async def test_validator_round_flow_with_gif_upload(client, db_session, monkeypa
             lambda: inside_round(777),
         )
 
-        start_response = await client.post(
-            "/api/v1/validator-rounds/start", json=start_payload
-        )
+        start_response = await client.post("/api/v1/validator-rounds/start", json=start_payload)
         assert start_response.status_code == 200
 
         tasks_response = await client.post(
@@ -158,19 +153,14 @@ async def test_validator_round_flow_with_gif_upload(client, db_session, monkeypa
         }
 
         evaluation_response = await client.post(
-            f"/api/v1/validator-rounds/{base_payload['round']['validator_round_id']}"
-            f"/agent-runs/{base_payload['agent_run']['agent_run_id']}/evaluations",
+            f"/api/v1/validator-rounds/{base_payload['round']['validator_round_id']}/agent-runs/{base_payload['agent_run']['agent_run_id']}/evaluations",
             json=evaluation_payload,
         )
         assert evaluation_response.status_code == 200
 
         evaluation_id = evaluation_payload["evaluation_result"]["evaluation_id"]
 
-        stored_before = await db_session.scalar(
-            select(EvaluationResultORM).where(
-                EvaluationResultORM.evaluation_id == evaluation_id
-            )
-        )
+        stored_before = await db_session.scalar(select(EvaluationResultORM).where(EvaluationResultORM.evaluation_id == evaluation_id))
         assert stored_before is not None
         assert stored_before.gif_recording is None
 
@@ -207,16 +197,9 @@ async def test_validator_round_flow_with_gif_upload(client, db_session, monkeypa
         assert "tests" in gif_url
 
         async with AsyncSessionLocal() as verify_session:
-            stored_after = await verify_session.scalar(
-                select(EvaluationResultORM).where(
-                    EvaluationResultORM.evaluation_id == evaluation_id
-                )
-            )
+            stored_after = await verify_session.scalar(select(EvaluationResultORM).where(EvaluationResultORM.evaluation_id == evaluation_id))
             assert stored_after is not None
             assert stored_after.gif_recording == gif_url
-            assert (
-                stored_after.validator_round_id
-                == base_payload["round"]["validator_round_id"]
-            )
+            assert stored_after.validator_round_id == base_payload["round"]["validator_round_id"]
     finally:
         settings.AWS_S3_GIF_PREFIX = original_prefix

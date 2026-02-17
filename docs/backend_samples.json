@@ -451,7 +451,6 @@
                           "browser": "chrome"
                         },
                         "tests": [],
-                        "relevant_data": {},
                         "use_case": {
                           "name": "Example"
                         }

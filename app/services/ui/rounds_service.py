@@ -3275,7 +3275,6 @@ class RoundsService:
                         prompt=task_row.prompt or "",
                         specifications=task_row.specifications or {},
                         tests=[],
-                        relevant_data=task_row.relevant_data or {},
                         use_case=task_row.use_case or {},
                     )
                 )
