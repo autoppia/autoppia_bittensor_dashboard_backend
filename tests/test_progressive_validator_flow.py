@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from app.db.models import RoundORM, TaskORM, TaskSolutionORM, EvaluationResultORM
+from app.db.models import RoundORM
 
 
 @pytest.mark.asyncio
@@ -67,12 +67,8 @@ async def test_progressive_validator_flow(client, db_session, monkeypatch):
         "round": base_payload["round"],
     }
     # Patch chain to be inside this test round window (301)
-    monkeypatch.setattr(
-        "app.api.validator.validator_round.get_current_block", lambda: inside_round(301)
-    )
-    start_response = await client.post(
-        "/api/v1/validator-rounds/start", json=start_payload
-    )
+    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: inside_round(301))
+    start_response = await client.post("/api/v1/validator-rounds/start", json=start_payload)
     assert start_response.status_code == 200
 
     # Create tasks and results incrementally
@@ -87,7 +83,6 @@ async def test_progressive_validator_flow(client, db_session, monkeypatch):
             "prompt": f"Progressive task {idx}",
             "specifications": {},
             "tests": [],
-            "relevant_data": {},
             "use_case": {"name": "Progressive"},
         }
 
@@ -160,10 +155,6 @@ async def test_progressive_validator_flow(client, db_session, monkeypatch):
     )
     assert finish_response.status_code == 200
 
-    round_row = await db_session.scalar(
-        select(RoundORM).where(
-            RoundORM.validator_round_id == base_payload["round"]["validator_round_id"]
-        )
-    )
+    round_row = await db_session.scalar(select(RoundORM).where(RoundORM.validator_round_id == base_payload["round"]["validator_round_id"]))
     assert round_row is not None
     assert round_row.data["status"] == "finished"

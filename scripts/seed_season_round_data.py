@@ -2,6 +2,7 @@
 Script para insertar datos de prueba de Season 1, Round 1 usando los endpoints reales.
 Este script NO limpia la base de datos, solo añade los datos.
 """
+
 import asyncio
 import os
 import sys
@@ -11,57 +12,57 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from httpx import AsyncClient, ASGITransport
-from app.main import app
-from app.config import settings
-from app.services.round_calc import compute_season_number
+from httpx import AsyncClient, ASGITransport  # noqa: E402
+from app.main import app  # noqa: E402
+from app.config import settings  # noqa: E402
+from app.services.round_calc import compute_season_number  # noqa: E402
 
 
 async def seed_data():
     """Seed Season 1, Round 1 data via endpoints."""
-    
+
     # Use real database
     os.environ["DATABASE_URL"] = "postgresql+asyncpg://autoppia_user:REMOVED_DEV_DB_PASSWORD@127.0.0.1:5432/autoppia_dev"
-    
+
     # Mock current block to be at start of Season 1, Round 1
     start_block = int(settings.DZ_STARTING_BLOCK)  # 4493500
-    
+
     # Verify season calculation
     expected_season = compute_season_number(start_block)
     print(f"📊 Calculated season from start_block {start_block}: {expected_season}")
-    
+
     validator_round_id = "validator_round_1_1_abc123def456"
     validator_uid = 0
     validator_hotkey = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty"
-    
+
     # Start app
     await app.router.startup()
-    
+
     try:
         # Mock get_current_block to return start_block
         import app.api.validator.validator_round as vmod
         import app.services.chain_state as chain_state_mod
-        
+
         original_get_block = getattr(vmod, "get_current_block", None)
         original_chain_get_block = getattr(chain_state_mod, "get_current_block", None)
-        
+
         def mock_get_current_block():
             return start_block
-        
+
         vmod.get_current_block = mock_get_current_block
         chain_state_mod.get_current_block = mock_get_current_block
-        
+
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://testserver") as client:
             # Mock validator auth - bypass authentication
             from app.main import app as app_instance
             from app.services.validator.validator_auth import require_validator_auth
-            
+
             async def mock_require_validator_auth():
                 return None
-            
+
             app_instance.dependency_overrides[require_validator_auth] = mock_require_validator_auth
-            
+
             try:
                 # 1. Start Round - Season 1, Round 1
                 print(f"\n🚀 Starting Round: Season {expected_season}, Round 1")
@@ -102,61 +103,62 @@ async def seed_data():
                         "config": {"test": True},
                     },
                 }
-                
+
                 headers = {
                     "x-validator-hotkey": validator_hotkey,
                     "x-validator-signature": "test_signature_for_testing_only",
                 }
-                
+
                 start_response = await client.post(
                     "/api/v1/validator-rounds/start",
                     json=start_round_payload,
                     headers=headers,
                     params={"force": True},
                 )
-                
+
                 if start_response.status_code != 200:
                     print(f"❌ Error starting round: {start_response.status_code}")
                     print(start_response.text)
                     return
-                
+
                 print(f"✅ Round started: {start_response.json()}")
-                
+
                 # 2. Send 10 tasks (only for round 1 of season)
-                print(f"\n📋 Adding 10 tasks...")
+                print("\n📋 Adding 10 tasks...")
                 tasks = []
                 for i in range(1, 11):
                     task_id = f"task_{i}_s1_abc123"
-                    tasks.append({
-                        "task_id": task_id,
-                        "validator_round_id": validator_round_id,
-                        "is_web_real": False,
-                        "web_project_id": f"project_{i % 5}",
-                        "web_version": "v1",
-                        "url": f"https://demo.autoppia.ai/project_{i % 5}",
-                        "prompt": f"Task {i} prompt: Execute action {i}",
-                        "specifications": {"action": f"action_{i}"},
-                        "tests": [],
-                        "relevant_data": {},
-                        "use_case": {"name": f"use_case_{i}"},
-                    })
-                
+                    tasks.append(
+                        {
+                            "task_id": task_id,
+                            "validator_round_id": validator_round_id,
+                            "is_web_real": False,
+                            "web_project_id": f"project_{i % 5}",
+                            "web_version": "v1",
+                            "url": f"https://demo.autoppia.ai/project_{i % 5}",
+                            "prompt": f"Task {i} prompt: Execute action {i}",
+                            "specifications": {"action": f"action_{i}"},
+                            "tests": [],
+                            "use_case": {"name": f"use_case_{i}"},
+                        }
+                    )
+
                 tasks_response = await client.post(
                     f"/api/v1/validator-rounds/{validator_round_id}/tasks",
                     json={"tasks": tasks},
                     headers=headers,
                     params={"force": True},
                 )
-                
+
                 if tasks_response.status_code != 200:
                     print(f"❌ Error adding tasks: {tasks_response.status_code}")
                     print(tasks_response.text)
                     return
-                
+
                 print(f"✅ Tasks added: {tasks_response.json()}")
-                
+
                 # 3. Add miners via start_agent_run (simulating handshake)
-                print(f"\n👥 Adding 3 miners...")
+                print("\n👥 Adding 3 miners...")
                 miners = [
                     {
                         "uid": 10,
@@ -180,7 +182,7 @@ async def seed_data():
                         "github_url": "https://github.com/miner/gamma/commit/ghi789",
                     },
                 ]
-                
+
                 for miner in miners:
                     agent_run_id = f"agent_run_{miner['uid']}_{validator_round_id}"
                     start_agent_run_payload = {
@@ -212,32 +214,32 @@ async def seed_data():
                             "is_sota": False,
                         },
                     }
-                    
+
                     agent_run_response = await client.post(
                         f"/api/v1/validator-rounds/{validator_round_id}/agent-runs/start",
                         json=start_agent_run_payload,
                         headers=headers,
                         params={"force": True},
                     )
-                    
+
                     if agent_run_response.status_code != 200:
                         print(f"❌ Error adding miner {miner['agent_name']}: {agent_run_response.status_code}")
                         print(agent_run_response.text)
                         return
                     else:
                         print(f"✅ Miner {miner['agent_name']} added")
-                
+
                 # Add task solutions for each miner
-                print(f"\n📝 Adding task solutions...")
+                print("\n📝 Adding task solutions...")
                 task_ids = [f"task_{i}_s1_abc123" for i in range(1, 11)]
-                
+
                 for miner in miners:
                     agent_run_id = f"agent_run_{miner['uid']}_{validator_round_id}"
                     # Each miner solves 5 tasks (tasks 1-5)
                     for task_idx in range(5):
                         task_id = task_ids[task_idx]
                         solution_id = f"solution_{miner['uid']}_{task_id}"
-                        
+
                         add_evaluation_payload = {
                             "task": {
                                 "task_id": task_id,
@@ -249,7 +251,6 @@ async def seed_data():
                                 "prompt": f"Task {task_idx + 1} prompt: Execute action {task_idx + 1}",
                                 "specifications": {"action": f"action_{task_idx + 1}"},
                                 "tests": [],
-                                "relevant_data": {},
                                 "use_case": {"name": f"use_case_{task_idx + 1}"},
                             },
                             "task_solution": {
@@ -292,23 +293,23 @@ async def seed_data():
                                 "meta": {},
                             },
                         }
-                        
+
                         eval_response = await client.post(
                             f"/api/v1/validator-rounds/{validator_round_id}/agent-runs/{agent_run_id}/evaluations",
                             json=add_evaluation_payload,
                             headers=headers,
                             params={"force": True},
                         )
-                        
+
                         if eval_response.status_code == 200:
                             print(f"  ✅ Solution for {miner['agent_name']} - Task {task_idx + 1}")
                         else:
                             print(f"  ❌ Error adding solution for {miner['agent_name']} - Task {task_idx + 1}: {eval_response.status_code}")
                             print(f"     {eval_response.text}")
-                
+
                 # Finish the round to create summary records with local and post-consensus evaluation
-                print(f"\n🏁 Finishing round to create summary records...")
-                
+                print("\n🏁 Finishing round to create summary records...")
+
                 # Create local_evaluation (from this validator's perspective)
                 local_evaluation = {
                     "miners": [
@@ -344,7 +345,7 @@ async def seed_data():
                         },
                     ]
                 }
-                
+
                 # Create post_consensus_evaluation (aggregated from all validators)
                 # Simula que hay 3 validators y el consensus da estos resultados
                 post_consensus_evaluation = {
@@ -384,36 +385,36 @@ async def seed_data():
                         },
                     ]
                 }
-                
+
                 finish_payload = {
                     "status": "finished",
                     "ended_at": 1700000300.0,
                     "local_evaluation": local_evaluation,
                     "post_consensus_evaluation": post_consensus_evaluation,
                 }
-                
+
                 finish_response = await client.post(
                     f"/api/v1/validator-rounds/{validator_round_id}/finish",
                     json=finish_payload,
                     headers=headers,
                     params={"force": True},
                 )
-                
+
                 if finish_response.status_code == 200:
                     print(f"✅ Round finished: {finish_response.json()}")
                 else:
                     print(f"❌ Error finishing round: {finish_response.status_code}")
                     print(f"   {finish_response.text}")
-                
-                print(f"\n✅ All data seeded successfully!")
+
+                print("\n✅ All data seeded successfully!")
                 print(f"   - Round ID: {validator_round_id}")
                 print(f"   - Season: {expected_season}, Round: 1")
-                print(f"   - 10 tasks")
-                print(f"   - 3 miners")
-                print(f"   - 15 task solutions (5 per miner)")
-                print(f"   - 15 evaluations")
-                print(f"   - 3 summary records")
-                
+                print("   - 10 tasks")
+                print("   - 3 miners")
+                print("   - 15 task solutions (5 per miner)")
+                print("   - 15 evaluations")
+                print("   - 3 summary records")
+
             finally:
                 # Clean up dependency override
                 app_instance.dependency_overrides.pop(require_validator_auth, None)
@@ -422,7 +423,7 @@ async def seed_data():
                     vmod.get_current_block = original_get_block
                 if original_chain_get_block:
                     chain_state_mod.get_current_block = original_chain_get_block
-    
+
     finally:
         await app.router.shutdown()
 

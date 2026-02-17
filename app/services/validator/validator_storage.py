@@ -1455,7 +1455,6 @@ class ValidatorRoundPersistenceService:
             "prompt": model.prompt,
             "specifications": _non_empty_dict(model.specifications),
             "tests": [test.model_dump(mode="json", exclude_none=True) for test in model.tests],
-            "relevant_data": _non_empty_dict(model.relevant_data),
             "use_case": (model.use_case if isinstance(model.use_case, dict) else _optional_dump(model.use_case)),
         }
 

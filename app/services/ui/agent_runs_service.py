@@ -1801,11 +1801,7 @@ class AgentRunsService:
                     task = task_by_id.get(task_id)
                     if not task:
                         continue
-                    website = None
-                    if isinstance(getattr(task, "relevant_data", None), dict):
-                        website = task.relevant_data.get("website")
-                    if not website:
-                        website = getattr(task, "url", None)
+                    website = getattr(task, "url", None)
                     hosts.add(_map_website_port_to_name(website))
                 websites_count = len(hosts)
         except Exception:  # noqa: BLE001
@@ -1975,9 +1971,7 @@ class AgentRunsService:
                     )
                 )
 
-        website = task.relevant_data.get("website") if isinstance(task.relevant_data, dict) else None
-        if not website:
-            website = task.url
+        website = task.url
 
         # Normalize website to friendly name
         website = _map_website_port_to_name(website)
