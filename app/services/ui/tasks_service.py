@@ -261,8 +261,10 @@ class TasksService:
                     defer(EvaluationORM.gif_recording),
                     defer(EvaluationORM.meta),
                 )
-                .selectinload(EvaluationORM.execution_history_record)
-                .selectinload(EvaluationORM.llm_usage),
+                .options(
+                    selectinload(EvaluationORM.execution_history_record),
+                    selectinload(EvaluationORM.llm_usage),
+                ),
             )
             .order_by(TaskORM.id.desc())
         )
@@ -735,8 +737,10 @@ class TasksService:
                     defer(EvaluationORM.gif_recording),
                     defer(EvaluationORM.meta),
                 )
-                .selectinload(EvaluationORM.execution_history_record)
-                .selectinload(EvaluationORM.llm_usage),
+                .options(
+                    selectinload(EvaluationORM.execution_history_record),
+                    selectinload(EvaluationORM.llm_usage),
+                ),
             )
             .where(TaskORM.task_id == task_id)
         )
