@@ -689,7 +689,7 @@ class RoundsService:
                     RoundORM.validator_snapshot  # 1:1 relationship (singular)
                 ),
                 selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(AgentEvaluationRunORM.evaluations).selectinload(EvaluationORM.execution_history_record).selectinload(EvaluationORM.llm_usage),
+                selectinload(AgentEvaluationRunORM.evaluations).options(selectinload(EvaluationORM.execution_history_record), selectinload(EvaluationORM.llm_usage)),
             )
 
         result = await self.session.scalars(stmt)
