@@ -154,7 +154,7 @@ class Settings(BaseSettings):
     AWS_S3_BUCKET: str = _env_var("AWS_S3_BUCKET", "")
     AWS_S3_ENDPOINT_URL: Optional[str] = os.getenv("AWS_S3_ENDPOINT_URL")
     AWS_S3_GIF_PREFIX: str = os.getenv("AWS_S3_GIF_PREFIX", "gifs")
-    AWS_S3_TASK_LOG_PREFIX: str = _env_var("AWS_S3_TASK_LOG_PREFIX", "task-logs")
+    AWS_S3_TASK_LOG_PREFIX: str = _env_var("AWS_S3_TASK_LOG_PREFIX", "task-solutions-logs")
     AWS_S3_PUBLIC_BASE_URL: Optional[str] = _env_var("AWS_S3_PUBLIC_BASE_URL", "")
 
     # Authentication
