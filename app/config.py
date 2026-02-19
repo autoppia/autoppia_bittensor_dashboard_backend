@@ -99,19 +99,20 @@ class Settings(BaseSettings):
     # Reads from .env with environment suffix:
     # ROUND_SIZE_EPOCHS_LOCAL, ROUND_SIZE_EPOCHS_DEVELOPMENT, etc.
     #
-    # TESTING mode: Use same ROUND_SIZE_EPOCHS as validator (0.347 for testing, 3.0 for production)
-    # This ensures round_number calculation matches between backend and validator
-    # When TESTING=true: ROUND_SIZE_EPOCHS=0.347 (matches validator testing mode)
-    # When TESTING=false: ROUND_SIZE_EPOCHS=3.0 (matches validator production mode)
+    # TESTING mode: align defaults with validator/config.py
+    # TESTING=true  -> ROUND=0.5,  MIN_START=7579508, SEASON=2
+    # TESTING=false -> ROUND=10.0, MIN_START=7579508, SEASON=280
     if TESTING_MODE:
-        # Testing mode: Short rounds (0.5 epochs ≈ 36 minutes) - matches validator TESTING=true
+        # Validator TESTING defaults
         ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.5"))
+        MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7579508"))
+        SEASON_SIZE_EPOCHS: float = float(_env_var("SEASON_SIZE_EPOCHS", "2.0"))
     else:
-        # Production mode: Long rounds (~4.8 hours) - matches validator TESTING=false
-        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "3.0"))
+        # Validator production defaults
+        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "10.0"))
+        MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7579508"))
+        SEASON_SIZE_EPOCHS: float = float(_env_var("SEASON_SIZE_EPOCHS", "280.0"))
     BLOCKS_PER_EPOCH: int = int(_env_var("BLOCKS_PER_EPOCH", "360"))
-    MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7478200"))
-    SEASON_SIZE_EPOCHS: float = float(_env_var("SEASON_SIZE_EPOCHS", "2.0"))  # Testing: 2 epochs
 
     # Chain state
     CHAIN_BLOCK_CACHE_TTL_SECONDS: int = 15 * 60
