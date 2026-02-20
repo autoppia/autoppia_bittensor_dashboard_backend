@@ -380,6 +380,7 @@ class OverviewService:
             and current_season == metrics_season
             and current_round_in_season is not None
             and current_round_in_season <= metrics_round_in_season
+            and getattr(metrics_round_model, "ended_at", None) is not None
         ):
             logger.warning(
                 "Current round-in-season (%s) <= latest finished (%s) for season %s; correcting to %s",

@@ -100,17 +100,17 @@ class Settings(BaseSettings):
     # ROUND_SIZE_EPOCHS_LOCAL, ROUND_SIZE_EPOCHS_DEVELOPMENT, etc.
     #
     # TESTING mode: align defaults with validator/config.py
-    # TESTING=true  -> ROUND=0.5,  MIN_START=7579508, SEASON=2
-    # TESTING=false -> ROUND=10.0, MIN_START=7579508, SEASON=280
+    # TESTING=true  -> ROUND=0.5,  MIN_START=7586110, SEASON=2
+    # TESTING=false -> ROUND=4.0, MIN_START=7586110, SEASON=280
     if TESTING_MODE:
         # Validator TESTING defaults
         ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.5"))
-        MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7579508"))
+        MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7586110"))
         SEASON_SIZE_EPOCHS: float = float(_env_var("SEASON_SIZE_EPOCHS", "2.0"))
     else:
         # Validator production defaults
-        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "10.0"))
-        MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7579508"))
+        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "4.0"))
+        MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7586110"))
         SEASON_SIZE_EPOCHS: float = float(_env_var("SEASON_SIZE_EPOCHS", "280.0"))
     BLOCKS_PER_EPOCH: int = int(_env_var("BLOCKS_PER_EPOCH", "360"))
 

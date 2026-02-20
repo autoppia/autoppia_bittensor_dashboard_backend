@@ -984,7 +984,7 @@ class AgentsService:
                     ValidatorRoundSummaryORM.validator_round_id == RoundORM.validator_round_id,
                 )
             )
-            .where(RoundORM.round_number == round_number)
+            .where(RoundORM.round_number_in_season == round_number)
         )
         scores_result = await self.session.execute(scores_stmt)
         scores_by_miner: Dict[int, float] = {row.miner_uid: float(row.post_consensus_avg_reward) if row.post_consensus_avg_reward else 0.0 for row in scores_result.all()}
@@ -1002,7 +1002,7 @@ class AgentsService:
                     ValidatorRoundValidatorORM.validator_round_id == RoundORM.validator_round_id,
                 )
             )
-            .where(RoundORM.round_number == round_number)
+            .where(RoundORM.round_number_in_season == round_number)
         )
         validators_result = await self.session.execute(validators_stmt)
         validator_names: Dict[int, Optional[str]] = {}
@@ -1188,8 +1188,8 @@ class AgentsService:
                     agent_id=agent_id,
                     uid=context.run.miner_uid,
                     miner=miner_info,
-                    is_sota=context.run.is_sota,
-                    version=context.run.version,
+                    is_sota=bool(getattr(context.run, "is_sota", False)),
+                    version=getattr(context.run, "version", None),
                 )
                 aggregates[agent_id] = aggregate
 
@@ -1227,8 +1227,8 @@ class AgentsService:
             rank_value: Optional[int] = None
             if context.run.agent_run_id in rankings_by_run_id:
                 rank_value = rankings_by_run_id[context.run.agent_run_id]
-            elif context.run.rank is not None:
-                rank_value = context.run.rank
+            elif getattr(context.run, "rank", None) is not None:
+                rank_value = getattr(context.run, "rank", None)
             elif context.round.winners:
                 for winner in context.round.winners:
                     winner_uid = winner.get("miner_uid")
@@ -1243,7 +1243,7 @@ class AgentsService:
 
             if rank_value is not None and rank_value > 0:
                 aggregate.ranks.append(rank_value)
-                if context.run.rank is None or context.run.rank != rank_value:
+                if getattr(context.run, "rank", None) is None or getattr(context.run, "rank", None) != rank_value:
                     context.run.rank = rank_value
                 if round_identifier:
                     aggregate.round_ranks.setdefault(round_identifier, []).append(rank_value)
@@ -1256,7 +1256,7 @@ class AgentsService:
                 aggregate.latest_rank = rank_value
                 aggregate.latest_rank_time = started
 
-            if context.run.is_sota:
+            if bool(getattr(context.run, "is_sota", False)):
                 bench_key = self._benchmark_key(context)
                 miner_details = getattr(context.run, "miner_info", None)
                 bench_name = miner_details.agent_name if miner_details and miner_details.agent_name else context.run.agent_run_id
@@ -1674,7 +1674,7 @@ class AgentsService:
         # Query post_consensus_avg_reward from validator_round_summary_miners for this miner
         stmt = (
             select(
-                RoundORM.round_number,
+                RoundORM.round_number_in_season.label("round_number"),
                 ValidatorRoundSummaryORM.post_consensus_avg_reward,
                 ValidatorRoundSummaryORM.post_consensus_rank,
                 RoundORM.ended_at,
@@ -1686,10 +1686,10 @@ class AgentsService:
                 )
             )
             .where(
-                RoundORM.round_number.in_(round_ids),
+                RoundORM.round_number_in_season.in_(round_ids),
                 ValidatorRoundSummaryORM.miner_uid == aggregate.uid,
             )
-            .order_by(RoundORM.round_number)
+            .order_by(RoundORM.round_number_in_season)
         )
 
         result = await self.session.execute(stmt)
@@ -1698,7 +1698,7 @@ class AgentsService:
         # Get top scores per round (max post_consensus_avg_reward for each round)
         top_scores_stmt = (
             select(
-                RoundORM.round_number,
+                RoundORM.round_number_in_season.label("round_number"),
                 func.max(ValidatorRoundSummaryORM.post_consensus_avg_reward).label("top_score"),
             )
             .select_from(
@@ -1707,8 +1707,8 @@ class AgentsService:
                     RoundORM.validator_round_id == ValidatorRoundSummaryORM.validator_round_id,
                 )
             )
-            .where(RoundORM.round_number.in_(round_ids))
-            .group_by(RoundORM.round_number)
+            .where(RoundORM.round_number_in_season.in_(round_ids))
+            .group_by(RoundORM.round_number_in_season)
         )
         top_scores_result = await self.session.execute(top_scores_stmt)
         top_scores_by_round = {row.round_number: float(row.top_score) for row in top_scores_result.all()}
