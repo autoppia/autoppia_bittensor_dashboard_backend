@@ -377,6 +377,52 @@ def _round_number_from_model(round_model: ValidatorRound, fallback_identifier: s
     return parsed or None
 
 
+def _round_number_for_display(
+    round_number: int,
+    *,
+    season_number: Optional[int] = None,
+    round_in_season: Optional[int] = None,
+) -> int:
+    """
+    Human-facing round number (round inside season), avoiding season*10000 values.
+    """
+    if round_in_season is not None:
+        try:
+            value = int(round_in_season)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+    if season_number is not None and round_number >= 10000:
+        candidate = round_number % 10000
+        if candidate > 0:
+            return candidate
+    return int(round_number)
+
+
+def _as_positive_int(value: Any) -> Optional[int]:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _latest_round_internal_id(
+    current_round_payload: Optional[Dict[str, Any]],
+    fallback_round_number: int,
+) -> int:
+    """
+    Return the internal round identifier used for ordering/comparisons.
+
+    Prefer `id` (stable internal identifier) and only fallback to `round` for
+    legacy payloads that don't include `id`.
+    """
+    if not current_round_payload:
+        return fallback_round_number
+    return _as_positive_int(current_round_payload.get("id")) or _as_positive_int(current_round_payload.get("round")) or fallback_round_number
+
+
 def _aggregate_status(statuses: List[str]) -> str:
     normalized = [status.lower() for status in statuses if status]
     if not normalized:
@@ -568,7 +614,7 @@ class RoundsService:
         # Create unique ID for compatibility
         unique_id = season * 10000 + round_in_season
         current = await self.get_current_round_overview()
-        latest_round_number = current.get("round") if current else unique_id
+        latest_round_number = _latest_round_internal_id(current, unique_id)
 
         overview = self._build_round_day_overview_from_records(
             unique_id,
@@ -590,7 +636,7 @@ class RoundsService:
         aggregated = await self._fetch_aggregated_round(round_identifier)
 
         current = await self.get_current_round_overview()
-        latest_round_number = current["round"] if current else aggregated.round_number
+        latest_round_number = _latest_round_internal_id(current, aggregated.round_number)
         records = [entry.record for entry in aggregated.validator_rounds]
         overview = self._build_round_day_overview_from_records(
             aggregated.round_number,
@@ -619,8 +665,10 @@ class RoundsService:
 
         overview["validatorRounds"] = basic_validator_rounds
         overview["id"] = aggregated.round_number
-        overview["round"] = aggregated.round_number
-        overview["roundNumber"] = aggregated.round_number
+        display_round = overview.get("roundInSeason") or overview.get("round")
+        if display_round is not None:
+            overview["round"] = display_round
+            overview["roundNumber"] = display_round
 
         return overview
 
@@ -635,7 +683,7 @@ class RoundsService:
                 return cached_payload
 
         current = await self.get_current_round_overview()
-        latest_round_number = current["round"] if current else aggregated.round_number
+        latest_round_number = _latest_round_internal_id(current, aggregated.round_number)
         logger.info(f"Building round {aggregated.round_number} overview (latest_round={latest_round_number}, current={current is not None})")
         records = [entry.record for entry in aggregated.validator_rounds]
         overview = self._build_round_day_overview_from_records(
@@ -662,8 +710,10 @@ class RoundsService:
 
         overview["validatorRounds"] = detailed_validator_rounds
         overview["id"] = aggregated.round_number
-        overview["round"] = aggregated.round_number
-        overview["roundNumber"] = aggregated.round_number
+        display_round = overview.get("roundInSeason") or overview.get("round")
+        if display_round is not None:
+            overview["round"] = display_round
+            overview["roundNumber"] = display_round
 
         if cache_key and settings.ENABLE_FINAL_ROUND_CACHE:
             redis_cache.set(
@@ -1292,9 +1342,6 @@ class RoundsService:
             current_block = min(current_block, end_block_value)
         blocks_remaining = max(end_block_value - current_block, 0)
 
-        round_key = f"round_{round_number}"
-        is_current = round_number == latest_round_number and status == "active"
-
         # Extract season and round from records
         season_number = None
         round_in_season = None
@@ -1303,10 +1350,21 @@ class RoundsService:
             season_number = first_record.model.season_number
             round_in_season = first_record.model.round_number_in_season
 
+        display_round_number = _round_number_for_display(
+            round_number,
+            season_number=season_number,
+            round_in_season=round_in_season,
+        )
+        if season_number is not None and round_in_season is not None:
+            round_key = f"{season_number}/{round_in_season}"
+        else:
+            round_key = f"round_{round_number}"
+        is_current = round_number == latest_round_number and status == "active"
+
         result = {
             "id": round_number,
-            "round": round_number,
-            "roundNumber": round_number,
+            "round": display_round_number,
+            "roundNumber": display_round_number,
             "roundKey": round_key,
             "startBlock": start_block,
             "endBlock": end_block_value,
@@ -1674,7 +1732,7 @@ class RoundsService:
     async def get_round_overview(self, round_identifier: Union[str, int]) -> Dict[str, Any]:
         aggregated = await self._fetch_aggregated_round(round_identifier, include_details=False)
         current = await self.get_current_round_overview()
-        latest_round_number = current["round"] if current else aggregated.round_number
+        latest_round_number = _latest_round_internal_id(current, aggregated.round_number)
         records = [entry.record for entry in aggregated.validator_rounds]
         return self._build_round_day_overview_from_records(
             aggregated.round_number,

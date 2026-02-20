@@ -139,6 +139,46 @@ class OverviewService:
         self.session = session
         self.rounds_service = RoundsService(session)
 
+    @staticmethod
+    def _uses_season_encoded_round_numbers(round_numbers: List[int]) -> bool:
+        """
+        Detect whether round identifiers are encoded as season*10000+round_in_season.
+
+        New IWAP payloads use this format (e.g., 10002 => season 1 round 2).
+        Older data may still use global round numbers (e.g., 2, 148, ...).
+        """
+        return any(int(number) >= 10000 for number in round_numbers if number is not None)
+
+    @staticmethod
+    def _round_for_display(
+        round_number: Optional[int],
+        *,
+        season: Optional[int] = None,
+        round_in_season: Optional[int] = None,
+    ) -> Optional[int]:
+        """
+        Return human-facing round number (round within season), never season*10000.
+        """
+        if round_in_season is not None:
+            try:
+                value = int(round_in_season)
+                if value > 0:
+                    return value
+            except Exception:
+                pass
+        if round_number is None:
+            return None
+        try:
+            value = int(round_number)
+        except Exception:
+            return None
+        # Legacy encoded form: season*10000 + round
+        if season is not None and value >= 10000:
+            candidate = value % 10000
+            if candidate > 0:
+                return candidate
+        return value
+
     @rollback_on_error
     async def overview_metrics(self) -> OverviewMetrics:
         # Try to get from Redis cache first (15 minute TTL)
@@ -231,10 +271,17 @@ class OverviewService:
 
         # Calculate CURRENT round from blockchain (NOT from DB)
         current_round_value = 0
+        current_round_global = 0
+        uses_season_encoded_rounds = any(number >= 10000 for number in round_records_by_number.keys())
         if current_block is not None:
             try:
-                current_round_value = compute_round_number(current_block)
-                logger.debug(f"Computed current round from blockchain: block={current_block}, round={current_round_value}")
+                current_round_global = compute_round_number(current_block)
+                current_round_value = current_round_global
+                logger.debug(
+                    "Computed current global round from blockchain: block=%s, round=%s",
+                    current_block,
+                    current_round_global,
+                )
             except Exception as exc:
                 logger.warning("Failed to compute current round from blockchain: %s", exc)
 
@@ -251,6 +298,8 @@ class OverviewService:
                 )
                 # compute_season_number expects a start block, but the same formula works for current block
                 current_season = compute_season_number(current_block)
+                if uses_season_encoded_rounds and current_season is not None and current_round_in_season is not None and current_season > 0 and current_round_in_season > 0:
+                    current_round_value = int(current_season) * 10000 + int(current_round_in_season)
             except Exception as exc:
                 logger.warning("Failed to compute current season/round-in-season from blockchain: %s", exc)
 
@@ -715,7 +764,14 @@ class OverviewService:
             currentRound=current_round_for_ui,
             currentSeason=current_season,
             currentRoundInSeason=current_round_in_season,
-            metricsRound=display_metrics_round_number,
+            metricsRound=(
+                self._round_for_display(
+                    display_metrics_round_number,
+                    season=metrics_season,
+                    round_in_season=metrics_round_in_season,
+                )
+                or 0
+            ),
             metricsSeason=metrics_season,
             metricsRoundInSeason=metrics_round_in_season,
             subnetVersion=subnet_version,
@@ -1641,21 +1697,25 @@ class OverviewService:
         aggregates: Dict[str, Dict[str, Any]] = {}
 
         # ═══════════════════════════════════════════════════════════════════
-        # Determine CURRENT round from blockchain (not max in DB)
-        # This ensures we show validators as "waiting" when DB is behind
+        # Determine CURRENT round from blockchain (not max in DB).
+        # Round numbers in DB may be:
+        # - legacy global round numbers
+        # - season-encoded numbers (season * 10000 + round_in_season)
+        # We must compare using the same scheme.
         # ═══════════════════════════════════════════════════════════════════
         try:
             current_block = get_current_block_estimate()
             current_round_from_blockchain = 0
+            current_round_global = 0
             if current_block is not None:
                 try:
-                    current_round_from_blockchain = compute_round_number(current_block)
-                    logger.debug(f"[_aggregate_validators] Current round from blockchain: {current_round_from_blockchain}")
+                    current_round_global = compute_round_number(current_block)
                 except Exception:
                     pass
         except Exception:
             current_block = None
             current_round_from_blockchain = 0
+            current_round_global = 0
 
         # Also track max round in DB for fallback
         round_numbers: List[int] = []
@@ -1670,10 +1730,34 @@ class OverviewService:
             fallback_record = records_with_contexts[0][0]
             max_round_in_db = fallback_record.model.round_number or _round_id_to_int(fallback_record.model.validator_round_id)
 
+        uses_season_encoded_rounds = self._uses_season_encoded_round_numbers(round_numbers)
+        if current_block is not None and current_round_global > 0:
+            if uses_season_encoded_rounds:
+                try:
+                    round_block_length = int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
+                    current_season = compute_season_number(current_block)
+                    current_round_in_season = compute_round_number_in_season(
+                        current_block,
+                        round_block_length,
+                    )
+                    if current_season > 0 and current_round_in_season > 0:
+                        current_round_from_blockchain = int(current_season) * 10000 + int(current_round_in_season)
+                except Exception:
+                    current_round_from_blockchain = 0
+            else:
+                current_round_from_blockchain = current_round_global
+
         # Use blockchain round as "current", fallback to DB max if blockchain unavailable
         current_round_number = current_round_from_blockchain if current_round_from_blockchain > 0 else max_round_in_db
 
-        logger.debug(f"[_aggregate_validators] current_round_number={current_round_number}, blockchain={current_round_from_blockchain}, db_max={max_round_in_db}")
+        logger.debug(
+            "[_aggregate_validators] current_round_number=%s, blockchain=%s, blockchain_global=%s, db_max=%s, season_encoded=%s",
+            current_round_number,
+            current_round_from_blockchain,
+            current_round_global,
+            max_round_in_db,
+            uses_season_encoded_rounds,
+        )
 
         # Build helper maps:
         # - current_round_entries: entries for the CURRENT round from blockchain
@@ -1749,6 +1833,11 @@ class OverviewService:
                 round_number = current_round_number or None
                 last_seen_season = None
                 last_seen_round_in_season = None
+            display_round_number = self._round_for_display(
+                round_number,
+                season=last_seen_season,
+                round_in_season=last_seen_round_in_season,
+            )
 
             display_name = validator_info.name if validator_info and validator_info.name else None
             if not display_name and display_round:
@@ -1839,7 +1928,7 @@ class OverviewService:
             last_activity_ts = max(last_activity_candidates) if last_activity_candidates else None
             seconds_since_activity = max(0.0, now_ts - last_activity_ts) if last_activity_ts is not None else None
 
-            validator_round = current_record.model if current_record else None
+            validator_round = current_record.model if current_record else (last_entry[0].model if last_entry else None)
 
             status_info = self._derive_validator_status(
                 current_record,
@@ -1848,6 +1937,13 @@ class OverviewService:
                 has_scores=has_scores,
                 seconds_since_activity=seconds_since_activity,
             )
+            # If validator has recent participation but no row yet for the chain-current round,
+            # show as WAITING (or OFFLINE if stale) instead of NOT_STARTED.
+            if current_record is None and last_entry is not None:
+                if seconds_since_activity is not None and seconds_since_activity > 86400:
+                    status_info = ValidatorStatusInfo.from_state(ValidatorState.OFFLINE)
+                else:
+                    status_info = ValidatorStatusInfo.from_state(ValidatorState.WAITING)
             status = status_info.label
             current_task = status_info.default_task
 
@@ -1897,7 +1993,7 @@ class OverviewService:
                 "uptime": uptime,
                 "completedTasks": int(completed_tasks),
                 "validatorRoundId": validator_round_id,
-                "roundNumber": round_number,
+                "roundNumber": display_round_number,
                 "lastSeenSeason": last_seen_season,
                 "lastSeenRoundInSeason": last_seen_round_in_season,
                 "validatorUid": validator_uid,
