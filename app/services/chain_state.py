@@ -40,6 +40,7 @@ def _fetch_current_block() -> Optional[int]:
         kwargs["network"] = network_value
         _logger.debug("Connecting to Subtensor with network: %s", network_value)
 
+    subtensor = None
     try:
         subtensor = bt.subtensor(**kwargs)  # type: ignore[attr-defined]
         try:
@@ -67,6 +68,14 @@ def _fetch_current_block() -> Optional[int]:
     except Exception as exc:
         _logger.error("Failed to create subtensor connection: %s", exc)
         return None
+    finally:
+        # Important: every polling cycle creates a subtensor client.
+        # Close it explicitly to avoid websocket/socket accumulation.
+        if subtensor is not None:
+            try:
+                subtensor.close()
+            except Exception:
+                pass
 
 
 def get_current_block_estimate() -> Optional[int]:
@@ -142,9 +151,7 @@ def start_block_refresher(period_seconds: Optional[int] = None) -> None:
         return
     if period_seconds is None:
         try:
-            period_seconds = int(
-                getattr(settings, "CHAIN_BLOCK_REFRESH_PERIOD", 30) or 30
-            )
+            period_seconds = int(getattr(settings, "CHAIN_BLOCK_REFRESH_PERIOD", 30) or 30)
         except Exception:
             period_seconds = 30
     period_seconds = max(5, int(period_seconds))

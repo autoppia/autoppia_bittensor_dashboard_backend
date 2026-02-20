@@ -55,63 +55,72 @@ def _try_fetch_price_sync(netuid: int) -> Optional[float]:
         network_value = settings.SUBTENSOR_NETWORK.strip()
         kwargs["network"] = network_value
 
+    subtensor = None
     try:
         subtensor = bt.subtensor(**kwargs)  # type: ignore[attr-defined]
     except Exception:
         return None
 
-    # Candidate call patterns across bittensor versions
-    # 1) get_subnet_hyperparameters(netuid) → may include fields resembling price
     try:
-        hp = getattr(subtensor, "get_subnet_hyperparameters", None)
-        if callable(hp):
-            data = hp(int(netuid))
-            # Accept both dict-like and object-like
-            candidates = [
-                "price",
-                "alpha_to_tao_rate",
-                "alpha_price",
-                "tau_price",
-            ]
-            for key in candidates:
-                try:
-                    if isinstance(data, dict) and key in data:
-                        val = float(data[key])
-                        if val > 0:
-                            return val
-                    else:
-                        val = float(getattr(data, key))  # type: ignore[arg-type]
-                        if val > 0:
-                            return val
-                except Exception:
-                    continue
-    except Exception:
-        pass
+        # Candidate call patterns across bittensor versions
+        # 1) get_subnet_hyperparameters(netuid) → may include fields resembling price
+        try:
+            hp = getattr(subtensor, "get_subnet_hyperparameters", None)
+            if callable(hp):
+                data = hp(int(netuid))
+                # Accept both dict-like and object-like
+                candidates = [
+                    "price",
+                    "alpha_to_tao_rate",
+                    "alpha_price",
+                    "tau_price",
+                ]
+                for key in candidates:
+                    try:
+                        if isinstance(data, dict) and key in data:
+                            val = float(data[key])
+                            if val > 0:
+                                return val
+                        else:
+                            val = float(getattr(data, key))  # type: ignore[arg-type]
+                            if val > 0:
+                                return val
+                    except Exception:
+                        continue
+        except Exception:
+            pass
 
-    # 2) get_subnet_price(netuid)
-    try:
-        fn = getattr(subtensor, "get_subnet_price", None)
-        if callable(fn):
-            val = float(fn(int(netuid)))
-            if val > 0:
-                return val
-    except Exception:
-        pass
-
-    # 3) Inspect metagraph for any price-like attribute (very defensive)
-    try:
-        mg = subtensor.metagraph(int(netuid))
-        for key in ("price", "alpha_to_tao_rate", "alpha_price", "tau_price"):
-            try:
-                val = float(getattr(mg, key))
+        # 2) get_subnet_price(netuid)
+        try:
+            fn = getattr(subtensor, "get_subnet_price", None)
+            if callable(fn):
+                val = float(fn(int(netuid)))
                 if val > 0:
                     return val
-            except Exception:
-                continue
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    return None
+        # 3) Inspect metagraph for any price-like attribute (very defensive)
+        try:
+            mg = subtensor.metagraph(int(netuid))
+            for key in ("price", "alpha_to_tao_rate", "alpha_price", "tau_price"):
+                try:
+                    val = float(getattr(mg, key))
+                    if val > 0:
+                        return val
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        return None
+    finally:
+        # Important for long-running updater loops.
+        if subtensor is not None:
+            try:
+                subtensor.close()
+            except Exception:
+                pass
 
 
 def get_price(netuid: int = 36, ttl_seconds: int = 300) -> float:
