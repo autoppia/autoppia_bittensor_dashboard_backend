@@ -20,9 +20,9 @@ from app.models.ui.rounds import (
     RoundSummaryResponse,
     RoundTimelineResponse,
     RoundValidatorsResponse,
-    RoundsListResponse,
 )
 from app.services.ui.rounds_service import RoundsService
+
 # Snapshot functionality removed
 # from app.services.snapshot_service import SnapshotService
 from app.services.chain_state import get_current_block_estimate
@@ -92,9 +92,7 @@ async def list_rounds(
         # Filter to started rounds only (based on chain state)
         current_block = get_current_block_estimate()
         if current_block is not None:
-            entries = [
-                e for e in entries if int(e.get("startBlock", 0) or 0) < current_block
-            ]
+            entries = [e for e in entries if int(e.get("startBlock", 0) or 0) < current_block]
         sliced = entries[offset:]
         return sliced
 
@@ -108,9 +106,7 @@ async def list_rounds(
     # Filter to started rounds only (based on chain state)
     current_block = get_current_block_estimate()
     if current_block is not None:
-        entries = [
-            e for e in entries if int(e.get("startBlock", 0) or 0) < current_block
-        ]
+        entries = [e for e in entries if int(e.get("startBlock", 0) or 0) < current_block]
         total = len(entries)
     current = await service.get_current_round_overview()
     payload = {
@@ -136,9 +132,7 @@ router.add_api_route(
 
 
 @router.get("/current", response_model=RoundDetailResponse)
-@cache(
-    "rounds_current", ttl=300
-)  # Cache 5 minutes - different key to avoid collision with overview
+@cache("rounds_current", ttl=300)  # Cache 5 minutes - different key to avoid collision with overview
 async def get_current_round(
     session: AsyncSession = Depends(get_session),
 ) -> RoundDetailResponse:
@@ -156,7 +150,7 @@ async def get_round_progress_by_season(
     session: AsyncSession = Depends(get_session),
 ) -> RoundProgressResponse:
     """Get round progress by season and round number.
-    
+
     Example: /rounds/1/1/progress returns progress for Season 1, Round 1
     """
     service = await _service(session)
@@ -175,7 +169,7 @@ async def get_round_by_season(
     session: AsyncSession = Depends(get_session),
 ) -> RoundDetailResponse:
     """Get round by season and round number within season.
-    
+
     Example: /rounds/8/3 returns Season 8, Round 3
     """
     service = await _service(session)
@@ -183,7 +177,7 @@ async def get_round_by_season(
         detail_data = await service.get_round_by_season(season, round)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    
+
     return RoundDetailResponse(success=True, data={"round": detail_data})
 
 
@@ -196,7 +190,7 @@ async def get_round_aggregated(
     """
     Endpoint simplificado que devuelve métricas agregadas (post-consensus) y por validator (local)
     desde validator_round_summary_miners.
-    
+
     - aggregated: winner, avg_winner_score, avg_eval_time, miners_evaluated, tasks_evaluated (post-consensus, desde Autoppia UID 83)
     - validators: lista de validators con sus métricas locales (prefijo local_)
     """
@@ -262,18 +256,14 @@ async def get_round(
         # Resolver validator_round_id -> round_number
         from app.db.models import RoundORM
 
-        round_number = await session.scalar(
-            select(RoundORM.round_number).where(RoundORM.validator_round_id == round_id)
-        )
+        round_number = await session.scalar(select(RoundORM.round_number).where(RoundORM.validator_round_id == round_id))
 
     # Snapshot functionality removed - always calculate from DB
 
     # Check if it's the current/active round - use Redis cache (1 day TTL)
     service = await _service(session)
     current_round_overview = await service.get_current_round_overview()
-    current_round_number = (
-        current_round_overview.get("round") if current_round_overview else None
-    )
+    current_round_number = (current_round_overview.get("id") or current_round_overview.get("round")) if current_round_overview else None
     is_current_round = round_number == current_round_number
 
     if is_current_round:
@@ -309,40 +299,32 @@ async def get_round(
         try:
             from app.db.models import ValidatorRoundORM
 
-            stmt = select(ValidatorRoundORM).where(
-                ValidatorRoundORM.round_number == round_number
-            )
+            stmt = select(ValidatorRoundORM).where(ValidatorRoundORM.round_number == round_number)
             round_rows = list(await session.scalars(stmt))
             for round_row in round_rows:
                 if round_row.status != "finished":
                     round_row.status = "finished"
-                    logger.info(
-                        f"  Updated {round_row.validator_round_id} status to finished"
-                    )
+                    logger.info(f"  Updated {round_row.validator_round_id} status to finished")
             await session.commit()
-            logger.info(
-                f"✅ Marked {len(round_rows)} validator_rounds as finished for round {round_number}"
-            )
+            logger.info(f"✅ Marked {len(round_rows)} validator_rounds as finished for round {round_number}")
         except Exception:
             logger.exception("Failed to update round status in DB")
 
         # Save to PostgreSQL snapshot (permanent)
-        logger.info(
-            "💾 Saving finished round %s to PostgreSQL snapshot...", round_number
-        )
+        logger.info("💾 Saving finished round %s to PostgreSQL snapshot...", round_number)
         try:
             from app.db.session import AsyncSessionLocal
             # Snapshot functionality removed
-# from app.services.snapshot_service import SnapshotService
+            # from app.services.snapshot_service import SnapshotService
 
             async with AsyncSessionLocal() as snapshot_session:
                 # Snapshot functionality removed
                 # await _persist_snapshot_from_detail(snapshot_session, round_id, detail_data)
-                
+
                 # Snapshot functionality removed - no longer using agent_stats table
                 # logger.info("📊 Updating agent stats for round %s...", round_number)
                 # snapshot_service = SnapshotService(snapshot_session)
-                
+
                 await snapshot_session.commit()
                 logger.info("✅ Round %s data saved", round_number)
         except Exception:
@@ -351,9 +333,7 @@ async def get_round(
         # Cache current round in Redis (1 day TTL)
         logger.info("💾 Caching current round %s in Redis (1 day)...", round_number)
         try:
-            redis_cache.set(
-                f"round:current:{round_number}", detail_data, ttl=86400
-            )  # 1 day
+            redis_cache.set(f"round:current:{round_number}", detail_data, ttl=86400)  # 1 day
             logger.info("✅ Current round %s cached in Redis", round_number)
         except Exception:
             logger.exception("Failed to cache current round %s", round_number)
@@ -379,9 +359,7 @@ async def get_round_statistics(
 
 
 @router.get("/{round_id}/miners", response_model=RoundMinersResponse)
-@cache(
-    "round_miners", ttl=300
-)  # Cache 5 minutes (smart_cache will extend for completed rounds)
+@cache("round_miners", ttl=300)  # Cache 5 minutes (smart_cache will extend for completed rounds)
 async def get_round_miners(
     round_id: str,
     session: AsyncSession = Depends(get_session),
@@ -451,9 +429,7 @@ async def get_round_validators(
     return RoundValidatorsResponse(success=True, data=data)
 
 
-@router.get(
-    "/{round_id}/validators/{validator_id}", response_model=RoundValidatorsResponse
-)
+@router.get("/{round_id}/validators/{validator_id}", response_model=RoundValidatorsResponse)
 async def get_round_validator(
     round_id: str,
     validator_id: str,
@@ -572,9 +548,7 @@ async def list_round_agent_runs(
             round_id,
             exc,
         )
-        raise HTTPException(
-            status_code=500, detail="Failed to fetch agent runs"
-        ) from exc
+        raise HTTPException(status_code=500, detail="Failed to fetch agent runs") from exc
 
 
 @router.get(
@@ -592,6 +566,4 @@ async def get_agent_run(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to fetch agent run %s: %s", agent_run_id, exc)
-        raise HTTPException(
-            status_code=500, detail="Failed to fetch agent run"
-        ) from exc
+        raise HTTPException(status_code=500, detail="Failed to fetch agent run") from exc
