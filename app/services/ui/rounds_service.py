@@ -2437,12 +2437,12 @@ class RoundsService:
 
             seconds_remaining = blocks_remaining * 12
 
-            # ✅ Calcular roundId: usar round_number si está disponible, sino calcular como season * 10000 + round_in_season
+            # Human-facing round id for UI (round inside season).
             round_id = None
-            if hasattr(round_row, "round_number") and round_row.round_number is not None:
-                round_id = round_row.round_number
-            elif season is not None and round_in_season is not None:
-                round_id = season * 10000 + round_in_season
+            if round_in_season is not None:
+                round_id = int(round_in_season)
+            elif hasattr(round_row, "round_number") and round_row.round_number is not None:
+                round_id = int(round_row.round_number)
 
             # ✅ Obtener nextRound y previousRound usando season/round
             previous_round = None
@@ -2512,8 +2512,23 @@ class RoundsService:
         result_next = await self.session.execute(stmt_next)
         next_round = result_next.scalar_one_or_none()
 
+        first_record = records[0] if records else None
+        season_number = first_record.model.season_number if first_record else None
+        round_in_season = first_record.model.round_number_in_season if first_record else None
+        display_round_id = (
+            int(round_in_season)
+            if round_in_season is not None
+            else _round_number_for_display(
+                aggregated.round_number,
+                season_number=season_number,
+                round_in_season=round_in_season,
+            )
+        )
+
         return {
-            "roundId": aggregated.round_number,
+            "roundId": display_round_id,
+            "season": season_number,
+            "roundInSeason": round_in_season,
             "currentBlock": progress.get("currentBlock", 0),
             "startBlock": progress.get("startBlock", 0),
             "endBlock": progress.get("endBlock", 0),
