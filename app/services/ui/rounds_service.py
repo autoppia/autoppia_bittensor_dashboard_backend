@@ -1852,8 +1852,23 @@ class RoundsService:
         total_emission = int(total_stake * 0.05) if total_stake else 0
         average_tasks_per_validator_per_miner = sum(tasks_per_validator) / len(tasks_per_validator) if tasks_per_validator else 0.0
 
+        first_record = aggregated.validator_rounds[0].record if aggregated.validator_rounds else None
+        season_number = first_record.model.season_number if first_record else None
+        round_in_season = first_record.model.round_number_in_season if first_record else None
+        display_round_id = (
+            int(round_in_season)
+            if round_in_season is not None
+            else _round_number_for_display(
+                aggregated.round_number,
+                season_number=season_number,
+                round_in_season=round_in_season,
+            )
+        )
+
         payload = {
-            "roundId": aggregated.round_number,
+            "roundId": display_round_id,
+            "season": season_number,
+            "roundInSeason": round_in_season,
             "totalMiners": len(metrics["miner_ids"]),
             "activeMiners": len(metrics["active_miner_ids"]),
             "totalTasks": total_tasks,
@@ -2718,7 +2733,17 @@ class RoundsService:
         minutes_remaining = time_remaining_metrics.get("minutes", 0)
 
         return {
-            "roundId": aggregated.round_number,
+            "roundId": (
+                int(records[0].model.round_number_in_season)
+                if records and records[0].model.round_number_in_season is not None
+                else _round_number_for_display(
+                    aggregated.round_number,
+                    season_number=(records[0].model.season_number if records else None),
+                    round_in_season=(records[0].model.round_number_in_season if records else None),
+                )
+            ),
+            "season": (records[0].model.season_number if records else None),
+            "roundInSeason": (records[0].model.round_number_in_season if records else None),
             "status": status,
             "progress": round(progress_ratio, 3),
             "totalMiners": statistics.get("totalMiners", 0),
