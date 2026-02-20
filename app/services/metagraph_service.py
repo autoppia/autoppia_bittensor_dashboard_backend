@@ -123,115 +123,121 @@ def refresh_metagraph_data() -> Dict[str, Any]:
         subtensor_kwargs["network"] = network_value
         logger.debug(f"Connecting to Subtensor with network: {network_value}")
 
+    subtensor = None
     try:
-        subtensor = bt.subtensor(**subtensor_kwargs)  # type: ignore[attr-defined]
-        metagraph = subtensor.metagraph(netuid=settings.VALIDATOR_NETUID)
-    except Exception as exc:
-        raise MetagraphError(f"Unable to fetch metagraph: {exc}") from exc
+        try:
+            subtensor = bt.subtensor(**subtensor_kwargs)  # type: ignore[attr-defined]
+            metagraph = subtensor.metagraph(netuid=settings.VALIDATOR_NETUID)
+        except Exception as exc:
+            raise MetagraphError(f"Unable to fetch metagraph: {exc}") from exc
 
-    # Extract all relevant data
-    hotkeys = _convert_to_list(getattr(metagraph, "hotkeys", None))
-    uids = _convert_to_list(getattr(metagraph, "uids", None))
-    stakes = _convert_to_list(getattr(metagraph, "S", None))
+        # Extract all relevant data
+        hotkeys = _convert_to_list(getattr(metagraph, "hotkeys", None))
+        uids = _convert_to_list(getattr(metagraph, "uids", None))
+        stakes = _convert_to_list(getattr(metagraph, "S", None))
 
-    # Try multiple possible attributes for vtrust
-    vtrust_attrs = ["validator_trust", "V", "vtrust", "v_trust"]
-    vtrust_raw = None
-    vtrust_attr_used = None
-    for attr in vtrust_attrs:
-        vtrust_raw = getattr(metagraph, attr, None)
-        if vtrust_raw is not None:
-            vtrust_attr_used = attr
-            logger.debug(f"Using '{attr}' for validator trust values")
-            break
+        # Try multiple possible attributes for vtrust
+        vtrust_attrs = ["validator_trust", "V", "vtrust", "v_trust"]
+        vtrust_raw = None
+        vtrust_attr_used = None
+        for attr in vtrust_attrs:
+            vtrust_raw = getattr(metagraph, attr, None)
+            if vtrust_raw is not None:
+                vtrust_attr_used = attr
+                logger.debug(f"Using '{attr}' for validator trust values")
+                break
 
-    vtrustvalues = _convert_to_list(vtrust_raw) if vtrust_raw is not None else []
+        vtrustvalues = _convert_to_list(vtrust_raw) if vtrust_raw is not None else []
 
-    # Try to get version information (Bittensor uses 'version', not 'versions')
-    version_raw = getattr(metagraph, "version", None)
-    versions = _convert_to_list(version_raw) if version_raw is not None else []
+        # Try to get version information (Bittensor uses 'version', not 'versions')
+        version_raw = getattr(metagraph, "version", None)
+        versions = _convert_to_list(version_raw) if version_raw is not None else []
 
-    # Build indexed data structure
-    validators_by_uid: Dict[int, Dict[str, Any]] = {}
-    validators_by_hotkey: Dict[str, Dict[str, Any]] = {}
+        # Build indexed data structure
+        validators_by_uid: Dict[int, Dict[str, Any]] = {}
+        validators_by_hotkey: Dict[str, Dict[str, Any]] = {}
 
-    max_len = max(len(hotkeys), len(uids), len(stakes))
+        max_len = max(len(hotkeys), len(uids), len(stakes))
 
-    for index in range(max_len):
-        # Extract UID
-        uid = None
-        if index < len(uids):
-            uid = int(uids[index]) if uids[index] is not None else index
-        else:
-            uid = index
+        for index in range(max_len):
+            # Extract UID
+            uid = None
+            if index < len(uids):
+                uid = int(uids[index]) if uids[index] is not None else index
+            else:
+                uid = index
 
-        # Extract hotkey
-        hotkey = None
-        if index < len(hotkeys):
-            hotkey = str(hotkeys[index]) if hotkeys[index] else None
+            # Extract hotkey
+            hotkey = None
+            if index < len(hotkeys):
+                hotkey = str(hotkeys[index]) if hotkeys[index] else None
 
-        # Extract stake from metagraph (in RAO, keep as RAO)
-        stake_rao = None
-        if index < len(stakes):
-            stake_rao = _extract_numeric_value(stakes[index])
+            # Extract stake from metagraph (in RAO, keep as RAO)
+            stake_rao = None
+            if index < len(stakes):
+                stake_rao = _extract_numeric_value(stakes[index])
 
-        # Extract vtrust
-        vtrust = None
-        if index < len(vtrustvalues):
-            vtrust = _extract_numeric_value(vtrustvalues[index])
+            # Extract vtrust
+            vtrust = None
+            if index < len(vtrustvalues):
+                vtrust = _extract_numeric_value(vtrustvalues[index])
 
-        # Extract version (keep as string to preserve "10.1.0" format)
-        version = None
-        if index < len(versions):
-            version_val = versions[index]
-            if version_val is not None:
-                version = str(version_val)  # Keep as string
+            # Extract version (keep as string to preserve "10.1.0" format)
+            version = None
+            if index < len(versions):
+                version_val = versions[index]
+                if version_val is not None:
+                    version = str(version_val)  # Keep as string
 
-        validator_data = {
-            "uid": uid,
-            "hotkey": hotkey,
-            "stake": stake_rao,  # Stake in RAO (not converted to TAO)
-            "vtrust": vtrust,
-            "version": version,  # string: "10.1.0"
+            validator_data = {
+                "uid": uid,
+                "hotkey": hotkey,
+                "stake": stake_rao,  # Stake in RAO (not converted to TAO)
+                "vtrust": vtrust,
+                "version": version,  # string: "10.1.0"
+                "fetched_at": time.time(),
+            }
+
+            validators_by_uid[uid] = validator_data
+            if hotkey:
+                validators_by_hotkey[hotkey] = validator_data
+
+                # Also store individual validator in Redis for fast lookup
+                individual_key = f"{REDIS_KEY_VALIDATOR_PREFIX}:uid:{uid}"
+                redis_cache.set(individual_key, validator_data, ttl=METAGRAPH_CACHE_TTL)
+
+        result = {
+            "by_uid": validators_by_uid,
+            "by_hotkey": validators_by_hotkey,
             "fetched_at": time.time(),
+            "vtrust_source": vtrust_attr_used,
         }
 
-        validators_by_uid[uid] = validator_data
-        if hotkey:
-            validators_by_hotkey[hotkey] = validator_data
+        # Store in Redis
+        redis_cache.set(REDIS_KEY_ALL_VALIDATORS, result, ttl=METAGRAPH_CACHE_TTL)
+        redis_cache.set(REDIS_KEY_LAST_UPDATE, time.time(), ttl=METAGRAPH_CACHE_TTL)
+        redis_cache.set(
+            REDIS_KEY_UPDATE_STATUS,
+            {
+                "status": "success",
+                "timestamp": time.time(),
+                "validator_count": len(validators_by_uid),
+                "vtrust_source": vtrust_attr_used,
+            },
+            ttl=METAGRAPH_CACHE_TTL,
+        )
 
-            # Also store individual validator in Redis for fast lookup
-            individual_key = f"{REDIS_KEY_VALIDATOR_PREFIX}:uid:{uid}"
-            redis_cache.set(individual_key, validator_data, ttl=METAGRAPH_CACHE_TTL)
+        elapsed = time.time() - start_time
+        logger.info(f"✅ Metagraph data refreshed: {len(validators_by_uid)} validators (vtrust source: {vtrust_attr_used or 'none'}, took {elapsed:.2f}s)")
 
-    result = {
-        "by_uid": validators_by_uid,
-        "by_hotkey": validators_by_hotkey,
-        "fetched_at": time.time(),
-        "vtrust_source": vtrust_attr_used,
-    }
-
-    # Store in Redis
-    redis_cache.set(REDIS_KEY_ALL_VALIDATORS, result, ttl=METAGRAPH_CACHE_TTL)
-    redis_cache.set(REDIS_KEY_LAST_UPDATE, time.time(), ttl=METAGRAPH_CACHE_TTL)
-    redis_cache.set(
-        REDIS_KEY_UPDATE_STATUS,
-        {
-            "status": "success",
-            "timestamp": time.time(),
-            "validator_count": len(validators_by_uid),
-            "vtrust_source": vtrust_attr_used,
-        },
-        ttl=METAGRAPH_CACHE_TTL,
-    )
-
-    elapsed = time.time() - start_time
-    logger.info(
-        f"✅ Metagraph data refreshed: {len(validators_by_uid)} validators "
-        f"(vtrust source: {vtrust_attr_used or 'none'}, took {elapsed:.2f}s)"
-    )
-
-    return result
+        return result
+    finally:
+        # Important for long-running workers: close subtensor client explicitly.
+        if subtensor is not None:
+            try:
+                subtensor.close()
+            except Exception:
+                pass
 
 
 def get_validator_data(
@@ -270,10 +276,7 @@ def get_validator_data(
     try:
         data = redis_cache.get(REDIS_KEY_ALL_VALIDATORS)
         if data is None:
-            logger.warning(
-                "Metagraph data not found in Redis. "
-                "Background worker may not be running or Redis may be down."
-            )
+            logger.warning("Metagraph data not found in Redis. Background worker may not be running or Redis may be down.")
             return None
     except Exception as exc:
         logger.error(f"Failed to fetch metagraph data from Redis: {exc}")
@@ -308,10 +311,7 @@ def get_all_validators_data() -> Dict[int, Dict[str, Any]]:
     try:
         data = redis_cache.get(REDIS_KEY_ALL_VALIDATORS)
         if data is None:
-            logger.warning(
-                "Metagraph data not found in Redis. "
-                "Background worker may not be running or Redis may be down."
-            )
+            logger.warning("Metagraph data not found in Redis. Background worker may not be running or Redis may be down.")
             return {}
         return data["by_uid"]
     except Exception as exc:
