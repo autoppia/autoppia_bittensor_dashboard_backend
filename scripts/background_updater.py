@@ -4,31 +4,31 @@ Background Data Updater - Standalone Process
 
 This script runs as a separate PM2 process and updates:
 - Metagraph data (validators) every 30 minutes
-- Subnet price every 5 minutes  
+- Subnet price every 5 minutes
 - Current block every 30 seconds
 
 This replaces the background threads that were running inside the FastAPI process.
 """
 
 import logging
+import os
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 # Add the project root to Python path (scripts/ is one level down from root)
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.config import settings
-from app.services.metagraph_service import (
+from app.config import settings  # noqa: E402
+from app.services.metagraph_service import (  # noqa: E402
     refresh_metagraph_data,
     get_last_update_time,
     MetagraphError,
     METAGRAPH_CACHE_TTL,
 )
-from app.services.redis_cache import redis_cache
-from app.services.chain_state import refresh_block_now
+from app.services.redis_cache import redis_cache  # noqa: E402
+from app.services.chain_state import refresh_block_now  # noqa: E402
 
 # Configure logging - send INFO to stdout, WARNING/ERROR to stderr
 # This ensures PM2 routes logs correctly (stdout -> out.log, stderr -> error.log)
@@ -58,15 +58,26 @@ root_logger.addHandler(stderr_handler)
 
 logger = logging.getLogger(__name__)
 
-# Update intervals
-METAGRAPH_UPDATE_INTERVAL = 30 * 60  # 30 minutes
-PRICE_UPDATE_INTERVAL = 5 * 60  # 5 minutes
-BLOCK_UPDATE_INTERVAL = 30  # 30 seconds
-ROUND_CACHE_INTERVAL = 4 * 60 * 60  # 4 hours
+
+def _int_env(name: str, default: int, min_value: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except Exception:
+        value = default
+    return max(min_value, value)
+
+
+# Update intervals (env-overridable).
+METAGRAPH_UPDATE_INTERVAL = _int_env("UPDATER_METAGRAPH_INTERVAL_SEC", 30 * 60, 60)
+PRICE_UPDATE_INTERVAL = _int_env("UPDATER_PRICE_INTERVAL_SEC", 5 * 60, 60)
+# Use a safer default cadence; block value is estimated between refreshes.
+BLOCK_UPDATE_INTERVAL = _int_env("UPDATER_BLOCK_INTERVAL_SEC", 5 * 60, 30)
+ROUND_CACHE_INTERVAL = _int_env("UPDATER_ROUND_CACHE_INTERVAL_SEC", 4 * 60 * 60, 60)
 
 # Redis keys for price
 REDIS_KEY_SUBNET_PRICE = "subnet:price"
 REDIS_KEY_PRICE_LAST_UPDATE = "subnet:price:last_update"
+REDIS_KEY_BLOCK_LAST_UPDATE = "chain:block_timestamp"
 
 
 def fetch_and_cache_block() -> bool:
@@ -134,29 +145,26 @@ def cache_recent_rounds() -> bool:
         import requests
         from app.services.chain_state import get_current_block_estimate
         from app.services.round_calc import compute_round_number
-        
+
         # Get current round number
         current_block = get_current_block_estimate()
         if not current_block:
             logger.warning("⚠️  Could not get current block for round caching")
             return False
-        
+
         current_round = compute_round_number(current_block)
-        
+
         # Cache last 3 completed rounds
         rounds_to_cache = [current_round - 1, current_round - 2, current_round - 3]
-        
+
         cached_count = 0
         for round_num in rounds_to_cache:
             if round_num <= 0:
                 continue
-            
+
             try:
                 # Call the API endpoint which will create the snapshot if missing
-                response = requests.get(
-                    f"http://localhost:8080/api/v1/rounds/{round_num}",
-                    timeout=60
-                )
+                response = requests.get(f"http://localhost:8080/api/v1/rounds/{round_num}", timeout=60)
                 if response.status_code == 200:
                     logger.info(f"✅ Cached round {round_num}")
                     cached_count += 1
@@ -164,12 +172,12 @@ def cache_recent_rounds() -> bool:
                     logger.warning(f"⚠️  Failed to cache round {round_num}: HTTP {response.status_code}")
             except Exception as e:
                 logger.error(f"❌ Error caching round {round_num}: {e}")
-        
+
         if cached_count > 0:
             logger.info(f"✅ Cached {cached_count} rounds successfully")
             return True
         return False
-        
+
     except Exception as exc:
         logger.error(f"❌ Failed to cache rounds: {exc}")
         return False
@@ -194,9 +202,7 @@ def main():
             logger.info("✅ Redis is available, starting updates")
             break
         retry_count += 1
-        logger.warning(
-            f"⏳ Waiting for Redis ({retry_count}/{max_retries}), retrying in 5 seconds..."
-        )
+        logger.warning(f"⏳ Waiting for Redis ({retry_count}/{max_retries}), retrying in 5 seconds...")
         time.sleep(5)
 
     if not redis_cache.is_available():
@@ -211,7 +217,7 @@ def main():
     if last_update:
         age_minutes = (time.time() - last_update) / 60
         logger.info(f"📊 Found existing metagraph data in Redis (age: {age_minutes:.1f} minutes)")
-        
+
         if age_minutes < METAGRAPH_CACHE_TTL / 60:
             should_update_immediately = False
             time_until_next = METAGRAPH_CACHE_TTL - (age_minutes * 60)
@@ -222,18 +228,34 @@ def main():
         logger.info("🔄 Performing initial metagraph update...")
         perform_metagraph_update()
 
-    # Always prime price and block on startup so we don't wait for the first interval
+    # Prime price/block only if cache is stale or missing.
     try:
-        logger.info("💰 Performing initial price update...")
-        fetch_and_cache_price()
+        last_price_update_cached = redis_cache.get(REDIS_KEY_PRICE_LAST_UPDATE)
+        price_age = (time.time() - float(last_price_update_cached)) if last_price_update_cached is not None else None
+        if price_age is None or price_age >= PRICE_UPDATE_INTERVAL:
+            logger.info("💰 Performing initial price update...")
+            fetch_and_cache_price()
+        else:
+            logger.info(
+                "⏭️  Skipping initial price update (fresh cache: %.1fs old)",
+                price_age,
+            )
     except Exception as exc:  # noqa: BLE001
-        logger.error(f"Failed initial price update: {exc}")
+        logger.error(f"Failed initial price update check: {exc}")
 
     try:
-        logger.info("🔢 Performing initial block update...")
-        fetch_and_cache_block()
+        last_block_update_cached = redis_cache.get(REDIS_KEY_BLOCK_LAST_UPDATE)
+        block_age = (time.time() - float(last_block_update_cached)) if last_block_update_cached is not None else None
+        if block_age is None or block_age >= BLOCK_UPDATE_INTERVAL:
+            logger.info("🔢 Performing initial block update...")
+            fetch_and_cache_block()
+        else:
+            logger.info(
+                "⏭️  Skipping initial block update (fresh cache: %.1fs old)",
+                block_age,
+            )
     except Exception as exc:  # noqa: BLE001
-        logger.error(f"Failed initial block update: {exc}")
+        logger.error(f"Failed initial block update check: {exc}")
 
     # Initialize counters and timestamps
     metagraph_update_count = 0
@@ -297,9 +319,7 @@ def main():
             time_until_price = PRICE_UPDATE_INTERVAL - time_since_price
             time_until_block = BLOCK_UPDATE_INTERVAL - time_since_block
             time_until_round_cache = ROUND_CACHE_INTERVAL - time_since_round_cache
-            time_until_next = min(
-                time_until_metagraph, time_until_price, time_until_block, time_until_round_cache, 10
-            )  # Max 10s sleep
+            time_until_next = min(time_until_metagraph, time_until_price, time_until_block, time_until_round_cache, 10)  # Max 10s sleep
 
             if time_until_next > 0:
                 time.sleep(time_until_next)
@@ -307,11 +327,7 @@ def main():
             # Log periodic status
             total_updates = metagraph_update_count + price_update_count + block_update_count + round_cache_count
             if total_updates > 0 and total_updates % 50 == 0:
-                logger.info(
-                    f"📊 Updater status: {metagraph_update_count} metagraph, "
-                    f"{price_update_count} price, {block_update_count} block, "
-                    f"{round_cache_count} round cache updates"
-                )
+                logger.info(f"📊 Updater status: {metagraph_update_count} metagraph, {price_update_count} price, {block_update_count} block, {round_cache_count} round cache updates")
 
     except KeyboardInterrupt:
         logger.info("🛑 Received shutdown signal")
