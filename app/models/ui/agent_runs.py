@@ -5,7 +5,6 @@ These models define the data structures for agent evaluation runs.
 
 from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel, Field
-from datetime import datetime, timezone
 from enum import Enum
 
 
@@ -120,12 +119,14 @@ class AgentRun(BaseModel):
         default=None,
         description="Average evaluation duration recorded for the run (seconds)",
     )
-    totalWebsites: int = Field(
-        default=0, description="Total number of unique websites in this run"
-    )
+    totalWebsites: int = Field(default=0, description="Total number of unique websites in this run")
     websites: List[Website] = Field(default_factory=list)
     tasks: List[Task] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    zeroReason: Optional[str] = Field(
+        default=None,
+        description="Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, all_tasks_failed)",
+    )
 
 
 class RoundInfo(BaseModel):

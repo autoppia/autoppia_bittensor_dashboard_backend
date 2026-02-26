@@ -167,7 +167,7 @@ async def get_validator_details(
 
     base_evaluations_query = (
         select(
-            EvaluationORM.eval_score.label("eval_score"),
+            EvaluationORM.evaluation_score.label("evaluation_score"),
             EvaluationORM.task_id.label("task_id"),
             TaskORM.web_project_id.label("web_id"),
             TaskORM.web_version.label("web_version"),
@@ -202,9 +202,9 @@ async def get_validator_details(
     # Agregados globales
     global_counts_stmt = select(
         func.count().label("total"),
-        func.count().filter(evaluations_subquery.c.eval_score >= 0.5).label("success"),
-        func.count().filter(and_(evaluations_subquery.c.eval_score < 0.5, evaluations_subquery.c.eval_score.isnot(None))).label("zero"),
-        func.count().filter(evaluations_subquery.c.eval_score.is_(None)).label("null_count"),
+        func.count().filter(evaluations_subquery.c.evaluation_score >= 0.5).label("success"),
+        func.count().filter(and_(evaluations_subquery.c.evaluation_score < 0.5, evaluations_subquery.c.evaluation_score.isnot(None))).label("zero"),
+        func.count().filter(evaluations_subquery.c.evaluation_score.is_(None)).label("null_count"),
     ).select_from(evaluations_subquery)
     global_counts_row = (await session.execute(global_counts_stmt)).one()
     total_evaluations_processed = int(global_counts_row.total or 0)
@@ -219,9 +219,9 @@ async def get_validator_details(
             evaluations_subquery.c.task_id,
             func.max(evaluations_subquery.c.task_prompt).label("task_prompt"),
             func.count().label("total"),
-            func.count().filter(evaluations_subquery.c.eval_score >= 0.5).label("success"),
-            func.count().filter(and_(evaluations_subquery.c.eval_score < 0.5, evaluations_subquery.c.eval_score.isnot(None))).label("zero"),
-            func.count().filter(evaluations_subquery.c.eval_score.is_(None)).label("null_count"),
+            func.count().filter(evaluations_subquery.c.evaluation_score >= 0.5).label("success"),
+            func.count().filter(and_(evaluations_subquery.c.evaluation_score < 0.5, evaluations_subquery.c.evaluation_score.isnot(None))).label("zero"),
+            func.count().filter(evaluations_subquery.c.evaluation_score.is_(None)).label("null_count"),
         )
         .select_from(evaluations_subquery)
         .group_by(
@@ -398,7 +398,7 @@ async def get_validator_details(
 
                 # Use post-consensus data (includes miners with 0 reward)
                 reward = float(summary.post_consensus_avg_reward) if summary.post_consensus_avg_reward is not None else 0.0
-                eval_score = float(summary.post_consensus_avg_eval_score) if summary.post_consensus_avg_eval_score is not None else 0.0
+                evaluation_score = float(summary.post_consensus_avg_eval_score) if summary.post_consensus_avg_eval_score is not None else 0.0
                 eval_time = float(summary.post_consensus_avg_eval_time) if summary.post_consensus_avg_eval_time is not None else 0.0
                 tasks_completed = summary.post_consensus_tasks_success or 0
                 tasks_total = summary.post_consensus_tasks_received or 0
@@ -410,7 +410,7 @@ async def get_validator_details(
                     "hotkey": summary.miner_hotkey or (snapshot.miner_hotkey if snapshot else None),
                     "score": reward,
                     "reward": reward * 100,  # As percentage
-                    "evalScore": eval_score * 100,  # As percentage
+                    "evalScore": evaluation_score * 100,  # As percentage
                     "evalTime": eval_time,  # In seconds
                     "tasksCompleted": tasks_completed,
                     "tasksTotal": tasks_total,

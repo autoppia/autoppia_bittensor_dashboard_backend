@@ -45,20 +45,14 @@ class TaskAction(BaseModel):
     id: str = Field(..., description="Unique action identifier")
     type: ActionType = Field(..., description="Type of action")
     # Accept legacy string selectors and new structured selector objects
-    selector: Optional[Union[str, Dict[str, Any]]] = Field(
-        None, description="CSS selector (string) or structured selector object"
-    )
+    selector: Optional[Union[str, Dict[str, Any]]] = Field(None, description="CSS selector (string) or structured selector object")
     value: Optional[str] = Field(None, description="Value to input or navigate to")
     timestamp: datetime = Field(..., description="When the action was performed")
     duration: float = Field(..., description="Duration of the action in seconds")
     success: bool = Field(..., description="Whether the action was successful")
     error: Optional[str] = Field(None, description="Error message if action failed")
-    metadata: Optional[Dict[str, Any]] = Field(
-        None, description="Additional action metadata"
-    )
-    screenshot: Optional[str] = Field(
-        None, description="Screenshot filename if available"
-    )
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional action metadata")
+    screenshot: Optional[str] = Field(None, description="Screenshot filename if available")
 
 
 class TaskScreenshot(BaseModel):
@@ -68,9 +62,7 @@ class TaskScreenshot(BaseModel):
     url: str = Field(..., description="URL to access the screenshot")
     timestamp: datetime = Field(..., description="When the screenshot was taken")
     actionId: Optional[str] = Field(None, description="Associated action ID")
-    description: Optional[str] = Field(
-        None, description="Description of the screenshot"
-    )
+    description: Optional[str] = Field(None, description="Description of the screenshot")
 
 
 class TaskLog(BaseModel):
@@ -79,9 +71,7 @@ class TaskLog(BaseModel):
     timestamp: datetime = Field(..., description="When the log entry was created")
     level: LogLevel = Field(..., description="Log level")
     message: str = Field(..., description="Log message")
-    metadata: Optional[Dict[str, Any]] = Field(
-        None, description="Additional log metadata"
-    )
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional log metadata")
 
 
 class Viewport(BaseModel):
@@ -115,36 +105,22 @@ class TaskPerformance(BaseModel):
     totalActions: int = Field(..., description="Total number of actions")
     successfulActions: int = Field(..., description="Number of successful actions")
     failedActions: int = Field(..., description="Number of failed actions")
-    averageActionDuration: float = Field(
-        ..., description="Average action duration in seconds"
-    )
+    averageActionDuration: float = Field(..., description="Average action duration in seconds")
     totalWaitTime: float = Field(..., description="Total wait time in seconds")
-    totalNavigationTime: float = Field(
-        ..., description="Total navigation time in seconds"
-    )
+    totalNavigationTime: float = Field(..., description="Total navigation time in seconds")
 
 
 class Task(BaseModel):
     """Main task model"""
 
     taskId: str = Field(..., description="Unique task identifier")
-    evaluationId: Optional[str] = Field(
-        None, description="Unique evaluation identifier for this task+miner combination"
-    )
+    evaluationId: Optional[str] = Field(None, description="Unique evaluation identifier for this task+miner combination")
     agentRunId: str = Field(..., description="Associated agent run ID")
-    roundNumber: Optional[int] = Field(
-        None, description="Round number this task belongs to"
-    )
-    season: Optional[int] = Field(
-        None, description="Season number this task belongs to"
-    )
+    roundNumber: Optional[int] = Field(None, description="Round number this task belongs to")
+    season: Optional[int] = Field(None, description="Season number this task belongs to")
     website: str = Field(..., description="Target website")
-    seed: Optional[str] = Field(
-        None, description="Seed parameter extracted from website URL"
-    )
-    webVersion: Optional[str] = Field(
-        None, description="Version of the web application used for this task"
-    )
+    seed: Optional[str] = Field(None, description="Seed parameter extracted from website URL")
+    webVersion: Optional[str] = Field(None, description="Version of the web application used for this task")
     useCase: str = Field(..., description="Use case or scenario")
     prompt: str = Field(..., description="Task prompt or description")
     status: TaskStatus = Field(..., description="Current task status")
@@ -155,18 +131,16 @@ class Task(BaseModel):
     endTime: Optional[datetime] = Field(None, description="Task end time")
     createdAt: datetime = Field(..., description="Task creation time")
     updatedAt: datetime = Field(..., description="Last update time")
-    actions: Optional[List[TaskAction]] = Field(
-        None, description="List of task actions"
-    )
-    screenshots: Optional[List[str]] = Field(
-        None, description="List of screenshot filenames"
-    )
+    actions: Optional[List[TaskAction]] = Field(None, description="List of task actions")
+    screenshots: Optional[List[str]] = Field(None, description="List of screenshot filenames")
     logs: Optional[List[str]] = Field(None, description="List of log messages")
     metadata: Optional[TaskMetadata] = Field(None, description="Task metadata")
     validatorName: Optional[str] = Field(None, description="Validator name for display")
     validatorImage: Optional[str] = Field(None, description="Validator image URL")
     minerName: Optional[str] = Field(None, description="Miner/agent name for display")
     minerImage: Optional[str] = Field(None, description="Miner/agent image URL")
+    zeroReason: Optional[str] = Field(None, description="Reason for score 0 at evaluation level (e.g. task_timeout, tests_failed)")
+    llmCost: Optional[float] = Field(None, description="Total cost in USD for LLM usage during this evaluation")
 
 
 class TaskRoundSummary(BaseModel):
@@ -202,9 +176,7 @@ class TaskMinerSummary(BaseModel):
     name: str = Field(..., description="Display name for the agent/miner")
     github: Optional[str] = Field(None, description="Repository or profile URL")
     image: Optional[str] = Field(None, description="Avatar or logo for the miner")
-    isSota: bool = Field(
-        False, description="Whether the run corresponds to a SOTA benchmark"
-    )
+    isSota: bool = Field(False, description="Whether the run corresponds to a SOTA benchmark")
 
 
 class TaskAgentRunSummary(BaseModel):
@@ -217,9 +189,7 @@ class TaskAgentRunSummary(BaseModel):
     startedAt: Optional[datetime] = Field(None, description="Agent run start time")
     endedAt: Optional[datetime] = Field(None, description="Agent run end time")
     duration: Optional[int] = Field(None, description="Duration of the run in seconds")
-    taskCount: Optional[int] = Field(
-        None, description="Number of tasks executed in the run"
-    )
+    taskCount: Optional[int] = Field(None, description="Number of tasks executed in the run")
     completedTasks: Optional[int] = Field(None, description="Number of tasks completed")
     failedTasks: Optional[int] = Field(None, description="Number of tasks failed")
 
@@ -232,38 +202,18 @@ class TaskEvaluationSummary(BaseModel):
     rawScore: float = Field(..., description="Raw score before adjustments")
     evaluationTime: float = Field(..., description="Evaluation duration in seconds")
     status: TaskStatus = Field(..., description="Outcome status for this evaluation")
-    validatorUid: int = Field(
-        ..., description="Validator UID that produced the evaluation"
-    )
+    validatorUid: int = Field(..., description="Validator UID that produced the evaluation")
     minerUid: Optional[int] = Field(None, description="Miner UID evaluated")
-    webAgentId: Optional[str] = Field(
-        None, description="Web agent identifier used during execution"
-    )
-    hasFeedback: bool = Field(
-        False, description="Indicates if rich feedback is available"
-    )
-    hasRecording: bool = Field(
-        False, description="Indicates if a recording artifact is available"
-    )
-    reward: Optional[float] = Field(
-        None, description="Reward value for the evaluation (alpha units)"
-    )
-    llmModel: Optional[str] = Field(
-        None, description="LLM model used during evaluation"
-    )
-    llmUsage: Optional[list[dict[str, Any]]] = Field(
-        None, description="Per-provider/model usage entries"
-    )
+    webAgentId: Optional[str] = Field(None, description="Web agent identifier used during execution")
+    hasFeedback: bool = Field(False, description="Indicates if rich feedback is available")
+    hasRecording: bool = Field(False, description="Indicates if a recording artifact is available")
+    reward: Optional[float] = Field(None, description="Reward value for the evaluation (alpha units)")
+    llmModel: Optional[str] = Field(None, description="LLM model used during evaluation")
+    llmUsage: Optional[list[dict[str, Any]]] = Field(None, description="Per-provider/model usage entries")
     # LLM usage tracking
-    llmCost: Optional[float] = Field(
-        None, description="Total cost in USD for LLM usage during evaluation"
-    )
-    llmTokens: Optional[int] = Field(
-        None, description="Total tokens used by LLM during evaluation"
-    )
-    llmProvider: Optional[str] = Field(
-        None, description="LLM provider used (e.g., 'openai', 'chutes')"
-    )
+    llmCost: Optional[float] = Field(None, description="Total cost in USD for LLM usage during evaluation")
+    llmTokens: Optional[int] = Field(None, description="Total tokens used by LLM during evaluation")
+    llmProvider: Optional[str] = Field(None, description="LLM provider used (e.g., 'openai', 'chutes')")
 
 
 class TaskSolutionSummary(BaseModel):
@@ -271,46 +221,28 @@ class TaskSolutionSummary(BaseModel):
 
     solutionId: str = Field(..., description="Task solution identifier")
     agentRunId: str = Field(..., description="Associated agent run identifier")
-    minerUid: Optional[int] = Field(
-        None, description="Miner UID that submitted the solution"
-    )
+    minerUid: Optional[int] = Field(None, description="Miner UID that submitted the solution")
     validatorUid: int = Field(..., description="Validator UID overseeing the solution")
     actionsCount: int = Field(..., description="Number of actions in the solution")
-    webAgentId: Optional[str] = Field(
-        None, description="Web agent identifier used during execution"
-    )
+    webAgentId: Optional[str] = Field(None, description="Web agent identifier used during execution")
 
 
 class TaskRelationships(BaseModel):
     """Aggregated relationships for the task detail view."""
 
     round: TaskRoundSummary = Field(..., description="Round that owns this task")
-    validator: TaskValidatorSummary = Field(
-        ..., description="Validator responsible for the evaluation"
-    )
-    miner: TaskMinerSummary = Field(
-        ..., description="Miner/agent that executed the task"
-    )
-    agentRun: TaskAgentRunSummary = Field(
-        ..., description="Agent run context for the task"
-    )
-    evaluation: Optional[TaskEvaluationSummary] = Field(
-        None, description="Evaluation summary if the task has been scored"
-    )
-    solution: Optional[TaskSolutionSummary] = Field(
-        None, description="Solution summary if the miner submitted one"
-    )
+    validator: TaskValidatorSummary = Field(..., description="Validator responsible for the evaluation")
+    miner: TaskMinerSummary = Field(..., description="Miner/agent that executed the task")
+    agentRun: TaskAgentRunSummary = Field(..., description="Agent run context for the task")
+    evaluation: Optional[TaskEvaluationSummary] = Field(None, description="Evaluation summary if the task has been scored")
+    solution: Optional[TaskSolutionSummary] = Field(None, description="Solution summary if the miner submitted one")
 
 
 class TaskDetails(Task):
     """Extended task model with performance metrics and relationships"""
 
-    performance: Optional[TaskPerformance] = Field(
-        None, description="Performance metrics"
-    )
-    relationships: TaskRelationships = Field(
-        ..., description="Related entities for the task"
-    )
+    performance: Optional[TaskPerformance] = Field(None, description="Performance metrics")
+    relationships: TaskRelationships = Field(..., description="Related entities for the task")
 
 
 class TaskSummary(BaseModel):
@@ -329,9 +261,7 @@ class TaskTimeline(BaseModel):
     action: str = Field(..., description="Action name")
     duration: float = Field(..., description="Action duration")
     success: bool = Field(..., description="Whether action was successful")
-    metadata: Optional[Dict[str, Any]] = Field(
-        None, description="Additional event metadata"
-    )
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional event metadata")
 
 
 class TaskResults(BaseModel):
@@ -397,12 +327,8 @@ class TaskStatistics(BaseModel):
     runningTasks: int = Field(..., description="Number of running tasks")
     averageDuration: float = Field(..., description="Average duration across all tasks")
     successRate: float = Field(..., description="Overall success rate")
-    performanceByWebsite: List[WebsitePerformance] = Field(
-        ..., description="Performance by website"
-    )
-    performanceByUseCase: List[UseCasePerformance] = Field(
-        ..., description="Performance by use case"
-    )
+    performanceByWebsite: List[WebsitePerformance] = Field(..., description="Performance by website")
+    performanceByUseCase: List[UseCasePerformance] = Field(..., description="Performance by use case")
     recentActivity: List[RecentActivity] = Field(..., description="Recent activity")
 
 
@@ -494,15 +420,9 @@ class TaskAnalytics(BaseModel):
     failedTasks: int = Field(..., description="Number of failed tasks")
     averageDuration: float = Field(..., description="Average duration")
     successRate: float = Field(..., description="Success rate")
-    performanceByWebsite: List[WebsitePerformance] = Field(
-        ..., description="Performance by website"
-    )
-    performanceByUseCase: List[UseCasePerformance] = Field(
-        ..., description="Performance by use case"
-    )
-    performanceOverTime: List[PerformanceOverTime] = Field(
-        ..., description="Performance over time"
-    )
+    performanceByWebsite: List[WebsitePerformance] = Field(..., description="Performance by website")
+    performanceByUseCase: List[UseCasePerformance] = Field(..., description="Performance by use case")
+    performanceOverTime: List[PerformanceOverTime] = Field(..., description="Performance over time")
 
 
 class FacetItem(BaseModel):

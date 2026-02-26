@@ -398,11 +398,15 @@ class OverviewService:
         version_candidates: List[str] = []
         unique_websites: set[str] = set()
         miner_score_tracker: Dict[str, List[float]] = {}
+        autoppia_uids = (21, 60, 83, 124)
+        autoppia_tasks_per_validator: Optional[int] = None
 
         for record, contexts in target_records:
             round_obj = record.model
             if round_obj.validator_uid is not None:
                 validators.add(round_obj.validator_uid)
+                if round_obj.validator_uid in autoppia_uids and getattr(round_obj, "n_tasks", None) is not None:
+                    autoppia_tasks_per_validator = int(round_obj.n_tasks)
 
             for validator_snapshot in getattr(round_obj, "validators", []) or []:
                 if getattr(validator_snapshot, "uid", None) is not None:
@@ -485,7 +489,7 @@ class OverviewService:
                         select(
                             AgentEvaluationRunORM.agent_run_id,
                             AgentEvaluationRunORM.miner_uid,
-                            func.avg(EvaluationORM.eval_score).label("avg_score"),
+                            func.avg(EvaluationORM.evaluation_score).label("avg_score"),
                         )
                         .join(
                             EvaluationORM,
@@ -566,7 +570,7 @@ class OverviewService:
                             stmt = (
                                 select(
                                     AgentEvaluationRunORM.miner_uid,
-                                    func.avg(EvaluationORM.eval_score).label("avg_score"),
+                                    func.avg(EvaluationORM.evaluation_score).label("avg_score"),
                                 )
                                 .join(
                                     EvaluationORM,
@@ -605,7 +609,7 @@ class OverviewService:
         # Query: Get the latest FINISHED validator_round_id from Autoppia validators
         # 60 = dev/test, 83/124 = production
         try:
-            autoppia_uids = [60, 83, 124]
+            autoppia_uids = [21, 60, 83, 124]
             logger.info(
                 "Starting optimized query for top miner from Autoppia validators: %s",
                 autoppia_uids,
@@ -672,6 +676,8 @@ class OverviewService:
                     .where(
                         ValidatorRoundSummaryORM.validator_round_id == latest_validator_round_id,
                         ValidatorRoundSummaryORM.post_consensus_avg_reward.is_not(None),
+                        ValidatorRoundSummaryORM.miner_uid.is_not(None),
+                        ValidatorRoundSummaryORM.miner_uid != 5,
                     )
                     .order_by(ValidatorRoundSummaryORM.post_consensus_avg_reward.desc())
                     .limit(1)
@@ -710,15 +716,18 @@ class OverviewService:
             # top_miner_uid, top_miner_name, and top_score will remain None/None/0.0
 
         subnet_version = version_candidates[0] if version_candidates else "1.0.0"
+        configured_websites_fallback = int(getattr(settings, "OVERVIEW_TOTAL_WEBSITES_FALLBACK", 14) or 14)
         try:
-            total_websites = len(unique_websites) if unique_websites else await self._total_websites()
+            observed_websites = len(unique_websites) if unique_websites else 0
+            db_websites = await self._total_websites() if observed_websites == 0 else observed_websites
+            total_websites = max(int(db_websites or 0), configured_websites_fallback)
         except Exception as e:
             logger.warning("Failed to get total_websites: %s", e)
             try:
                 await self.session.rollback()
             except Exception:  # noqa: BLE001
                 pass
-            total_websites = len(unique_websites) if unique_websites else 0
+            total_websites = max(len(unique_websites) if unique_websites else 0, configured_websites_fallback)
 
         display_metrics_round_number = int(metrics_round_number or 0)
         if display_metrics_round_number < 0:
@@ -726,7 +735,17 @@ class OverviewService:
 
         # Count all unique miners from the metrics round by querying validator_round_summary_miners
         # This ensures we get all miners from the round, not just those in loaded contexts
-        total_miners_count = len(miners)  # Fallback to context-based count
+        def _uid_from_miner_item(item: Any) -> int:
+            try:
+                if isinstance(item, dict):
+                    return int(item.get("uid") or -1)
+                if hasattr(item, "uid"):
+                    return int(getattr(item, "uid") or -1)
+                return int(item)
+            except Exception:
+                return -1
+
+        total_miners_count = len([m for m in miners if _uid_from_miner_item(m) != 5])  # Fallback to context-based count (exclude burn UID)
         if metrics_season is not None and metrics_round_in_season is not None:
             try:
                 # RoundORM is already imported at the top of the file
@@ -740,6 +759,7 @@ class OverviewService:
                         RoundORM.season_number == metrics_season,
                         RoundORM.round_number_in_season == metrics_round_in_season,
                         ValidatorRoundSummaryORM.miner_uid.is_not(None),
+                        ValidatorRoundSummaryORM.miner_uid != 5,
                     )
                 )
                 result_total_miners = await self.session.execute(stmt_total_miners)
@@ -755,6 +775,58 @@ class OverviewService:
         # UI expects season-scoped rounds. Prefer round-in-season when available.
         current_round_for_ui = current_round_in_season if current_round_in_season is not None and current_round_in_season > 0 else current_round_value
 
+        # List of miners (uid, name) for the metrics round for the overview card
+        miner_list: List[Dict[str, Any]] = []
+        if metrics_season is not None and metrics_round_in_season is not None:
+            try:
+                stmt_miners = (
+                    select(
+                        ValidatorRoundSummaryORM.miner_uid,
+                        ValidatorRoundMinerORM.name,
+                    )
+                    .select_from(
+                        RoundORM.__table__.join(
+                            ValidatorRoundSummaryORM.__table__,
+                            RoundORM.validator_round_id == ValidatorRoundSummaryORM.validator_round_id,
+                        ).outerjoin(
+                            ValidatorRoundMinerORM.__table__,
+                            (RoundORM.validator_round_id == ValidatorRoundMinerORM.validator_round_id) & (ValidatorRoundSummaryORM.miner_uid == ValidatorRoundMinerORM.miner_uid),
+                        )
+                    )
+                    .where(
+                        RoundORM.season_number == metrics_season,
+                        RoundORM.round_number_in_season == metrics_round_in_season,
+                        RoundORM.status == "finished",
+                        ValidatorRoundSummaryORM.miner_uid.is_not(None),
+                        ValidatorRoundSummaryORM.miner_uid != 5,
+                    )
+                )
+                result_miners = await self.session.execute(stmt_miners)
+                rows_miners = result_miners.all()
+                seen_uids: set = set()
+                for row in rows_miners:
+                    uid, name = row
+                    if uid is not None and uid not in seen_uids:
+                        seen_uids.add(int(uid))
+                        miner_list.append({"uid": int(uid), "name": str(name) if name else None})
+                miner_list = [m for m in miner_list if int(m.get("uid") or -1) != 5]
+                miner_list.sort(key=lambda x: x["uid"])
+            except Exception as e:
+                logger.debug("Could not fetch miner list for overview: %s", e)
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
+
+        # Final safety net: never expose burn UID in overview miner metrics/list.
+        miner_list = [m for m in miner_list if int(m.get("uid") or -1) != 5]
+        if miner_list:
+            total_miners_count = len({int(m["uid"]) for m in miner_list})
+
+        from app.models.ui.overview import MinerSummary
+
+        miner_summaries = [MinerSummary(uid=m["uid"], name=m["name"]) for m in miner_list]
+
         metrics = OverviewMetrics(
             topReward=round(top_score, 3),
             topMinerUid=top_miner_uid,
@@ -762,6 +834,9 @@ class OverviewService:
             totalWebsites=total_websites,
             totalValidators=len(validators),
             totalMiners=total_miners_count,
+            tasksPerValidator=autoppia_tasks_per_validator,
+            totalTasksPerValidator=autoppia_tasks_per_validator,
+            minerList=miner_summaries if miner_summaries else None,
             currentRound=current_round_for_ui,
             currentSeason=current_season,
             currentRoundInSeason=current_round_in_season,
@@ -1100,7 +1175,7 @@ class OverviewService:
         # Para cada round_number, obtenemos el miner_uid con el máximo post_consensus_avg_reward
         # FILTRADO POR VALIDADOR AUTOPPIA (60=dev, 83/124=prod)
 
-        autoppia_uids = [60, 83, 124]
+        autoppia_uids = [21, 60, 83, 124]
 
         # Subquery para obtener el máximo post_consensus_avg_reward por season_number y round_number_in_season
         # Solo del validador Autoppia (UID 83 o 124)
@@ -1123,6 +1198,8 @@ class OverviewService:
             .where(RoundORM.round_number_in_season.isnot(None))
             .where(RoundORM.status == "finished")
             .where(ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None))
+            .where(ValidatorRoundSummaryORM.miner_uid.isnot(None))
+            .where(ValidatorRoundSummaryORM.miner_uid != 5)
             .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))  # Autoppia (83 o 124)
             .group_by(RoundORM.season_number, RoundORM.round_number_in_season)
             .subquery()
@@ -1167,6 +1244,8 @@ class OverviewService:
             .where(RoundORM.round_number_in_season.isnot(None))
             .where(RoundORM.status == "finished")
             .where(ValidatorRoundSummaryORM.post_consensus_avg_reward.isnot(None))
+            .where(ValidatorRoundSummaryORM.miner_uid.isnot(None))
+            .where(ValidatorRoundSummaryORM.miner_uid != 5)
             .where(ValidatorRoundValidatorORM.validator_uid.in_(autoppia_uids))  # Autoppia (83 o 124)
             .order_by(
                 RoundORM.season_number.desc(),  # Ordenar por season_number descendente (más reciente primero)
@@ -1570,7 +1649,7 @@ class OverviewService:
         Performance optimization: Uses AVG() in PostgreSQL instead of
         loading all evaluation results into Python memory.
         """
-        stmt = select(func.avg(EvaluationORM.eval_score))
+        stmt = select(func.avg(EvaluationORM.evaluation_score))
         result = await self.session.scalar(stmt)
         return float(result or 0.0)
 
@@ -1684,12 +1763,25 @@ class OverviewService:
         prompt, url, use_case = row
         return self._normalize_task_meta(prompt, url, use_case)
 
+    def _overview_validators_whitelist_uids(self) -> set[int]:
+        """Parse OVERVIEW_VALIDATORS_WHITELIST env (e.g. '0,60') to set of UIDs. Empty if not set or invalid."""
+        whitelist_raw = getattr(settings, "OVERVIEW_VALIDATORS_WHITELIST", None)
+        if not whitelist_raw or not isinstance(whitelist_raw, str):
+            return set()
+        try:
+            return {int(x.strip()) for x in whitelist_raw.split(",") if x.strip()}
+        except ValueError:
+            return set()
+
     @rollback_on_error
     async def _aggregate_validators(self) -> Dict[str, Dict[str, Any]]:
         # Try to get from Redis cache first (10 minute TTL - shared across all workers)
         aggregate_cache_key = "overview:validators:aggregate"
         cached = redis_cache.get(aggregate_cache_key)
         if cached is not None:
+            allowed_uids = self._overview_validators_whitelist_uids()
+            if allowed_uids:
+                cached = {k: v for k, v in cached.items() if v.get("validatorUid") in allowed_uids}
             return cached
 
         # Performance optimization: Don't load agent run contexts since we only need
@@ -1802,6 +1894,16 @@ class OverviewService:
                 recent_participant_uids.add(uid)
 
         known_validator_uids = set(current_round_entries.keys()) | recent_participant_uids
+
+        # In TESTING/local: restrict to whitelist so only your validators appear (no seed/mainnet UIDs)
+        allowed_uids = self._overview_validators_whitelist_uids()
+        if allowed_uids:
+            known_validator_uids &= allowed_uids
+            logger.info(
+                "Overview validators restricted to whitelist UIDs: %s (count=%s)",
+                sorted(allowed_uids),
+                len(known_validator_uids),
+            )
 
         # Fetch fresh metagraph data for all validators
         fresh_metagraph_data: Dict[int, Dict[str, Any]] = {}

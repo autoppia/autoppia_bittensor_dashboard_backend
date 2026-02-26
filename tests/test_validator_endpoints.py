@@ -57,8 +57,6 @@ def _make_submission_payload(prefix: str = "001") -> dict:
         "max_epochs": 20,
         "max_blocks": 360,
         "n_tasks": 1,
-        "n_miners": 1,
-        "n_winners": 1,
         "miners": [miner_info],
         "sota_agents": [],
         "winners": [],
@@ -124,7 +122,7 @@ def _make_submission_payload(prefix: str = "001") -> dict:
         "agent_run_id": agent_run_id,
         "miner_uid": miner_uid,
         "validator_uid": validator_uid,
-        "final_score": 0.92,
+        "evaluation_score": 0.92,
         "test_results_matrix": [[{"success": True, "extra_data": {"confidence": 0.99}}]],
         "execution_history": [{"action": "click", "selector": "#submit"}],
         "feedback": None,
@@ -462,7 +460,7 @@ async def test_progressive_validator_flow(client, db_session, monkeypatch):
 
     evaluation_row = await db_session.scalar(select(EvaluationResultORM).where(EvaluationResultORM.evaluation_id == evaluation["evaluation_id"]))
     assert evaluation_row is not None
-    assert evaluation_row.data["final_score"] == pytest.approx(evaluation["final_score"])
+    assert evaluation_row.data["evaluation_score"] == pytest.approx(evaluation["evaluation_score"])
 
     # Idempotency: repeat progressive calls with the same payloads
     again_start = await client.post(

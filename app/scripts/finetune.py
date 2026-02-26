@@ -27,11 +27,11 @@ Notes:
 
 import argparse
 import asyncio
-import json
 import os
 import time
 from pathlib import Path
 from typing import Optional
+
 
 # Best-effort load environment from .env without requiring python-dotenv
 def _load_env_from_dotenv(dotenv_path: str = ".env") -> None:
@@ -54,9 +54,7 @@ def _load_env_from_dotenv(dotenv_path: str = ".env") -> None:
                         continue
                     key, val = line.split("=", 1)
                     key, val = key.strip(), val.strip()
-                    if (val.startswith("\"") and val.endswith("\"")) or (
-                        val.startswith("'") and val.endswith("'")
-                    ):
+                    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
                         val = val[1:-1]
                     os.environ.setdefault(key, val)
     except Exception:
@@ -66,9 +64,7 @@ def _load_env_from_dotenv(dotenv_path: str = ".env") -> None:
 def _ensure_openai_client():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY not set. Add it to your .env or environment."
-        )
+        raise RuntimeError("OPENAI_API_KEY not set. Add it to your .env or environment.")
 
     # Prefer the new OpenAI client if available; fallback to legacy API
     try:
@@ -84,9 +80,7 @@ def _ensure_openai_client():
         openai.api_key = api_key
         return ("legacy", openai)
     except Exception as exc:
-        raise RuntimeError(
-            "Could not import OpenAI SDK. Install it via `pip install openai`."
-        ) from exc
+        raise RuntimeError("Could not import OpenAI SDK. Install it via `pip install openai`.") from exc
 
 
 def _upload_file(client_tuple, file_path: str) -> str:
@@ -200,7 +194,7 @@ def parse_args() -> argparse.Namespace:
         "--min-score",
         type=float,
         default=0.5,
-        help="Minimum eval final_score to include (default: 0.5)",
+        help="Minimum evaluation_score to include (default: 0.5)",
     )
     parser.add_argument(
         "--max-actions",

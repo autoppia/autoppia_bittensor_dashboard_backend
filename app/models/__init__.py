@@ -21,7 +21,6 @@ from .core import (
     TestUnion,
     Evaluation,
     TestResult,
-    Feedback,
     EvaluationStats,
     EvaluationResult,
     ValidatorRoundSubmissionRequest,

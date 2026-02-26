@@ -124,7 +124,8 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
     # 1. Crear validator_round
     round_obj = ValidatorRoundORM(
         validator_round_id=validator_round_id,
-        round_number=round_number,
+        season_number=1,
+        round_number_in_season=round_number,
         start_block=7000000 + round_number * 1000,
         end_block=7000000 + round_number * 1000 + 500,
         start_epoch=19500.0 + round_number,
@@ -132,10 +133,7 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
         started_at=started_at,
         ended_at=ended_at,
         n_tasks=len(TASKS),
-        n_miners=len(MINERS),
-        n_winners=1,
         status="finished",
-        meta={},
     )
     session.add(round_obj)
     await session.flush()
@@ -146,7 +144,6 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
         validator_uid=validator["uid"],
         validator_hotkey=validator["hotkey"],
         validator_coldkey=validator["coldkey"],
-        round_number=round_number,
         name=validator["name"],
         stake=validator["stake"],
         vtrust=validator["vtrust"],
@@ -257,10 +254,10 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
             await session.flush()
 
             # Crear 1 evaluation para cada solution (relación 1-1)
-            eval_score = base_score + random.uniform(-0.1, 0.1)
-            eval_score = max(0.0, min(1.0, eval_score))
+            evaluation_score = base_score + random.uniform(-0.1, 0.1)
+            evaluation_score = max(0.0, min(1.0, evaluation_score))
             eval_time = random.uniform(5, 12)
-            reward = eval_score * random.uniform(0.9, 1.0)
+            reward = evaluation_score * random.uniform(0.9, 1.0)
 
             evaluation = EvaluationORM(
                 evaluation_id=f"{solution_id}_eval",
@@ -272,11 +269,10 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
                 miner_hotkey=miner["hotkey"],
                 validator_uid=validator["uid"],
                 validator_hotkey=validator["hotkey"],
-                eval_score=eval_score,  # ✅ Usa eval_score (existe en BD)
+                evaluation_score=evaluation_score,  # ✅ Usa evaluation_score (existe en BD)
                 reward=reward,  # ✅ Usa reward (existe en BD)
                 evaluation_time=eval_time,
-                feedback=None,
-                meta={},
+                extra_info={},
             )
             session.add(evaluation)
             all_evaluations.append(evaluation)
@@ -300,12 +296,12 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
 
         if miner_evaluations:
             local_avg_reward = sum(e.reward for e in miner_evaluations) / len(miner_evaluations)
-            local_avg_eval_score = sum(e.eval_score for e in miner_evaluations) / len(miner_evaluations)
+            local_avg_eval_score = sum(e.evaluation_score for e in miner_evaluations) / len(miner_evaluations)
             local_avg_eval_time = sum(e.evaluation_time for e in miner_evaluations) / len(miner_evaluations)
             # Contar tareas únicas recibidas (cada tarea tiene 1 evaluation)
             local_tasks_received = len(set(e.task_id for e in miner_evaluations))
             # Contar tareas únicas exitosas (cada tarea tiene 1 evaluation, relación 1-1)
-            local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.eval_score >= 0.5))
+            local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.evaluation_score >= 0.5))
 
             all_miner_rewards[miner["uid"]] = local_avg_reward
 
@@ -320,12 +316,12 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
             continue
 
         local_avg_reward = sum(e.reward for e in miner_evaluations) / len(miner_evaluations)
-        local_avg_eval_score = sum(e.eval_score for e in miner_evaluations) / len(miner_evaluations)
+        local_avg_eval_score = sum(e.evaluation_score for e in miner_evaluations) / len(miner_evaluations)
         local_avg_eval_time = sum(e.evaluation_time for e in miner_evaluations) / len(miner_evaluations)
         # Contar tareas únicas recibidas (cada tarea tiene 1 evaluation)
         local_tasks_received = len(set(e.task_id for e in miner_evaluations))
         # Contar tareas únicas exitosas (cada tarea tiene 1 evaluation, relación 1-1)
-        local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.eval_score >= 0.5))
+        local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.evaluation_score >= 0.5))
         local_rank = rank_map.get(miner["uid"], 1)
 
         # Post-consensus se calculará después agregando datos de todos los validators
@@ -382,7 +378,7 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
         miner_evaluations = [e for e in all_evaluations if e.miner_uid == miner["uid"]]
         if miner_evaluations:
             avg_reward = sum(e.reward for e in miner_evaluations) / len(miner_evaluations)
-            avg_eval_score = sum(e.eval_score for e in miner_evaluations) / len(miner_evaluations)
+            avg_eval_score = sum(e.evaluation_score for e in miner_evaluations) / len(miner_evaluations)
 
             stats_list.append(
                 {
@@ -441,36 +437,32 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
                 }
             )
 
-    # Actualizar meta del round
-    round_obj.meta = {
+    # validator_summary: solo round, s3_logs, ipfs_uploaded, ipfs_downloaded, evaluation_pre_consensus, evaluation_post_consensus
+    round_obj.validator_summary = {
         "round": {
             "round_number": round_number,
             "started_at": started_at,
             "ended_at": ended_at,
             "tasks_total": len(TASKS),
-            "miners_active": len(MINERS),
-            "tasks_completed": len([e for e in all_evaluations if e.eval_score > 0.5]),
+            "miners_evaluated": len(MINERS),
+            "tasks_completed": len([e for e in all_evaluations if e.evaluation_score > 0.5]),
             "emission": {
                 "alpha_price": 0.0043,
                 "burn_percentage": 92.5,
                 "burn_recipient_uid": 5,
             },
         },
+        "s3_logs": None,
         "ipfs_uploaded": {
             "timestamp": ended_at,
             "validator_hotkey": validator["hotkey"],
             "validator_uid": validator["uid"],
             "stake": validator["stake"],
-            "stats_list": stats_list,  # Esto es lo que se sube a IPFS
+            "stats_list": stats_list,
         },
-        "local_evaluation": {
-            "timestamp": ended_at,
-            "miners": local_miners,
-        },
-        "post_consensus_evaluation": {
-            "timestamp": ended_at,
-            "miners": post_consensus_miners,  # ✅ Usa consensus_reward
-        },
+        "ipfs_downloaded": None,
+        "evaluation_pre_consensus": {"miners": local_miners, "timestamp": ended_at},
+        "evaluation_post_consensus": {"miners": post_consensus_miners, "timestamp": ended_at},
     }
 
     # No hacer commit aquí, se hará después de calcular post-consensus

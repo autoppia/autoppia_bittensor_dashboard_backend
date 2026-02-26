@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from types import SimpleNamespace
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
@@ -48,6 +48,11 @@ from app.services.validator.validator_storage import (
     RoundConflictError,
     DuplicateIdentifierError,
     ValidatorRoundPersistenceService,
+)
+from app.services.media_storage import (
+    GifStorageConfigError,
+    build_public_url,
+    store_validator_round_log,
 )
 
 logger = logging.getLogger(__name__)
@@ -149,11 +154,14 @@ class FinishRoundAgentRun(BaseModel):
     weight: float | None = None
     # FASE 1: Nuevos campos opcionales
     miner_name: str | None = None
-    avg_reward: float | None = None  # Average reward (eval_score + time_score)
+    avg_reward: float | None = None  # Average reward (evaluation_score + time_score)
     avg_evaluation_time: float | None = None
     tasks_attempted: int | None = None
     tasks_completed: int | None = None
     tasks_failed: int | None = None
+    zero_reason: str | None = None  # Reason for score 0 (e.g. over_cost_limit, deploy_failed, all_tasks_failed)
+    is_reused: bool = False  # Same (repo, commit) already evaluated this season
+    reused_from_agent_run_id: str | None = None  # Source agent_run_id when is_reused
 
 
 class RoundMetadata(BaseModel):
@@ -168,8 +176,8 @@ class RoundMetadata(BaseModel):
     end_epoch: float
     tasks_total: int
     tasks_completed: int
-    miners_responded_handshake: int
-    miners_active: int
+    miners_responded_handshake: int  # miners that answered the round handshake
+    miners_evaluated: int  # miners that had at least one task evaluated
 
 
 class FinishRoundRequest(BaseModel):
@@ -177,11 +185,28 @@ class FinishRoundRequest(BaseModel):
     ended_at: float | None = Field(default=None, description="Epoch timestamp when the round finished")
     agent_runs: list[FinishRoundAgentRun] = Field(default_factory=list)
     round_metadata: RoundMetadata | None = Field(default=None, alias="round")
+    validator_summary: Dict[str, Any] | None = None
     local_evaluation: Dict[str, Any] | None = None
     post_consensus_evaluation: Dict[str, Any] | None = None
     # IPFS data
     ipfs_uploaded: Dict[str, Any] | None = None
     ipfs_downloaded: Dict[str, Any] | None = None
+    s3_logs: Dict[str, Any] | None = None
+
+
+class ValidatorRoundLogUploadRequest(BaseModel):
+    validator_round_id: str = Field(..., description="Validator round ID that owns this log")
+    season: Optional[int] = Field(None, description="Season number")
+    round_in_season: Optional[int] = Field(None, description="Round number inside season")
+    validator_uid: Optional[int] = Field(None, description="Validator UID")
+    validator_hotkey: Optional[str] = Field(None, description="Validator hotkey")
+    content: str = Field(..., description="Raw validator round log payload")
+
+
+class ValidatorRoundLogUploadResponse(BaseModel):
+    success: bool
+    data: Optional[dict[str, Any]] = None
+    error: Optional[str] = None
 
 
 @router.post("/auth-check", dependencies=[Depends(require_validator_auth)])
@@ -1178,6 +1203,9 @@ async def finish_round(
                         "tasks_attempted": ar.tasks_attempted,
                         "tasks_completed": ar.tasks_completed,
                         "tasks_failed": ar.tasks_failed,
+                        "zero_reason": ar.zero_reason,
+                        "is_reused": ar.is_reused,
+                        "reused_from_agent_run_id": ar.reused_from_agent_run_id,
                     }
                     for ar in payload.agent_runs
                 ]
@@ -1185,23 +1213,18 @@ async def finish_round(
                 else None
             ),
             round_metadata=(payload.round_metadata.model_dump() if payload.round_metadata else None),
+            validator_summary=payload.validator_summary,
             local_evaluation=payload.local_evaluation,
             post_consensus_evaluation=payload.post_consensus_evaluation,
             ipfs_uploaded=payload.ipfs_uploaded,
             ipfs_downloaded=payload.ipfs_downloaded,
+            s3_logs=payload.s3_logs,
         )
         await session.commit()
 
-        # Determine number of winners from post_consensus_evaluation
-        n_winners = 0
-        if payload.post_consensus_evaluation:
-            miners = payload.post_consensus_evaluation.get("miners", [])
-            n_winners = len([m for m in miners if m.get("weight", 0) > 0])
-
         logger.info(
-            "Finished round %s with %d winners, %d agent_runs updated",
+            "Finished round %s, %d agent_runs updated",
             validator_round_id,
-            n_winners,
             len(payload.agent_runs) if payload.agent_runs else 0,
         )
 
@@ -1213,3 +1236,85 @@ async def finish_round(
 
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{validator_round_id}/round-log",
+    dependencies=[Depends(require_validator_auth)],
+    response_model=ValidatorRoundLogUploadResponse,
+)
+async def upload_round_log(
+    validator_round_id: str,
+    payload: ValidatorRoundLogUploadRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> ValidatorRoundLogUploadResponse:
+    service = ValidatorRoundPersistenceService(session)
+
+    if payload.validator_round_id != validator_round_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"payload validator_round_id mismatch: got {payload.validator_round_id}, expected {validator_round_id}",
+        )
+
+    # Round may not exist if IWAP was reset mid-round; create minimal round so log upload can succeed
+    try:
+        round_row = await service.ensure_round_exists_or_create_minimal_for_round_log(
+            validator_round_id=validator_round_id,
+            season=payload.season,
+            round_in_season=payload.round_in_season,
+            validator_uid=payload.validator_uid,
+            validator_hotkey=payload.validator_hotkey,
+            owner_hotkey_from_request=request.headers.get(VALIDATOR_HOTKEY_HEADER),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    _ensure_request_matches_round_owner(request, round_row)
+    await session.commit()
+
+    try:
+        data = payload.content.encode("utf-8")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid log content encoding: {type(exc).__name__}",
+        ) from exc
+
+    try:
+        object_key = await store_validator_round_log(
+            validator_round_id=validator_round_id,
+            data=data,
+            season=payload.season,
+            round_in_season=payload.round_in_season,
+            validator_uid=payload.validator_uid,
+            validator_hotkey=payload.validator_hotkey,
+        )
+    except GifStorageConfigError as exc:
+        logger.error("Round log upload failed (S3 not configured): %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="S3 not configured for round log uploads",
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Round log upload failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload round log to S3",
+        ) from exc
+
+    payload_url = build_public_url(object_key)
+
+    return ValidatorRoundLogUploadResponse(
+        success=True,
+        data={
+            "objectKey": object_key,
+            "url": payload_url,
+            "payloadBytes": len(data),
+            "validator_round_id": validator_round_id,
+            "validator_uid": payload.validator_uid,
+            "validator_hotkey": payload.validator_hotkey,
+        },
+    )

@@ -33,7 +33,7 @@ async def _service(session: AsyncSession) -> AgentRunsService:
 
 
 @router.get("", response_model=AgentRunsListResponse)
-@cache("agent_runs_list", ttl=600)  # Cache 10 minutes - pre-warmed by background worker
+@cache("agent_runs_list_v2", ttl=600)  # v2: include isReused/reusedFromAgentRunId
 async def list_agent_runs(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),

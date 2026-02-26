@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload, defer
 
 from app.db.models import (
     AgentEvaluationRunORM,
+    EvaluationLLMUsageORM,
     EvaluationORM,
     TaskORM,
     TaskSolutionORM,
@@ -195,9 +196,9 @@ class TasksService:
         latency predictable even with large tables.
         """
         if not include_details:
-            # Generate cache key for lightweight listing
+            # Generate cache key for lightweight listing (v2 = includes llmCost per task)
             cache_key = redis_cache._generate_key(
-                "tasks_search_light",
+                "tasks_search_light_v2",
                 page=page,
                 limit=limit,
                 agent_run_id=agent_run_id,
@@ -257,9 +258,8 @@ class TasksService:
                 selectinload(TaskORM.task_solutions),
                 selectinload(TaskORM.evaluations)
                 .options(
-                    defer(EvaluationORM.feedback),
                     defer(EvaluationORM.gif_recording),
-                    defer(EvaluationORM.meta),
+                    defer(EvaluationORM.extra_info),
                 )
                 .options(
                     selectinload(EvaluationORM.execution_history_record),
@@ -319,7 +319,7 @@ class TasksService:
                     continue
 
             ui_task = self._build_ui_task(context)
-            evaluation_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
+            evaluation_score = getattr(context.evaluation, "evaluation_score", 0.0) if context.evaluation else 0.0
             run_start_ts = context.agent_run.started_at or context.round.started_at or 0.0
 
             if status and ui_task.status.value.lower() != status.lower():
@@ -506,9 +506,9 @@ class TasksService:
 
         # Add score filter if provided
         if min_score is not None:
-            filters.append(EvaluationORM.eval_score >= min_score)
+            filters.append(EvaluationORM.evaluation_score >= min_score)
         if max_score is not None:
-            filters.append(EvaluationORM.eval_score <= max_score)
+            filters.append(EvaluationORM.evaluation_score <= max_score)
 
         if use_case:
             # Filter by use_case name in JSON field
@@ -536,7 +536,7 @@ class TasksService:
         elif sort_by.lower() in {"endtime", "end_time"}:
             sort_column = EvaluationORM.created_at
         elif sort_by.lower() == "score":
-            sort_column = EvaluationORM.eval_score
+            sort_column = EvaluationORM.evaluation_score
 
         order_expr = sort_column.desc() if sort_order.lower() == "desc" else sort_column.asc()
         # Optimize COUNT: build count query without ORDER BY (faster)
@@ -600,6 +600,18 @@ class TasksService:
             )
             round_map = {r.validator_round_id: r for r in round_rows}
 
+        # Sum LLM cost per evaluation for task list cards
+        eval_ids = [ev.evaluation_id for ev in eval_rows if ev.evaluation_id]
+        costs_by_eval: Dict[str, float] = {}
+        if eval_ids:
+            cost_stmt = (
+                select(EvaluationLLMUsageORM.evaluation_id, func.coalesce(func.sum(EvaluationLLMUsageORM.cost), 0.0))
+                .where(EvaluationLLMUsageORM.evaluation_id.in_(eval_ids))
+                .group_by(EvaluationLLMUsageORM.evaluation_id)
+            )
+            cost_rows = (await self.session.execute(cost_stmt)).all()
+            costs_by_eval = {eid: float(total) for eid, total in cost_rows}
+
         def _use_case_name(raw: Any) -> str:
             if isinstance(raw, dict):
                 return str(raw.get("name") or raw.get("use_case") or raw.get("useCase") or "Unknown")
@@ -626,7 +638,7 @@ class TasksService:
             run = agent_runs_by_id.get(ev.agent_run_id)
             round_row = round_map.get(ev.validator_round_id)
 
-            score = getattr(ev, "eval_score", getattr(ev, "final_score", 0.0)) if ev else 0.0
+            score = getattr(ev, "evaluation_score", 0.0) if ev else 0.0
             duration = ev.evaluation_time if ev and ev.evaluation_time is not None else (run.elapsed_sec if run else 0.0)
             status_val = TaskStatus.COMPLETED if ev and score >= 0.5 else (TaskStatus.FAILED if ev else TaskStatus.PENDING)
 
@@ -653,6 +665,8 @@ class TasksService:
                         continue
             if status and status_val.value.lower() != status.lower():
                 continue
+
+            eval_cost = costs_by_eval.get(ev.evaluation_id) if ev and ev.evaluation_id else None
 
             items.append(
                 UITask(
@@ -682,6 +696,8 @@ class TasksService:
                     validatorImage=self._get_validator_image(run, round_row),
                     minerName=self._get_miner_name(run, round_row),
                     minerImage=self._get_miner_image(run, round_row),
+                    zeroReason=getattr(ev, "zero_reason", None) if ev else None,
+                    llmCost=eval_cost,
                 )
             )
 
@@ -733,9 +749,8 @@ class TasksService:
                 selectinload(TaskORM.task_solutions),
                 selectinload(TaskORM.evaluations)
                 .options(
-                    defer(EvaluationORM.feedback),
                     defer(EvaluationORM.gif_recording),
-                    defer(EvaluationORM.meta),
+                    defer(EvaluationORM.extra_info),
                 )
                 .options(
                     selectinload(EvaluationORM.execution_history_record),
@@ -765,9 +780,8 @@ class TasksService:
                 selectinload(TaskORM.task_solutions),
                 selectinload(TaskORM.evaluations)
                 .options(
-                    defer(EvaluationORM.feedback),
                     defer(EvaluationORM.gif_recording),
-                    defer(EvaluationORM.meta),
+                    defer(EvaluationORM.extra_info),
                 )
                 .selectinload(EvaluationORM.execution_history_record),
             )
@@ -836,10 +850,10 @@ class TasksService:
                 continue
 
         total = len(contexts)
-        completed = len([ctx for ctx in contexts if ctx.evaluation and getattr(ctx.evaluation, "eval_score", getattr(ctx.evaluation, "final_score", 0.0)) >= 0.5])
-        failed = len([ctx for ctx in contexts if ctx.evaluation and getattr(ctx.evaluation, "eval_score", getattr(ctx.evaluation, "final_score", 0.0)) < 0.5])
+        completed = len([ctx for ctx in contexts if ctx.evaluation and getattr(ctx.evaluation, "evaluation_score", 0.0) >= 0.5])
+        failed = len([ctx for ctx in contexts if ctx.evaluation and getattr(ctx.evaluation, "evaluation_score", 0.0) < 0.5])
 
-        scores = [getattr(ctx.evaluation, "eval_score", getattr(ctx.evaluation, "final_score", 0.0)) for ctx in contexts if ctx.evaluation]
+        scores = [getattr(ctx.evaluation, "evaluation_score", 0.0) for ctx in contexts if ctx.evaluation]
         durations = [ctx.evaluation.evaluation_time for ctx in contexts if ctx.evaluation]
 
         average_score = sum(scores) / len(scores) if scores else 0.0
@@ -867,7 +881,7 @@ class TasksService:
 
         performance_over_time: List[Dict[str, Any]] = []
         for context in contexts:
-            evaluation_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
+            evaluation_score = getattr(context.evaluation, "evaluation_score", 0.0) if context.evaluation else 0.0
             evaluation_duration = context.evaluation.evaluation_time if context.evaluation else 0.0
             completed_flag = evaluation_score >= 0.5
 
@@ -1068,7 +1082,7 @@ class TasksService:
             duration = None
 
         if context.evaluation:
-            evaluation_status = TaskStatus.COMPLETED if getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) >= 0.5 else TaskStatus.FAILED
+            evaluation_status = TaskStatus.COMPLETED if getattr(context.evaluation, "evaluation_score", 0.0) >= 0.5 else TaskStatus.FAILED
         elif context.agent_run.ended_at:
             evaluation_status = TaskStatus.FAILED if task.score < 0.5 else TaskStatus.COMPLETED
         else:
@@ -1091,8 +1105,8 @@ class TasksService:
 
         evaluation_summary: Optional[TaskEvaluationSummary] = None
         if context.evaluation:
-            eval_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0))
-            eval_meta = getattr(context.evaluation, "meta", None) or {}
+            evaluation_score = getattr(context.evaluation, "evaluation_score", 0.0)
+            eval_meta = getattr(context.evaluation, "metadata", None) or {}
             llm_model = eval_meta.get("llm_model") or eval_meta.get("model") or eval_meta.get("llm_model_name") or eval_meta.get("model_name") or eval_meta.get("llm")
             llm_usage = getattr(context.evaluation, "llm_usage", None) or []
             try:
@@ -1105,13 +1119,13 @@ class TasksService:
             single_model = llm_usage_list[0].get("model") if len(llm_usage_list) == 1 else None
             evaluation_summary = TaskEvaluationSummary(
                 evaluationId=context.evaluation.evaluation_id,
-                finalScore=eval_score,
-                rawScore=eval_score,
+                finalScore=evaluation_score,
+                rawScore=evaluation_score,
                 evaluationTime=context.evaluation.evaluation_time,
                 status=evaluation_status,
                 validatorUid=context.evaluation.validator_uid,
                 minerUid=context.evaluation.miner_uid,
-                hasFeedback=bool(context.evaluation.feedback),
+                hasFeedback=False,
                 hasRecording=bool(context.evaluation.gif_recording),
                 reward=getattr(context.evaluation, "reward", None),
                 llmModel=str(llm_model) if llm_model else single_model,
@@ -1182,7 +1196,7 @@ class TasksService:
             description=miner.description if miner and miner.description else "",
         )
 
-        evaluation_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
+        evaluation_score = getattr(context.evaluation, "evaluation_score", 0.0) if context.evaluation else 0.0
         task_status = TaskStatus.COMPLETED if evaluation_score >= 0.5 else TaskStatus.FAILED
 
         task_info = TaskInfo(
@@ -1196,7 +1210,7 @@ class TasksService:
         return PersonasData(round=round_info, validator=validator_info, agent=agent_info, task=task_info)
 
     def build_task_statistics(self, context: TaskContext) -> TaskStatistics:
-        evaluation_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
+        evaluation_score = getattr(context.evaluation, "evaluation_score", 0.0) if context.evaluation else 0.0
         duration = context.evaluation.evaluation_time if context.evaluation else 0.0
         completed = 1 if evaluation_score >= 0.5 else 0
         failed = 1 - completed if context.evaluation else 0
@@ -1277,8 +1291,8 @@ class TasksService:
 
         return TaskResults(
             taskId=context.task.task_id,
-            status=("completed" if context.evaluation and getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) >= 0.5 else "failed"),
-            score=getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0,
+            status=("completed" if context.evaluation and getattr(context.evaluation, "evaluation_score", 0.0) >= 0.5 else "failed"),
+            score=getattr(context.evaluation, "evaluation_score", 0.0) if context.evaluation else 0.0,
             duration=_safe_int(getattr(context.evaluation, "evaluation_time", 0.0)),
             actions=action_models,
             screenshots=self.build_screenshots(context),
@@ -1647,7 +1661,7 @@ class TasksService:
 
     def _build_ui_task(self, context: TaskContext) -> UITask:
         evaluation = context.evaluation
-        score = getattr(evaluation, "eval_score", getattr(evaluation, "final_score", 0.0)) if evaluation else 0.0
+        score = getattr(evaluation, "evaluation_score", 0.0) if evaluation else 0.0
         status = TaskStatus.COMPLETED if score >= 0.5 else TaskStatus.FAILED
         success_rate = int(score * 100)
 
@@ -1722,6 +1736,7 @@ class TasksService:
             validatorImage=validator_image,
             minerName=miner_name,
             minerImage=miner_image,
+            zeroReason=getattr(evaluation, "zero_reason", None) if evaluation else None,
         )
 
     @staticmethod
@@ -1774,14 +1789,13 @@ class TasksService:
         data.setdefault("validator_hotkey", evaluation_row.validator_hotkey)
         data.setdefault("miner_uid", evaluation_row.miner_uid)
         data.setdefault("miner_hotkey", evaluation_row.miner_hotkey)
-        data.setdefault("eval_score", getattr(evaluation_row, "eval_score", 0.0))
+        data.setdefault("evaluation_score", getattr(evaluation_row, "evaluation_score", 0.0))
         data.setdefault("evaluation_time", evaluation_row.evaluation_time)
         data.setdefault("execution_history", evaluation_row.execution_history)
-        data.setdefault("feedback", evaluation_row.feedback)
         data.setdefault("web_agent_id", getattr(evaluation_row, "web_agent_id", None))
         data.setdefault("stats", getattr(evaluation_row, "stats", None))
         data.setdefault("gif_recording", evaluation_row.gif_recording)
-        data.setdefault("metadata", evaluation_row.meta)
+        data.setdefault("metadata", evaluation_row.extra_info)
         result = Evaluation(**data)
         return result
 
@@ -1826,25 +1840,28 @@ class TasksService:
     def _build_results_clean(self, context: TaskContext, actions: List[TaskAction]) -> Dict[str, Any]:
         """Build result (singular) without actions, screenshots, logs, summary, taskId."""
         # Get evaluation score and convert to binary (0 or 1)
-        eval_score_raw = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0)) if context.evaluation else 0.0
-        eval_score = 1.0 if eval_score_raw >= 0.5 else 0.0
+        eval_score_raw = getattr(context.evaluation, "evaluation_score", 0.0) if context.evaluation else 0.0
+        evaluation_score = 1.0 if eval_score_raw >= 0.5 else 0.0
 
         # Get evaluation time
         eval_time = _safe_int(getattr(context.evaluation, "evaluation_time", 0.0)) if context.evaluation else 0
 
         # Determine status
-        status = "completed" if eval_score >= 0.5 else "failed"
+        status = "completed" if evaluation_score >= 0.5 else "failed"
+        zero_reason = getattr(context.evaluation, "zero_reason", None) if context.evaluation else None
 
         return {
             "status": status,
-            "eval_score": eval_score,
+            "evaluation_score": evaluation_score,
             "eval_time": eval_time,
+            "zero_reason": zero_reason,
         }
 
     def _build_info(self, context: TaskContext) -> Dict[str, Any]:
         """Build info object with evaluationId, taskId, miner_run_id, round, validator, miner."""
         # Get evaluation ID
         evaluation_id = context.evaluation.evaluation_id if context.evaluation else None
+        zero_reason = getattr(context.evaluation, "zero_reason", None) if context.evaluation else None
 
         # Get task ID
         task_id = context.task.task_id
@@ -1930,6 +1947,7 @@ class TasksService:
             "round": round_info,
             "validator": validator_info,
             "miner": miner_info,
+            "zeroReason": zero_reason,
         }
 
     @staticmethod

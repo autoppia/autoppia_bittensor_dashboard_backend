@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
+import uuid
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
-import uuid
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, defer
 from app.config import settings
@@ -56,30 +58,46 @@ def _non_empty_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return value or {}
 
 
+# Keys in agent_run metadata that are redundant with DB columns (is_reused, reused_from_agent_run_id)
+_AGENT_RUN_META_REDUNDANT_KEYS = frozenset({"handshake_note", "reused_from_round"})
+
+
+def _agent_run_meta_for_storage(model: "AgentEvaluationRun") -> Dict[str, Any]:
+    """Store only useful agent_run metadata; omit handshake_note/reused_from_round (already in is_reused/reused_from_agent_run_id)."""
+    meta = getattr(model, "metadata", None) or {}
+    if not meta:
+        return {}
+    cleaned = {k: v for k, v in meta.items() if k not in _AGENT_RUN_META_REDUNDANT_KEYS}
+    return _non_empty_dict(cleaned)
+
+
 def _clean_meta_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Clean metadata dict, removing empty or useless fields."""
+    """Clean metadata dict: remove empty/useless fields and heavy LLM payloads.
+    llm_calls / llm_usage detail is not stored here (lives in evaluation_llm_usage and AWS logs).
+    timeout (and similar) are not stored here: use zero_reason column instead.
+    """
     if not value:
         return {}
 
-    # Fields that are considered useless if empty or have default values
+    # Don't store heavy LLM payloads in meta (duplicated in evaluation_llm_usage + AWS)
+    # Don't store timeout/timeout_reason in extra_info; use zero_reason column (e.g. task_timeout)
+    skip_keys = {"llm_calls", "llm_usage", "timeout", "timeout_reason"}
     useless_fields = {
         "notes": "",
         "error_message": "",
-        "version_ok": True,  # Default value
-        "eval_score": 0.0,  # Already stored in eval_score column
-        "reward": 0.0,  # Already stored in reward column
-        "final_score": 0.0,  # Legacy field name (replaced by eval_score)
+        "version_ok": True,
+        "evaluation_score": 0.0,
+        "reward": 0.0,
     }
 
     cleaned = {}
     for key, val in value.items():
-        # Skip if it's a useless field with default/empty value
+        if key in skip_keys:
+            continue
         if key in useless_fields and val == useless_fields[key]:
             continue
-        # Skip empty strings
         if isinstance(val, str) and not val.strip():
             continue
-        # Include the field
         cleaned[key] = val
 
     return cleaned
@@ -266,200 +284,41 @@ class ValidatorRoundPersistenceService:
         row = AgentEvaluationRunORM(**kwargs)
         self.session.add(row)
         await self.session.flush()
-        return row
 
-    async def _clone_previous_evaluations_if_unchanged(
-        self,
-        *,
-        round_row: ValidatorRoundORM,
-        agent_run_row: AgentEvaluationRunORM,
-    ) -> int:
-        """
-        If the miner's github_url is unchanged from the previous run, clone the
-        latest evaluations into the new agent run (new IDs, new round/task IDs).
-
-        Returns number of evaluations cloned.
-        """
-        from sqlalchemy.orm import selectinload
-        from app.db.models import (
-            AgentEvaluationRunORM,
-            ValidatorRoundMinerORM,
-            TaskORM,
-            TaskSolutionORM,
-            EvaluationORM,
-            EvaluationExecutionHistoryORM,
-        )
-
-        miner_uid = agent_run_row.miner_uid
-        miner_hotkey = agent_run_row.miner_hotkey
-
-        # Resolve current snapshot github_url for this run
-        stmt_cur_snap = select(ValidatorRoundMinerORM).where(ValidatorRoundMinerORM.validator_round_id == round_row.validator_round_id)
-        if miner_uid is not None:
-            stmt_cur_snap = stmt_cur_snap.where(ValidatorRoundMinerORM.miner_uid == miner_uid)
-        elif miner_hotkey:
-            stmt_cur_snap = stmt_cur_snap.where(ValidatorRoundMinerORM.miner_hotkey == miner_hotkey)
-        cur_snap = await self.session.scalar(stmt_cur_snap)
-        current_github = (cur_snap.github_url or "").strip() if cur_snap else ""
-        if not current_github:
-            return 0
-
-        # Skip if there are already evaluations for this run
-        existing_eval = await self.session.scalar(select(EvaluationORM).where(EvaluationORM.agent_run_id == agent_run_row.agent_run_id).limit(1))
-        if existing_eval is not None:
-            return 0
-
-        # Find most recent previous run for this miner
-        stmt_prev = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.validator_round_id != round_row.validator_round_id)
-        if miner_uid is not None:
-            stmt_prev = stmt_prev.where(AgentEvaluationRunORM.miner_uid == miner_uid)
-        elif miner_hotkey:
-            stmt_prev = stmt_prev.where(AgentEvaluationRunORM.miner_hotkey == miner_hotkey)
-        else:
-            return 0
-
-        stmt_prev = stmt_prev.order_by(AgentEvaluationRunORM.started_at.desc(), AgentEvaluationRunORM.id.desc()).limit(1)
-        prev_run = await self.session.scalar(stmt_prev)
-        if prev_run is None:
-            return 0
-
-        # Do not clone across seasons (tasks change). Require same season.
-        try:
-            prev_round_row = await self._get_round_row(prev_run.validator_round_id)
-            if prev_round_row and prev_round_row.season_number != round_row.season_number:
-                return 0
-        except Exception:
-            # If season lookup fails, be conservative and skip cloning.
-            return 0
-
-        # Compare github_url from previous snapshot
-        stmt_prev_snap = select(ValidatorRoundMinerORM).where(ValidatorRoundMinerORM.validator_round_id == prev_run.validator_round_id)
-        if miner_uid is not None:
-            stmt_prev_snap = stmt_prev_snap.where(ValidatorRoundMinerORM.miner_uid == miner_uid)
-        elif miner_hotkey:
-            stmt_prev_snap = stmt_prev_snap.where(ValidatorRoundMinerORM.miner_hotkey == miner_hotkey)
-        prev_snap = await self.session.scalar(stmt_prev_snap)
-        prev_github = (prev_snap.github_url or "").strip() if prev_snap else ""
-        if not prev_github or prev_github != current_github:
-            return 0
-
-        # Load tasks for current and previous rounds
-        current_tasks = await self.session.scalars(select(TaskORM).where(TaskORM.validator_round_id == round_row.validator_round_id))
-        prev_tasks = await self.session.scalars(select(TaskORM).where(TaskORM.validator_round_id == prev_run.validator_round_id))
-
-        current_task_map: Dict[str, TaskORM] = {}
-        for task in current_tasks:
-            base_id = _strip_round_prefix(task.task_id, round_row.validator_round_id)
-            if base_id:
-                current_task_map[base_id] = task
-
-        prev_task_map: Dict[str, TaskORM] = {}
-        for task in prev_tasks:
-            base_id = _strip_round_prefix(task.task_id, prev_run.validator_round_id)
-            if base_id:
-                prev_task_map[base_id] = task
-
-        if not current_task_map or not prev_task_map:
-            return 0
-
-        prev_evals = await self.session.scalars(
-            select(EvaluationORM)
-            .where(EvaluationORM.agent_run_id == prev_run.agent_run_id)
-            .options(
-                selectinload(EvaluationORM.task_solution),
-                selectinload(EvaluationORM.execution_history_record),
-                selectinload(EvaluationORM.llm_usage),
-            )
-        )
-
-        cloned = 0
-        for prev_eval in prev_evals:
-            base_id = _strip_round_prefix(prev_eval.task_id, prev_run.validator_round_id)
-            if not base_id:
-                continue
-            current_task = current_task_map.get(base_id)
-            if current_task is None:
-                continue
-
-            new_solution_id = _make_solution_id(miner_uid)
-            new_evaluation_id = _make_evaluation_id(miner_uid)
-
-            prev_solution = prev_eval.task_solution
-            solution_row = TaskSolutionORM(
-                solution_id=new_solution_id,
-                task_id=current_task.task_id,
-                agent_run_id=agent_run_row.agent_run_id,
-                validator_round_id=round_row.validator_round_id,
-                validator_uid=round_row.validator_snapshot.validator_uid if round_row.validator_snapshot else prev_eval.validator_uid,
-                validator_hotkey=round_row.validator_snapshot.validator_hotkey if round_row.validator_snapshot else prev_eval.validator_hotkey,
-                miner_uid=agent_run_row.miner_uid,
-                miner_hotkey=agent_run_row.miner_hotkey,
-                actions=list(getattr(prev_solution, "actions", []) or []),
-            )
-            self.session.add(solution_row)
-            await self.session.flush()
-
-            evaluation_row = EvaluationORM(
-                evaluation_id=new_evaluation_id,
-                validator_round_id=round_row.validator_round_id,
-                agent_run_id=agent_run_row.agent_run_id,
-                task_id=current_task.task_id,
-                task_solution_id=new_solution_id,
-                miner_uid=agent_run_row.miner_uid,
-                miner_hotkey=agent_run_row.miner_hotkey,
-                validator_uid=round_row.validator_snapshot.validator_uid if round_row.validator_snapshot else prev_eval.validator_uid,
-                validator_hotkey=round_row.validator_snapshot.validator_hotkey if round_row.validator_snapshot else prev_eval.validator_hotkey,
-                eval_score=prev_eval.eval_score,
-                reward=prev_eval.reward,
-                evaluation_time=prev_eval.evaluation_time,
-                feedback=prev_eval.feedback,
-                gif_recording=prev_eval.gif_recording,
-                meta=dict(prev_eval.meta or {}),
-            )
-            self.session.add(evaluation_row)
-            await self.session.flush()
-
-            if prev_eval.execution_history_record and prev_eval.execution_history_record.execution_history:
-                self.session.add(
-                    EvaluationExecutionHistoryORM(
-                        evaluations_id=evaluation_row.id,
-                        execution_history=list(prev_eval.execution_history_record.execution_history),
-                    )
+        # Reused runs: copy result metrics from source at creation time (instant, no evaluation).
+        # Do NOT copy ended_at/elapsed_sec: reused = 0s "evaluation" time (we didn't run anything).
+        is_reused = getattr(agent_run, "is_reused", False)
+        reused_from_id = getattr(agent_run, "reused_from_agent_run_id", None)
+        if is_reused and reused_from_id:
+            source = await self._resolve_reused_source_run(reused_from_id)
+            if source:
+                # Always anchor reused runs to the original source run.
+                row.reused_from_agent_run_id = source.agent_run_id
+                for attr in (
+                    "average_score",
+                    "average_execution_time",
+                    "average_reward",
+                    "total_tasks",
+                    "success_tasks",
+                    "failed_tasks",
+                    "zero_reason",
+                ):
+                    val = getattr(source, attr, None)
+                    if val is not None:
+                        setattr(row, attr, val)
+                if getattr(source, "meta", None) is not None and isinstance(source.meta, dict):
+                    row.meta = dict(source.meta)
+                # Reused run is "closed" immediately: no time spent evaluating
+                row.ended_at = row.started_at
+                row.elapsed_sec = 0.0
+                await self.session.flush()
+                logger.debug(
+                    "start_agent_run: copied metrics from source run %s to reused run %s (elapsed_sec=0)",
+                    reused_from_id,
+                    row.agent_run_id,
                 )
 
-            if prev_eval.llm_usage:
-                usage_items = [
-                    {
-                        "provider": u.provider,
-                        "model": u.model,
-                        "tokens": u.tokens,
-                        "cost": u.cost,
-                    }
-                    for u in prev_eval.llm_usage
-                ]
-                await self._sync_llm_usage(evaluation_row, usage_items)
-
-            cloned += 1
-
-        if cloned:
-            await self.session.refresh(agent_run_row, ["evaluations", "task_solutions"])
-            metrics = self._compute_agent_run_stats(agent_run_row)
-            agent_run_row.total_tasks = metrics["total_tasks"]
-            agent_run_row.success_tasks = metrics["success_tasks"]
-            agent_run_row.failed_tasks = metrics["failed_tasks"]
-            agent_run_row.average_score = metrics["average_score"]
-            agent_run_row.average_execution_time = metrics["average_execution_time"]
-            agent_run_row.average_reward = metrics["average_reward"]
-
-            logger.info(
-                "Cloned %d evaluations from agent_run_id=%s to agent_run_id=%s (miner_uid=%s github unchanged)",
-                cloned,
-                prev_run.agent_run_id,
-                agent_run_row.agent_run_id,
-                miner_uid,
-            )
-
-        return cloned
+        return row
 
     async def get_round_by_validator_and_number(
         self,
@@ -582,6 +441,17 @@ class ValidatorRoundPersistenceService:
         agent_run_row.average_score = metrics["average_score"]
         agent_run_row.average_execution_time = metrics["average_execution_time"]
         agent_run_row.average_reward = metrics["average_reward"]
+        if getattr(agent_run_row, "zero_reason", None) is None and self._run_has_zero_score(agent_run_row):
+            agent_run_row.zero_reason = self._derive_run_zero_reason_from_evaluations(agent_run_row)
+
+        # Close this agent run now: ended_at = when we received this evaluation (run is per-miner, not per-round)
+        now = time.time()
+        agent_run_row.ended_at = now
+        if agent_run_row.started_at is not None:
+            agent_run_row.elapsed_sec = max(0.0, float(now) - float(agent_run_row.started_at))
+
+        # Propagate to any runs that reused from this one (they may have been created when this run was still empty)
+        await self._propagate_source_metrics_to_reused_runs(agent_run_row)
 
         # Reaching here means fresh insert path; idempotency is handled at endpoint by
         # detecting duplicates before writes. This method intentionally raises
@@ -719,6 +589,16 @@ class ValidatorRoundPersistenceService:
             agent_run_row.average_score = metrics["average_score"]
             agent_run_row.average_execution_time = metrics["average_execution_time"]
             agent_run_row.average_reward = metrics["average_reward"]
+            if getattr(agent_run_row, "zero_reason", None) is None and self._run_has_zero_score(agent_run_row):
+                agent_run_row.zero_reason = self._derive_run_zero_reason_from_evaluations(agent_run_row)
+
+            # Close this agent run now (run is per-miner; we don't wait for round end)
+            now = time.time()
+            agent_run_row.ended_at = now
+            if agent_run_row.started_at is not None:
+                agent_run_row.elapsed_sec = max(0.0, float(now) - float(agent_run_row.started_at))
+
+            await self._propagate_source_metrics_to_reused_runs(agent_run_row)
 
     # ──────────────────────────────────────────────────────────────────────
     # Read-only helpers for idempotency checks
@@ -740,10 +620,12 @@ class ValidatorRoundPersistenceService:
         ended_at: float,
         agent_runs: Optional[List[Dict[str, Any]]] = None,
         round_metadata: Optional[Dict[str, Any]] = None,
+        validator_summary: Optional[Dict[str, Any]] = None,
         local_evaluation: Optional[Dict[str, Any]] = None,
         post_consensus_evaluation: Optional[Dict[str, Any]] = None,
         ipfs_uploaded: Optional[Dict[str, Any]] = None,
         ipfs_downloaded: Optional[Dict[str, Any]] = None,
+        s3_logs: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Mark a validator round as completed."""
         round_row = await self._ensure_round_exists(validator_round_id)
@@ -751,6 +633,14 @@ class ValidatorRoundPersistenceService:
         # If round metadata was provided by the validator, persist boundary fields.
         # This is the only place end_block/end_epoch are communicated back to the backend.
         if round_metadata and isinstance(round_metadata, dict):
+            # Keep summary round_number coherent with persisted round id fields.
+            # Some validators can compute round_number from a later block during finish.
+            try:
+                persisted_round_in_season = int(getattr(round_row, "round_number_in_season", 0) or 0)
+                if persisted_round_in_season > 0:
+                    round_metadata["round_number"] = persisted_round_in_season
+            except Exception:
+                pass
             try:
                 rb = round_metadata.get("start_block")
                 if rb is not None and int(rb) > 0 and (getattr(round_row, "start_block", None) in (None, 0)):
@@ -815,82 +705,102 @@ class ValidatorRoundPersistenceService:
 
         round_row.status = normalized_status
 
-        # Build meta with all data
-        meta_data = {
-            **round_row.meta,
-        }
-
-        # Process emission info - check round_metadata first, then post_consensus_evaluation (for backward compatibility)
-        emission_info = None
+        # validator_summary: solo round, s3_logs, ipfs_uploaded, ipfs_downloaded, evaluation_pre_consensus, evaluation_post_consensus
         from app.services.subnet_utils import get_price
         from app.config import settings
 
-        # Calculate alpha_price from cached metagraph price
+        emission_info = None
         try:
             alpha_price = get_price(netuid=settings.VALIDATOR_NETUID)
             if alpha_price <= 0:
-                # Fallback to env if cached price is invalid
                 alpha_price = float(settings.SUBNET_PRICE_FALLBACK)
         except Exception:
-            # Safe fallback to env config
             alpha_price = float(settings.SUBNET_PRICE_FALLBACK)
 
-        # Check if emission is already in round_metadata (preferred)
         if round_metadata and isinstance(round_metadata, dict):
             emission_info = round_metadata.get("emission", {})
-
-        # Fallback: extract from post_consensus_evaluation (backward compatibility)
         if not emission_info and post_consensus_evaluation:
-            import copy
-
-            post_consensus_copy = copy.deepcopy(post_consensus_evaluation)
-            emission_info = post_consensus_copy.get("emission", {})
-            # Remove emission from post_consensus_evaluation if it was there
-            if "emission" in post_consensus_copy:
-                del post_consensus_copy["emission"]
-            meta_data["post_consensus_evaluation"] = post_consensus_copy
-        elif post_consensus_evaluation:
-            # post_consensus_evaluation exists but no emission - use as is
-            meta_data["post_consensus_evaluation"] = post_consensus_evaluation
-
-        # Add alpha_price to emission info if we have it
+            emission_info = (post_consensus_evaluation or {}).get("emission", {})
         if emission_info:
-            emission_info = dict(emission_info)  # Make a copy
+            emission_info = dict(emission_info)
             emission_info["alpha_price"] = float(alpha_price)
 
-        # Add round_metadata with emission info
+        round_with_emission = None
         if round_metadata:
-            round_metadata_copy = dict(round_metadata)
-            # Add/update emission info with alpha_price
+            round_with_emission = dict(round_metadata)
             if emission_info:
-                round_metadata_copy["emission"] = emission_info
-            meta_data["round"] = round_metadata_copy
+                round_with_emission["emission"] = emission_info
         elif emission_info:
-            # If no round_metadata but we have emission, create minimal round metadata with emission
-            meta_data["round"] = {"emission": emission_info}
+            round_with_emission = {"emission": emission_info}
 
-        # Add other fields
-        if local_evaluation:
-            meta_data["local_evaluation"] = local_evaluation
-        if ipfs_uploaded:
-            meta_data["ipfs_uploaded"] = ipfs_uploaded
-        if ipfs_downloaded:
-            meta_data["ipfs_downloaded"] = ipfs_downloaded
+        vs = validator_summary or {}
+        merged = {
+            "round": round_with_emission or vs.get("round"),
+            "s3_logs": s3_logs if s3_logs is not None else vs.get("s3_logs"),
+            "ipfs_uploaded": ipfs_uploaded or vs.get("ipfs_uploaded"),
+            "ipfs_downloaded": ipfs_downloaded or vs.get("ipfs_downloaded"),
+            "evaluation_pre_consensus": vs.get("evaluation_pre_consensus") or (local_evaluation.get("summary") if isinstance(local_evaluation, dict) else None),
+            "evaluation_post_consensus": vs.get("evaluation_post_consensus") or (post_consensus_evaluation.get("summary") if isinstance(post_consensus_evaluation, dict) else None),
+        }
 
-        round_row.meta = meta_data
+        # Normalize consensus summaries for stable UI/API shape
+        pre_summary = merged.get("evaluation_pre_consensus")
+        if isinstance(pre_summary, dict):
+            # Remove noisy internal key from pre-consensus summary.
+            pre_summary.pop("schema_version", None)
+            rs = pre_summary.get("round_summary") if isinstance(pre_summary.get("round_summary"), dict) else {}
+            winner_obj = rs.get("winner") if isinstance(rs.get("winner"), dict) else {}
+            miner_uid = winner_obj.get("miner_uid")
+            if miner_uid is None:
+                # Try to infer deterministically from round summary fields
+                decision = rs.get("decision") if isinstance(rs.get("decision"), dict) else {}
+                inferred_uid = winner_obj.get("uid") or decision.get("top_candidate_uid") or pre_summary.get("season_summary", {}).get("current_winner_uid")
+                if inferred_uid is None and isinstance(rs.get("miner_scores"), dict) and rs.get("miner_scores"):
+                    try:
+                        inferred_uid = max(
+                            rs.get("miner_scores").items(),
+                            key=lambda kv: float(kv[1] or 0.0),
+                        )[0]
+                    except Exception:
+                        inferred_uid = None
+                if inferred_uid is not None:
+                    try:
+                        winner_obj["miner_uid"] = int(inferred_uid)
+                    except Exception:
+                        pass
+                    rs["winner"] = winner_obj
+                    pre_summary["round_summary"] = rs
+            # Ensure season_summary carries explicit current winner uid
+            season_summary = pre_summary.get("season_summary") if isinstance(pre_summary.get("season_summary"), dict) else {}
+            season_current_uid = season_summary.get("current_winner_uid")
+            if season_current_uid is None:
+                inferred_season_uid = winner_obj.get("miner_uid") or winner_obj.get("uid")
+                if inferred_season_uid is not None:
+                    try:
+                        season_summary["current_winner_uid"] = int(inferred_season_uid)
+                    except Exception:
+                        pass
+            pre_summary["season_summary"] = season_summary
+            merged["evaluation_pre_consensus"] = pre_summary
 
-        # Calculate n_winners from post_consensus_evaluation
-        if post_consensus_evaluation:
-            miners = post_consensus_evaluation.get("miners", [])
-            n_winners = len([m for m in miners if m.get("weight", 0) > 0])
-            round_row.n_winners = n_winners
-        else:
-            round_row.n_winners = 0
+        post_summary = merged.get("evaluation_post_consensus")
+        if isinstance(post_summary, dict):
+            # Remove noisy internal key from post-consensus summary shown in UI payloads.
+            post_summary.pop("schema_version", None)
+            merged["evaluation_post_consensus"] = post_summary
+
+        round_row.validator_summary = merged
+        if s3_logs is not None:
+            round_row.s3_logs = s3_logs
 
         round_row.ended_at = ended_at
 
         rank_map: Dict[str, Optional[int]] = {}
         weight_map: Dict[str, Optional[float]] = {}
+        zero_reason_map: Dict[str, Optional[str]] = {}
+        is_reused_map: Dict[str, bool] = {}
+        reused_from_map: Dict[str, Optional[str]] = {}
+        agent_runs_by_id: Dict[str, Dict[str, Any]] = {}
         if agent_runs:
             for agent_run_data in agent_runs:
                 agent_run_id = agent_run_data.get("agent_run_id")
@@ -898,6 +808,10 @@ class ValidatorRoundPersistenceService:
                     continue
                 rank_map[agent_run_id] = agent_run_data.get("rank")
                 weight_map[agent_run_id] = agent_run_data.get("weight")
+                zero_reason_map[agent_run_id] = agent_run_data.get("zero_reason")
+                is_reused_map[agent_run_id] = bool(agent_run_data.get("is_reused", False))
+                reused_from_map[agent_run_id] = agent_run_data.get("reused_from_agent_run_id")
+                agent_runs_by_id[agent_run_id] = agent_run_data
 
         stmt_runs = (
             select(AgentEvaluationRunORM)
@@ -905,9 +819,8 @@ class ValidatorRoundPersistenceService:
                 selectinload(AgentEvaluationRunORM.task_solutions),
                 selectinload(AgentEvaluationRunORM.evaluations)
                 .options(
-                    defer(EvaluationORM.feedback),
                     defer(EvaluationORM.gif_recording),
-                    defer(EvaluationORM.meta),
+                    defer(EvaluationORM.extra_info),
                 )
                 .selectinload(EvaluationORM.execution_history_record),
             )
@@ -917,39 +830,124 @@ class ValidatorRoundPersistenceService:
         run_rows = list(run_rows_result)
 
         for run_row in run_rows:
-            if ended_at is not None:
-                run_row.ended_at = ended_at
-                if run_row.started_at is not None:
-                    elapsed = max(0.0, float(ended_at) - float(run_row.started_at))
-                    run_row.elapsed_sec = elapsed
+            is_reused = is_reused_map.get(run_row.agent_run_id, getattr(run_row, "is_reused", False))
+            # Do NOT set ended_at/elapsed_sec here: agent runs are per-miner and already closed
+            # - Reused: closed at start_agent_run (ended_at=started_at, elapsed_sec=0)
+            # - Evaluated: closed in add_evaluation when we received the last evaluation
 
-            # If this run has no evaluations, attempt to clone from previous run
-            # when github_url is unchanged (carry-over behavior).
-            if not run_row.evaluations:
-                try:
-                    cloned = await self._clone_previous_evaluations_if_unchanged(
-                        round_row=round_row,
-                        agent_run_row=run_row,
-                    )
-                    if cloned:
-                        await self.session.refresh(run_row, ["evaluations", "task_solutions"])
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "Failed to clone evaluations for agent_run_id=%s in finish_round: %s",
-                        run_row.agent_run_id,
-                        exc,
-                    )
+            if not is_reused:
+                metrics = self._compute_agent_run_stats(run_row)
+                run_row.total_tasks = metrics["total_tasks"]
+                run_row.success_tasks = metrics["success_tasks"]
+                run_row.failed_tasks = metrics["failed_tasks"]
+                run_row.average_score = metrics["average_score"]
+                run_row.average_execution_time = metrics["average_execution_time"]
+                run_row.average_reward = metrics["average_reward"]
+            else:
+                # Reused runs: source run is truth. Never overwrite with payload 0/0/0 — rounds are sequential, source always has metrics.
+                payload_data = agent_runs_by_id.get(run_row.agent_run_id) or {}
+                source_id = reused_from_map.get(run_row.agent_run_id) or getattr(run_row, "reused_from_agent_run_id", None)
+                source_run = await self._resolve_reused_source_run(source_id) if source_id else None
+                if source_run is not None:
+                    run_row.reused_from_agent_run_id = source_run.agent_run_id
 
-            metrics = self._compute_agent_run_stats(run_row)
-            run_row.total_tasks = metrics["total_tasks"]
-            run_row.success_tasks = metrics["success_tasks"]
-            run_row.failed_tasks = metrics["failed_tasks"]
-            run_row.average_score = metrics["average_score"]
-            run_row.average_execution_time = metrics["average_execution_time"]
-            run_row.average_reward = metrics["average_reward"]
+                payload_attempted = payload_data.get("tasks_attempted")
+                source_total = (getattr(source_run, "total_tasks", None) or 0) if source_run else 0
+                # Prefer source when payload would zero out (validator sometimes sends 0 for reused runs)
+                use_source_metrics = source_run is not None and source_total > 0 and (payload_attempted is None or int(payload_attempted or 0) == 0)
+
+                if use_source_metrics:
+                    run_row.total_tasks = int(source_run.total_tasks or 0)
+                    run_row.success_tasks = int(getattr(source_run, "success_tasks", 0) or 0)
+                    run_row.failed_tasks = int(getattr(source_run, "failed_tasks", 0) or 0)
+                    run_row.average_score = source_run.average_score
+                    run_row.average_execution_time = getattr(source_run, "average_execution_time", None)
+                    run_row.average_reward = getattr(source_run, "average_reward", None)
+                    if getattr(source_run, "zero_reason", None):
+                        run_row.zero_reason = source_run.zero_reason
+                else:
+                    if payload_attempted is not None:
+                        run_row.total_tasks = int(payload_attempted)
+                    elif source_run is not None:
+                        run_row.total_tasks = int(source_run.total_tasks or 0)
+                    if payload_data.get("tasks_completed") is not None:
+                        run_row.success_tasks = int(payload_data["tasks_completed"])
+                    elif source_run is not None:
+                        run_row.success_tasks = int(getattr(source_run, "success_tasks", 0) or 0)
+                    if payload_data.get("tasks_failed") is not None:
+                        run_row.failed_tasks = int(payload_data["tasks_failed"])
+                    elif source_run is not None:
+                        run_row.failed_tasks = int(getattr(source_run, "failed_tasks", 0) or 0)
+                    if payload_data.get("avg_reward") is not None:
+                        run_row.average_reward = float(payload_data["avg_reward"])
+                    elif source_run is not None and getattr(source_run, "average_reward", None) is not None:
+                        run_row.average_reward = float(source_run.average_reward)
+                    if payload_data.get("avg_evaluation_time") is not None:
+                        payload_avg_eval_time = float(payload_data["avg_evaluation_time"])
+                        if payload_avg_eval_time > 0.0:
+                            run_row.average_execution_time = payload_avg_eval_time
+                        elif source_run is not None and getattr(source_run, "average_execution_time", None) is not None:
+                            run_row.average_execution_time = float(source_run.average_execution_time)
+                        else:
+                            run_row.average_execution_time = payload_avg_eval_time
+                    elif source_run is not None and getattr(source_run, "average_execution_time", None) is not None:
+                        run_row.average_execution_time = float(source_run.average_execution_time)
+                    total = getattr(run_row, "total_tasks", 0) or 0
+                    success = getattr(run_row, "success_tasks", 0) or 0
+                    run_row.average_score = (success / total) if total else (float(source_run.average_score) if source_run and getattr(source_run, "average_score", None) is not None else 0.0)
+
+            if run_row.agent_run_id in zero_reason_map:
+                run_row.zero_reason = zero_reason_map[run_row.agent_run_id]
+            if run_row.agent_run_id in is_reused_map:
+                run_row.is_reused = is_reused_map[run_row.agent_run_id]
+            if run_row.agent_run_id in reused_from_map:
+                # Do not downgrade an already-resolved root source to an intermediate reused run.
+                if not getattr(run_row, "reused_from_agent_run_id", None):
+                    run_row.reused_from_agent_run_id = reused_from_map[run_row.agent_run_id]
+
+            # If run has effective score 0 and no zero_reason: for reused runs use source run's zero_reason, else derive from evaluations
+            if run_row.zero_reason is None and self._run_has_zero_score(run_row):
+                source_id = getattr(run_row, "reused_from_agent_run_id", None)
+                if source_id:
+                    source_run = await self._get_agent_run_row(source_id)
+                    if source_run and getattr(source_run, "zero_reason", None):
+                        run_row.zero_reason = source_run.zero_reason
+                if run_row.zero_reason is None:
+                    run_row.zero_reason = self._derive_run_zero_reason_from_evaluations(run_row)
 
             # rank and weight removed from agent_evaluation_runs
             # They are now stored in validator_round_summary_miners and updated there
+
+        # Cascade: runs that reuse a run we just updated may have been processed in a
+        # finish_round that ran before this round (e.g. round 5 before round 4). Now that
+        # this run has total_tasks/failed_tasks/average_execution_time, copy them to all
+        # runs that have reused_from_agent_run_id = this run.
+        for run_row in run_rows:
+            source_id = getattr(run_row, "agent_run_id", None)
+            if not source_id:
+                continue
+            has_stats = (getattr(run_row, "total_tasks", None) or 0) > 0 or getattr(run_row, "average_execution_time", None) is not None
+            if not has_stats:
+                continue
+            stmt_reused = select(AgentEvaluationRunORM).where(
+                AgentEvaluationRunORM.reused_from_agent_run_id == source_id,
+            )
+            reused_rows_result = await self.session.scalars(stmt_reused)
+            for reused_row in reused_rows_result:
+                if (getattr(reused_row, "total_tasks", None) or 0) == 0 and getattr(reused_row, "average_execution_time", None) is None:
+                    reused_row.total_tasks = run_row.total_tasks or 0
+                    reused_row.success_tasks = run_row.success_tasks or 0
+                    reused_row.failed_tasks = run_row.failed_tasks or 0
+                    reused_row.average_score = run_row.average_score
+                    reused_row.average_execution_time = run_row.average_execution_time
+                    reused_row.average_reward = run_row.average_reward
+                    if getattr(run_row, "zero_reason", None) and getattr(reused_row, "zero_reason", None) is None:
+                        reused_row.zero_reason = run_row.zero_reason
+                    logger.debug(
+                        "finish_round: cascaded stats from source run %s to reused run %s",
+                        source_id,
+                        reused_row.agent_run_id,
+                    )
 
         # Populate validator_round_summary_miners table
         await self._populate_round_summary(
@@ -958,6 +956,7 @@ class ValidatorRoundPersistenceService:
             post_consensus_evaluation=post_consensus_evaluation,
             subnet_price=alpha_price,
         )
+        await self._enrich_validator_summary_post_consensus_from_db(round_row)
 
     async def submit_round(self, payload: ValidatorRoundSubmissionRequest) -> PersistenceResult:
         """Persist the entire round submission payload."""
@@ -1123,6 +1122,33 @@ class ValidatorRoundPersistenceService:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _run_has_zero_score(run_row: AgentEvaluationRunORM) -> bool:
+        """True if the run has effective score 0 (so it must have a zero_reason)."""
+        avg = getattr(run_row, "average_score", None)
+        if avg is not None and avg <= 0.0:
+            return True
+        total = getattr(run_row, "total_tasks", None) or 0
+        success = getattr(run_row, "success_tasks", None) or 0
+        return total > 0 and success == 0
+
+    @staticmethod
+    def _derive_run_zero_reason_from_evaluations(run_row: AgentEvaluationRunORM) -> str:
+        """Derive zero_reason for a run with score 0 from its evaluations (never leave 0 without reason)."""
+        evaluations = list(getattr(run_row, "evaluations", []) or [])
+        zero_reasons: List[str] = []
+        for ev in evaluations:
+            score = getattr(ev, "evaluation_score", None)
+            if score is not None and float(score) <= 0.0:
+                reason = getattr(ev, "zero_reason", None)
+                if reason:
+                    zero_reasons.append(reason)
+        if not zero_reasons:
+            return "task_failed"
+        # Use single most common reason (e.g. all task_timeout -> "task_timeout")
+        (reason, _) = Counter(zero_reasons).most_common(1)[0]
+        return reason
+
     def _compute_agent_run_stats(self, run_row: AgentEvaluationRunORM) -> Dict[str, Any]:
         task_solutions = list(getattr(run_row, "task_solutions", []) or [])
         evaluations = list(getattr(run_row, "evaluations", []) or [])
@@ -1141,11 +1167,10 @@ class ValidatorRoundPersistenceService:
 
         scores: List[float] = []
         for eval_obj in evaluations:
-            # Try eval_score first, fallback to final_score for legacy compatibility
-            value = self._to_float(getattr(eval_obj, "eval_score", None)) or self._to_float(getattr(eval_obj, "final_score", None))
-            # 🔍 CRITICAL: If no eval_score found, default to 0.0 (task failed)
+            value = self._to_float(getattr(eval_obj, "evaluation_score", None)) or self._to_float(getattr(eval_obj, "eval_score", None))
+            # 🔍 CRITICAL: If no evaluation_score found, default to 0.0 (task failed)
             # This ensures average_score is NEVER None if there are evaluations
-            # Each task should have an evaluation with eval_score (0.0 or 1.0)
+            # Each task should have an evaluation with evaluation_score (0.0 or 1.0)
             if value is not None:
                 scores.append(value)
             else:
@@ -1164,8 +1189,8 @@ class ValidatorRoundPersistenceService:
             # No tasks yet - average_score is None (round not finished)
             average_score = None
 
-        # Binary scoring: eval_score is 1.0 if at least one test passed, 0.0 otherwise
-        # success_tasks counts evaluations with eval_score > 0.0 (i.e., == 1.0)
+        # Binary scoring: evaluation_score is 1.0 if at least one test passed, 0.0 otherwise
+        # success_tasks counts evaluations with evaluation_score > 0.0 (i.e., == 1.0)
         success_tasks = sum(1 for score in scores if score > 0.0)
         if success_tasks > total_tasks:
             success_tasks = total_tasks
@@ -1180,15 +1205,13 @@ class ValidatorRoundPersistenceService:
 
         reward_values: List[float] = []
         for eval_obj in evaluations:
-            # Try reward field first (new), then fallback to meta or final_score for legacy compatibility
             reward_candidate: Any = getattr(eval_obj, "reward", None)
             if reward_candidate is None:
                 meta = getattr(eval_obj, "meta", {}) or {}
                 if isinstance(meta, dict):
                     reward_candidate = meta.get("reward") or meta.get("total_reward") or meta.get("final_reward")
             if reward_candidate is None:
-                # Legacy fallback: use eval_score or final_score
-                reward_candidate = getattr(eval_obj, "eval_score", None) or getattr(eval_obj, "final_score", None)
+                reward_candidate = getattr(eval_obj, "evaluation_score", None) or getattr(eval_obj, "eval_score", None)
             value = self._to_float(reward_candidate)
             if value is not None:
                 reward_values.append(value)
@@ -1260,6 +1283,49 @@ class ValidatorRoundPersistenceService:
         stmt = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == agent_run_id)
         return await self.session.scalar(stmt)
 
+    async def _resolve_reused_source_run(self, source_run_id: Optional[str]) -> Optional[AgentEvaluationRunORM]:
+        """Follow reused_from chain and return the root source run."""
+        if not source_run_id:
+            return None
+        visited: set[str] = set()
+        current_id: Optional[str] = source_run_id
+        root: Optional[AgentEvaluationRunORM] = None
+        while current_id and current_id not in visited:
+            visited.add(current_id)
+            row = await self._get_agent_run_row(current_id)
+            if row is None:
+                break
+            root = row
+            current_id = getattr(row, "reused_from_agent_run_id", None)
+        return root
+
+    async def _propagate_source_metrics_to_reused_runs(self, source_run: AgentEvaluationRunORM) -> None:
+        """When a source run gets its metrics (e.g. after evaluations), copy them to any runs that reuse from it.
+        This fixes runs created before the source had data (e.g. round N+1 reused run created before round N evaluations arrived).
+        """
+        total = getattr(source_run, "total_tasks", None) or 0
+        if total <= 0:
+            return
+        stmt = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.reused_from_agent_run_id == source_run.agent_run_id)
+        result = await self.session.scalars(stmt)
+        updated = False
+        for row in result:
+            if (getattr(row, "total_tasks", None) or 0) <= 0:
+                row.total_tasks = int(total)
+                row.success_tasks = int(getattr(source_run, "success_tasks", 0) or 0)
+                row.failed_tasks = int(getattr(source_run, "failed_tasks", 0) or 0)
+                if getattr(source_run, "average_score", None) is not None:
+                    row.average_score = source_run.average_score
+                if getattr(source_run, "average_execution_time", None) is not None:
+                    row.average_execution_time = source_run.average_execution_time
+                if getattr(source_run, "average_reward", None) is not None:
+                    row.average_reward = source_run.average_reward
+                if getattr(source_run, "zero_reason", None):
+                    row.zero_reason = source_run.zero_reason
+                updated = True
+        if updated:
+            await self.session.flush()
+
     async def _get_task_row(self, task_id: str) -> Optional[TaskORM]:
         stmt = select(TaskORM).where(TaskORM.task_id == task_id)
         return await self.session.scalar(stmt)
@@ -1270,6 +1336,64 @@ class ValidatorRoundPersistenceService:
         round_row = await self.session.scalar(stmt)
         if not round_row:
             raise ValueError(f"Validator round {validator_round_id} not found")
+        return round_row
+
+    async def ensure_round_exists_or_create_minimal_for_round_log(
+        self,
+        validator_round_id: str,
+        season: Optional[int],
+        round_in_season: Optional[int],
+        validator_uid: Optional[int],
+        validator_hotkey: Optional[str],
+        *,
+        owner_hotkey_from_request: Optional[str] = None,
+    ) -> ValidatorRoundORM:
+        """
+        Return the round row, creating a minimal round + validator snapshot if the round
+        does not exist (e.g. after IWAP reset). Allows round-log upload to succeed and
+        finish_round to update the row later.
+        """
+        stmt = select(ValidatorRoundORM).options(selectinload(ValidatorRoundORM.validator_snapshot)).where(ValidatorRoundORM.validator_round_id == validator_round_id)
+        round_row = await self.session.scalar(stmt)
+        if round_row is not None:
+            return round_row
+        uid = int(validator_uid) if validator_uid is not None else 0
+        hotkey = (validator_hotkey or owner_hotkey_from_request or "").strip()
+        if not hotkey:
+            raise ValueError("Cannot create minimal round: validator_hotkey or owner_hotkey_from_request required")
+        round_row = ValidatorRoundORM(
+            validator_round_id=validator_round_id,
+            season_number=season,
+            round_number_in_season=round_in_season,
+            start_block=0,
+            end_block=None,
+            start_epoch=0,
+            end_epoch=None,
+            started_at=0.0,
+            ended_at=None,
+            n_tasks=0,
+            status="active",
+        )
+        self.session.add(round_row)
+        await self.session.flush()
+        snapshot = ValidatorRoundValidatorORM(
+            validator_round_id=validator_round_id,
+            validator_uid=uid,
+            validator_hotkey=hotkey,
+            validator_coldkey=None,
+            name=None,
+            stake=None,
+            vtrust=None,
+            image_url=None,
+            version=None,
+            config=None,
+        )
+        self.session.add(snapshot)
+        await self.session.flush()
+        stmt = select(ValidatorRoundORM).options(selectinload(ValidatorRoundORM.validator_snapshot)).where(ValidatorRoundORM.validator_round_id == validator_round_id)
+        round_row = await self.session.scalar(stmt)
+        assert round_row is not None
+        logger.info("Created minimal validator round %s for round-log upload (e.g. after IWAP reset)", validator_round_id)
         return round_row
 
     async def _ensure_unique_round_number(
@@ -1401,7 +1525,7 @@ class ValidatorRoundPersistenceService:
 
     def _validator_round_kwargs(self, model: ValidatorRound) -> Dict[str, Any]:
         # validator_uid, validator_hotkey, validator_coldkey moved to ValidatorRoundValidatorORM
-        # season_number and round_number_in_season are passed from model and validated in start_round
+        # metadata/round summary is stored in validator_summary at finish_round, not at start
         return {
             "validator_round_id": model.validator_round_id,
             "season_number": model.season_number,
@@ -1413,10 +1537,7 @@ class ValidatorRoundPersistenceService:
             "started_at": model.started_at,
             "ended_at": model.ended_at,
             "n_tasks": model.n_tasks,
-            "n_miners": model.n_miners,
-            "n_winners": model.n_winners,
             "status": model.status,
-            "meta": _non_empty_dict(model.metadata),
         }
 
     def _agent_run_kwargs(
@@ -1438,10 +1559,13 @@ class ValidatorRoundPersistenceService:
             "average_reward": model.average_reward,
             # total_reward removed - no longer stored in agent_evaluation_runs
             "total_tasks": model.total_tasks,
-            "success_tasks": model.success_tasks,
+            "success_tasks": getattr(model, "success_tasks", getattr(model, "completed_tasks", 0)),
             "failed_tasks": model.failed_tasks,
             # rank and weight removed - obtain via validator_round_summary_miners
-            "meta": _non_empty_dict(model.metadata),
+            "meta": _agent_run_meta_for_storage(model),
+            "is_reused": getattr(model, "is_reused", False),
+            "reused_from_agent_run_id": getattr(model, "reused_from_agent_run_id", None),
+            "zero_reason": getattr(model, "zero_reason", None),
         }
 
     def _task_kwargs(self, model: Task) -> Dict[str, Any]:
@@ -1478,8 +1602,10 @@ class ValidatorRoundPersistenceService:
         self,
         model: Evaluation,
     ) -> Dict[str, Any]:
-        # Normalize eval_score and reward
-        eval_score_val = getattr(model, "eval_score", getattr(model, "final_score", 0.0))
+        # Normalize evaluation_score and reward (accept eval_score from legacy payloads)
+        eval_score_val = getattr(model, "evaluation_score", None) or getattr(model, "eval_score", None)
+        if eval_score_val is None:
+            eval_score_val = 0.0
         try:
             eval_score_val = float(eval_score_val)
         except Exception:
@@ -1491,14 +1617,20 @@ class ValidatorRoundPersistenceService:
         except Exception:
             reward_val = 0.0
 
-        # Enforce minimum reward when eval_score > 0: at least EVAL_SCORE_WEIGHT
-        # If eval_score == 0, reward must be 0
+        # Enforce minimum reward when evaluation_score > 0: at least EVAL_SCORE_WEIGHT
+        # If evaluation_score == 0, reward must be 0
         if eval_score_val > 0.0:
             eval_score_weight = float(settings.EVAL_SCORE_WEIGHT)
 
             reward_val = max(reward_val, eval_score_weight)
         else:
             reward_val = 0.0
+
+        zero_reason = getattr(model, "zero_reason", None)
+        if zero_reason is None and eval_score_val <= 0.0:
+            meta = getattr(model, "metadata", None) or {}
+            if meta.get("timeout") is True:
+                zero_reason = "task_timeout"
 
         return {
             "evaluation_id": model.evaluation_id,
@@ -1510,13 +1642,13 @@ class ValidatorRoundPersistenceService:
             "validator_hotkey": model.validator_hotkey,
             "miner_uid": model.miner_uid,
             "miner_hotkey": model.miner_hotkey,
-            "eval_score": eval_score_val,  # Support both new and legacy field names
+            "evaluation_score": eval_score_val,
             "reward": reward_val,
             "evaluation_time": model.evaluation_time,
             "execution_history": list(model.execution_history),
-            "feedback": _optional_dump(model.feedback),
             "gif_recording": model.gif_recording,
-            "meta": _clean_meta_dict(model.metadata),
+            "extra_info": _clean_meta_dict(model.metadata),
+            "zero_reason": zero_reason,
         }
 
     def _llm_usage_from_evaluation(self, evaluation: Evaluation) -> Any:
@@ -1603,6 +1735,155 @@ class ValidatorRoundPersistenceService:
             "evaluation_id",
         )
 
+    async def _enrich_validator_summary_post_consensus_from_db(self, round_row: ValidatorRoundORM) -> None:
+        """Enrich validator_summary.evaluation_post_consensus with DB-derived metrics.
+
+        Source of truth is validator_round_summary_miners. This makes the summary explicit,
+        debuggable, and consistent with APIs that read from round summary rows.
+        """
+        stmt_rows = select(ValidatorRoundSummaryORM).where(ValidatorRoundSummaryORM.validator_round_id == round_row.validator_round_id).order_by(ValidatorRoundSummaryORM.miner_uid.asc())
+        summary_rows = list(await self.session.scalars(stmt_rows))
+        if not summary_rows:
+            return
+
+        validators_count = int(
+            await self.session.scalar(select(func.count(func.distinct(ValidatorRoundValidatorORM.validator_uid))).where(ValidatorRoundValidatorORM.validator_round_id == round_row.validator_round_id))
+            or 0
+        )
+
+        miners_payload: List[Dict[str, Any]] = []
+        tasks_evaluated_total = 0
+        tasks_success_total = 0
+        rewards: List[float] = []
+        eval_scores: List[float] = []
+        eval_times: List[float] = []
+
+        for row in summary_rows:
+            post_tasks_received = int(row.post_consensus_tasks_received or 0)
+            post_tasks_success = int(row.post_consensus_tasks_success or 0)
+            tasks_evaluated_total += post_tasks_received
+            tasks_success_total += post_tasks_success
+            if row.post_consensus_avg_reward is not None:
+                rewards.append(float(row.post_consensus_avg_reward))
+            if row.post_consensus_avg_eval_score is not None:
+                eval_scores.append(float(row.post_consensus_avg_eval_score))
+            if row.post_consensus_avg_eval_time is not None:
+                eval_times.append(float(row.post_consensus_avg_eval_time))
+
+            miners_payload.append(
+                {
+                    "miner_uid": int(row.miner_uid),
+                    "miner_hotkey": row.miner_hotkey,
+                    "post_consensus_rank": row.post_consensus_rank,
+                    "post_consensus_avg_reward": row.post_consensus_avg_reward,
+                    "post_consensus_avg_eval_score": row.post_consensus_avg_eval_score,
+                    "post_consensus_avg_eval_time": row.post_consensus_avg_eval_time,
+                    "post_consensus_tasks_received": row.post_consensus_tasks_received,
+                    "post_consensus_tasks_success": row.post_consensus_tasks_success,
+                    "weight": row.weight,
+                }
+            )
+
+        winner = next((m for m in miners_payload if m.get("post_consensus_rank") == 1), None)
+        if winner is None:
+            winner = max(
+                miners_payload,
+                key=lambda m: (
+                    float(m.get("post_consensus_avg_reward") or 0.0),
+                    float(m.get("post_consensus_avg_eval_score") or 0.0),
+                    -int(m.get("miner_uid") or 0),
+                ),
+                default=None,
+            )
+
+        db_rollup = {
+            "validator_round_id": round_row.validator_round_id,
+            "season_number": round_row.season_number,
+            "round_number_in_season": round_row.round_number_in_season,
+            "validators_count": validators_count,
+            "miners_evaluated": len(miners_payload),
+            "tasks_evaluated": tasks_evaluated_total,
+            "tasks_success": tasks_success_total,
+            "avg_reward": (sum(rewards) / len(rewards)) if rewards else 0.0,
+            "avg_eval_score": (sum(eval_scores) / len(eval_scores)) if eval_scores else 0.0,
+            "avg_eval_time": (sum(eval_times) / len(eval_times)) if eval_times else 0.0,
+            "single_validator_mode": validators_count == 1,
+            "winner": {
+                "miner_uid": winner.get("miner_uid"),
+                "post_consensus_rank": winner.get("post_consensus_rank"),
+                "post_consensus_avg_reward": winner.get("post_consensus_avg_reward"),
+            }
+            if winner
+            else None,
+        }
+
+        validator_summary = dict(round_row.validator_summary or {})
+        current_post = validator_summary.get("evaluation_post_consensus")
+        if isinstance(current_post, dict):
+            enriched_post = dict(current_post)
+        elif current_post is None:
+            enriched_post = {}
+        else:
+            enriched_post = {"raw": current_post}
+
+        enriched_post["miners"] = miners_payload
+        # Avoid noisy internal fields in post-consensus payload.
+        enriched_post.pop("schema_version", None)
+        winner_uid = db_rollup.get("winner", {}).get("miner_uid") if isinstance(db_rollup.get("winner"), dict) else None
+        round_summary = enriched_post.get("round_summary") if isinstance(enriched_post.get("round_summary"), dict) else {}
+        winner_obj = round_summary.get("winner") if isinstance(round_summary.get("winner"), dict) else {}
+        if winner_uid is not None:
+            winner_obj["miner_uid"] = int(winner_uid)
+        round_summary["winner"] = winner_obj
+        enriched_post["round_summary"] = round_summary
+
+        decision_obj = round_summary.get("decision") if isinstance(round_summary.get("decision"), dict) else {}
+        season_summary = enriched_post.get("season_summary") if isinstance(enriched_post.get("season_summary"), dict) else {}
+        if winner_uid is not None:
+            season_summary["current_winner_uid"] = int(winner_uid)
+        if "dethroned" not in season_summary:
+            season_summary["dethroned"] = bool(decision_obj.get("dethroned", False))
+        enriched_post["season_summary"] = season_summary
+
+        def _to_int(value: Any) -> Optional[int]:
+            try:
+                if value is None:
+                    return None
+                return int(value)
+            except Exception:
+                return None
+
+        def _to_float(value: Any) -> Optional[float]:
+            try:
+                if value is None:
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        # Keep round-level consensus decision as first-class columns in validator_rounds.
+        winner_obj = round_summary.get("winner") if isinstance(round_summary.get("winner"), dict) else {}
+        round_row.winner_uid = _to_int(winner_obj.get("miner_uid") or winner_obj.get("uid"))
+        round_row.winner_score = _to_float(winner_obj.get("score"))
+        round_row.reigning_uid_before_round = _to_int(decision_obj.get("reigning_uid_before_round"))
+        round_row.reigning_score_before_round = _to_float(decision_obj.get("reigning_score_before_round"))
+        round_row.top_candidate_uid = _to_int(decision_obj.get("top_candidate_uid"))
+        round_row.top_candidate_score = _to_float(decision_obj.get("top_candidate_score"))
+        round_row.required_improvement_pct = _to_float(season_summary.get("required_improvement_pct", decision_obj.get("required_improvement_pct")))
+        dethroned_value = season_summary.get("dethroned", decision_obj.get("dethroned"))
+        round_row.dethroned = bool(dethroned_value) if dethroned_value is not None else None
+
+        # Convenience top-level aliases to avoid ambiguity in consumers.
+        enriched_post.setdefault("validators_count", db_rollup["validators_count"])
+        enriched_post.setdefault("miners_evaluated", db_rollup["miners_evaluated"])
+        enriched_post.setdefault("tasks_evaluated", db_rollup["tasks_evaluated"])
+        enriched_post.setdefault("tasks_success", db_rollup["tasks_success"])
+        # winner is already represented in round_summary; avoid duplicated winner blocks here.
+        enriched_post.pop("winner", None)
+
+        validator_summary["evaluation_post_consensus"] = enriched_post
+        round_row.validator_summary = validator_summary
+
     async def _populate_round_summary(
         self,
         *,
@@ -1617,23 +1898,39 @@ class ValidatorRoundPersistenceService:
         """
         # Build a map of miner_uid -> summary data
         summary_map: Dict[int, Dict[str, Any]] = {}
+        run_metrics_map: Dict[int, Dict[str, Any]] = {}
+
+        # Always read local metrics from persisted agent runs as the source of truth.
+        stmt_runs = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.validator_round_id == validator_round_id).where(AgentEvaluationRunORM.miner_uid.isnot(None))
+        run_rows = await self.session.scalars(stmt_runs)
+        for run_row in run_rows:
+            if run_row.miner_uid is None:
+                continue
+            miner_uid = int(run_row.miner_uid)
+            run_metrics_map[miner_uid] = {
+                "miner_uid": miner_uid,
+                "miner_hotkey": run_row.miner_hotkey,
+                "local_avg_reward": run_row.average_reward,
+                "local_avg_eval_score": run_row.average_score,
+                "local_avg_eval_time": run_row.average_execution_time,
+                "local_tasks_received": run_row.total_tasks,
+                "local_tasks_success": run_row.success_tasks,
+            }
+            summary_map.setdefault(miner_uid, {}).update(run_metrics_map[miner_uid])
 
         # If no evaluation data provided, create basic summaries from agent_runs
         if not local_evaluation and not post_consensus_evaluation:
-            stmt_runs = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.validator_round_id == validator_round_id).where(AgentEvaluationRunORM.miner_uid.isnot(None))
-            run_rows = await self.session.scalars(stmt_runs)
-            for run_row in run_rows:
-                if run_row.miner_uid is None:
-                    continue
-                miner_uid = int(run_row.miner_uid)
-                summary_map.setdefault(miner_uid, {})["miner_uid"] = miner_uid
-                summary_map[miner_uid]["miner_hotkey"] = run_row.miner_hotkey
-                # Calculate local metrics from agent_run
-                summary_map[miner_uid]["local_avg_reward"] = run_row.average_reward
-                summary_map[miner_uid]["local_avg_eval_score"] = run_row.average_score
-                summary_map[miner_uid]["local_avg_eval_time"] = run_row.average_execution_time
-                summary_map[miner_uid]["local_tasks_received"] = run_row.total_tasks
-                summary_map[miner_uid]["local_tasks_success"] = run_row.success_tasks
+            # When only runs are available, also derive deterministic local ranking.
+            ranked_miners = sorted(
+                run_metrics_map.items(),
+                key=lambda kv: (
+                    -float(kv[1].get("local_avg_reward") or 0.0),
+                    -float(kv[1].get("local_avg_eval_score") or 0.0),
+                    int(kv[0]),
+                ),
+            )
+            for index, (miner_uid, _) in enumerate(ranked_miners, start=1):
+                summary_map.setdefault(miner_uid, {})["local_rank"] = index
 
         # Process local_evaluation
         if local_evaluation and isinstance(local_evaluation, dict):
@@ -1646,13 +1943,42 @@ class ValidatorRoundPersistenceService:
                     continue
 
                 summary_map.setdefault(miner_uid, {})["miner_uid"] = int(miner_uid)
-                summary_map[miner_uid]["miner_hotkey"] = miner_data.get("miner_hotkey")
-                summary_map[miner_uid]["local_rank"] = miner_data.get("rank")
-                summary_map[miner_uid]["local_avg_reward"] = miner_data.get("avg_reward")
-                summary_map[miner_uid]["local_avg_eval_score"] = miner_data.get("avg_eval_score")
-                summary_map[miner_uid]["local_avg_eval_time"] = miner_data.get("avg_evaluation_time")
-                summary_map[miner_uid]["local_tasks_received"] = miner_data.get("tasks_attempted")
-                summary_map[miner_uid]["local_tasks_success"] = miner_data.get("tasks_completed")
+                run_metrics = run_metrics_map.get(int(miner_uid), {})
+                miner_hotkey = miner_data.get("miner_hotkey") or run_metrics.get("miner_hotkey")
+                if miner_hotkey is not None:
+                    summary_map[miner_uid]["miner_hotkey"] = miner_hotkey
+
+                local_rank = miner_data.get("rank")
+                if local_rank is not None:
+                    summary_map[miner_uid]["local_rank"] = local_rank
+
+                # Local metrics must match persisted local execution (agent runs).
+                # Only fall back to payload when run metrics are not available.
+                summary_map[miner_uid]["local_avg_reward"] = run_metrics.get("local_avg_reward") if run_metrics.get("local_avg_reward") is not None else miner_data.get("avg_reward")
+                summary_map[miner_uid]["local_avg_eval_score"] = run_metrics.get("local_avg_eval_score") if run_metrics.get("local_avg_eval_score") is not None else miner_data.get("avg_eval_score")
+                summary_map[miner_uid]["local_avg_eval_time"] = run_metrics.get("local_avg_eval_time") if run_metrics.get("local_avg_eval_time") is not None else miner_data.get("avg_evaluation_time")
+                summary_map[miner_uid]["local_tasks_received"] = run_metrics.get("local_tasks_received") if run_metrics.get("local_tasks_received") is not None else miner_data.get("tasks_attempted")
+                summary_map[miner_uid]["local_tasks_success"] = run_metrics.get("local_tasks_success") if run_metrics.get("local_tasks_success") is not None else miner_data.get("tasks_completed")
+
+        # If some local ranks are still missing but local metrics exist, derive from local_avg_reward.
+        missing_rank_uids = [uid for uid, data in summary_map.items() if data.get("local_rank") is None and data.get("local_avg_reward") is not None]
+        if missing_rank_uids:
+            ranked_miners = sorted(
+                missing_rank_uids,
+                key=lambda uid: (
+                    -float(summary_map[uid].get("local_avg_reward") or 0.0),
+                    -float(summary_map[uid].get("local_avg_eval_score") or 0.0),
+                    int(uid),
+                ),
+            )
+            used_ranks = {int(data["local_rank"]) for data in summary_map.values() if data.get("local_rank") is not None}
+            next_rank = 1
+            for uid in ranked_miners:
+                while next_rank in used_ranks:
+                    next_rank += 1
+                summary_map[uid]["local_rank"] = next_rank
+                used_ranks.add(next_rank)
+                next_rank += 1
 
         # Process post_consensus_evaluation
         if post_consensus_evaluation and isinstance(post_consensus_evaluation, dict):
@@ -1679,6 +2005,30 @@ class ValidatorRoundPersistenceService:
                 # Add subnet_price to all miners in this round
                 if subnet_price is not None:
                     summary_map[miner_uid]["subnet_price"] = float(subnet_price)
+
+        # Consistency rule:
+        # If this round only has one validator, post-consensus metrics should not
+        # contradict local metrics. In reused/timeout flows, post-consensus payloads
+        # can contain zeros (tasks_sent=0, avg_eval_time=0) even though local metrics
+        # are valid. Normalize post-consensus from local in that case.
+        validators_count_in_round = await self.session.scalar(
+            select(func.count(func.distinct(ValidatorRoundValidatorORM.validator_uid))).where(ValidatorRoundValidatorORM.validator_round_id == validator_round_id)
+        )
+        if int(validators_count_in_round or 0) == 1:
+            for _miner_uid, data in summary_map.items():
+                local_tasks = int(data.get("local_tasks_received") or 0)
+                post_tasks = int(data.get("post_consensus_tasks_received") or 0)
+                if local_tasks <= 0:
+                    continue
+                if post_tasks <= 0:
+                    data["post_consensus_tasks_received"] = local_tasks
+                    data["post_consensus_tasks_success"] = int(data.get("local_tasks_success") or 0)
+                if float(data.get("post_consensus_avg_eval_time") or 0.0) <= 0.0:
+                    data["post_consensus_avg_eval_time"] = data.get("local_avg_eval_time")
+                if float(data.get("post_consensus_avg_eval_score") or 0.0) <= 0.0:
+                    data["post_consensus_avg_eval_score"] = data.get("local_avg_eval_score")
+                if float(data.get("post_consensus_avg_reward") or 0.0) <= 0.0:
+                    data["post_consensus_avg_reward"] = data.get("local_avg_reward")
 
         # Upsert summary records
         for miner_uid, summary_data in summary_map.items():

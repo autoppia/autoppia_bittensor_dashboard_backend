@@ -57,6 +57,10 @@ def _task_log_prefix() -> str:
     return settings.AWS_S3_TASK_LOG_PREFIX.strip("/")
 
 
+def _validator_round_log_prefix() -> str:
+    return settings.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX.strip("/")
+
+
 def build_gif_key(evaluation_id: str) -> str:
     """Return the object key used for storing an evaluation GIF."""
     filename = f"{evaluation_id}.gif"
@@ -84,6 +88,29 @@ def build_task_log_key(
         parts.append(f"round={round_in_season}")
     if validator_round_id:
         parts.append(f"validator_round_id={validator_round_id}")
+    parts.append(filename)
+    return "/".join([p for p in parts if p])
+
+
+def build_validator_round_log_key(
+    validator_round_id: str,
+    *,
+    season: Optional[int] = None,
+    round_in_season: Optional[int] = None,
+    validator_uid: Optional[int] = None,
+    validator_hotkey: Optional[str] = None,
+) -> str:
+    """Return the object key used for storing a raw per-round log dump."""
+    safe_validator_round_id = str(validator_round_id).replace("/", "_")
+    filename = f"{safe_validator_round_id}.log"
+    parts = [_validator_round_log_prefix()]
+    if season is not None and round_in_season is not None:
+        parts.append(f"season={season}")
+        parts.append(f"round={round_in_season}")
+    if validator_uid is not None:
+        parts.append(f"validator_uid={validator_uid}")
+    elif validator_hotkey:
+        parts.append(f"validator_hotkey={validator_hotkey}")
     parts.append(filename)
     return "/".join([p for p in parts if p])
 
@@ -163,6 +190,46 @@ async def store_task_log(
     return object_key
 
 
+async def store_validator_round_log(
+    *,
+    validator_round_id: str,
+    data: bytes,
+    season: Optional[int] = None,
+    round_in_season: Optional[int] = None,
+    validator_uid: Optional[int] = None,
+    validator_hotkey: Optional[str] = None,
+) -> str:
+    """Upload a raw validator-round log dump to S3 and return the object key."""
+    client = get_s3_client()
+    object_key = build_validator_round_log_key(
+        validator_round_id,
+        season=season,
+        round_in_season=round_in_season,
+        validator_uid=validator_uid,
+        validator_hotkey=validator_hotkey,
+    )
+    bucket = settings.AWS_S3_BUCKET
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    logger.debug(
+        "Uploading round log for %s to s3://%s/%s (bytes=%d)",
+        validator_round_id,
+        bucket,
+        object_key,
+        len(data),
+    )
+    await asyncio.to_thread(
+        client.put_object,
+        Bucket=bucket,
+        Key=object_key,
+        Body=data,
+        ContentType="text/plain",
+        Metadata={"uploaded_at": timestamp},
+    )
+
+    return object_key
+
+
 __all__ = [
     "GifStorageConfigError",
     "build_gif_key",
@@ -170,6 +237,8 @@ __all__ = [
     "build_public_url",
     "get_s3_client",
     "reset_s3_client_cache",
+    "build_validator_round_log_key",
     "store_gif",
+    "store_validator_round_log",
     "store_task_log",
 ]

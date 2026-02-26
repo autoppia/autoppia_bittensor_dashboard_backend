@@ -7,7 +7,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field
 
 from app.models.ui.agent_runs import Action, Log
 
@@ -53,6 +53,7 @@ class EvaluationListItem(BaseModel):
     responseTime: float
     createdAt: Optional[str]
     updatedAt: Optional[str]
+    zeroReason: Optional[str] = None  # Reason for score 0 (e.g. task_timeout, tests_failed)
 
 
 class EvaluationDetail(EvaluationListItem):

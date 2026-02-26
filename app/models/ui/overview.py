@@ -18,6 +18,13 @@ class BaseResponse(BaseModel):
 
 
 # --- Overview Metrics Models ---
+class MinerSummary(BaseModel):
+    """Minimal miner info for overview."""
+
+    uid: int
+    name: Optional[str] = None
+
+
 class OverviewMetrics(BaseModel):
     """Overview dashboard metrics."""
 
@@ -29,6 +36,9 @@ class OverviewMetrics(BaseModel):
     totalWebsites: int
     totalValidators: int
     totalMiners: int
+    tasksPerValidator: Optional[int] = None  # Tasks in latest round for Autoppia validator
+    totalTasksPerValidator: Optional[int] = None  # Alias explícito para clientes que esperan este nombre
+    minerList: Optional[List[MinerSummary]] = None  # UIDs and names for the metrics round
     currentRound: int
     currentSeason: Optional[int] = None
     currentRoundInSeason: Optional[int] = None

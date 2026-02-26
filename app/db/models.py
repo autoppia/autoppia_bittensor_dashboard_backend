@@ -72,11 +72,18 @@ class ValidatorRoundORM(TimestampMixin, Base):
     started_at: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     ended_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     n_tasks: Mapped[int] = mapped_column(Integer, nullable=False)
-    n_miners: Mapped[int] = mapped_column(Integer, nullable=False)
-    n_winners: Mapped[int] = mapped_column(Integer, nullable=False)
-
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
-    meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    validator_summary: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    s3_logs: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    # Consensus decision snapshot (round-level, queryable source of truth)
+    winner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    winner_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    reigning_uid_before_round: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    reigning_score_before_round: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    top_candidate_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    top_candidate_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    required_improvement_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    dethroned: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, index=True)
 
     validator_snapshot: Mapped["ValidatorRoundValidatorORM"] = relationship(
         back_populates="validator_round",
@@ -110,9 +117,14 @@ class ValidatorRoundORM(TimestampMixin, Base):
         legacy_status = self.status or ""
         if legacy_status == "active":
             legacy_status = "in_progress"
+        meta = dict(self.validator_summary or {})
+        if self.s3_logs:
+            meta["s3_logs"] = self.s3_logs
         return {
             "status": legacy_status,
-            "meta": dict(self.meta or {}),
+            "meta": meta,
+            "validator_summary": self.validator_summary,
+            "s3_logs": self.s3_logs,
         }
 
 
@@ -272,6 +284,16 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     # rank and weight removed - obtain via validator_round_summary_miners
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
+    is_reused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reused_from_agent_run_id: Mapped[Optional[str]] = mapped_column(
+        String(128),
+        ForeignKey("miner_evaluation_runs.agent_run_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, all_tasks_failed)
+    zero_reason: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="agent_runs")
     task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(back_populates="agent_run", cascade="all, delete-orphan")
     evaluations: Mapped[list["EvaluationORM"]] = relationship(back_populates="agent_run", cascade="all, delete-orphan")
@@ -415,12 +437,13 @@ class EvaluationORM(TimestampMixin, Base):
     validator_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     validator_hotkey: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
 
-    eval_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # Evaluation score (tests/actions only, 0-1)
-    reward: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # Reward value (eval_score + time_score, used for consensus)
+    evaluation_score: Mapped[float] = mapped_column("evaluation_score", Float, nullable=False, default=0.0)  # Evaluation score (tests/actions only, 0-1)
+    reward: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # Reward value (evaluation_score + time_score, used for consensus)
     evaluation_time: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    feedback: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     gif_recording: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    extra_info: Mapped[dict[str, Any]] = mapped_column("extra_info", JSON, nullable=False, default=dict)  # e.g. timeout flag; was "meta"
+    # Reason for score 0 at evaluation level (e.g. task_timeout, tests_failed)
+    zero_reason: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     # LLM usage: only in evaluation_llm_usage table (relationship llm_usage), not duplicated here
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="evaluations")
@@ -440,13 +463,16 @@ class EvaluationORM(TimestampMixin, Base):
     @property
     def data(self) -> dict[str, Any]:
         """Backwards-compatible accessor for legacy JSON payloads."""
-        return {
+        out: dict[str, Any] = {
             "evaluation_id": self.evaluation_id,
-            "eval_score": self.eval_score,
+            "evaluation_score": self.evaluation_score,
             "reward": self.reward,
             "evaluation_time": self.evaluation_time,
-            "meta": dict(self.meta or {}),
+            "metadata": dict(self.extra_info or {}),
         }
+        if self.zero_reason is not None:
+            out["zero_reason"] = self.zero_reason
+        return out
 
     @property
     def execution_history(self) -> list[Any]:

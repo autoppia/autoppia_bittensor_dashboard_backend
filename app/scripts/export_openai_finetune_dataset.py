@@ -48,8 +48,8 @@ from app.db.models import TaskORM, TaskSolutionORM, EvaluationORM
 SYSTEM_PROMPT_DEFAULT = (
     "You are a web automation planner. Given a target URL and a natural-language task, "
     "return only a JSON array describing the minimal sequence of actions to complete the task. "
-    "Use the schema: [{\"type\": \"navigate|click|input|type|search|extract|submit|open_tab|close_tab|wait|scroll|screenshot|other\", "
-    "\"selector\": string|null, \"value\": string|null}]. Do not include timestamps or explanations; "
+    'Use the schema: [{"type": "navigate|click|input|type|search|extract|submit|open_tab|close_tab|wait|scroll|screenshot|other", '
+    '"selector": string|null, "value": string|null}]. Do not include timestamps or explanations; '
     "respond with the JSON array only."
 )
 
@@ -136,10 +136,7 @@ def _normalize_action_type(raw_type: Optional[str]) -> str:
         "leftclickdrag": "click",
         "undefined": "other",
     }
-    return alias_map.get(value, value if value in {
-        "navigate", "click", "input", "type", "search", "extract", "submit",
-        "open_tab", "close_tab", "wait", "scroll", "screenshot", "other"
-    } else "other")
+    return alias_map.get(value, value if value in {"navigate", "click", "input", "type", "search", "extract", "submit", "open_tab", "close_tab", "wait", "scroll", "screenshot", "other"} else "other")
 
 
 def _extract_action_fields(action: Any) -> Tuple[str, Optional[str], Optional[str]]:
@@ -204,8 +201,8 @@ def _select_best_evaluation(task_row: TaskORM) -> Optional[EvaluationORM]:
     evaluations: List[EvaluationORM] = list(task_row.evaluations or [])
     if not evaluations:
         return None
-    # Prefer the highest final_score; tie-breaker by earliest id ascending
-    evaluations.sort(key=lambda e: (-(e.final_score or 0.0), e.id or 0))
+    # Prefer the highest evaluation_score; tie-breaker by earliest id ascending
+    evaluations.sort(key=lambda e: (-(getattr(e, "evaluation_score", 0.0) or 0.0), e.id or 0))
     return evaluations[0]
 
 
@@ -228,13 +225,12 @@ async def _iter_task_batches(session: AsyncSession, batch_size: int) -> Iterable
             select(TaskORM)
             .options(
                 selectinload(TaskORM.task_solutions),
-                selectinload(TaskORM.evaluations).options(
-                    defer(EvaluationORM.feedback),
+                selectinload(TaskORM.evaluations)
+                .options(
                     defer(EvaluationORM.gif_recording),
-                    defer(EvaluationORM.meta),
-                ).selectinload(
-                    EvaluationORM.execution_history_record
-                ),
+                    defer(EvaluationORM.extra_info),
+                )
+                .selectinload(EvaluationORM.execution_history_record),
             )
             .order_by(TaskORM.id.asc())
             .offset(offset)
@@ -281,8 +277,8 @@ async def export_dataset(
             async for batch in _iter_task_batches(session, batch_size):
                 for task_row in batch:
                     best_eval = _select_best_evaluation(task_row)
-                    if best_eval and best_eval.final_score is not None:
-                        if best_eval.final_score < float(min_score):
+                    if best_eval and getattr(best_eval, "evaluation_score", None) is not None:
+                        if getattr(best_eval, "evaluation_score", 0.0) < float(min_score):
                             continue
 
                     solution_row = _matching_solution(task_row, getattr(best_eval, "task_solution_id", None))
@@ -331,7 +327,7 @@ def parse_args() -> argparse.Namespace:
         "--min-score",
         type=float,
         default=0.0,
-        help="Minimum evaluation final_score required to include a task (default: 0.0)",
+        help="Minimum evaluation_score required to include a task (default: 0.0)",
     )
     parser.add_argument(
         "--max-actions",

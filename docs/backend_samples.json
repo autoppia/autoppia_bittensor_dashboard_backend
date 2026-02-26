@@ -491,7 +491,7 @@
                         "task_solution_id": "solution_1001",
                         "miner_uid": 1701,
                         "validator_uid": 1901,
-                        "final_score": 0.92,
+                        "evaluation_score": 0.92,
                         "test_results_matrix": [
                           [
                             {
@@ -552,8 +552,6 @@
                   "max_epochs": 20,
                   "max_blocks": 360,
                   "n_tasks": 1,
-                  "n_miners": 1,
-                  "n_winners": 1,
                   "status": "active",
                   "average_score": 0.92,
                   "top_score": 0.92,

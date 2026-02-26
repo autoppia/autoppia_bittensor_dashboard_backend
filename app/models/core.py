@@ -180,10 +180,8 @@ class ValidatorRound(BaseModel):
     started_at: float = Field(default_factory=now_ts, description="Start timestamp")
     ended_at: Optional[float] = Field(default=None, description="End timestamp for the round")
     n_tasks: int = Field(..., description="Total number of tasks issued in the round")
-    n_miners: int = Field(..., description="Total number of miners evaluated")
-    n_winners: int = Field(..., description="Number of winners selected")
 
-    # Summary metrics
+    # Summary metrics (miners count: use metadata/validator_summary.round miners_responded_handshake / miners_evaluated)
     status: Literal["active", "finished", "pending", "evaluating_finished"] = Field(default="active", description="Lifecycle status for the validator round")
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
@@ -289,7 +287,7 @@ class ValidatorRoundSummary(BaseModel):
 class AgentEvaluationRun(BaseModel):
     """Execution record for a single agent (miner) in a validator round."""
 
-    model_config = {"extra": "allow"}
+    model_config = {"extra": "allow", "populate_by_name": True}
 
     agent_run_id: str = Field(..., description="Primary identifier for the agent run")
     validator_round_id: str = Field(..., description="Foreign key to the validator round")
@@ -308,10 +306,14 @@ class AgentEvaluationRun(BaseModel):
     average_execution_time: Optional[float] = Field(default=None, description="Average execution time per task")
     average_reward: Optional[float] = Field(default=None, description="Average reward produced across tasks")
     total_tasks: int = Field(default=0, description="Total tasks attempted")
-    success_tasks: int = Field(default=0, description="Tasks completed successfully (eval_score >= 0.5)")
-    failed_tasks: int = Field(default=0, description="Tasks that failed (eval_score < 0.5)")
+    success_tasks: int = Field(default=0, alias="completed_tasks", description="Tasks completed successfully (evaluation_score >= 0.5)")
+    failed_tasks: int = Field(default=0, description="Tasks that failed (evaluation_score < 0.5)")
     # rank and weight removed - obtain via validator_round_summary_miners
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Extensible metadata for the run")
+
+    is_reused: bool = Field(default=False, description="True when this run reuses results from a previous run (same code)")
+    reused_from_agent_run_id: Optional[str] = Field(default=None, description="Agent run id that was evaluated; evaluations come from that run")
+    zero_reason: Optional[str] = Field(default=None, description="Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, all_tasks_failed)")
 
     @model_validator(mode="after")  # type: ignore[misc]
     def _validate_identity(  # type: ignore[override]
@@ -484,40 +486,6 @@ class TestResult(BaseModel):
     extra_data: Optional[dict] = None
 
 
-class Feedback(BaseModel):
-    task_prompt: str
-    final_score: float
-    executed_actions: int
-    failed_actions: int
-    passed_tests: int
-    failed_tests: int
-    total_execution_time: float
-    time_penalty: float
-    critical_test_penalty: int
-    test_results: List[TestResult] = Field(default_factory=list)
-    execution_history: List[Any] = Field(default_factory=list)
-
-    def to_text(self) -> str:
-        feedback = f"Task: '{self.task_prompt}'\n"
-        feedback += f"Final Score: {self.final_score}/10\n"
-        feedback += f"Executed Actions: {self.executed_actions}, Failed Actions: {self.failed_actions}\n"
-        feedback += f"Tests Passed: {self.passed_tests}, Tests Failed: {self.failed_tests}\n"
-        feedback += f"Total Execution Time: {self.total_execution_time:.2f}s\n"
-        feedback += f"Time Penalty: {self.time_penalty:.1f} points\n"
-        feedback += f"Critical Test Penalty: {self.critical_test_penalty} points\n"
-        feedback += "\nTest Results:\n"
-        for test in self.test_results:
-            feedback += f"  - Test: {'PASSED' if test.success else 'FAILED'}\n"
-            if test.extra_data:
-                feedback += f"      Extra Data: {test.extra_data}\n"
-
-        feedback += "\nExecution History:\n"
-        for record in self.execution_history:
-            feedback += f"  - Action: {record}\n"
-
-        return feedback
-
-
 class EvaluationStats(BaseModel):
     """Statistics captured for a specific evaluation execution."""
 
@@ -574,19 +542,24 @@ class Evaluation(BaseModel):
     validator_uid: int = Field(..., description="Validator UID that produced the evaluation")
     validator_hotkey: str = Field(..., description="Validator hotkey that produced the evaluation")
 
-    eval_score: float = Field(default=0.0, description="Evaluation score (tests/actions only, 0-1)")
-    reward: float = Field(default=0.0, description="Reward value (eval_score + time_score, used for consensus)")
+    evaluation_score: float = Field(
+        default=0.0,
+        description="Evaluation score (0.0-1.0).",
+    )
+
+    reward: float = Field(default=0.0, description="Reward value (evaluation_score + time_score, used for consensus)")
     evaluation_time: float = Field(default=0.0, description="Time taken to evaluate the solution (seconds)")
     execution_history: List[Any] = Field(
         default_factory=list,
         description="Ordered history of execution steps captured during evaluation",
     )
-    feedback: Optional[Feedback] = Field(default=None, description="Optional human-readable feedback summary")
     gif_recording: Optional[str] = Field(
         default=None,
         description="Optional base64-encoded GIF recording of the browser state",
     )
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Extensible metadata for the evaluation")
+    # Reason for score 0 at evaluation level (e.g. task_timeout, tests_failed)
+    zero_reason: Optional[str] = Field(default=None, description="Reason for evaluation score 0 when applicable")
     # LLM usage tracking (per-call details)
     llm_usage: List[Dict[str, Any]] = Field(
         default_factory=list,
@@ -698,7 +671,6 @@ __all__ = [
     "TaskSolution",
     "Evaluation",
     "TestResult",
-    "Feedback",
     "EvaluationStats",
     "EvaluationResult",
     "AgentEvaluationRunWithDetails",
