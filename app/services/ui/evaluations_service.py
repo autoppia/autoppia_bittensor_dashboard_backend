@@ -129,6 +129,12 @@ class EvaluationsService:
 
         skip = (page - 1) * limit
 
+        # Reused runs have no evaluations; resolve to the run they reference
+        if run_id:
+            run_row = await self.session.scalar(select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == run_id))
+            if run_row and getattr(run_row, "is_reused", False) and getattr(run_row, "reused_from_agent_run_id", None):
+                run_id = run_row.reused_from_agent_run_id
+
         # Construir query base con filtros en SQL
         stmt = select(EvaluationORM)
 
@@ -233,9 +239,10 @@ class EvaluationsService:
                     "task_solution_id": evaluation_row.task_solution_id,
                     "miner_uid": evaluation_row.miner_uid,
                     "validator_uid": evaluation_row.validator_uid,
-                    "eval_score": evaluation_row.eval_score,
+                    "evaluation_score": evaluation_row.evaluation_score,
                     "reward": evaluation_row.reward,
                     "evaluation_time": evaluation_row.evaluation_time,
+                    "zero_reason": getattr(evaluation_row, "zero_reason", None),
                     **llm_summary_from_usage(getattr(evaluation_row, "llm_usage", None) or []),
                     "season": season_number,
                     "round_in_season": round_number_in_season,
@@ -341,9 +348,9 @@ class EvaluationsService:
         )
 
     def _build_list_item(self, context: EvaluationContext) -> EvaluationListItem:
-        eval_score = getattr(context.evaluation, "eval_score", getattr(context.evaluation, "final_score", 0.0))
-        reward = getattr(context.evaluation, "reward", eval_score)
-        status = self._status_from_score(eval_score)
+        evaluation_score = getattr(context.evaluation, "evaluation_score", 0.0)
+        reward = getattr(context.evaluation, "reward", evaluation_score)
+        status = self._status_from_score(evaluation_score)
         round_int = _round_id_to_int(context.round.validator_round_id)
         task_url = context.task.url
 
@@ -368,11 +375,12 @@ class EvaluationsService:
             taskId=context.task.task_id,
             taskUrl=task_url,
             status=status,
-            score=_safe_round(eval_score),
+            score=_safe_round(evaluation_score),
             reward=_safe_round(reward),
             responseTime=_safe_round(getattr(context.evaluation, "evaluation_time", 0.0)),
             createdAt=self._format_timestamp(created),
             updatedAt=self._format_timestamp(updated),
+            zeroReason=getattr(context.evaluation, "zero_reason", None),
         )
 
     def build_detail(self, context: EvaluationContext) -> EvaluationDetail:
@@ -480,15 +488,15 @@ class EvaluationsService:
         data.setdefault("validator_hotkey", evaluation_row.validator_hotkey)
         data.setdefault("miner_uid", evaluation_row.miner_uid)
         data.setdefault("miner_hotkey", evaluation_row.miner_hotkey)
-        data.setdefault("eval_score", getattr(evaluation_row, "eval_score", getattr(evaluation_row, "final_score", 0.0)))
-        data.setdefault("reward", getattr(evaluation_row, "reward", getattr(evaluation_row, "eval_score", getattr(evaluation_row, "final_score", 0.0))))
+        data.setdefault("evaluation_score", getattr(evaluation_row, "evaluation_score", 0.0))
+        data.setdefault("reward", getattr(evaluation_row, "reward", getattr(evaluation_row, "evaluation_score", 0.0)))
         data.setdefault("evaluation_time", evaluation_row.evaluation_time)
         data.setdefault("execution_history", evaluation_row.execution_history)
-        data.setdefault("feedback", evaluation_row.feedback)
         data.setdefault("web_agent_id", evaluation_row.web_agent_id)
         data.setdefault("stats", evaluation_row.stats)
         data.setdefault("gif_recording", evaluation_row.gif_recording)
-        data.setdefault("metadata", evaluation_row.meta)
+        data.setdefault("metadata", evaluation_row.extra_info)
+        data.setdefault("zero_reason", getattr(evaluation_row, "zero_reason", None))
         try:
             from sqlalchemy import inspect
 

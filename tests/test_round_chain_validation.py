@@ -46,8 +46,6 @@ def _mk_round_payload(round_number: int, *, uid: int = 1001) -> dict:
             "start_block": 1,
             "start_epoch": 1,
             "n_tasks": 1,
-            "n_miners": 1,
-            "n_winners": 1,
             "started_at": 1_700_000_000.0,
             "status": "in_progress",
         },
@@ -57,7 +55,6 @@ def _mk_round_payload(round_number: int, *, uid: int = 1001) -> dict:
 @pytest.mark.asyncio
 async def test_start_round_rejects_round_number_mismatch(client, monkeypatch):
     from app.config import settings
-    from app.services import chain_state as chain
 
     backend_round = 5
     # Force chain to backend_round
@@ -75,7 +72,6 @@ async def test_start_round_rejects_round_number_mismatch(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_start_round_must_be_inside_window(client, monkeypatch):
     from app.config import settings
-    from app.services import chain_state as chain
 
     rnd = 3
     # Force chain to be before the round window
@@ -90,7 +86,6 @@ async def test_start_round_must_be_inside_window(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_finish_round_rejects_not_started_or_already_finished(client, monkeypatch):
     from app.config import settings
-    from app.services import chain_state as chain
 
     rnd = 2
     # First, accept start inside the window
@@ -138,7 +133,6 @@ async def test_rounds_list_hides_not_started_rounds(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_round_progress_includes_chain_fields(client, monkeypatch):
     from app.config import settings
-    from app.services import chain_state as chain
 
     rnd = 4
     monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _block_for_round(settings, rnd, position="inside"))

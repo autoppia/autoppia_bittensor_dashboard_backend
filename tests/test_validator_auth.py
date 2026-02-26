@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import contextlib
 
 import pytest
@@ -101,8 +100,6 @@ async def test_start_round_rejects_when_header_hotkey_mismatch(client):
                 "start_block": 1,
                 "start_epoch": 1,
                 "n_tasks": 1,
-                "n_miners": 1,
-                "n_winners": 1,
                 "started_at": 1_700_000_000.0,
                 "status": "in_progress",
             },
@@ -110,4 +107,3 @@ async def test_start_round_rejects_when_header_hotkey_mismatch(client):
         resp = await client.post("/api/v1/validator-rounds/start", json=payload, headers=headers)
         assert resp.status_code == 400
         assert "does not match" in resp.json()["detail"].lower()
-

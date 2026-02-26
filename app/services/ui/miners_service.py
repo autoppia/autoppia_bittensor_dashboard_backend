@@ -254,7 +254,7 @@ class MinersService:
                 filtered.durations.append(duration)
 
             filtered.total_tasks += len(context.tasks)
-            filtered.success_tasks += len([er for er in context.evaluations if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5])
+            filtered.success_tasks += len([er for er in context.evaluations if getattr(er, "evaluation_score", 0.0) >= 0.5])
 
             if context.run.rank is not None:
                 filtered.ranks.append(context.run.rank)

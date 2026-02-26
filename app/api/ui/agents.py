@@ -71,7 +71,7 @@ async def get_latest_round_top_miner(
     """
     Get latest round and top miner for initial redirect when accessing /subnet36/agents.
 
-    Returns JSON { round: "season/round", miner_uid, miner_hotkey }.
+    Returns JSON { season, round, miner_uid, miner_hotkey }.
     Frontend performs the redirect. Only considers Autoppia validators (83, 124, 60).
     """
     from app.services.redis_cache import redis_cache
@@ -87,9 +87,11 @@ async def get_latest_round_top_miner(
     try:
         data = await rounds_service.get_latest_round_and_top_miner()
         if data is None:
-            raise HTTPException(status_code=404, detail="No rounds available")
+            # No rounds available: return 200 with null so frontend can use fallback (e.g. rounds list)
+            return {"success": True, "data": None}
 
         payload = {
+            "season": data["season"],
             "round": data["round"],
             "miner_uid": data["miner_uid"],
             "miner_hotkey": data.get("miner_hotkey"),

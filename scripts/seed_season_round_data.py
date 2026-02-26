@@ -85,8 +85,6 @@ async def seed_data():
                         "end_epoch": 12483,
                         "started_at": 1700000000.0,
                         "n_tasks": 10,
-                        "n_miners": 3,
-                        "n_winners": 1,
                         "status": "active",
                         "metadata": {},
                     },
@@ -286,7 +284,7 @@ async def seed_data():
                                 "validator_hotkey": validator_hotkey,
                                 "miner_uid": miner["uid"],
                                 "miner_hotkey": miner["hotkey"],
-                                "eval_score": 0.8 + (task_idx * 0.02),  # Scores from 0.8 to 0.88
+                                "evaluation_score": 0.8 + (task_idx * 0.02),  # Scores from 0.8 to 0.88
                                 "reward": 0.8 + (task_idx * 0.02),
                                 "evaluation_time": 2.5 + task_idx * 0.1,
                                 "status": "completed",

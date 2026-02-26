@@ -122,6 +122,9 @@ class Settings(BaseSettings):
     # If env vars are not set, fallback to validator defaults: 0.995 and 0.005
     EVAL_SCORE_WEIGHT: float = float(_env_var("EVAL_SCORE_WEIGHT", "0.995"))
     TIME_WEIGHT: float = float(_env_var("TIME_WEIGHT", "0.005"))
+    # Task limits (must stay in sync with validator defaults)
+    TASK_TIMEOUT_SECONDS: float = float(_env_var("TASK_TIMEOUT_SECONDS", "180.0"))
+    MAX_TASK_DOLLAR_COST_USD: float = float(_env_var("MAX_TASK_DOLLAR_COST_USD", "0.05"))
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ALPHA EMISSION CONFIGURATION
@@ -156,6 +159,7 @@ class Settings(BaseSettings):
     AWS_S3_ENDPOINT_URL: Optional[str] = os.getenv("AWS_S3_ENDPOINT_URL")
     AWS_S3_GIF_PREFIX: str = os.getenv("AWS_S3_GIF_PREFIX", "gifs")
     AWS_S3_TASK_LOG_PREFIX: str = _env_var("AWS_S3_TASK_LOG_PREFIX", "task-solutions-logs")
+    AWS_S3_VALIDATOR_ROUND_LOG_PREFIX: str = _env_var("AWS_S3_VALIDATOR_ROUND_LOG_PREFIX", "validator-round-logs")
     AWS_S3_PUBLIC_BASE_URL: Optional[str] = _env_var("AWS_S3_PUBLIC_BASE_URL", "")
 
     # Authentication
@@ -194,6 +198,10 @@ class Settings(BaseSettings):
 
     # Overview / validators list behavior
     OVERVIEW_VALIDATORS_LOOKBACK_ROUNDS: int = 2
+    # In TESTING/local: only show these validator UIDs in subnet overview (e.g. "21,126" for 2 local validators).
+    # If set, validators list is filtered to these UIDs so you don't see seed/mainnet validators.
+    OVERVIEW_VALIDATORS_WHITELIST: Optional[str] = os.getenv("OVERVIEW_VALIDATORS_WHITELIST", None)
+    OVERVIEW_TOTAL_WEBSITES_FALLBACK: int = int(os.getenv("OVERVIEW_TOTAL_WEBSITES_FALLBACK", "14"))
 
     # CORS Configuration
     # Prefer explicit origins to support credentials; fallback to wildcard in local env
@@ -280,6 +288,8 @@ class Settings(BaseSettings):
             self.AWS_S3_GIF_PREFIX = self.AWS_S3_GIF_PREFIX.strip("/") or "gifs"
         if self.AWS_S3_TASK_LOG_PREFIX:
             self.AWS_S3_TASK_LOG_PREFIX = self.AWS_S3_TASK_LOG_PREFIX.strip("/") or "task-logs"
+        if self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX:
+            self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX = self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX.strip("/") or "validator-round-logs"
 
         # Normalize log level strings
         def _norm(v: Optional[str], default: str) -> str:

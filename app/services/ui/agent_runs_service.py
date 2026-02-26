@@ -309,10 +309,17 @@ class AgentRunsService:
             # Fetch consensus scores and miner images
             consensus_scores = await self._fetch_consensus_scores_for_contexts(contexts) if contexts else {}
             miner_images = await self._fetch_miner_images_for_contexts(contexts) if contexts else {}
+            reused_from_round_display_map = await self._get_reused_from_round_display(contexts) if contexts else {}
 
             # Build all run summaries
             all_runs = [
-                self._build_run_summary(context, consensus_scores.get(context.run.agent_run_id), miner_images.get((context.round.validator_round_id, context.run.miner_uid))) for context in contexts
+                self._build_run_summary(
+                    context,
+                    consensus_scores.get(context.run.agent_run_id),
+                    miner_images.get((context.round.validator_round_id, context.run.miner_uid)),
+                    reused_from_round_display=reused_from_round_display_map.get(getattr(context.run, "reused_from_agent_run_id", None) or ""),
+                )
+                for context in contexts
             ]
 
             # Add miners without runs
@@ -368,9 +375,16 @@ class AgentRunsService:
             # Fetch consensus scores and miner images
             consensus_scores = await self._fetch_consensus_scores_for_contexts(contexts)
             miner_images = await self._fetch_miner_images_for_contexts(contexts)
+            reused_from_round_display_map = await self._get_reused_from_round_display(contexts)
 
             runs = [
-                self._build_run_summary(context, consensus_scores.get(context.run.agent_run_id), miner_images.get((context.round.validator_round_id, context.run.miner_uid))) for context in contexts
+                self._build_run_summary(
+                    context,
+                    consensus_scores.get(context.run.agent_run_id),
+                    miner_images.get((context.round.validator_round_id, context.run.miner_uid)),
+                    reused_from_round_display=reused_from_round_display_map.get(getattr(context.run, "reused_from_agent_run_id", None) or ""),
+                )
+                for context in contexts
             ]
 
         available_rounds = await self._list_available_round_numbers()
@@ -440,9 +454,8 @@ class AgentRunsService:
                 .options(
                     selectinload(AgentEvaluationRunORM.evaluations)
                     .options(
-                        defer(EvaluationORM.feedback),
                         defer(EvaluationORM.gif_recording),
-                        defer(EvaluationORM.meta),
+                        defer(EvaluationORM.extra_info),
                     )
                     .selectinload(EvaluationORM.execution_history_record)
                 )
@@ -462,7 +475,7 @@ class AgentRunsService:
                     # Include all evaluations, treating None as 0.0 for consistency
                     scores = []
                     for er in eval_results:
-                        score_val = getattr(er, "eval_score", getattr(er, "final_score", None))
+                        score_val = getattr(er, "evaluation_score", None)
                         if score_val is not None:
                             try:
                                 scores.append(float(score_val))
@@ -530,7 +543,7 @@ class AgentRunsService:
                 # Include all evaluations, treating None as 0.0 for consistency
                 scores = []
                 for er in eval_results:
-                    score_val = getattr(er, "eval_score", getattr(er, "final_score", None))
+                    score_val = getattr(er, "evaluation_score", None)
                     if score_val is not None:
                         try:
                             scores.append(float(score_val))
@@ -971,16 +984,16 @@ class AgentRunsService:
 
         logs: List[Log] = []
         for evaluation in context.evaluations:
-            if evaluation.feedback and evaluation.feedback.execution_history:
-                for entry in evaluation.feedback.execution_history:
-                    message = str(entry)
-                    logs.append(
-                        Log(
-                            timestamp=_ts_to_iso(context.run.started_at) or "",
-                            level=LogLevel.INFO,
-                            message=message,
-                        )
+            exec_hist = getattr(evaluation, "execution_history", None) or []
+            for entry in exec_hist:
+                message = str(entry)
+                logs.append(
+                    Log(
+                        timestamp=_ts_to_iso(context.run.started_at) or "",
+                        level=LogLevel.INFO,
+                        message=message,
                     )
+                )
         return logs
 
     @rollback_on_error
@@ -1022,17 +1035,30 @@ class AgentRunsService:
         except ValueError:
             return None
 
+        content_context = context
+        is_reused = bool(getattr(context.run, "is_reused", False))
+        reused_from_agent_run_id = getattr(context.run, "reused_from_agent_run_id", None)
+        if is_reused and reused_from_agent_run_id:
+            # For reused runs, always build analytics/details from source run context.
+            # This guarantees tasks/evaluations alignment (website/use_case mapping).
+            try:
+                source_context = await self.rounds_service.get_agent_run_context(reused_from_agent_run_id)
+                if source_context is not None:
+                    content_context = source_context
+            except Exception:
+                pass
+
         # Calculate rank and fetch consensus score
         await self._calculate_rank_for_context(context)
         await self._fetch_consensus_score_for_context(context)
 
         # Build all data - only statistics, tasks, and info (no run, no summary)
-        statistics = self._build_statistics_simplified(context)
-        _, _, task_map = self._index_results(context)
+        statistics = self._build_statistics_simplified(content_context)
+        _, _, task_map = self._index_results(content_context)
 
         # Build evaluations list (not tasks) - each evaluation represents a task+miner combination
         evaluations_list = []
-        for evaluation in context.evaluations:
+        for evaluation in content_context.evaluations:
             task_id = getattr(evaluation, "task_id", None)
             task = task_map.get(task_id) if task_id else None
 
@@ -1051,10 +1077,10 @@ class AgentRunsService:
                 # No task in round map (e.g. task_ids mismatch or tasks not loaded) - still include evaluation
                 prompt = website = use_case = status = start_time = end_time = None
 
-            eval_score = getattr(evaluation, "eval_score", getattr(evaluation, "final_score", 0.0))
-            eval_score_binary = 1.0 if eval_score >= 0.5 else 0.0
+            evaluation_score = getattr(evaluation, "evaluation_score", 0.0)
+            eval_score_binary = 1.0 if evaluation_score >= 0.5 else 0.0
             eval_time = getattr(evaluation, "evaluation_time", 0.0) or 0.0
-            reward = getattr(evaluation, "reward", None) or eval_score
+            reward = getattr(evaluation, "reward", None) or evaluation_score
 
             evaluation_dict = {
                 "evaluationId": evaluation.evaluation_id,
@@ -1063,16 +1089,32 @@ class AgentRunsService:
                 "website": website,
                 "useCase": use_case,
                 "status": status,
-                "eval_score": eval_score_binary,
+                "evaluation_score": eval_score_binary,
                 "eval_time": eval_time,
                 "reward": reward,
                 "startTime": start_time,
                 "endTime": end_time,
+                "zeroReason": getattr(evaluation, "zero_reason", None),
             }
             evaluations_list.append(evaluation_dict)
 
         # Build info object
         info = self._build_agent_run_info(context)
+        info["isReused"] = is_reused
+        info["reusedFromAgentRunId"] = reused_from_agent_run_id
+
+        if is_reused and reused_from_agent_run_id:
+            reused_from_info: Dict[str, Any] = {"agentRunId": reused_from_agent_run_id}
+            try:
+                reused_context = await self.rounds_service.get_agent_run_context(reused_from_agent_run_id)
+            except Exception:
+                reused_context = None
+            if reused_context is not None:
+                reused_round = getattr(reused_context, "round", None)
+                reused_from_info["validatorRoundId"] = getattr(reused_round, "validator_round_id", None)
+                reused_from_info["roundNumber"] = getattr(reused_round, "round_number_in_season", None) or getattr(reused_round, "round_number", None)
+                reused_from_info["seasonNumber"] = getattr(reused_round, "season_number", None)
+            info["reusedFrom"] = reused_from_info
 
         return {
             "statistics": statistics if statistics else None,
@@ -1145,6 +1187,7 @@ class AgentRunsService:
             "round": round_info,
             "validator": validator_info,
             "miner": miner_info,
+            "zeroReason": getattr(context.run, "zero_reason", None),
         }
 
     async def compare_runs(self, run_ids: List[str]) -> Dict[str, Any]:
@@ -1246,6 +1289,7 @@ class AgentRunsService:
                 "agentImage": agent_image,
                 "agentDescription": agent_description,
             },
+            zeroReason=getattr(context.run, "zero_reason", None),
         )
 
     def _build_personas(self, context: AgentRunContext) -> Personas:
@@ -1410,9 +1454,9 @@ class AgentRunsService:
                 )
             )
 
-        excellent = len([er for er in context.evaluations if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.9])
-        good = len([er for er in context.evaluations if 0.7 <= getattr(er, "eval_score", getattr(er, "final_score", 0.0)) < 0.9])
-        average = len([er for er in context.evaluations if 0.5 <= getattr(er, "eval_score", getattr(er, "final_score", 0.0)) < 0.7])
+        excellent = len([er for er in context.evaluations if getattr(er, "evaluation_score", 0.0) >= 0.9])
+        good = len([er for er in context.evaluations if 0.7 <= getattr(er, "evaluation_score", 0.0) < 0.9])
+        average = len([er for er in context.evaluations if 0.5 <= getattr(er, "evaluation_score", 0.0) < 0.7])
         poor = len(context.evaluations) - excellent - good - average
 
         score_distribution = ScoreDistribution(
@@ -1451,11 +1495,11 @@ class AgentRunsService:
         total_evaluations = len(context.evaluations)
 
         # Count successful evaluations
-        # eval_score can be decimal (0.0-1.0) or binary (0 or 1)
-        # Consider successful if eval_score >= 0.5 (same logic as in get_agent_run_complete)
+        # evaluation_score can be decimal (0.0-1.0) or binary (0 or 1)
+        # Consider successful if evaluation_score >= 0.5 (same logic as in get_agent_run_complete)
         successful_evaluations = 0
         for er in context.evaluations:
-            eval_score_val = getattr(er, "eval_score", getattr(er, "final_score", None))
+            eval_score_val = getattr(er, "evaluation_score", None)
             if eval_score_val is not None:
                 eval_score_float = float(eval_score_val)
                 if eval_score_float >= 0.5:
@@ -1466,10 +1510,7 @@ class AgentRunsService:
         # Sum all eval_scores from evaluations and divide by total count
         eval_scores_sum = 0.0
         for er in context.evaluations:
-            # Get eval_score, check if it exists (not None), otherwise try final_score
-            eval_score_val = getattr(er, "eval_score", None)
-            if eval_score_val is None:
-                eval_score_val = getattr(er, "final_score", None)
+            eval_score_val = getattr(er, "evaluation_score", None)
             # Convert to float, use 0.0 if None
             if eval_score_val is None:
                 eval_score_val = 0.0
@@ -1486,12 +1527,10 @@ class AgentRunsService:
         # Sum all rewards from evaluations and divide by total count
         rewards_sum = 0.0
         for er in context.evaluations:
-            # Get reward, fallback to eval_score if None
+            # Get reward, fallback to evaluation_score if None
             reward_val = getattr(er, "reward", None)
             if reward_val is None:
-                reward_val = getattr(er, "eval_score", None)
-                if reward_val is None:
-                    reward_val = getattr(er, "final_score", None)
+                reward_val = getattr(er, "evaluation_score", None)
             # Convert to float, use 0.0 if None
             if reward_val is None:
                 reward_val = 0.0
@@ -1558,11 +1597,11 @@ class AgentRunsService:
             websites_set.add(website)
 
             # Get evaluation metrics
-            eval_score = getattr(evaluation, "eval_score", getattr(evaluation, "final_score", 0.0)) or 0.0
-            eval_score_float = float(eval_score)
-            # Consider successful if eval_score >= 0.5 (same logic as in get_agent_run_complete)
+            evaluation_score = getattr(evaluation, "evaluation_score", 0.0) or 0.0
+            eval_score_float = float(evaluation_score)
+            # Consider successful if evaluation_score >= 0.5 (same logic as in get_agent_run_complete)
             is_successful = eval_score_float >= 0.5
-            # Use eval_score as fallback if reward is None (same as get_agent_run_complete)
+            # Use evaluation_score as fallback if reward is None (same as get_agent_run_complete)
             reward = getattr(evaluation, "reward", None) or eval_score_float
             eval_time = getattr(evaluation, "evaluation_time", 0.0) or 0.0
 
@@ -1734,7 +1773,73 @@ class AgentRunsService:
             recentActivity=recent_activity,
         )
 
-    def _build_run_summary(self, context: AgentRunContext, consensus_score: Optional[float] = None, miner_image: Optional[str] = None) -> Dict[str, object]:
+    @staticmethod
+    def _parse_round_display_from_validator_round_id(validator_round_id: Optional[str]) -> Optional[str]:
+        """Parse 'Season X, Round Y' from validator_round_id when DB columns are null. Supports validator_round_22_4_xxx or 23/10."""
+        if not validator_round_id:
+            return None
+        if "/" in validator_round_id:
+            parts = validator_round_id.split("/")
+            if len(parts) >= 2:
+                try:
+                    s, r = int(parts[0]), int(parts[1])
+                    return f"Season {s}, Round {r}"
+                except (ValueError, TypeError):
+                    pass
+        parts = validator_round_id.replace("validator_round_", "").split("_")
+        if len(parts) >= 2:
+            try:
+                s, r = int(parts[0]), int(parts[1])
+                return f"Season {s}, Round {r}"
+            except (ValueError, TypeError):
+                pass
+        return None
+
+    async def _get_reused_from_round_display(self, contexts: List[AgentRunContext]) -> Dict[str, str]:
+        """Return map: reused_from_agent_run_id -> 'Season X, Round Y' for source runs."""
+        ref_ids = list({getattr(ctx.run, "reused_from_agent_run_id", None) for ctx in contexts if getattr(ctx.run, "reused_from_agent_run_id", None)})
+        if not ref_ids:
+            return {}
+        stmt = (
+            select(
+                AgentEvaluationRunORM.agent_run_id,
+                RoundORM.season_number,
+                RoundORM.round_number_in_season,
+                RoundORM.validator_round_id,
+            )
+            .join(RoundORM, AgentEvaluationRunORM.validator_round_id == RoundORM.validator_round_id)
+            .where(AgentEvaluationRunORM.agent_run_id.in_(ref_ids))
+        )
+        result = await self.session.execute(stmt)
+        out = {}
+        for row in result:
+            run_id, season, rnd, vrid = row[0], row[1], row[2], row[3]
+            if season is not None and rnd is not None:
+                out[run_id] = f"Season {season}, Round {rnd}"
+            else:
+                # Fallback: parse from validator_round_id when DB columns are null
+                display = self._parse_round_display_from_validator_round_id(vrid)
+                if display:
+                    out[run_id] = display
+        # If any ref_id had no row (e.g. round not in validator_rounds), get validator_round_id from run and parse
+        missing = [rid for rid in ref_ids if rid not in out]
+        if missing:
+            stmt2 = select(AgentEvaluationRunORM.agent_run_id, AgentEvaluationRunORM.validator_round_id).where(AgentEvaluationRunORM.agent_run_id.in_(missing))
+            result2 = await self.session.execute(stmt2)
+            for row in result2:
+                run_id, vrid = row[0], row[1]
+                display = self._parse_round_display_from_validator_round_id(vrid)
+                if display:
+                    out[run_id] = display
+        return out
+
+    def _build_run_summary(
+        self,
+        context: AgentRunContext,
+        consensus_score: Optional[float] = None,
+        miner_image: Optional[str] = None,
+        reused_from_round_display: Optional[str] = None,
+    ) -> Dict[str, object]:
         run_model = context.run
 
         total_tasks = getattr(run_model, "n_tasks_total", None) or run_model.total_tasks or len(context.tasks)
@@ -1748,7 +1853,7 @@ class AgentRunsService:
 
         # Fallback: if success_tasks is 0, count from evaluations
         if success_tasks == 0 and context.evaluations:
-            success_tasks = sum(1 for evaluation in context.evaluations if getattr(evaluation, "eval_score", getattr(evaluation, "final_score", 0.0)) >= 0.5)
+            success_tasks = sum(1 for evaluation in context.evaluations if getattr(evaluation, "evaluation_score", 0.0) >= 0.5)
 
         if failed_tasks == 0 and total_tasks:
             failed_tasks = max(total_tasks - success_tasks, 0)
@@ -1835,6 +1940,10 @@ class AgentRunsService:
             "websitesCount": websites_count,
             "totalWebsites": websites_count,
             "averageEvaluationTime": (round(average_evaluation_time, 3) if average_evaluation_time is not None else None),
+            "zeroReason": getattr(run_model, "zero_reason", None),
+            "isReused": bool(getattr(run_model, "is_reused", False)),
+            "reusedFromAgentRunId": getattr(run_model, "reused_from_agent_run_id", None),
+            "reusedFromRoundDisplay": reused_from_round_display,
         }
 
     def _sort_runs(self, runs: List[Dict[str, object]], sort_by: str, sort_order: str) -> List[Dict[str, object]]:
@@ -1863,13 +1972,13 @@ class AgentRunsService:
             if ui_task is None:
                 continue
             evaluation = evaluation_map.get(task_id)
-            eval_score = getattr(evaluation, "eval_score", getattr(evaluation, "final_score", 0.0)) if evaluation else 0.0
-            success = evaluation is not None and eval_score >= 0.5
+            evaluation_score = getattr(evaluation, "evaluation_score", 0.0) if evaluation else 0.0
+            success = evaluation is not None and evaluation_score >= 0.5
             host = _map_website_port_to_name(ui_task.website)
 
             host_stats_entry = host_stats[host]
             host_stats_entry["tasks"] += 1
-            host_stats_entry["score_sum"] += eval_score
+            host_stats_entry["score_sum"] += evaluation_score
             if success:
                 host_stats_entry["successful"] += 1
                 success_count += 1
@@ -1912,9 +2021,9 @@ class AgentRunsService:
         run,
         round_obj: ValidatorRound,
     ) -> UITask:
-        eval_score = getattr(evaluation, "eval_score", getattr(evaluation, "final_score", 0.0)) if evaluation else 0.0
-        status = TaskStatus.COMPLETED if evaluation and eval_score >= 0.5 else TaskStatus.FAILED
-        score = eval_score
+        evaluation_score = getattr(evaluation, "evaluation_score", 0.0) if evaluation else 0.0
+        status = TaskStatus.COMPLETED if evaluation and evaluation_score >= 0.5 else TaskStatus.FAILED
+        score = evaluation_score
 
         # Use evaluation_time directly from the database
         # This is the time the evaluator took to process the task
@@ -2013,7 +2122,7 @@ class AgentRunsService:
     def _compute_average_score(evaluations: List[Evaluation]) -> float:
         if not evaluations:
             return 0.0
-        return sum(getattr(result, "eval_score", getattr(result, "final_score", 0.0)) for result in evaluations) / len(evaluations)
+        return sum(getattr(result, "evaluation_score", 0.0) for result in evaluations) / len(evaluations)
 
     @staticmethod
     def _run_status(context: AgentRunContext) -> RunStatus:

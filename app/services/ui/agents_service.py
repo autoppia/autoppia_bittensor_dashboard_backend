@@ -725,7 +725,7 @@ class AgentsService:
             if completed_from_run is not None:
                 success_tasks += completed_from_run
             elif context.evaluations:
-                success_tasks += len([er for er in context.evaluations if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5])
+                success_tasks += len([er for er in context.evaluations if getattr(er, "evaluation_score", 0.0) >= 0.5])
 
             if score >= 0.5:
                 successes += 1
@@ -1123,9 +1123,8 @@ class AgentsService:
             selectinload(AgentEvaluationRunORM.task_solutions),
             selectinload(AgentEvaluationRunORM.evaluations)
             .options(
-                defer(EvaluationORM.feedback),
                 defer(EvaluationORM.gif_recording),
-                defer(EvaluationORM.meta),
+                defer(EvaluationORM.extra_info),
             )
             .selectinload(EvaluationORM.execution_history_record),  # Relación correcta: evaluations
         )
@@ -1222,7 +1221,7 @@ class AgentsService:
             if completed_from_run is not None and completed_from_run > 0:
                 aggregate.success_tasks += completed_from_run
             elif context.evaluations:
-                aggregate.success_tasks += len([er for er in context.evaluations if getattr(er, "eval_score", getattr(er, "final_score", 0.0)) >= 0.5])
+                aggregate.success_tasks += len([er for er in context.evaluations if getattr(er, "evaluation_score", 0.0) >= 0.5])
 
             rank_value: Optional[int] = None
             if context.run.agent_run_id in rankings_by_run_id:
@@ -1385,9 +1384,8 @@ class AgentsService:
             selectinload(AgentEvaluationRunORM.task_solutions),
             selectinload(AgentEvaluationRunORM.evaluations)
             .options(
-                defer(EvaluationORM.feedback),
                 defer(EvaluationORM.gif_recording),
-                defer(EvaluationORM.meta),
+                defer(EvaluationORM.extra_info),
             )
             .selectinload(EvaluationORM.execution_history_record),  # Relación correcta: evaluations
         )
@@ -1576,7 +1574,7 @@ class AgentsService:
                 pass
 
         if context.evaluations:
-            scores = [getattr(result, "eval_score", getattr(result, "final_score", 0.0)) for result in context.evaluations]
+            scores = [getattr(result, "evaluation_score", 0.0) for result in context.evaluations]
             return sum(scores) / len(scores) if scores else 0.0
 
         fallback = getattr(context.run, "avg_eval_score", None)

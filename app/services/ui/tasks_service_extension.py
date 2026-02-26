@@ -3,7 +3,7 @@ Extension methods for TasksService to handle tasks with solutions endpoint.
 """
 
 from typing import Any, Dict, List, Optional
-from sqlalchemy import String, and_, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -12,7 +12,6 @@ from app.db.models import (
     EvaluationORM,
     RoundORM,
     TaskORM,
-    TaskSolutionORM,
 )
 
 
@@ -123,11 +122,7 @@ async def get_tasks_with_solutions(
     base_stmt = select(EvaluationORM).options(
         selectinload(EvaluationORM.task),
         selectinload(EvaluationORM.task_solution),
-        selectinload(EvaluationORM.agent_run).selectinload(
-            AgentEvaluationRunORM.validator_round
-        ).selectinload(
-            RoundORM.validator_snapshot
-        ),
+        selectinload(EvaluationORM.agent_run).selectinload(AgentEvaluationRunORM.validator_round).selectinload(RoundORM.validator_snapshot),
     )
 
     count_stmt = select(func.count()).select_from(EvaluationORM)
@@ -157,12 +152,12 @@ async def get_tasks_with_solutions(
     website_filter = website.lower() if website else None
     website_port = _map_website_name_to_port(website_filter) if website_filter else None
     website_filtered_in_sql = False
-    
+
     # Filter by use_case (use_case is a JSON dict, extract 'name' field)
     # We can filter directly in SQL using the index on use_case->>'name'
     use_case_filter = use_case.lower() if use_case else None
     use_case_filtered_in_sql = False
-    
+
     # If we need to filter by website or use_case, join with TaskORM
     if website_port or use_case_filter:
         if TaskORM not in [t for t in base_stmt.froms]:
@@ -174,7 +169,7 @@ async def get_tasks_with_solutions(
                 TaskORM,
                 EvaluationORM.task_id == TaskORM.task_id,
             )
-        
+
         # Filter by website port in SQL (more efficient than Python filtering)
         if website_port:
             # Filter URLs containing the port (e.g., ":8000" or "localhost:8000")
@@ -185,7 +180,7 @@ async def get_tasks_with_solutions(
                 )
             )
             website_filtered_in_sql = True
-        
+
         # Filter by use_case in SQL using the index
         if use_case_filter:
             filters.append(func.lower(TaskORM.use_case["name"].astext) == use_case_filter)
@@ -214,9 +209,7 @@ async def get_tasks_with_solutions(
                 AgentEvaluationRunORM,
                 EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
             )
-        filters.append(
-            func.lower(AgentEvaluationRunORM.miner_hotkey) == agent_id.lower()
-        )
+        filters.append(func.lower(AgentEvaluationRunORM.miner_hotkey) == agent_id.lower())
 
     # Filter by validator_id
     if validator_id:
@@ -229,9 +222,7 @@ async def get_tasks_with_solutions(
                 AgentEvaluationRunORM,
                 EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
             )
-        filters.append(
-            func.lower(AgentEvaluationRunORM.validator_hotkey) == validator_id.lower()
-        )
+        filters.append(func.lower(AgentEvaluationRunORM.validator_hotkey) == validator_id.lower())
 
     # Filter by round_id
     if round_id is not None:
@@ -256,26 +247,26 @@ async def get_tasks_with_solutions(
 
     # Filter by score range
     if min_score is not None:
-        filters.append(EvaluationORM.eval_score >= (min_score / 100.0))
+        filters.append(EvaluationORM.evaluation_score >= (min_score / 100.0))
     if max_score is not None:
-        filters.append(EvaluationORM.eval_score <= (max_score / 100.0))
+        filters.append(EvaluationORM.evaluation_score <= (max_score / 100.0))
 
     # Filter by status
     if status:
         status_lower = status.lower()
         if status_lower == "completed":
-            filters.append(EvaluationORM.eval_score >= 0.7)
+            filters.append(EvaluationORM.evaluation_score >= 0.7)
         elif status_lower == "failed":
-            filters.append(EvaluationORM.eval_score < 0.7)
+            filters.append(EvaluationORM.evaluation_score < 0.7)
         elif status_lower == "pending":
-            filters.append(EvaluationORM.eval_score.is_(None))
+            filters.append(EvaluationORM.evaluation_score.is_(None))
 
     # Filter by success (true = score = 1.0, false = score < 1.0)
     if success is not None:
         if success:
-            filters.append(EvaluationORM.eval_score == 1.0)
+            filters.append(EvaluationORM.evaluation_score == 1.0)
         else:
-            filters.append(EvaluationORM.eval_score < 1.0)
+            filters.append(EvaluationORM.evaluation_score < 1.0)
 
     # Apply all filters
     for flt in filters:
@@ -285,7 +276,7 @@ async def get_tasks_with_solutions(
     # Sorting
     sort_columns = {
         "created_at": EvaluationORM.created_at,
-        "score": EvaluationORM.eval_score,
+        "score": EvaluationORM.evaluation_score,
         "duration": EvaluationORM.created_at,  # Fallback to created_at
     }
 
@@ -342,7 +333,7 @@ async def get_tasks_with_solutions(
             use_case_name = task_orm.use_case.get("name", "unknown")
         elif isinstance(task_orm.use_case, str):
             use_case_name = task_orm.use_case
-        
+
         if use_case_filter and not use_case_filtered_in_sql:
             # Apply use_case filter if specified (only if not already filtered in SQL)
             if use_case_name.lower() != use_case_filter:
@@ -357,9 +348,7 @@ async def get_tasks_with_solutions(
             "requiredUrl": None,  # Not available in TaskORM
             "webVersion": task_orm.web_version,
             "tests": _normalize_tests(task_orm.tests),
-            "createdAt": (
-                task_orm.created_at.isoformat() if task_orm.created_at else None
-            ),
+            "createdAt": (task_orm.created_at.isoformat() if task_orm.created_at else None),
         }
 
         solution_data = None
@@ -368,19 +357,15 @@ async def get_tasks_with_solutions(
                 "taskSolutionId": solution_orm.solution_id,
                 "trajectory": [],
                 "actions": solution_orm.actions or [],
-                "createdAt": (
-                    solution_orm.created_at.isoformat()
-                    if solution_orm.created_at
-                    else None
-                ),
+                "createdAt": (solution_orm.created_at.isoformat() if solution_orm.created_at else None),
             }
 
         # Score is binary: 0 or 1 (stored as 0.0 or 1.0 in DB)
-        eval_score = eval_orm.eval_score or 0.0
+        evaluation_score = eval_orm.evaluation_score or 0.0
         evaluation_data = {
             "evaluationResultId": eval_orm.evaluation_id,  # Use evaluation_id instead of result_id
-            "score": int(eval_score),  # Convert to 0 or 1
-            "passed": eval_score >= 1.0,  # True if score = 1, False if score = 0
+            "score": int(evaluation_score),  # Convert to 0 or 1
+            "passed": evaluation_score >= 1.0,  # True if score = 1, False if score = 0
         }
 
         agent_data = None
@@ -391,7 +376,7 @@ async def get_tasks_with_solutions(
             if agent_run_orm.validator_round and agent_run_orm.validator_round.validator_snapshot:
                 validator_uid = agent_run_orm.validator_round.validator_snapshot.validator_uid
                 validator_hotkey = agent_run_orm.validator_round.validator_snapshot.validator_hotkey
-            
+
             agent_data = {
                 "agentRunId": agent_run_orm.agent_run_id,
                 "minerUid": agent_run_orm.miner_uid,

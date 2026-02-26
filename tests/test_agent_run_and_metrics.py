@@ -53,8 +53,6 @@ async def _start_minimal_round(
             "start_block": 1,
             "start_epoch": 1,
             "n_tasks": 1,
-            "n_miners": 1,
-            "n_winners": 1,
             "started_at": 1_700_000_000.0,
             "status": "in_progress",
         },
@@ -283,7 +281,7 @@ async def test_add_evaluation_relationship_mismatch_rejected(client, monkeypatch
             "validator_round_id": round_id,
             "agent_run_id": run_id,
             "validator_uid": 1001,
-            "final_score": 0.8,
+            "evaluation_score": 0.8,
             "test_results_matrix": [[{"success": True}]],
             "execution_history": [],
             "feedback": None,
@@ -437,7 +435,7 @@ async def test_finish_round_computes_run_metrics_and_top_miners(client, db_sessi
     )
     assert r_start.status_code == 200
 
-    # Add two evaluations with final_score 0.6 and 0.8, times 4.0 and 6.0, raw_score 0.6/0.8
+    # Add two evaluations with evaluation_score 0.6 and 0.8, times 4.0 and 6.0, raw_score 0.6/0.8
     for idx, score in enumerate([0.6, 0.8], start=1):
         payload = {
             "task": task,
@@ -459,7 +457,7 @@ async def test_finish_round_computes_run_metrics_and_top_miners(client, db_sessi
                 "agent_run_id": run_id,
                 "miner_uid": 501,
                 "validator_uid": 1001,
-                "final_score": score,
+                "evaluation_score": score,
                 "test_results_matrix": [[{"success": True}]],
                 "execution_history": [],
                 "feedback": None,
@@ -506,3 +504,63 @@ async def test_finish_round_computes_run_metrics_and_top_miners(client, db_sessi
     top = r_top.json()
     assert top["success"] is True
     assert top["data"]["miners"]
+
+
+@pytest.mark.asyncio
+async def test_finish_round_persists_zero_reason(client, db_session, monkeypatch):
+    """When finish_round receives agent_runs with zero_reason, it is persisted on the run row."""
+    from app.config import settings as _settings
+    from app.main import app
+
+    monkeypatch.setattr(_settings, "AUTH_DISABLED", False)
+    app.dependency_overrides[get_validator_auth_service] = lambda: _StubAuthService()
+
+    round_id = "zero_reason_round"
+    run_id = "run_zero_reason"
+    await _start_minimal_round(client, round_id=round_id)
+
+    start_run = {
+        "agent_run": {
+            "agent_run_id": run_id,
+            "validator_round_id": round_id,
+            "validator_uid": 1001,
+            "validator_hotkey": "5FHeaderHotkey111111111111111111111111111111",
+            "miner_uid": 502,
+            "miner_hotkey": "miner_hotkey_502",
+            "is_sota": False,
+        },
+        "miner_identity": {"uid": 502, "hotkey": "miner_hotkey_502"},
+        "miner_snapshot": {
+            "validator_round_id": round_id,
+            "miner_uid": 502,
+            "miner_hotkey": "miner_hotkey_502",
+            "agent_name": "M502",
+        },
+    }
+    r_start = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
+        json=start_run,
+        headers=_headers(),
+    )
+    assert r_start.status_code == 200
+
+    r_finish = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/finish?force=true",
+        json={
+            "status": "completed",
+            "ended_at": 1_700_001_000.0,
+            "agent_runs": [
+                {
+                    "agent_run_id": run_id,
+                    "rank": 1,
+                    "zero_reason": "over_cost_limit",
+                }
+            ],
+        },
+        headers=_headers(),
+    )
+    assert r_finish.status_code == 200
+
+    row = await db_session.scalar(select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == run_id))
+    assert row is not None
+    assert getattr(row, "zero_reason", None) == "over_cost_limit"

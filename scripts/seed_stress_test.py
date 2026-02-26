@@ -186,7 +186,8 @@ async def create_validator_round(
     # 1. Crear validator_round
     round_obj = ValidatorRoundORM(
         validator_round_id=validator_round_id,
-        round_number=round_number,
+        season_number=1,
+        round_number_in_season=round_number,
         start_block=7000000 + round_number * 1000,
         end_block=7000000 + round_number * 1000 + 500,
         start_epoch=19500.0 + round_number,
@@ -194,10 +195,15 @@ async def create_validator_round(
         started_at=started_at,
         ended_at=ended_at,
         n_tasks=len(tasks),
-        n_miners=len(miners),
-        n_winners=1,
         status="finished",
-        meta={},
+        validator_summary={
+            "round": {"round_number": round_number, "started_at": started_at, "ended_at": ended_at},
+            "s3_logs": None,
+            "ipfs_uploaded": None,
+            "ipfs_downloaded": None,
+            "evaluation_pre_consensus": None,
+            "evaluation_post_consensus": None,
+        },
     )
     session.add(round_obj)
     await session.flush()
@@ -208,7 +214,6 @@ async def create_validator_round(
         validator_uid=validator["uid"],
         validator_hotkey=validator["hotkey"],
         validator_coldkey=validator.get("coldkey", validator["hotkey"]),
-        round_number=round_number,
         name=validator["name"],
         stake=validator["stake"],
         vtrust=validator["vtrust"],
@@ -313,10 +318,10 @@ async def create_validator_round(
             await session.flush()
 
             # Crear 1 evaluation para cada solution (relación 1-1)
-            eval_score = base_score + random.uniform(-0.1, 0.1)
-            eval_score = max(0.0, min(1.0, eval_score))
+            evaluation_score = base_score + random.uniform(-0.1, 0.1)
+            evaluation_score = max(0.0, min(1.0, evaluation_score))
             eval_time = random.uniform(5, 12)
-            reward = eval_score * random.uniform(0.9, 1.0)
+            reward = evaluation_score * random.uniform(0.9, 1.0)
 
             evaluation = EvaluationORM(
                 evaluation_id=f"{solution_id}_eval",
@@ -328,11 +333,10 @@ async def create_validator_round(
                 miner_hotkey=miner["hotkey"],
                 validator_uid=validator["uid"],
                 validator_hotkey=validator["hotkey"],
-                eval_score=eval_score,
+                evaluation_score=evaluation_score,
                 reward=reward,
                 evaluation_time=eval_time,
-                feedback=None,
-                meta={},
+                extra_info={},
             )
             session.add(evaluation)
             all_evaluations.append(evaluation)
@@ -396,10 +400,10 @@ async def create_validator_round(
         if existing_summary:
             # Ya existe, actualizar en lugar de crear
             local_avg_reward = sum(e.reward for e in miner_evaluations) / len(miner_evaluations)
-            local_avg_eval_score = sum(e.eval_score for e in miner_evaluations) / len(miner_evaluations)
+            local_avg_eval_score = sum(e.evaluation_score for e in miner_evaluations) / len(miner_evaluations)
             local_avg_eval_time = sum(e.evaluation_time for e in miner_evaluations) / len(miner_evaluations)
             local_tasks_received = len(set(e.task_id for e in miner_evaluations))
-            local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.eval_score >= 0.5))
+            local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.evaluation_score >= 0.5))
             local_rank = rank_map.get(miner["uid"], 1)
 
             existing_summary.local_rank = local_rank
@@ -418,10 +422,10 @@ async def create_validator_round(
         else:
             # No existe, crear nuevo
             local_avg_reward = sum(e.reward for e in miner_evaluations) / len(miner_evaluations)
-            local_avg_eval_score = sum(e.eval_score for e in miner_evaluations) / len(miner_evaluations)
+            local_avg_eval_score = sum(e.evaluation_score for e in miner_evaluations) / len(miner_evaluations)
             local_avg_eval_time = sum(e.evaluation_time for e in miner_evaluations) / len(miner_evaluations)
             local_tasks_received = len(set(e.task_id for e in miner_evaluations))
-            local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.eval_score >= 0.5))
+            local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.evaluation_score >= 0.5))
             local_rank = rank_map.get(miner["uid"], 1)
 
             summary = ValidatorRoundSummaryORM(

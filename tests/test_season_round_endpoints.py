@@ -73,8 +73,6 @@ async def test_start_round_season_1_round_1_with_tasks(client, monkeypatch, db_s
                 "end_epoch": 12483,
                 "started_at": 1700000000.0,
                 "n_tasks": 10,
-                "n_miners": 3,
-                "n_winners": 1,
                 "status": "active",
                 "metadata": {},
             },
@@ -237,7 +235,6 @@ async def test_start_round_season_1_round_1_with_tasks(client, monkeypatch, db_s
         assert final_round.season_number == 1
         assert final_round.round_number_in_season == 1
         assert final_round.n_tasks == 10
-        assert final_round.n_miners == 3
         assert final_round.status == "active"
 
         print(f"✅ Test passed! Created Season {final_round.season_number}, Round {final_round.round_number_in_season}")

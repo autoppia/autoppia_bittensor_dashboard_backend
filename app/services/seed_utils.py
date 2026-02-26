@@ -632,10 +632,9 @@ def _build_agent_run_bundle(
             validator_hotkey=validator_round.validator_hotkey,
             miner_uid=miner_identity.uid,
             miner_hotkey=miner_identity.hotkey,
-            final_score=task_score,
+            evaluation_score=task_score,
             evaluation_time=random.uniform(1.0, 6.0),
             execution_history=[action.attributes for action in actions],
-            feedback=None,
             stats=None,
             gif_recording=SEED_GIF_URL,
             metadata={"seed_index": task_index, "seed_gif": True, "tests_passed": 1, "tests_total": 1, "template": template.website_slug},
@@ -695,8 +694,6 @@ def build_seed_payload(
         started_at=started_at,
         ended_at=None,
         n_tasks=num_tasks,
-        n_miners=num_miners,
-        n_winners=min(3, num_miners),
         status="active",
         metadata={"source": "seed"},
     )
@@ -791,7 +788,7 @@ def _compute_round_outcome(
     payload: SeedPayload,
 ) -> Tuple[List[Dict[str, Any]], List[float], Dict[str, float]]:
     sorted_bundles = sorted(payload.agent_bundles, key=lambda bundle: bundle.average_score, reverse=True)
-    n_winners = min(payload.validator_round.n_winners or 3, len(sorted_bundles))
+    n_winners = min(3, len(sorted_bundles))
     winners_data: List[Dict[str, Any]] = []
     winner_scores: List[float] = []
 
