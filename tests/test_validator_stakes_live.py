@@ -5,8 +5,8 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-from app.services.validator.validator_auth import ValidatorAuthService
 from app.config import settings
+from app.services.validator.validator_auth import ValidatorAuthService
 
 # Skip live stake tests unless explicitly enabled (they hit the chain)
 if os.getenv("RUN_LIVE_TESTS", "0").lower() not in ("1", "true", "yes", "on"):

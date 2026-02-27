@@ -20,16 +20,16 @@ if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
     ENVIRONMENT="${ENVIRONMENT:-local}"
     ENVIRONMENT_UPPER=$(echo "$ENVIRONMENT" | tr '[:lower:]' '[:upper:]')
-    
+
     # Obtener configuración de Redis
     REDIS_HOST_VAR="REDIS_HOST_${ENVIRONMENT_UPPER}"
     REDIS_PORT_VAR="REDIS_PORT_${ENVIRONMENT_UPPER}"
     REDIS_PASSWORD_VAR="REDIS_PASSWORD_${ENVIRONMENT_UPPER}"
-    
+
     REDIS_HOST=$(eval echo \${REDIS_HOST:-${REDIS_HOST_VAR:-localhost}})
     REDIS_PORT=$(eval echo \${REDIS_PORT:-${REDIS_PORT_VAR:-6379}})
     REDIS_PASSWORD=$(eval echo \$${REDIS_PASSWORD_VAR})
-    
+
     # Verificar si Redis está en Docker
     if [ -f docker-compose.yml ] && docker compose ps redis 2>/dev/null | grep -q "redis"; then
         USE_DOCKER=true

@@ -69,7 +69,7 @@ Ruta del script:
 
 - `~/autoppia_bittensor_dashboard_backend/scripts/bash/backup/backup.sh`
 
-> Importante: en `cron` conviene usar **ruta absoluta** (sin `~`).  
+> Importante: en `cron` conviene usar **ruta absoluta** (sin `~`).
 > Si el usuario que ejecuta el cron es `root`, el equivalente es:
 > `/root/autoppia_bittensor_dashboard_backend/scripts/bash/backup/backup.sh`
 

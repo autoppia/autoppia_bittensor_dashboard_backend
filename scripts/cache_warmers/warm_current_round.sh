@@ -20,6 +20,3 @@ curl -s "$BASE/api/v1/agent-runs?roundId=$CURRENT&page=1&limit=20" > /dev/null &
 
 wait
 echo "$(date +%T): Current round $CURRENT warmed" >> "$LOG_DIR/current_round_warmer.log"
-
-
-

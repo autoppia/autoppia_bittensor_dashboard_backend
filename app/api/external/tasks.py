@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.services.ui.tasks_service_extension import get_tasks_with_solutions
+from app.services.ui.external_tasks_query import get_tasks_with_solutions
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +36,13 @@ async def get_tasks_with_solutions_endpoint(
 ):
     """
     Get tasks with their solutions, applying multiple filters.
-    
+
     This endpoint requires an API key and supports pagination, filtering, and sorting.
     """
     # Validate API key
     if key != "AIagent2025":
         raise HTTPException(status_code=422, detail="Invalid API key")
-    
+
     # Parse sort parameter
     sort_by = "created_at"
     sort_order = "desc"
@@ -63,7 +63,7 @@ async def get_tasks_with_solutions_endpoint(
             # Default to created_at_desc if invalid sort
             sort_by = "created_at"
             sort_order = "desc"
-    
+
     data = await get_tasks_with_solutions(
         session=session,
         page=page,
@@ -83,10 +83,5 @@ async def get_tasks_with_solutions_endpoint(
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    
+
     return {"success": True, "data": data}
-
-
-
-
-

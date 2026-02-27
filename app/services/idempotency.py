@@ -1,8 +1,7 @@
-import time
-from typing import Optional
-from fastapi import Header, Request
-from app.config import settings
 import logging
+import time
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -13,9 +12,7 @@ _cache: dict[str, float] = {}
 def get_cache_stats() -> dict:
     """Get statistics about the idempotency cache."""
     now = time.time()
-    active_keys = sum(
-        1 for ts in _cache.values() if now - ts <= settings.IDEMPOTENCY_TTL
-    )
+    active_keys = sum(1 for ts in _cache.values() if now - ts <= settings.IDEMPOTENCY_TTL)
     expired_keys = len(_cache) - active_keys
 
     return {

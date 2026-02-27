@@ -1,26 +1,24 @@
 from __future__ import annotations
 
-import asyncio
 import contextlib
+import os
 from typing import Optional
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-import os
-
-from app.main import app
 from app.config import settings
+from app.main import app
 from app.services.validator.validator_auth import (
-    ValidatorAuthService,
-    get_validator_auth_service,
     VALIDATOR_HOTKEY_HEADER,
     VALIDATOR_SIGNATURE_HEADER,
+    ValidatorAuthService,
+    get_validator_auth_service,
 )
 
 # Skip this file unless explicitly enabled (hits live subtensor network)
 if os.getenv("RUN_LIVE_TESTS", "0").lower() not in ("1", "true", "yes", "on"):
-    import pytest  # noqa: WPS433
+    import pytest  # noqa: E402
 
     pytest.skip("Skipping live stake tests (set RUN_LIVE_TESTS=1 to run)", allow_module_level=True)
 
@@ -34,8 +32,8 @@ class _SigNoop_RealStake_Service:
     def verify_signature(self, *, hotkey: str, signature_b64: str) -> None:  # noqa: ARG002
         return None
 
-    def ensure_minimum_stake(self, hotkey: str) -> float:
-        return self._real.ensure_minimum_stake(hotkey)
+    def has_minimum_stake(self, hotkey: str) -> bool:
+        return self._real.has_minimum_stake(hotkey)
 
 
 @contextlib.asynccontextmanager

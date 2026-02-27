@@ -165,5 +165,3 @@ curl http://localhost:8080/api/v1/overview/metrics
 | **Mantenibilidad**         | ❌ Media          | ✅ Alta           |
 
 **Conclusión:** Cron jobs son más simples, robustos y flexibles.
-
-

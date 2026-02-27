@@ -320,7 +320,6 @@ class TaskORM(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    is_web_real: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     web_project_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     web_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
@@ -339,7 +338,6 @@ class TaskORM(TimestampMixin, Base):
         return {
             "task_id": self.task_id,
             "validator_round_id": self.validator_round_id,
-            "is_web_real": self.is_web_real,
             "web_project_id": self.web_project_id,
             "web_version": self.web_version,
             "url": self.url,
@@ -496,8 +494,8 @@ class EvaluationExecutionHistoryORM(TimestampMixin, Base):
     __tablename__ = "evaluations_execution_history"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    evaluations_id: Mapped[int] = mapped_column(
-        ForeignKey("evaluations.id", ondelete="CASCADE"),
+    evaluation_id: Mapped[str] = mapped_column(
+        ForeignKey("evaluations.evaluation_id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -577,7 +575,6 @@ __all__ = [
     "TaskORM",
     "TaskSolutionORM",
     "EvaluationORM",
-    "EvaluationResultORM",
     "EvaluationExecutionHistoryORM",
     "EvaluationLLMUsageORM",
     "TaskExecutionLogORM",
@@ -586,4 +583,3 @@ __all__ = [
 
 # Backwards compatibility aliases (must be after __all__ for export)
 RoundORM = ValidatorRoundORM
-EvaluationResultORM = EvaluationORM

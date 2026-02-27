@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Create an OpenAI fine‑tuning job from the exported JSONL dataset.
 
@@ -24,6 +22,8 @@ Notes:
   - Requires `openai` Python package. Install: `pip install openai`.
   - By default, it does not wait for completion. Use --wait to poll.
 """
+
+from __future__ import annotations
 
 import argparse
 import asyncio

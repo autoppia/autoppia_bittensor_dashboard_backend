@@ -1,5 +1,7 @@
 #!/bin/bash
-# Levanta el backend IWAP (API) y el background updater con PM2.
+# Levanta EXACTAMENTE dos procesos PM2 del backend:
+#   1) iwap-api
+#   2) background-updater
 # Uso: bash scripts/bash/start_backend_pm2.sh [puerto]
 
 set -e
@@ -10,6 +12,12 @@ cd "$PROJECT_ROOT"
 
 PORT="${1:-${BACKEND_PORT:-${PORT:-8080}}}"
 PM2_API_NAME="iwap-api"
+PM2_BG_NAME="background-updater"
+
+# Canonical main validator (autoppia validator 1)
+# Se puede sobreescribir desde el entorno antes de ejecutar el script.
+export MAIN_VALIDATOR_UID="${MAIN_VALIDATOR_UID:-21}"
+export MAIN_VALIDATOR_HOTKEY="${MAIN_VALIDATOR_HOTKEY:-5DANs86MZknobepodgBt91DBp3gPiSxJjpopJw8BKDkpX3gZ}"
 
 echo "🚀 Iniciando IWAP API con PM2 (puerto ${PORT})..."
 echo ""
@@ -41,17 +49,17 @@ fi
 echo ""
 
 # 2. Background updater en PM2
-echo "2️⃣  Background updater..."
-if pm2 list 2>/dev/null | grep -q "background-updater"; then
-    echo "   ✅ background-updater ya está en PM2"
+echo "2️⃣  Background updater (${PM2_BG_NAME})..."
+if pm2 list 2>/dev/null | grep -q "$PM2_BG_NAME"; then
+    echo "   ✅ ${PM2_BG_NAME} ya está en PM2"
 else
-    echo "   Iniciando background-updater con PM2..."
+    echo "   Iniciando ${PM2_BG_NAME} con PM2..."
     NO_INTERACTIVE=1 bash scripts/bash/start_background_updater.sh 2>/dev/null || true
     sleep 1
-    if pm2 list 2>/dev/null | grep -q "background-updater"; then
-        echo "   ✅ background-updater iniciado"
+    if pm2 list 2>/dev/null | grep -q "$PM2_BG_NAME"; then
+        echo "   ✅ ${PM2_BG_NAME} iniciado"
     else
-        echo "   ⚠️  background-updater no se pudo iniciar (opcional)"
+        echo "   ⚠️  ${PM2_BG_NAME} no se pudo iniciar (opcional)"
     fi
 fi
 echo ""
@@ -88,13 +96,15 @@ fi
 
 pm2 save 2>/dev/null || true
 echo ""
-echo "✅ IWAP API y background updater en PM2"
+echo "✅ Backend PM2 listo (2 procesos esperados)"
 echo "   API:    http://localhost:${PORT} (pm2 name: $PM2_API_NAME)"
+echo "   BG:     ${PM2_BG_NAME}"
+echo "   Main validator: uid=${MAIN_VALIDATOR_UID} hotkey=${MAIN_VALIDATOR_HOTKEY}"
 echo "   Docs:   http://localhost:${PORT}/docs"
 echo ""
 echo "Comandos útiles:"
 echo "  pm2 logs $PM2_API_NAME        # logs de la API"
-echo "  pm2 logs background-updater   # logs del background updater"
+echo "  pm2 logs $PM2_BG_NAME         # logs del background updater"
 echo "  pm2 restart $PM2_API_NAME     # reiniciar API"
 echo "  pm2 stop $PM2_API_NAME        # parar API"
 echo "  pm2 list                      # listar procesos"

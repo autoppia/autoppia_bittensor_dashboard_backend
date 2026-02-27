@@ -5,9 +5,9 @@ from sqlalchemy import select
 
 from app.db.models import AgentEvaluationRunORM
 from app.services.validator.validator_auth import (
-    get_validator_auth_service,
     VALIDATOR_HOTKEY_HEADER,
     VALIDATOR_SIGNATURE_HEADER,
+    get_validator_auth_service,
 )
 
 
@@ -15,8 +15,8 @@ class _StubAuthService:
     def verify_signature(self, *, hotkey: str, signature_b64: str) -> None:  # noqa: ARG002
         return None
 
-    def ensure_minimum_stake(self, hotkey: str) -> float:  # noqa: ARG002
-        return 1.0
+    def has_minimum_stake(self, hotkey: str) -> bool:  # noqa: ARG002
+        return True
 
 
 def _headers() -> dict[str, str]:

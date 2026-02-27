@@ -1,7 +1,8 @@
 """
-Utilities for managing the Autoppia backend database and seeding data.
+Utilities for backend operations, organized by purpose.
 
-This package provides scripts for:
-- Seeding minimal complete data for frontend testing (seed_minimal_complete.py)
-- Bash utilities for database operations and API testing
+- seed_db_test/: scripts and SQL to seed local/test databases
+- tests/: ad-hoc performance/integration checks
+- maintenance/: backfills, exports, and DB inspection helpers
+- cache_warmers/, migrations/, bash/: operational helpers
 """

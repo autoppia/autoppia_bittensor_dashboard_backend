@@ -23,7 +23,7 @@ fi
 if ! command -v redis-server &> /dev/null; then
     echo "❌ Redis no está instalado"
     echo "📦 Intentando instalar Redis..."
-    
+
     # Intentar instalar Redis
     INSTALLED=false
     if command -v apt-get &> /dev/null; then
@@ -43,7 +43,7 @@ if ! command -v redis-server &> /dev/null; then
     elif command -v brew &> /dev/null; then
         brew install redis && INSTALLED=true || true
     fi
-    
+
     if [ "$INSTALLED" = false ]; then
         echo "❌ No se pudo instalar Redis automáticamente"
         echo "Por favor instala Redis manualmente:"
@@ -107,4 +107,3 @@ else
     echo "❌ Error: Redis no se pudo iniciar"
     exit 1
 fi
-

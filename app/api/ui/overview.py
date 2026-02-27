@@ -18,25 +18,19 @@ from app.models.ui.overview import (
     RoundsListResponse,
     StatisticsResponse,
     ValidatorDetailResponse,
-    ValidatorsListResponse,
     ValidatorsFilterResponse,
+    ValidatorsListResponse,
 )
-from app.services.ui.overview_service import OverviewService
-from app.services.redis_cache import cache, redis_cache
+from app.services.redis_cache import cache
+from app.services.ui.ui_data_service import UIDataService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/overview", tags=["overview"])
 
 
-async def _service(session: AsyncSession) -> OverviewService:
-    return OverviewService(session)
-
-
 @router.get("/metrics", response_model=OverviewMetricsResponse)
-@cache(
-    "overview_metrics", ttl=900
-)
+@cache("overview_metrics", ttl=900)
 async def get_overview_metrics(
     session: AsyncSession = Depends(get_session),
 ) -> OverviewMetricsResponse:
@@ -46,15 +40,13 @@ async def get_overview_metrics(
     The cache warmer thread calls this endpoint periodically, ensuring the cache
     is always populated before users request it (zero cold starts).
     """
-    service = await _service(session)
-    metrics = await service.overview_metrics()
+    newdb = UIDataService(session)
+    metrics = await newdb.get_overview_metrics()
     return OverviewMetricsResponse(success=True, data={"metrics": metrics})
 
 
 @router.get("/validators", response_model=ValidatorsListResponse)
-@cache(
-    "validators_list", ttl=180
-)  # Cache 3 minutes - mantenido caliente por el cache warmer
+@cache("validators_list", ttl=180)  # Cache 3 minutes - mantenido caliente por el cache warmer
 async def get_validators(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),
@@ -63,8 +55,8 @@ async def get_validators(
     sortBy: str = Query("weight"),
     sortOrder: str = Query("desc"),
 ) -> ValidatorsListResponse:
-    service = await _service(session)
-    validators, total = await service.validators_list(
+    newdb = UIDataService(session)
+    validators, total = await newdb.get_overview_validators_list(
         page=page,
         limit=limit,
         status=status,
@@ -86,35 +78,29 @@ async def get_validators(
 async def get_validators_filter(
     session: AsyncSession = Depends(get_session),
 ) -> ValidatorsFilterResponse:
-    service = await _service(session)
-    items = await service.validators_filter()
+    newdb = UIDataService(session)
+    items = await newdb.get_overview_validators_filter()
     return ValidatorsFilterResponse(success=True, data={"validators": items})
 
 
 @router.get("/validators/{validator_id}", response_model=ValidatorDetailResponse)
-@cache(
-    "validator_detail", ttl=180
-)  # Cache 3 minutes - similar to validators_list
-async def get_validator_detail(
-    validator_id: str, session: AsyncSession = Depends(get_session)
-) -> ValidatorDetailResponse:
-    service = await _service(session)
+@cache("validator_detail", ttl=180)  # Cache 3 minutes - similar to validators_list
+async def get_validator_detail(validator_id: str, session: AsyncSession = Depends(get_session)) -> ValidatorDetailResponse:
+    newdb = UIDataService(session)
     try:
-        validator = await service.validator_detail(validator_id)
+        validator = await newdb.get_overview_validator_detail(validator_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ValidatorDetailResponse(success=True, data={"validator": validator})
 
 
 @router.get("/rounds/current", response_model=CurrentRoundResponse)
-@cache(
-    "current_round", ttl=300
-)  # Cache 5 minutes - current round changes more frequently
+@cache("current_round", ttl=300)  # Cache 5 minutes - current round changes more frequently
 async def get_current_round(
     session: AsyncSession = Depends(get_session),
 ) -> CurrentRoundResponse:
-    service = await _service(session)
-    round_info = await service.current_round()
+    newdb = UIDataService(session)
+    round_info = await newdb.get_overview_current_round()
     if round_info is None:
         raise HTTPException(status_code=404, detail="No rounds available")
     return CurrentRoundResponse(success=True, data={"round": round_info})
@@ -127,10 +113,8 @@ async def list_rounds(
     limit: int = Query(10, ge=1, le=100),
     status: Optional[str] = Query(None),
 ) -> RoundsListResponse:
-    service = await _service(session)
-    rounds, current, total = await service.rounds_list(
-        page=page, limit=limit, status=status
-    )
+    newdb = UIDataService(session)
+    rounds, current, total = await newdb.get_overview_rounds_list(page=page, limit=limit, status=status)
     return RoundsListResponse(
         success=True,
         data={
@@ -146,25 +130,23 @@ async def get_round_detail(
     validator_round_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> RoundDetailResponse:
-    service = await _service(session)
+    newdb = UIDataService(session)
     try:
-        round_info = await service.round_detail(validator_round_id)
+        round_info = await newdb.get_overview_round_detail(validator_round_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RoundDetailResponse(success=True, data={"round": round_info})
 
 
 @router.get("/leaderboard", response_model=LeaderboardResponse)
-@cache(
-    "leaderboard", ttl=600
-)  # Cache 10 minutes - standardized for consistent performance
+@cache("leaderboard", ttl=600)  # Cache 10 minutes - standardized for consistent performance
 async def get_leaderboard(
     session: AsyncSession = Depends(get_session),
     time_range: Optional[str] = Query(None, alias="timeRange"),
     limit: Optional[int] = Query(None, ge=1, le=365),
 ) -> LeaderboardResponse:
-    service = await _service(session)
-    entries, time_window = await service.leaderboard(time_range=time_range, limit=limit)
+    newdb = UIDataService(session)
+    entries, time_window = await newdb.get_overview_leaderboard(limit=limit)
     return LeaderboardResponse(
         success=True,
         data={
@@ -176,14 +158,12 @@ async def get_leaderboard(
 
 
 @router.get("/statistics", response_model=StatisticsResponse)
-@cache(
-    "statistics", ttl=600
-)  # Cache 10 minutes - standardized for consistent performance
+@cache("statistics", ttl=600)  # Cache 10 minutes - standardized for consistent performance
 async def get_statistics(
     session: AsyncSession = Depends(get_session),
 ) -> StatisticsResponse:
-    service = await _service(session)
-    stats = await service.statistics()
+    newdb = UIDataService(session)
+    stats = await newdb.get_overview_statistics()
     return StatisticsResponse(success=True, data={"statistics": stats})
 
 
@@ -192,8 +172,8 @@ async def get_statistics(
 async def get_network_status(
     session: AsyncSession = Depends(get_session),
 ) -> NetworkStatusResponse:
-    service = await _service(session)
-    status = await service.network_status()
+    newdb = UIDataService(session)
+    status = await newdb.get_overview_network_status()
     return NetworkStatusResponse(success=True, data=status)
 
 
@@ -202,8 +182,8 @@ async def get_recent_activity(
     session: AsyncSession = Depends(get_session),
     limit: int = Query(10, ge=1, le=100),
 ) -> RecentActivityResponse:
-    service = await _service(session)
-    activities = await service.recent_activity(limit)
+    newdb = UIDataService(session)
+    activities = await newdb.get_overview_recent_activity(limit)
     return RecentActivityResponse(
         success=True,
         data={
@@ -218,8 +198,8 @@ async def get_performance_trends(
     session: AsyncSession = Depends(get_session),
     days: int = Query(7, ge=1, le=30),
 ) -> PerformanceTrendsResponse:
-    service = await _service(session)
-    trends = await service.performance_trends(days)
+    newdb = UIDataService(session)
+    trends = await newdb.get_overview_performance_trends(days)
     return PerformanceTrendsResponse(
         success=True,
         data={

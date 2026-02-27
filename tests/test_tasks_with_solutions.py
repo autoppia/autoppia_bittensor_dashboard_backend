@@ -6,8 +6,7 @@ Migrado desde scripts/bash/test_tasks_with_solutions.sh
 
 import json
 import sys
-import urllib.parse
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 
@@ -66,10 +65,10 @@ def make_request(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 def test_no_filters() -> bool:
     """Test 1: Sin filtros (todas las tareas)."""
     print_test("1️⃣", "Sin filtros (todas las tareas)")
-    
+
     params = {"key": API_KEY, "limit": 5}
     data = make_request(params)
-    
+
     if data and data.get("success") and data.get("data", {}).get("total") is not None:
         total = data["data"]["total"]
         print_success(f"OK - Total: {total} tareas")
@@ -87,10 +86,10 @@ def test_no_filters() -> bool:
 def test_successful_tasks() -> bool:
     """Test 2: Tareas exitosas (success=true)."""
     print_test("2️⃣", "Tareas exitosas (success=true)")
-    
+
     params = {"key": API_KEY, "success": "true", "limit": 5}
     data = make_request(params)
-    
+
     if data and data.get("success") and data.get("data", {}).get("total") is not None:
         total = data["data"]["total"]
         print_success(f"OK - Total: {total} tareas exitosas")
@@ -105,10 +104,10 @@ def test_successful_tasks() -> bool:
 def test_failed_tasks() -> bool:
     """Test 3: Tareas fallidas (success=false)."""
     print_test("3️⃣", "Tareas fallidas (success=false)")
-    
+
     params = {"key": API_KEY, "success": "false", "limit": 5}
     data = make_request(params)
-    
+
     if data and data.get("success") and data.get("data", {}).get("total") is not None:
         total = data["data"]["total"]
         print_success(f"OK - Total: {total} tareas fallidas")
@@ -123,10 +122,10 @@ def test_failed_tasks() -> bool:
 def test_website_filter() -> bool:
     """Test 4: Filtrar por website (autocinema)."""
     print_test("4️⃣", "Filtro por website (autocinema)")
-    
+
     params = {"key": API_KEY, "website": "autocinema", "limit": 5}
     data = make_request(params)
-    
+
     if data and data.get("success") and data.get("data", {}).get("total") is not None:
         total = data["data"]["total"]
         print_success(f"OK - Total: {total} tareas de autocinema")
@@ -141,10 +140,10 @@ def test_website_filter() -> bool:
 def test_website_and_success() -> bool:
     """Test 5: Website + success (autocinema exitosas)."""
     print_test("5️⃣", "Website + success (autocinema exitosas)")
-    
+
     params = {"key": API_KEY, "website": "autocinema", "success": "true", "limit": 5}
     data = make_request(params)
-    
+
     if data and data.get("success") and data.get("data", {}).get("total") is not None:
         total = data["data"]["total"]
         print_success(f"OK - Total: {total} tareas exitosas de autocinema")
@@ -159,44 +158,40 @@ def test_website_and_success() -> bool:
 def test_web_version_filter() -> bool:
     """Test 5b: Filtro por webVersion."""
     print_test("5️⃣b", "Filtro por webVersion")
-    
+
     # Primero obtenemos una tarea para ver qué webVersion tiene
     sample_params = {"key": API_KEY, "limit": 1}
     sample_data = make_request(sample_params)
-    
+
     if not sample_data or not sample_data.get("data", {}).get("tasks"):
         print_warning("No se encontró webVersion en las tareas de muestra, saltando test")
         print()
         return False
-    
+
     web_version = sample_data["data"]["tasks"][0].get("task", {}).get("webVersion")
-    
+
     if not web_version or web_version in ("null", "None"):
         print_warning("No se encontró webVersion en las tareas de muestra, saltando test")
         print()
         return False
-    
+
     # Hacer petición con el filtro webVersion
     params = {"key": API_KEY, "webVersion": web_version, "limit": 5}
     data = make_request(params)
-    
+
     if data and data.get("success") and data.get("data", {}).get("total") is not None:
         total = data["data"]["total"]
         print_success(f"OK - Total: {total} tareas con webVersion={web_version}")
-        
+
         # Verificar que todas las tareas tienen el mismo webVersion
         tasks = data.get("data", {}).get("tasks", [])
-        versions = [
-            t.get("task", {}).get("webVersion")
-            for t in tasks
-            if t.get("task", {}).get("webVersion")
-        ]
-        
+        versions = [t.get("task", {}).get("webVersion") for t in tasks if t.get("task", {}).get("webVersion")]
+
         if all(v == web_version for v in versions):
             print_success(f"  Todas las tareas tienen webVersion={web_version}")
         else:
             print_warning("  Algunas tareas no tienen el webVersion esperado")
-        
+
         print()
         return True
     else:
@@ -208,27 +203,27 @@ def test_web_version_filter() -> bool:
 def test_website_and_web_version() -> bool:
     """Test 6: Website + webVersion (filtro combinado)."""
     print_test("6️⃣", "Website + webVersion (filtro combinado)")
-    
+
     # Primero obtenemos una tarea de autozone para ver qué webVersion tiene
     sample_params = {"key": API_KEY, "website": "autozone", "limit": 1}
     sample_data = make_request(sample_params)
-    
+
     if not sample_data or not sample_data.get("data", {}).get("tasks"):
         print_warning("No se encontró webVersion en las tareas de autozone, saltando test")
         print()
         return False
-    
+
     web_version = sample_data["data"]["tasks"][0].get("task", {}).get("webVersion")
-    
+
     if not web_version or web_version in ("null", "None"):
         print_warning("No se encontró webVersion en las tareas de autozone, saltando test")
         print()
         return False
-    
+
     # Hacer petición con ambos filtros
     params = {"key": API_KEY, "website": "autozone", "webVersion": web_version, "limit": 5}
     data = make_request(params)
-    
+
     if data and data.get("success") and data.get("data", {}).get("total") is not None:
         total = data["data"]["total"]
         print_success(f"OK - Total: {total} tareas de autozone con webVersion={web_version}")
@@ -243,10 +238,10 @@ def test_website_and_web_version() -> bool:
 def test_sorting() -> bool:
     """Test 7: Con ordenamiento (created_at_desc)."""
     print_test("7️⃣", "Con ordenamiento (created_at_desc)")
-    
+
     params = {"key": API_KEY, "sort": "created_at_desc", "limit": 3}
     data = make_request(params)
-    
+
     if data and data.get("success") and data.get("data", {}).get("total") is not None:
         total = data["data"]["total"]
         print_success(f"OK - Total: {total} tareas (ordenadas por fecha desc)")
@@ -261,10 +256,10 @@ def test_sorting() -> bool:
 def test_full_structure() -> bool:
     """Test 8: Estructura completa (1 tarea)."""
     print_test("8️⃣", "Estructura completa (1 tarea)")
-    
+
     params = {"key": API_KEY, "success": "true", "limit": 1}
     data = make_request(params)
-    
+
     if data:
         print(json.dumps(data, indent=2)[:2000])  # Primeros 2000 caracteres
         print()
@@ -278,7 +273,7 @@ def test_full_structure() -> bool:
 def test_no_api_key() -> bool:
     """Test 9: Sin API key (debe devolver 422)."""
     print_test("9️⃣", "Sin API key (debe devolver 422)")
-    
+
     try:
         with httpx.Client(timeout=10.0) as client:
             response = client.get(API_URL, params={"limit": 1})
@@ -299,9 +294,9 @@ def test_no_api_key() -> bool:
 def main() -> None:
     """Ejecuta todos los tests."""
     print_header("🚀 Testing /with-solutions endpoint")
-    
+
     results = []
-    
+
     results.append(("Test 1", test_no_filters()))
     results.append(("Test 2", test_successful_tasks()))
     results.append(("Test 3", test_failed_tasks()))
@@ -312,14 +307,14 @@ def main() -> None:
     results.append(("Test 7", test_sorting()))
     results.append(("Test 8", test_full_structure()))
     results.append(("Test 9", test_no_api_key()))
-    
+
     print_header("✅ Tests completados")
-    
+
     # Resumen
     passed = sum(1 for _, result in results if result)
     total = len(results)
     print(f"Tests pasados: {passed}/{total}")
-    
+
     if passed == total:
         sys.exit(0)
     else:

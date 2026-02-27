@@ -228,5 +228,3 @@ curl -s http://localhost:8080/api/v1/overview/metrics
 ---
 
 **TODO ESTÁ LISTO Y FUNCIONANDO** 🎉
-
-

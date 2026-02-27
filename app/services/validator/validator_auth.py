@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import base64
+import logging
 import threading
 import time
-import logging
 from typing import Dict, Optional
 
 from fastapi import Depends, HTTPException, Request, status
@@ -24,10 +24,6 @@ class InvalidSignatureError(ValidatorAuthError):
     """Raised when signature verification fails."""
 
 
-class StakeTooLowError(ValidatorAuthError):
-    """Raised when the validator stake does not meet the minimum threshold."""
-
-
 class AuthUnavailableError(ValidatorAuthError):
     """Raised when on-chain data cannot be fetched."""
 
@@ -38,10 +34,7 @@ class ValidatorAuthService:
         self._cache_lock = threading.Lock()
         self._stakes_cache: Dict[str, float] = {}
         self._cache_expiry = 0.0
-        self._log_signature_payloads = bool(
-            str(getattr(settings, "LOG_VALIDATOR_SIGNATURES", "")).lower()
-            not in {"", "0", "false", "none"}
-        )
+        self._log_signature_payloads = bool(str(getattr(settings, "LOG_VALIDATOR_SIGNATURES", "")).lower() not in {"", "0", "false", "none"})
 
     @staticmethod
     def _redact_signature(signature_b64: str, *, head: int = 8) -> str:
@@ -57,9 +50,7 @@ class ValidatorAuthService:
         try:
             return base64.b64decode(signature_b64, validate=True)
         except Exception as exc:  # pragma: no cover - defensive
-            raise InvalidSignatureError(
-                "Signature must be a valid base64-encoded string"
-            ) from exc
+            raise InvalidSignatureError("Signature must be a valid base64-encoded string") from exc
 
     def _load_metagraph_stakes(self) -> Dict[str, float]:
         try:
@@ -113,11 +104,7 @@ class ValidatorAuthService:
             if index < len(stake_values):
                 candidate = stake_values[index]
                 try:
-                    raw_value = (
-                        float(candidate.item())
-                        if hasattr(candidate, "item")
-                        else float(candidate)
-                    )
+                    raw_value = float(candidate.item()) if hasattr(candidate, "item") else float(candidate)
                 except Exception:
                     logger.debug(
                         "Unable to coerce stake value for hotkey=%s candidate=%r",
@@ -160,9 +147,7 @@ class ValidatorAuthService:
         try:
             keypair = bt.Keypair(ss58_address=hotkey)  # type: ignore[attr-defined]
         except Exception as exc:
-            raise InvalidSignatureError(
-                f"Invalid validator hotkey address: {exc}"
-            ) from exc
+            raise InvalidSignatureError(f"Invalid validator hotkey address: {exc}") from exc
 
         try:
             is_valid = bool(keypair.verify(message_bytes, signature))
@@ -171,33 +156,28 @@ class ValidatorAuthService:
                 "Validator signature verification failed unexpectedly for hotkey=%s",
                 hotkey,
             )
-            raise AuthUnavailableError(
-                f"Signature verification unavailable: {exc}"
-            ) from exc
+            raise AuthUnavailableError(f"Signature verification unavailable: {exc}") from exc
 
         if not is_valid:
             logger.warning("Validator signature did not verify for hotkey=%s", hotkey)
             raise InvalidSignatureError("Signature verification failed")
         logger.info("Validator signature verified successfully for hotkey=%s", hotkey)
 
-    def ensure_minimum_stake(self, hotkey: str) -> float:
+    def has_minimum_stake(self, hotkey: str) -> bool:
+        """Return True if the validator has at least MIN_VALIDATOR_STAKE (or threshold is disabled)."""
         try:
             minimum = float(settings.MIN_VALIDATOR_STAKE)
         except (TypeError, ValueError):
             minimum = 0.0
 
         if minimum <= 0:
-            return minimum
+            return True
 
         stakes = self._get_cached_stakes()
         stake = stakes.get(hotkey)
         if stake is None:
-            raise StakeTooLowError("Validator hotkey not found in metagraph")
-        if stake < minimum:
-            raise StakeTooLowError(
-                f"Validator stake {stake:.3f} is below the required minimum {minimum:.3f}"
-            )
-        return stake
+            return False
+        return stake >= minimum
 
 
 _validator_auth_service = ValidatorAuthService()
@@ -230,17 +210,10 @@ async def require_validator_auth(
 
     try:
         service.verify_signature(hotkey=hotkey, signature_b64=signature)
-        service.ensure_minimum_stake(hotkey)
     except InvalidSignatureError as exc:
         logger.warning("Validator auth failed: invalid signature for hotkey=%s", hotkey)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
-        ) from exc
-    except StakeTooLowError as exc:
-        logger.warning("Validator auth failed: stake too low for hotkey=%s", hotkey)
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
     except AuthUnavailableError as exc:
@@ -261,3 +234,10 @@ async def require_validator_auth(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Validator authentication failed unexpectedly",
         ) from exc
+
+    if not service.has_minimum_stake(hotkey):
+        logger.warning("Validator auth failed: stake too low or not in metagraph for hotkey=%s", hotkey)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Validator stake too low or hotkey not in metagraph",
+        )

@@ -203,6 +203,11 @@ class Settings(BaseSettings):
     OVERVIEW_VALIDATORS_WHITELIST: Optional[str] = os.getenv("OVERVIEW_VALIDATORS_WHITELIST", None)
     OVERVIEW_TOTAL_WEBSITES_FALLBACK: int = int(os.getenv("OVERVIEW_TOTAL_WEBSITES_FALLBACK", "14"))
 
+    # Canonical/main validator identity (source of truth for season/round canonical data)
+    # If set, only this validator drives canonical round/season outcomes in DB rollups.
+    MAIN_VALIDATOR_UID: Optional[int] = int(_env_var("MAIN_VALIDATOR_UID")) if _env_var("MAIN_VALIDATOR_UID") not in (None, "") else None
+    MAIN_VALIDATOR_HOTKEY: Optional[str] = _env_var("MAIN_VALIDATOR_HOTKEY", None)
+
     # CORS Configuration
     # Prefer explicit origins to support credentials; fallback to wildcard in local env
     CORS_ORIGINS: list[str] = [

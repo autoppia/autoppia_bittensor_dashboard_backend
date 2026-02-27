@@ -12,7 +12,6 @@ from app.services.subnet_timeline import (
 )
 
 router = APIRouter(prefix="/api/v1/subnets", tags=["subnets"])
-legacy_router = APIRouter(prefix="/subnets", tags=["subnets"], include_in_schema=False)
 
 
 async def _timeline_response(
@@ -66,28 +65,6 @@ async def get_subnet_timeline(
         le=MAX_ROSTER_SIZE,
         description="Roster size to return (defaults to 8)",
     ),
-    session: AsyncSession = Depends(get_session),
-) -> SubnetTimelineResponse:
-    return await _timeline_response(
-        subnet_id,
-        session,
-        rounds=rounds,
-        end_round=end_round,
-        seconds_back=seconds_back,
-        miners=miners,
-    )
-
-
-@legacy_router.get(
-    "/{subnet_id}/timeline",
-    response_model=SubnetTimelineResponse,
-)
-async def get_subnet_timeline_legacy(
-    subnet_id: str = Path(..., description="Subnet identifier"),
-    rounds: int | None = Query(None, ge=1, le=MAX_ROUND_COUNT),
-    end_round: int | None = Query(None, ge=1),
-    seconds_back: int | None = Query(None, ge=1),
-    miners: int | None = Query(None, ge=1, le=MAX_ROSTER_SIZE),
     session: AsyncSession = Depends(get_session),
 ) -> SubnetTimelineResponse:
     return await _timeline_response(

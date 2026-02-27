@@ -23,19 +23,19 @@ echo "🔧 Using environment: $ENVIRONMENT"
 _get_var() {
   local base_name=$1
   local specific_var="${base_name}_${ENV_SUFFIX}"
-  
+
   # Try specific var first (e.g., POSTGRES_USER_LOCAL)
   if [[ -n "${!specific_var:-}" ]]; then
     echo "${!specific_var}"
     return 0
   fi
-  
+
   # Fallback to generic var (e.g., POSTGRES_USER)
   if [[ -n "${!base_name:-}" ]]; then
     echo "${!base_name}"
     return 0
   fi
-  
+
   return 1
 }
 

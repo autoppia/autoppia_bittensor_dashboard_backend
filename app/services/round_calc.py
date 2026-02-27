@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from app.config import settings
 
@@ -72,7 +71,7 @@ def is_inside_window(current_block: int, boundaries: RoundBoundaries) -> bool:
 
 def compute_season_number(start_block: int) -> int:
     """Compute 1-based season number from start_block.
-    
+
     Uses the same MINIMUM_START_BLOCK as rounds, but with SEASON_SIZE_EPOCHS.
     """
     base = int(settings.MINIMUM_START_BLOCK)
@@ -85,24 +84,23 @@ def compute_season_number(start_block: int) -> int:
 
 def compute_round_number_in_season(current_block: int, round_block_length: int) -> int:
     """Compute 1-based round number within the current season.
-    
+
     Args:
         current_block: Current blockchain block height
         round_block_length: Number of blocks per round
-        
+
     Returns:
         1-based round number within the season (1, 2, 3, ...)
     """
     base = int(settings.MINIMUM_START_BLOCK)
     if current_block < base:
         return 0
-    
+
     # Calculate which season we're in
     season_block_length = int(settings.SEASON_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
     season_start_block = base + ((current_block - base) // season_block_length) * season_block_length
-    
+
     # Calculate round within the season
     blocks_into_season = current_block - season_start_block
     round_index = blocks_into_season // round_block_length
     return int(round_index + 1)
-

@@ -4,7 +4,6 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -21,20 +20,31 @@ from app.models.ui.rounds import (
     RoundTimelineResponse,
     RoundValidatorsResponse,
 )
-from app.services.ui.rounds_service import RoundsService
 
 # Snapshot functionality removed
 # from app.services.snapshot_service import SnapshotService
 from app.services.chain_state import get_current_block_estimate
 from app.services.redis_cache import cache
+from app.services.ui.ui_data_service import UIDataService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/rounds", tags=["rounds"])
 
 
-async def _service(session: AsyncSession) -> RoundsService:
-    return RoundsService(session)
+async def _newdb(session: AsyncSession) -> UIDataService:
+    return UIDataService(session)
+
+
+async def _round_detail_from_identifier(service: UIDataService, round_id: str) -> dict:
+    raw = str(round_id).strip()
+    if "/" in raw:
+        season_s, round_s = raw.split("/", 1)
+        return await service.get_round_detail(int(season_s), int(round_s))
+    parsed = int(raw)
+    if parsed >= 10000 and (parsed % 10000) > 0:
+        return await service.get_round_detail(parsed // 10000, parsed % 10000)
+    return await service.get_round_detail_by_round_id(parsed)
 
 
 # Snapshot functionality removed - no longer using round_snapshots table
@@ -51,12 +61,9 @@ async def list_round_ids(
     Get lightweight list of round IDs only (no nested data).
     Much faster than full /rounds endpoint - use this for dropdowns and lists.
     """
-    service = await _service(session)
-    round_ids = await service.list_round_ids(
-        limit=limit,
-        status=status,
-        sort_order=sortOrder,
-    )
+    service = await _newdb(session)
+    entries, _ = await service.get_rounds_list(page=1, limit=limit)
+    round_ids = [int(e.get("id", 0)) for e in entries if int(e.get("id", 0)) > 0]
     return {
         "success": True,
         "data": {
@@ -77,38 +84,16 @@ async def list_rounds(
     sortOrder: str = Query("desc"),
     skip: Optional[int] = Query(None, ge=0),
 ):
-    service = await _service(session)
+    service = await _newdb(session)
     if skip is not None:
-        # Maintain legacy semantics but return aggregated round-day entries.
         page = (skip // limit) + 1
         offset = skip % limit
-        entries, _ = await service.list_rounds_paginated(
-            page=page,
-            limit=limit,
-            status=status,
-            sort_by=sortBy,
-            sort_order=sortOrder,
-        )
-        # Filter to started rounds only (based on chain state)
-        current_block = get_current_block_estimate()
-        if current_block is not None:
-            entries = [e for e in entries if int(e.get("startBlock", 0) or 0) < current_block]
+        entries, _ = await service.get_rounds_list(page=page, limit=limit)
         sliced = entries[offset:]
         return sliced
 
-    entries, total = await service.list_rounds_paginated(
-        page=page,
-        limit=limit,
-        status=status,
-        sort_by=sortBy,
-        sort_order=sortOrder,
-    )
-    # Filter to started rounds only (based on chain state)
-    current_block = get_current_block_estimate()
-    if current_block is not None:
-        entries = [e for e in entries if int(e.get("startBlock", 0) or 0) < current_block]
-        total = len(entries)
-    current = await service.get_current_round_overview()
+    entries, total = await service.get_rounds_list(page=page, limit=limit)
+    current = await service.get_current_round()
     payload = {
         "rounds": entries,
         "total": total,
@@ -136,8 +121,8 @@ router.add_api_route(
 async def get_current_round(
     session: AsyncSession = Depends(get_session),
 ) -> RoundDetailResponse:
-    service = await _service(session)
-    current = await service.get_current_round_overview()
+    service = await _newdb(session)
+    current = await service.get_current_round()
     if current is None:
         raise HTTPException(status_code=404, detail="No rounds available")
     return RoundDetailResponse(success=True, data={"round": current})
@@ -153,9 +138,9 @@ async def get_round_progress_by_season(
 
     Example: /rounds/1/1/progress returns progress for Season 1, Round 1
     """
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        progress = await service.get_round_progress(f"{season}/{round}")
+        progress = await service.get_round_progress_data(f"{season}/{round}", get_current_block_estimate())
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RoundProgressResponse(success=True, data={"progress": progress})
@@ -172,9 +157,9 @@ async def get_round_by_season(
 
     Example: /rounds/8/3 returns Season 8, Round 3
     """
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        detail_data = await service.get_round_by_season(season, round)
+        detail_data = await service.get_round_detail(season, round)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -194,9 +179,9 @@ async def get_round_aggregated(
     - aggregated: winner, avg_winner_score, avg_eval_time, miners_evaluated, tasks_evaluated (post-consensus, desde Autoppia UID 83)
     - validators: lista de validators con sus métricas locales (prefijo local_)
     """
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        data = await service.get_aggregated_metrics(season, round_in_season)
+        data = await service.get_round_with_validators(season, round_in_season)
         return {"success": True, "data": data}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -215,9 +200,9 @@ async def get_round_basic(
     Get basic round info without nested agent runs, tasks, solutions, or evaluations.
     Use this for round page header and status display.
     """
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        basic_data = await service.get_round_basic(round_id)
+        basic_data = await _round_detail_from_identifier(service, round_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
@@ -243,100 +228,22 @@ async def get_round(
     - Current round cached in Redis (updates frequently)
     - Auto-caching on first request
     """
-    from app.services.redis_cache import redis_cache
-    import logging
-
-    logger = logging.getLogger(__name__)
-
-    # Parse round_number
-    round_number: Optional[int] = None
+    service = await _newdb(session)
     try:
-        round_number = int(round_id)
-    except ValueError:
-        # Resolver validator_round_id -> round_number
-        from app.db.models import RoundORM
-
-        round_number = await session.scalar(select(RoundORM.round_number).where(RoundORM.validator_round_id == round_id))
-
-    # Snapshot functionality removed - always calculate from DB
-
-    # Check if it's the current/active round - use Redis cache (1 day TTL)
-    service = await _service(session)
-    current_round_overview = await service.get_current_round_overview()
-    current_round_number = (current_round_overview.get("id") or current_round_overview.get("round")) if current_round_overview else None
-    is_current_round = round_number == current_round_number
-
-    if is_current_round:
-        # Try Redis cache for current round (1 day TTL)
-        cache_key = f"round:current:{round_number}"
-        cached_data = redis_cache.get(cache_key)
-        if cached_data:
-            logger.info("✅ Serving current round %s from Redis cache", round_number)
-            return {
-                "success": True,
-                "data": {"round": cached_data},
-            }
-
-    # Calculate from DB (slow path)
-    logger.info("🔄 Calculating round %s from DB...", round_id)
-    try:
-        detail_data = await service.get_round(round_id)
+        if "/" in round_id:
+            season_s, round_s = round_id.split("/", 1)
+            detail_data = await service.get_round_detail(int(season_s), int(round_s))
+        else:
+            parsed = int(round_id)
+            if parsed >= 10000 and (parsed % 10000) > 0:
+                detail_data = await service.get_round_detail(parsed // 10000, parsed % 10000)
+            else:
+                detail_data = await service.get_round_detail_by_round_id(parsed)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    # Save based on round status
-    round_status = detail_data.get("status", "")
-    is_finished = round_status in (
-        "finished",
-        "completed",
-        "complete",
-        "evaluating_finished",
-    )
-
-    if is_finished and round_number:
-        # Update status in DB for all validator_rounds of this round_number
-        logger.info("🔄 Marking round %s as finished in DB...", round_number)
-        try:
-            from app.db.models import ValidatorRoundORM
-
-            stmt = select(ValidatorRoundORM).where(ValidatorRoundORM.round_number == round_number)
-            round_rows = list(await session.scalars(stmt))
-            for round_row in round_rows:
-                if round_row.status != "finished":
-                    round_row.status = "finished"
-                    logger.info(f"  Updated {round_row.validator_round_id} status to finished")
-            await session.commit()
-            logger.info(f"✅ Marked {len(round_rows)} validator_rounds as finished for round {round_number}")
-        except Exception:
-            logger.exception("Failed to update round status in DB")
-
-        # Save to PostgreSQL snapshot (permanent)
-        logger.info("💾 Saving finished round %s to PostgreSQL snapshot...", round_number)
-        try:
-            from app.db.session import AsyncSessionLocal
-            # Snapshot functionality removed
-            # from app.services.snapshot_service import SnapshotService
-
-            async with AsyncSessionLocal() as snapshot_session:
-                # Snapshot functionality removed
-                # await _persist_snapshot_from_detail(snapshot_session, round_id, detail_data)
-
-                # Snapshot functionality removed - no longer using agent_stats table
-                # logger.info("📊 Updating agent stats for round %s...", round_number)
-                # snapshot_service = SnapshotService(snapshot_session)
-
-                await snapshot_session.commit()
-                logger.info("✅ Round %s data saved", round_number)
-        except Exception:
-            logger.exception("Failed to persist snapshot for round %s", round_id)
-    elif is_current_round and round_number:
-        # Cache current round in Redis (1 day TTL)
-        logger.info("💾 Caching current round %s in Redis (1 day)...", round_number)
-        try:
-            redis_cache.set(f"round:current:{round_number}", detail_data, ttl=86400)  # 1 day
-            logger.info("✅ Current round %s cached in Redis", round_number)
-        except Exception:
-            logger.exception("Failed to cache current round %s", round_number)
+    except Exception as exc:
+        logger.error("Error loading round %s: %s", round_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {
         "success": True,
@@ -350,7 +257,7 @@ async def get_round_statistics(
     round_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> RoundStatisticsResponse:
-    service = await _service(session)
+    service = await _newdb(session)
     try:
         stats = await service.get_round_statistics(round_id)
     except ValueError as exc:
@@ -359,7 +266,7 @@ async def get_round_statistics(
 
 
 @router.get("/{round_id}/miners", response_model=RoundMinersResponse)
-@cache("round_miners", ttl=300)  # Cache 5 minutes (smart_cache will extend for completed rounds)
+@cache("round_miners", ttl=300)  # Cache 5 minutes
 async def get_round_miners(
     round_id: str,
     session: AsyncSession = Depends(get_session),
@@ -371,9 +278,9 @@ async def get_round_miners(
     minScore: Optional[float] = Query(None),
     maxScore: Optional[float] = Query(None),
 ) -> RoundMinersResponse:
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        data = await service.get_round_miners(
+        data = await service.get_round_miners_data(
             round_identifier=round_id,
             page=page,
             limit=limit,
@@ -394,9 +301,18 @@ async def get_top_round_miners(
     session: AsyncSession = Depends(get_session),
     limit: int = Query(10, ge=1, le=50),
 ) -> RoundMinersResponse:
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        data = await service.get_top_miners(round_id, limit)
+        data = await service.get_round_miners_data(
+            round_identifier=round_id,
+            page=1,
+            limit=limit,
+            sort_by="score",
+            sort_order="desc",
+            success=None,
+            min_score=None,
+            max_score=None,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RoundMinersResponse(success=True, data=data)
@@ -408,9 +324,21 @@ async def get_round_miner(
     uid: int,
     session: AsyncSession = Depends(get_session),
 ) -> RoundMinersResponse:
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        miner = await service.get_round_miner(round_id, uid)
+        data = await service.get_round_miners_data(
+            round_identifier=round_id,
+            page=1,
+            limit=1000,
+            sort_by="ranking",
+            sort_order="asc",
+            success=None,
+            min_score=None,
+            max_score=None,
+        )
+        miner = next((m for m in data.get("miners", []) if int(m.get("uid", -1)) == uid), None)
+        if miner is None:
+            raise ValueError(f"Miner {uid} not found in round {round_id}")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RoundMinersResponse(success=True, data={"miner": miner})
@@ -421,9 +349,22 @@ async def get_round_validators(
     round_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> RoundValidatorsResponse:
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        data = await service.get_round_validators(round_id)
+        data = await service.get_round_validators_data(round_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RoundValidatorsResponse(success=True, data=data)
+
+
+@router.get("/by-id/{round_id}/validators", response_model=RoundValidatorsResponse, include_in_schema=False)
+async def get_round_validators_by_id_alias(
+    round_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> RoundValidatorsResponse:
+    service = await _newdb(session)
+    try:
+        data = await service.get_round_validators_data(round_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RoundValidatorsResponse(success=True, data=data)
@@ -435,9 +376,41 @@ async def get_round_validator(
     validator_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> RoundValidatorsResponse:
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        validator = await service.get_round_validator(round_id, validator_id)
+        data = await service.get_round_validators_data(round_id)
+        validator = None
+        for item in data.get("validators", []):
+            item_id = str(item.get("id", ""))
+            item_uid = item_id.replace("validator-", "")
+            if validator_id == item_id or validator_id == item_uid:
+                validator = item
+                break
+        if validator is None:
+            raise ValueError(f"Validator {validator_id} not found in round {round_id}")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RoundValidatorsResponse(success=True, data={"validator": validator})
+
+
+@router.get("/by-id/{round_id}/validators/{validator_id}", response_model=RoundValidatorsResponse, include_in_schema=False)
+async def get_round_validator_by_id_alias(
+    round_id: str,
+    validator_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> RoundValidatorsResponse:
+    service = await _newdb(session)
+    try:
+        data = await service.get_round_validators_data(round_id)
+        validator = None
+        for item in data.get("validators", []):
+            item_id = str(item.get("id", ""))
+            item_uid = item_id.replace("validator-", "")
+            if validator_id == item_id or validator_id == item_uid:
+                validator = item
+                break
+        if validator is None:
+            raise ValueError(f"Validator {validator_id} not found in round {round_id}")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RoundValidatorsResponse(success=True, data={"validator": validator})
@@ -452,15 +425,33 @@ async def get_round_activity(
     activity_type: Optional[str] = Query(None, alias="type"),
     since: Optional[str] = Query(None),
 ) -> RoundActivityResponse:
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        data = await service.get_round_activity(
-            round_identifier=round_id,
-            limit=limit,
-            offset=offset,
-            activity_type=activity_type,
-            since=since,
-        )
+        detail = await _round_detail_from_identifier(service, round_id)
+        activities = []
+        if detail.get("startTime"):
+            activities.append(
+                {
+                    "id": f"{detail['id']}-start",
+                    "type": "round_started",
+                    "message": f"Round {detail['roundKey']} started",
+                    "timestamp": detail["startTime"],
+                    "metadata": {"roundId": detail["id"]},
+                }
+            )
+        if detail.get("endTime"):
+            activities.append(
+                {
+                    "id": f"{detail['id']}-end",
+                    "type": "round_ended",
+                    "message": f"Round {detail['roundKey']} finished",
+                    "timestamp": detail["endTime"],
+                    "metadata": {"roundId": detail["id"]},
+                }
+            )
+        if activity_type:
+            activities = [a for a in activities if a.get("type") == activity_type]
+        data = {"activities": activities[offset : offset + limit], "total": len(activities)}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RoundActivityResponse(success=True, data=data)
@@ -471,13 +462,10 @@ async def get_round_progress(
     round_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> RoundProgressResponse:
-    """Get round progress. Supports both formats:
-    - /rounds/1/1/progress (season/round format)
-    - /rounds/{round_id}/progress (legacy format)
-    """
-    service = await _service(session)
+    """Get round progress for the provided identifier (season/round or numeric)."""
+    service = await _newdb(session)
     try:
-        progress = await service.get_round_progress(round_id)
+        progress = await service.get_round_progress_data(round_id, get_current_block_estimate())
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RoundProgressResponse(success=True, data={"progress": progress})
@@ -488,11 +476,30 @@ async def compare_rounds(
     payload: RoundComparisonRequest,
     session: AsyncSession = Depends(get_session),
 ) -> RoundComparisonResponse:
-    service = await _service(session)
+    service = await _newdb(session)
     if not payload.roundIds:
         raise HTTPException(status_code=400, detail="roundIds cannot be empty")
     try:
-        comparisons = await service.compare_rounds(payload.roundIds)
+        comparisons = []
+        for rid in payload.roundIds:
+            stats = await service.get_round_statistics(str(rid))
+            top = await service.get_round_miners_data(
+                round_identifier=str(rid),
+                page=1,
+                limit=3,
+                sort_by="score",
+                sort_order="desc",
+                success=None,
+                min_score=None,
+                max_score=None,
+            )
+            comparisons.append(
+                {
+                    "roundId": rid,
+                    "statistics": stats,
+                    "topMiners": [{"uid": int(m["uid"]), "score": float(m["score"]), "ranking": int(m["ranking"])} for m in top.get("miners", [])],
+                }
+            )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RoundComparisonResponse(success=True, data={"rounds": comparisons})
@@ -503,9 +510,27 @@ async def get_round_timeline(
     round_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> RoundTimelineResponse:
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        timeline = await service.get_round_timeline(round_id)
+        detail = await _round_detail_from_identifier(service, round_id)
+        timeline = []
+        if detail.get("startTime"):
+            timeline.append(
+                {
+                    "timestamp": detail["startTime"],
+                    "block": int(detail.get("startBlock") or 0),
+                    "completedTasks": 0,
+                    "activeMiners": 0,
+                }
+            )
+        timeline.append(
+            {
+                "timestamp": detail.get("endTime") or detail.get("startTime"),
+                "block": int(detail.get("endBlock") or detail.get("startBlock") or 0),
+                "completedTasks": int(detail.get("completedTasks") or 0),
+                "activeMiners": 0,
+            }
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RoundTimelineResponse(success=True, data={"timeline": timeline})
@@ -516,9 +541,9 @@ async def get_round_summary(
     round_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> RoundSummaryResponse:
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        summary = await service.get_round_summary_card(round_id)
+        summary = await service.get_round_summary_data(round_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RoundSummaryResponse(success=True, data=summary)
@@ -534,14 +559,10 @@ async def list_round_agent_runs(
     limit: int = Query(100, ge=1, le=500),
     skip: int = Query(0, ge=0),
 ) -> List[AgentEvaluationRunWithDetails]:
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        return await service.list_agent_runs(
-            validator_round_id=round_id,
-            limit=limit,
-            skip=skip,
-            include_details=True,
-        )
+        runs = await service.list_round_agent_runs(round_id, limit=limit, skip=skip)
+        return [AgentEvaluationRunWithDetails(**run) for run in runs]
     except Exception as exc:  # noqa: BLE001
         logger.exception(
             "Failed to list agent runs for round %s: %s",
@@ -559,9 +580,10 @@ async def get_agent_run(
     agent_run_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> AgentEvaluationRunWithDetails:
-    service = await _service(session)
+    service = await _newdb(session)
     try:
-        return await service.get_agent_run(agent_run_id)
+        run = await service.get_agent_run_by_id(agent_run_id)
+        return AgentEvaluationRunWithDetails(**run)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001

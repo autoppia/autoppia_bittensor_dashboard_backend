@@ -21,6 +21,3 @@ done
 
 wait
 echo "$(date +%T): Recent rounds $((CURRENT-3))-$((CURRENT-1)) warmed" >> "$LOG_DIR/recent_rounds_warmer.log"
-
-
-

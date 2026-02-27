@@ -12,31 +12,29 @@ logger, log_level = init_logging(settings)
 import os
 import re
 import time
-from fastapi import FastAPI, Request, Depends
+
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.middleware.logging_middleware import DetailedLoggingMiddleware
+from app.api.external.tasks import router as external_tasks_router
 from app.api.ui.agent_runs import router as agent_runs_router
 from app.api.ui.agents import router as agents_router
 from app.api.ui.evaluations import router as evaluations_router
-from app.api.ui.legacy_rounds import legacy_router as legacy_rounds_router
 from app.api.ui.miner_list import router as miner_list_router
 from app.api.ui.miners import router as miners_router
 from app.api.ui.overview import router as overview_router
 from app.api.ui.rounds import router as rounds_router
-from app.api.ui.subnets import legacy_router as subnets_legacy_router
 from app.api.ui.subnets import router as subnets_router
 from app.api.ui.tasks import router as tasks_router
 from app.api.ui.validators import router as validators_router
-from app.api.validator.validator_round import router as validator_rounds_router
 from app.api.validator.task_logs import router as task_logs_router
-from app.api.external.tasks import router as external_tasks_router
-from app.db.session import init_db, get_session
+from app.api.validator.validator_round import router as validator_rounds_router
+from app.db.session import get_session, init_db
+from app.middleware.logging_middleware import DetailedLoggingMiddleware
 from app.services.idempotency import get_cache_stats
-
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -107,7 +105,6 @@ async def log_requests(request: Request, call_next):
 app.include_router(validator_rounds_router)
 app.include_router(task_logs_router)
 app.include_router(rounds_router)
-app.include_router(legacy_rounds_router)
 app.include_router(agent_runs_router)
 app.include_router(evaluations_router)
 # IMPORTANT: external_tasks_router must be registered BEFORE tasks_router
@@ -120,7 +117,6 @@ app.include_router(miners_router)
 app.include_router(overview_router)
 app.include_router(miner_list_router)
 app.include_router(subnets_router)
-app.include_router(subnets_legacy_router)
 app.include_router(validators_router)
 
 

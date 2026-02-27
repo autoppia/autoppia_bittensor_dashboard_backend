@@ -11,12 +11,12 @@ Environment overrides (examples):
   LOG_TO_FILE=true|false
   LOG_FILE_PATH=logs/app.log
 """
+
 from __future__ import annotations
 
-import sys
-import os
 import logging as _logging
-from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
+import sys
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -58,10 +58,7 @@ class _SuppressSqlalchemyInfoFilter(_logging.Filter):
     noisy_prefixes = ("sqlalchemy.engine", "sqlalchemy.pool", "sqlalchemy.orm")
 
     def filter(self, record: _logging.LogRecord) -> bool:  # pragma: no cover
-        return not (
-            record.levelno < _logging.WARNING
-            and any(record.name.startswith(p) for p in self.noisy_prefixes)
-        )
+        return not (record.levelno < _logging.WARNING and any(record.name.startswith(p) for p in self.noisy_prefixes))
 
 
 def _apply_filter_to_active_handlers(filt: _logging.Filter) -> None:
@@ -139,9 +136,7 @@ def _setup_file_logging(settings, level: int) -> None:
     file_handler.setLevel(level)
 
     # Set format for file logs (more detailed)
-    file_formatter = _logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
-    )
+    file_formatter = _logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s")
     file_handler.setFormatter(file_formatter)
 
     # Add to root logger
@@ -173,15 +168,9 @@ def init_logging(settings) -> Tuple[_logging.Logger, int]:
     Returns: (logger, effective_level)
     """
     level = _parse_level(getattr(settings, "LOG_LEVEL", "WARNING"), _logging.WARNING)
-    sa_level = _parse_level(
-        getattr(settings, "SQLALCHEMY_LOG_LEVEL", "ERROR"), _logging.ERROR
-    )
-    bt_level = _parse_level(
-        getattr(settings, "BITTENSOR_LOG_LEVEL", "WARNING"), _logging.WARNING
-    )
-    uvicorn_level = _parse_level(
-        getattr(settings, "UVICORN_LOG_LEVEL", "WARNING"), _logging.WARNING
-    )
+    sa_level = _parse_level(getattr(settings, "SQLALCHEMY_LOG_LEVEL", "ERROR"), _logging.ERROR)
+    bt_level = _parse_level(getattr(settings, "BITTENSOR_LOG_LEVEL", "WARNING"), _logging.WARNING)
+    uvicorn_level = _parse_level(getattr(settings, "UVICORN_LOG_LEVEL", "WARNING"), _logging.WARNING)
 
     # If DEBUG=true and general level was INFO, allow bump to DEBUG
     if getattr(settings, "DEBUG", False) and level == _logging.INFO:

@@ -30,7 +30,7 @@ else
         set +e
         bash scripts/bash/start_redis.sh
         set -e
-        
+
         # Verificar nuevamente
         sleep 1
         if pgrep -x "redis-server" > /dev/null; then
@@ -55,7 +55,7 @@ if command -v pm2 &> /dev/null; then
     if pm2 list 2>/dev/null | grep -q "background-updater"; then
         BACKGROUND_RUNNING=true
     fi
-    
+
     if [ "$BACKGROUND_RUNNING" = true ]; then
         BACKGROUND_NAME=$(pm2 list 2>/dev/null | grep "background-updater" | awk '{print $2}' | head -1)
         echo "   ✅ Background updater ya está corriendo en PM2 (nombre: ${BACKGROUND_NAME:-background-updater})"
@@ -64,7 +64,7 @@ if command -v pm2 &> /dev/null; then
         if [ -f "scripts/bash/start_background_updater.sh" ]; then
             # Ejecutar en modo no interactivo
             NO_INTERACTIVE=1 bash scripts/bash/start_background_updater.sh
-            
+
             # Verificar nuevamente
             sleep 2
             if pm2 list 2>/dev/null | grep -q "background-updater"; then
