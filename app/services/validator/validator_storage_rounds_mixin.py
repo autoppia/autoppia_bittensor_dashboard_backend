@@ -257,7 +257,7 @@ class ValidatorStorageRoundsMixin:
 
         round_row.status = normalized_status
 
-        # validator_summary: solo round, s3_logs, ipfs_uploaded, ipfs_downloaded, evaluation_pre_consensus, evaluation_post_consensus
+        # validator_summary: keep round/s3/ipfs/evaluation summaries and handshake diagnostics
         from app.config import settings
         from app.services.subnet_utils import get_price
 
@@ -293,6 +293,7 @@ class ValidatorStorageRoundsMixin:
             "ipfs_downloaded": ipfs_downloaded or vs.get("ipfs_downloaded"),
             "evaluation_pre_consensus": vs.get("evaluation_pre_consensus") or (local_evaluation.get("summary") if isinstance(local_evaluation, dict) else None),
             "evaluation_post_consensus": vs.get("evaluation_post_consensus") or (post_consensus_evaluation.get("summary") if isinstance(post_consensus_evaluation, dict) else None),
+            "handshake_results": vs.get("handshake_results"),
         }
 
         # Normalize consensus summaries for stable UI/API shape
@@ -334,6 +335,11 @@ class ValidatorStorageRoundsMixin:
                         pass
             pre_summary["season_summary"] = season_summary
             merged["evaluation_pre_consensus"] = pre_summary
+
+        # When backend has no explicit post-consensus payload (e.g. single validator
+        # or no evaluated miners), preserve a stable shape by mirroring pre-consensus.
+        if merged.get("evaluation_post_consensus") is None and isinstance(merged.get("evaluation_pre_consensus"), dict):
+            merged["evaluation_post_consensus"] = dict(merged["evaluation_pre_consensus"])
 
         post_summary = merged.get("evaluation_post_consensus")
         if isinstance(post_summary, dict):
