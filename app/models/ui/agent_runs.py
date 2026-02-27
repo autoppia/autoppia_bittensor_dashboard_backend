@@ -3,9 +3,10 @@ Agent Runs API models for the AutoPPIA Bittensor Dashboard.
 These models define the data structures for agent evaluation runs.
 """
 
-from typing import List, Optional, Dict, Any, Union
-from pydantic import BaseModel, Field
 from enum import Enum
+from typing import Any, Dict, List, Optional, Union
+
+from pydantic import BaseModel, Field
 
 
 # --- Enums ---

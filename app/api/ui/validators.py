@@ -9,20 +9,20 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import and_, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_session
+from app.config import settings
 from app.db.models import (
     AgentEvaluationRunORM,
     EvaluationORM,
     TaskORM,
-    ValidatorRoundORM,
-    ValidatorRoundValidatorORM,
-    ValidatorRoundSummaryORM,
     ValidatorRoundMinerORM,
+    ValidatorRoundORM,
+    ValidatorRoundSummaryORM,
+    ValidatorRoundValidatorORM,
 )
+from app.db.session import get_session
+from app.services.metagraph_service import MetagraphError, get_validator_data
 from app.services.redis_cache import cache
 from app.utils.images import resolve_validator_image
-from app.services.metagraph_service import get_validator_data, MetagraphError
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 

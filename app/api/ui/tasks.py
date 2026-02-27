@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.services.ui.tasks_service import TasksService
+from app.services.ui.ui_data_service import UIDataService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 
 
-async def _service(session: AsyncSession) -> TasksService:
-    return TasksService(session)
+async def _service(session: AsyncSession) -> UIDataService:
+    return UIDataService(session)
 
 
 @router.get("")
@@ -167,11 +167,11 @@ async def get_task_actions(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     actions = service.build_actions(context)
     total = len(actions)
-    
+
     # Count total successful and failed actions (not just paginated)
-    success_count = sum(1 for action in actions if getattr(action, 'success', False))
-    fail_count = sum(1 for action in actions if getattr(action, 'error', False) or not getattr(action, 'success', False))
-    
+    success_count = sum(1 for action in actions if getattr(action, "success", False))
+    fail_count = sum(1 for action in actions if getattr(action, "error", False) or not getattr(action, "success", False))
+
     start = (page - 1) * limit
     end = start + limit
     paginated = actions[start:end]

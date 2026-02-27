@@ -11,7 +11,6 @@ from app.db.models import EvaluationResultORM
 from app.db.session import AsyncSessionLocal
 from app.services import media_storage
 
-
 # Pre-converted GIF bytes generated from
 # https://github.com/autoppia/autoppia_web_agents_subnet/blob/main/icon48.png
 ICON48_GIF_BASE64 = """

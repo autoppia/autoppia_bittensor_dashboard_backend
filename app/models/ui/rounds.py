@@ -1,6 +1,6 @@
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
-from datetime import datetime
 
 
 class BaseResponse(BaseModel):
@@ -29,7 +29,7 @@ class ValidatorRoundSummary(BaseModel):
 
 class RoundInfo(BaseModel):
     """Round information model."""
-    
+
     model_config = {"extra": "allow"}
 
     id: int
@@ -100,7 +100,7 @@ class ValidatorPerformance(BaseModel):
     activeMiners: int = Field(default=0)
     weight: int
     trust: float
-    version: int
+    version: str
     stake: int
     emission: int
     lastSeen: str  # ISO timestamp

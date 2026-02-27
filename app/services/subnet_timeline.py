@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import mean
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, defer
 
-from app.db.models import AgentEvaluationRunORM, EvaluationORM, RoundORM
-from app.models.core import AgentEvaluationRun, MinerInfo, ValidatorRound
 from app.models.ui.subnets import (
     MinerRosterEntry,
     MinerSnapshot,
@@ -20,8 +16,6 @@ from app.models.ui.subnets import (
     TimelineMetaQuery,
     TimelineRound,
 )
-from app.services.ui.rounds_service import AgentRunContext, RoundsService
-from app.utils.images import resolve_agent_image
 
 DEFAULT_ROUND_COUNT = 90
 MAX_ROUND_COUNT = 500
@@ -43,81 +37,15 @@ COLOR_PALETTE = [
 ]
 
 
-@dataclass(slots=True)
-class _RoundSnapshot:
-    number: int
-    identifier: str
-    round_model: ValidatorRound
-    agent_contexts: List[AgentRunContext]
-
-    @property
-    def timestamp(self) -> float:
-        reference = self.round_model.ended_at or self.round_model.started_at
-        if reference is None:
-            return datetime.now(timezone.utc).timestamp()
-        return reference
-
-    @property
-    def duration(self) -> Optional[float]:
-        if self.round_model.started_at is None or self.round_model.ended_at is None:
-            return None
-        return max(self.round_model.ended_at - self.round_model.started_at, 0.0)
-
-
-def _round_number(validator_round_id: str) -> Optional[int]:
-    if "_" in validator_round_id:
-        _, suffix = validator_round_id.split("_", 1)
-    else:
-        suffix = validator_round_id
-    try:
-        return int(suffix)
-    except ValueError:
-        return None
-
-
 def _iso_timestamp(seconds: float) -> str:
     return datetime.fromtimestamp(seconds, tz=timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _score_from_run(context: AgentRunContext) -> float:
-    """Return the average evaluation score for an agent run (0-1 range)."""
-    if context.evaluations:
-        scores = [getattr(result, "evaluation_score", 0.0) for result in context.evaluations]
-        return sum(scores) / len(scores) if scores else 0.0
-    if context.run.avg_eval_score is not None:
-        return context.run.avg_eval_score
-    return 0.0
-
-
-def _miner_identifier(run: AgentEvaluationRun) -> str:
-    if run.miner_uid is not None:
-        return f"miner-{run.miner_uid}"
-    return run.agent_run_id
-
-
-def _miner_display_name(run: AgentEvaluationRun) -> str:
-    info = run.miner_info
-    if info and info.agent_name:
-        return info.agent_name
-    if run.miner_uid is not None:
-        return f"Miner {run.miner_uid}"
-    return run.agent_run_id
-
-
-def _miner_avatar(info: Optional[MinerInfo], display_name: str, identifier: str) -> str:
-    resolved = resolve_agent_image(info)
-    if resolved:
-        return resolved
-    safe = display_name.replace(" ", "+")
-    return f"https://placehold.co/256x256?text={safe or identifier}"
-
-
 class SubnetTimelineService:
-    """Build subnet timeline responses sourced entirely from persisted round data."""
+    """Build subnet timeline responses sourced from new DB schema tables."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
-        self.rounds_service = RoundsService(session)
 
     async def build_timeline(
         self,
@@ -133,35 +61,25 @@ class SubnetTimelineService:
             raise ValueError("No rounds available for timeline generation")
 
         target_end = self._resolve_end_round(end_round, available_rounds)
-        requested_rounds = self._resolve_round_count(
-            rounds=rounds,
-            seconds_back=seconds_back,
-            available=len(available_rounds),
-        )
-
-        selected_ids = self._select_round_ids(
-            available_rounds,
-            end_round_number=target_end,
-            count=requested_rounds,
-        )
-        if not selected_ids:
+        requested_rounds = self._resolve_round_count(rounds=rounds, seconds_back=seconds_back, available=len(available_rounds))
+        selected = self._select_rounds(available_rounds, end_round_number=target_end, count=requested_rounds)
+        if not selected:
             raise ValueError("No rounds matched the requested window")
 
-        round_snapshots = await self._load_round_snapshots(selected_ids)
-        if not round_snapshots:
-            raise ValueError("No persisted round snapshots available")
+        roster_size = self._resolve_roster_size(miners)
+        timeline, roster = await self._build_timeline_and_roster(selected, roster_size)
 
-        roster_size = self._resolve_roster_size(miners, len(round_snapshots))
-
-        timeline, roster = self._build_timeline(round_snapshots, roster_size)
-
-        durations = [snapshot.duration for snapshot in round_snapshots if snapshot.duration]
+        durations = []
+        for idx in range(1, len(timeline)):
+            t1 = datetime.fromisoformat(timeline[idx - 1].timestamp.replace("Z", "+00:00")).timestamp()
+            t2 = datetime.fromisoformat(timeline[idx].timestamp.replace("Z", "+00:00")).timestamp()
+            durations.append(max(t2 - t1, 0))
         average_duration = int(round(mean(durations))) if durations else FALLBACK_ROUND_DURATION
 
         meta = TimelineMeta(
             subnet_id=subnet_id,
-            start_round=round_snapshots[0].number,
-            end_round=round_snapshots[-1].number,
+            start_round=timeline[0].round,
+            end_round=timeline[-1].round,
             round_count=len(timeline),
             round_duration_seconds=max(1, average_duration),
             generated_at=datetime.now(timezone.utc).isoformat(),
@@ -171,44 +89,48 @@ class SubnetTimelineService:
                 seconds_back=seconds_back,
                 miners=miners,
             ),
-            inferred_round_count=len(selected_ids),
+            inferred_round_count=len(selected),
         )
+        return SubnetTimelineResponse(subnet_id=subnet_id, roster=roster, timeline=timeline, meta=meta)
 
-        return SubnetTimelineResponse(
-            subnet_id=subnet_id,
-            roster=roster,
-            timeline=timeline,
-            meta=meta,
+    async def _available_rounds(self) -> List[Tuple[int, int, int, float]]:
+        rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                    SELECT
+                      r.round_id,
+                      s.season_number,
+                      r.round_number_in_season,
+                      EXTRACT(EPOCH FROM COALESCE(r.ended_at, r.started_at, NOW())) AS ts
+                    FROM rounds r
+                    JOIN seasons s ON s.season_id = r.season_id
+                    ORDER BY s.season_number ASC, r.round_number_in_season ASC
+                    """
+                    )
+                )
+            )
+            .mappings()
+            .all()
         )
-
-    async def _available_rounds(self) -> List[Tuple[int, str]]:
-        stmt = select(RoundORM.validator_round_id)
-        results = await self.session.scalars(stmt)
-        entries: List[Tuple[int, str]] = []
-        for identifier in results:
-            number = _round_number(identifier)
-            if number is not None:
-                entries.append((number, identifier))
-        entries.sort(key=lambda item: item[0])
-        return entries
+        result: List[Tuple[int, int, int, float]] = []
+        for row in rows:
+            season = int(row["season_number"])
+            round_in = int(row["round_number_in_season"])
+            encoded = season * 10000 + round_in
+            result.append((encoded, int(row["round_id"]), round_in, float(row["ts"] or datetime.now(timezone.utc).timestamp())))
+        return result
 
     @staticmethod
-    def _resolve_end_round(
-        end_round: Optional[int],
-        available_rounds: Sequence[Tuple[int, str]],
-    ) -> int:
+    def _resolve_end_round(end_round: Optional[int], available_rounds: Sequence[Tuple[int, int, int, float]]) -> int:
         max_available = available_rounds[-1][0]
         if end_round is None:
             return max_available
         return min(max(end_round, 1), max_available)
 
     @staticmethod
-    def _resolve_round_count(
-        *,
-        rounds: Optional[int],
-        seconds_back: Optional[int],
-        available: int,
-    ) -> int:
+    def _resolve_round_count(*, rounds: Optional[int], seconds_back: Optional[int], available: int) -> int:
         if rounds is not None:
             count = max(1, min(rounds, MAX_ROUND_COUNT))
         elif seconds_back is not None:
@@ -219,189 +141,123 @@ class SubnetTimelineService:
         return min(count, available)
 
     @staticmethod
-    def _select_round_ids(
-        rounds: Sequence[Tuple[int, str]],
+    def _select_rounds(
+        rounds: Sequence[Tuple[int, int, int, float]],
         *,
         end_round_number: int,
         count: int,
-    ) -> List[Tuple[int, str]]:
+    ) -> List[Tuple[int, int, int, float]]:
         eligible = [entry for entry in rounds if entry[0] <= end_round_number]
         if not eligible:
             return []
         return eligible[-count:]
 
-    async def _load_round_snapshots(
-        self,
-        selected: Sequence[Tuple[int, str]],
-    ) -> List[_RoundSnapshot]:
-        identifiers = [identifier for _, identifier in selected]
-        stmt = (
-            select(RoundORM)
-            .options(
-                selectinload(RoundORM.agent_runs).selectinload(AgentEvaluationRunORM.task_solutions),
-                selectinload(RoundORM.agent_runs)
-                .selectinload(AgentEvaluationRunORM.evaluations)
-                .options(
-                    defer(EvaluationORM.gif_recording),
-                    defer(EvaluationORM.extra_info),
-                )
-                .selectinload(EvaluationORM.execution_history_record),
-                selectinload(RoundORM.validator_snapshot),  # 1:1 relationship (singular)
-                selectinload(RoundORM.miner_snapshots),
-            )
-            .where(RoundORM.validator_round_id.in_(identifiers))
-        )
-        rows = await self.session.scalars(stmt)
-        by_identifier: Dict[str, RoundORM] = {row.validator_round_id: row for row in rows}
-        tasks_by_round = await self.rounds_service._load_tasks_for_rounds(identifiers)  # type: ignore[attr-defined]
-
-        snapshots: List[_RoundSnapshot] = []
-        for number, identifier in selected:
-            round_row = by_identifier.get(identifier)
-            if round_row is None:
-                continue
-            round_model = self.rounds_service._deserialize_round(round_row)  # type: ignore[attr-defined]
-            round_tasks = tasks_by_round.get(identifier, {})
-            agent_contexts = [
-                self.rounds_service._build_agent_run_context(
-                    run_row,
-                    parent_round_row=round_row,
-                    tasks_for_round=round_tasks,
-                )  # type: ignore[attr-defined]
-                for run_row in round_row.agent_runs
-            ]
-            snapshots.append(
-                _RoundSnapshot(
-                    number=number,
-                    identifier=identifier,
-                    round_model=round_model,
-                    agent_contexts=agent_contexts,
-                )
-            )
-        snapshots.sort(key=lambda snapshot: snapshot.number)
-        return snapshots
-
     @staticmethod
-    def _resolve_roster_size(
-        miners: Optional[int],
-        available_snapshots: int,
-    ) -> int:
-        requested = miners if miners is not None else DEFAULT_ROSTER_SIZE
-        return max(1, min(requested, MAX_ROSTER_SIZE))
+    def _resolve_roster_size(miners: Optional[int]) -> int:
+        if miners is None:
+            return DEFAULT_ROSTER_SIZE
+        return max(1, min(miners, MAX_ROSTER_SIZE))
 
-    def _build_timeline(
+    async def _build_timeline_and_roster(
         self,
-        round_snapshots: Sequence[_RoundSnapshot],
+        selected_rounds: Sequence[Tuple[int, int, int, float]],
         roster_size: int,
     ) -> Tuple[List[TimelineRound], List[MinerRosterEntry]]:
-        miner_stats: Dict[str, Dict[str, object]] = defaultdict(
-            lambda: {
-                "display_name": "",
-                "image": "",
-                "scores": [],
-                "info": None,
-            }
-        )
+        per_round: Dict[int, List[Dict[str, object]]] = {}
+        miner_presence: Dict[str, int] = defaultdict(int)
+        miner_best_score: Dict[str, float] = defaultdict(float)
+        miner_names: Dict[str, str] = {}
 
-        timeline: List[TimelineRound] = []
-        previous_snapshots: Dict[str, MinerSnapshot] = {}
-
-        for snapshot in round_snapshots:
-            run_scores: List[Tuple[AgentRunContext, float]] = []
-            for context in snapshot.agent_contexts:
-                info = context.run.miner_info
-                if info and getattr(info, "is_sota", False):
-                    continue
-                score = max(0.0, min(1.0, _score_from_run(context)))
-                run_scores.append((context, score))
-
-                identifier = _miner_identifier(context.run)
-                metrics = miner_stats[identifier]
-                metrics["display_name"] = _miner_display_name(context.run)
-                metrics["info"] = context.run.miner_info
-                metrics["scores"].append(score)
-                resolved_image = resolve_agent_image(context.run.miner_info)
-                if resolved_image:
-                    metrics["image"] = resolved_image
-
-            if not run_scores:
-                continue
-
-            run_scores.sort(
-                key=lambda item: (
-                    -item[1],
-                    item[0].run.miner_uid if item[0].run.miner_uid is not None else float("inf"),
-                    item[0].run.agent_run_id,
+        for encoded, round_id, _round_in, _ts in selected_rounds:
+            rows = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                        WITH ranked AS (
+                          SELECT DISTINCT ON (miner_uid)
+                            miner_uid,
+                            COALESCE(name, 'Miner ' || miner_uid::text) AS name,
+                            COALESCE(effective_rank, post_consensus_rank, 9999) AS rank,
+                            COALESCE(effective_reward, post_consensus_avg_reward, 0) AS score
+                          FROM round_validator_miners
+                          WHERE round_id = :rid
+                          ORDER BY miner_uid, COALESCE(effective_rank, post_consensus_rank, 9999) ASC, COALESCE(effective_reward, post_consensus_avg_reward, 0) DESC
+                        )
+                        SELECT miner_uid, name, rank, score
+                        FROM ranked
+                        ORDER BY rank ASC, score DESC
+                        """
+                        ),
+                        {"rid": round_id},
+                    )
                 )
+                .mappings()
+                .all()
             )
-
-            snapshots: List[MinerSnapshot] = []
-            for rank, (context, score) in enumerate(run_scores, start=1):
-                identifier = _miner_identifier(context.run)
-                percent_score = round(score * 100, 2)
-                previous = previous_snapshots.get(identifier)
-                if previous:
-                    score_change = round(percent_score - previous.score, 2)
-                    rank_change = previous.rank - rank
-                    previous_rank = previous.rank
-                else:
-                    score_change = 0.0
-                    rank_change = 0
-                    previous_rank = None
-
-                snapshot_model = MinerSnapshot(
-                    miner_id=identifier,
-                    score=percent_score,
-                    rank=rank,
-                    rank_change=rank_change,
-                    score_change=score_change,
-                    previous_rank=previous_rank,
+            miners_for_round: List[Dict[str, object]] = []
+            for row in rows:
+                miner_uid = int(row["miner_uid"])
+                miner_id = f"miner-{miner_uid}"
+                score_pct = max(0.0, min(float(row["score"] or 0.0) * 100.0, 100.0))
+                miners_for_round.append(
+                    {
+                        "miner_id": miner_id,
+                        "name": str(row["name"]),
+                        "rank": int(row["rank"] or 9999),
+                        "score": score_pct,
+                    }
                 )
-                snapshots.append(snapshot_model)
-                previous_snapshots[identifier] = snapshot_model
+                miner_presence[miner_id] += 1
+                miner_best_score[miner_id] = max(miner_best_score[miner_id], score_pct)
+                miner_names[miner_id] = str(row["name"])
+            per_round[encoded] = miners_for_round
 
-            timeline.append(
-                TimelineRound(
-                    round=snapshot.number,
-                    timestamp=_iso_timestamp(snapshot.timestamp),
-                    snapshots=snapshots,
-                )
-            )
-
-        roster = self._build_roster(miner_stats, roster_size)
-        return timeline, roster
-
-    def _build_roster(
-        self,
-        miner_stats: Dict[str, Dict[str, object]],
-        roster_size: int,
-    ) -> List[MinerRosterEntry]:
-        aggregates: List[Tuple[float, str, Dict[str, object]]] = []
-        for identifier, metrics in miner_stats.items():
-            scores: Iterable[float] = metrics["scores"]  # type: ignore[assignment]
-            if not scores:
-                continue
-            average_score = mean(scores)
-            aggregates.append((average_score, identifier, metrics))
-
-        aggregates.sort(key=lambda item: item[0], reverse=True)
-        selected = aggregates[:roster_size]
+        ordered_miners = sorted(
+            miner_presence.keys(),
+            key=lambda mid: (-miner_presence[mid], -miner_best_score[mid], int(mid.split("-")[-1])),
+        )[:roster_size]
 
         roster: List[MinerRosterEntry] = []
-        for index, (avg_score, identifier, metrics) in enumerate(selected):
-            info: Optional[MinerInfo] = metrics["info"]  # type: ignore[assignment]
-            display_name = metrics["display_name"] or (info.agent_name if info else identifier)  # type: ignore[assignment]
-            image = metrics["image"]  # type: ignore[assignment]
-            avatar_url = image if image else _miner_avatar(info, display_name, identifier)
-            color = COLOR_PALETTE[index % len(COLOR_PALETTE)]
-
+        for idx, miner_id in enumerate(ordered_miners):
+            uid = miner_id.split("-")[-1]
             roster.append(
                 MinerRosterEntry(
-                    miner_id=identifier,
-                    display_name=display_name,
-                    color_hex=color,
-                    avatar_url=avatar_url,
-                    order=index,
+                    miner_id=miner_id,
+                    display_name=miner_names.get(miner_id, f"Miner {uid}"),
+                    color_hex=COLOR_PALETTE[idx % len(COLOR_PALETTE)],
+                    avatar_url=f"https://placehold.co/96x96/png?text=M{uid}",
+                    order=idx,
                 )
             )
-        return roster
+
+        prev_rank: Dict[str, Optional[int]] = {r.miner_id: None for r in roster}
+        prev_score: Dict[str, float] = {r.miner_id: 0.0 for r in roster}
+        timeline: List[TimelineRound] = []
+        for encoded, _round_id, _round_in, ts in selected_rounds:
+            round_rows = per_round.get(encoded, [])
+            by_id = {str(row["miner_id"]): row for row in round_rows}
+            snapshots: List[MinerSnapshot] = []
+            for roster_entry in roster:
+                row = by_id.get(roster_entry.miner_id)
+                current_rank = int(row["rank"]) if row else max(1, len(round_rows) + 1)
+                current_score = float(row["score"]) if row else 0.0
+                previous_rank = prev_rank.get(roster_entry.miner_id)
+                previous_score = prev_score.get(roster_entry.miner_id, 0.0)
+                rank_change = 0 if previous_rank is None else previous_rank - current_rank
+                score_change = current_score - previous_score
+                snapshots.append(
+                    MinerSnapshot(
+                        miner_id=roster_entry.miner_id,
+                        score=current_score,
+                        rank=current_rank,
+                        rank_change=rank_change,
+                        score_change=score_change,
+                        previous_rank=previous_rank,
+                    )
+                )
+                prev_rank[roster_entry.miner_id] = current_rank
+                prev_score[roster_entry.miner_id] = current_score
+            timeline.append(TimelineRound(round=encoded, timestamp=_iso_timestamp(ts), snapshots=snapshots))
+
+        return timeline, roster

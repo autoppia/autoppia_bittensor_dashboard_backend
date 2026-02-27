@@ -31,11 +31,11 @@ from typing import Optional
 
 from app.config import settings
 from app.services.metagraph_service import (
-    refresh_metagraph_data,
-    get_update_status,
-    get_last_update_time,
-    MetagraphError,
     METAGRAPH_CACHE_TTL,
+    MetagraphError,
+    get_last_update_time,
+    get_update_status,
+    refresh_metagraph_data,
 )
 from app.services.redis_cache import redis_cache
 
@@ -87,7 +87,7 @@ def _fetch_and_cache_price() -> bool:
     """
     try:
         # Import here to avoid circular dependencies
-        from app.services.subnet_utils import _try_fetch_price_sync, _env_fallback
+        from app.services.subnet_utils import _env_fallback, _try_fetch_price_sync
 
         netuid = settings.VALIDATOR_NETUID
 
@@ -102,9 +102,7 @@ def _fetch_and_cache_price() -> bool:
 
         # Store in Redis
         redis_cache.set(REDIS_KEY_SUBNET_PRICE, float(price), ttl=PRICE_UPDATE_INTERVAL)
-        redis_cache.set(
-            REDIS_KEY_PRICE_LAST_UPDATE, time.time(), ttl=PRICE_UPDATE_INTERVAL
-        )
+        redis_cache.set(REDIS_KEY_PRICE_LAST_UPDATE, time.time(), ttl=PRICE_UPDATE_INTERVAL)
 
         logger.info(f"✅ Subnet price updated: {price:.6f} TAO (source: {source})")
         return True
@@ -125,9 +123,7 @@ def _updater_worker():
 
     logger.info("=" * 80)
     logger.info("🚀 Background Data Updater Thread Starting")
-    logger.info(
-        f"   - Metagraph update interval: {METAGRAPH_UPDATE_INTERVAL / 60:.0f} minutes"
-    )
+    logger.info(f"   - Metagraph update interval: {METAGRAPH_UPDATE_INTERVAL / 60:.0f} minutes")
     logger.info(f"   - Price update interval: {PRICE_UPDATE_INTERVAL / 60:.0f} minutes")
     logger.info(f"   - Block update interval: {BLOCK_UPDATE_INTERVAL} seconds")
     logger.info(f"   - Metagraph cache TTL: {METAGRAPH_CACHE_TTL / 60:.0f} minutes")
@@ -143,10 +139,7 @@ def _updater_worker():
             logger.info("✅ Redis is available, starting metagraph updates")
             break
         retry_count += 1
-        logger.warning(
-            f"⏳ Waiting for Redis ({retry_count}/{max_retries}), "
-            f"retrying in 5 seconds..."
-        )
+        logger.warning(f"⏳ Waiting for Redis ({retry_count}/{max_retries}), retrying in 5 seconds...")
         time.sleep(5)
 
     if not redis_cache.is_available():
@@ -161,18 +154,12 @@ def _updater_worker():
     if last_update:
         age_seconds = time.time() - last_update
         age_minutes = age_seconds / 60
-        logger.info(
-            f"📊 Found existing metagraph data in Redis "
-            f"(age: {age_minutes:.1f} minutes)"
-        )
+        logger.info(f"📊 Found existing metagraph data in Redis (age: {age_minutes:.1f} minutes)")
 
         if age_seconds < METAGRAPH_UPDATE_INTERVAL:
             # Data is fresh, skip initial update
             should_update_immediately = False
-            logger.info(
-                f"⏭️  Existing data is fresh, next update in "
-                f"{(METAGRAPH_UPDATE_INTERVAL - age_seconds) / 60:.1f} minutes"
-            )
+            logger.info(f"⏭️  Existing data is fresh, next update in {(METAGRAPH_UPDATE_INTERVAL - age_seconds) / 60:.1f} minutes")
         else:
             logger.info("⚠️  Existing data is stale, performing immediate update")
     else:
@@ -229,9 +216,7 @@ def _updater_worker():
         time_until_metagraph = METAGRAPH_UPDATE_INTERVAL - time_since_metagraph
         time_until_price = PRICE_UPDATE_INTERVAL - time_since_price
         time_until_block = BLOCK_UPDATE_INTERVAL - time_since_block
-        time_until_next = min(
-            time_until_metagraph, time_until_price, time_until_block, 10
-        )  # Max 10s sleep
+        time_until_next = min(time_until_metagraph, time_until_price, time_until_block, 10)  # Max 10s sleep
 
         if time_until_next > 0:
             if _should_stop.wait(timeout=time_until_next):
@@ -240,10 +225,7 @@ def _updater_worker():
         # Log periodic status
         total_updates = metagraph_update_count + price_update_count + block_update_count
         if total_updates > 0 and total_updates % 50 == 0:
-            logger.info(
-                f"📊 Updater status: {metagraph_update_count} metagraph, "
-                f"{price_update_count} price, {block_update_count} block updates"
-            )
+            logger.info(f"📊 Updater status: {metagraph_update_count} metagraph, {price_update_count} price, {block_update_count} block updates")
 
     logger.info("=" * 80)
     logger.info("🛑 Background Data Updater Thread Stopped")
@@ -272,10 +254,7 @@ def _perform_update() -> bool:
         validator_count = status.get("validator_count", 0)
         vtrust_source = status.get("vtrust_source", "unknown")
 
-        logger.info(
-            f"✅ Update completed in {elapsed:.2f}s - "
-            f"{validator_count} validators (vTrust: {vtrust_source})"
-        )
+        logger.info(f"✅ Update completed in {elapsed:.2f}s - {validator_count} validators (vTrust: {vtrust_source})")
         return True
 
     except MetagraphError as exc:
@@ -341,9 +320,7 @@ def stop_metagraph_updater(timeout: float = 10.0):
     _updater_thread.join(timeout=timeout)
 
     if _updater_thread.is_alive():
-        logger.warning(
-            f"⚠️  Background updater thread did not stop within {timeout}s timeout"
-        )
+        logger.warning(f"⚠️  Background updater thread did not stop within {timeout}s timeout")
     else:
         logger.info("✅ Background updater thread stopped gracefully")
 

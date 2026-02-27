@@ -8,9 +8,9 @@ import pytest
 from sqlalchemy import select
 
 from app.db.models import (
-    ValidatorRoundORM,
     TaskORM,
     ValidatorRoundMinerORM,
+    ValidatorRoundORM,
 )
 from app.services.round_calc import compute_season_number
 

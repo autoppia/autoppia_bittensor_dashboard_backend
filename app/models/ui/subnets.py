@@ -1,4 +1,5 @@
 from typing import List, Optional
+
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
@@ -27,10 +28,7 @@ class MinerSnapshot(BaseModel):
     rank: int = Field(..., ge=1, description="Ranking position at this round")
     rank_change: int = Field(..., description="Rank delta compared to previous round")
     score_change: float = Field(..., description="Score delta compared to previous round")
-    previous_rank: Optional[int] = Field(
-        None,
-        description="Previous round rank if available"
-    )
+    previous_rank: Optional[int] = Field(None, description="Previous round rank if available")
 
 
 class TimelineRound(BaseModel):
@@ -38,9 +36,7 @@ class TimelineRound(BaseModel):
 
     round: int = Field(..., ge=1, description="Sequential round number")
     timestamp: str = Field(..., description="Round timestamp in ISO 8601 format")
-    snapshots: List[MinerSnapshot] = Field(
-        ..., description="Snapshot for each miner in the roster"
-    )
+    snapshots: List[MinerSnapshot] = Field(..., description="Snapshot for each miner in the roster")
 
 
 class TimelineMetaQuery(BaseModel):

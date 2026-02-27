@@ -4,12 +4,12 @@ import contextlib
 
 import pytest
 
-from app.main import app
 from app.config import settings
+from app.main import app
 from app.services.validator.validator_auth import (
-    get_validator_auth_service,
     VALIDATOR_HOTKEY_HEADER,
     VALIDATOR_SIGNATURE_HEADER,
+    get_validator_auth_service,
 )
 
 
@@ -23,10 +23,10 @@ class _StubAuthService:
         if self.should_fail_signature:
             raise AssertionError("signature fail (stub)")
 
-    def ensure_minimum_stake(self, hotkey: str) -> float:  # noqa: ARG002
+    def has_minimum_stake(self, hotkey: str) -> bool:  # noqa: ARG002
         if self.should_fail_stake:
-            raise AssertionError("stake too low (stub)")
-        return self.min_stake
+            return False
+        return True
 
 
 @contextlib.asynccontextmanager

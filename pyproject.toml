@@ -60,6 +60,19 @@ target-version = ['py311']
 profile = "black"
 line_length = 88
 
+[tool.ruff]
+line-length = 200
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes (F401 = unused imports, etc.)
+    "I",   # isort (import sorting)
+]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

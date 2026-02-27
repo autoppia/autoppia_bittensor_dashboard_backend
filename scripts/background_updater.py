@@ -10,6 +10,7 @@ This script runs as a separate PM2 process and updates:
 This replaces the background threads that were running inside the FastAPI process.
 """
 
+import asyncio
 import logging
 import os
 import sys
@@ -20,15 +21,18 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from sqlalchemy import text  # noqa: E402
+
 from app.config import settings  # noqa: E402
+from app.db.session import AsyncSessionLocal  # noqa: E402
+from app.services.chain_state import refresh_block_now  # noqa: E402
 from app.services.metagraph_service import (  # noqa: E402
-    refresh_metagraph_data,
-    get_last_update_time,
-    MetagraphError,
     METAGRAPH_CACHE_TTL,
+    MetagraphError,
+    get_last_update_time,
+    refresh_metagraph_data,
 )
 from app.services.redis_cache import redis_cache  # noqa: E402
-from app.services.chain_state import refresh_block_now  # noqa: E402
 
 # Configure logging - send INFO to stdout, WARNING/ERROR to stderr
 # This ensures PM2 routes logs correctly (stdout -> out.log, stderr -> error.log)
@@ -73,6 +77,7 @@ PRICE_UPDATE_INTERVAL = _int_env("UPDATER_PRICE_INTERVAL_SEC", 5 * 60, 60)
 # Use a safer default cadence; block value is estimated between refreshes.
 BLOCK_UPDATE_INTERVAL = _int_env("UPDATER_BLOCK_INTERVAL_SEC", 5 * 60, 30)
 ROUND_CACHE_INTERVAL = _int_env("UPDATER_ROUND_CACHE_INTERVAL_SEC", 4 * 60 * 60, 60)
+ROUND_RECONCILE_INTERVAL = _int_env("UPDATER_ROUND_RECONCILE_INTERVAL_SEC", 30, 10)
 
 # Redis keys for price
 REDIS_KEY_SUBNET_PRICE = "subnet:price"
@@ -97,7 +102,7 @@ def fetch_and_cache_block() -> bool:
 def fetch_and_cache_price() -> bool:
     """Fetch subnet price and cache in Redis."""
     try:
-        from app.services.subnet_utils import _try_fetch_price_sync, _env_fallback
+        from app.services.subnet_utils import _env_fallback, _try_fetch_price_sync
 
         netuid = settings.VALIDATOR_NETUID
 
@@ -143,6 +148,7 @@ def cache_recent_rounds() -> bool:
     """
     try:
         import requests
+
         from app.services.chain_state import get_current_block_estimate
         from app.services.round_calc import compute_round_number
 
@@ -177,9 +183,56 @@ def cache_recent_rounds() -> bool:
             logger.info(f"✅ Cached {cached_count} rounds successfully")
             return True
         return False
-
     except Exception as exc:
         logger.error(f"❌ Failed to cache rounds: {exc}")
+        return False
+
+
+async def _reconcile_rounds_and_seasons_async(current_block: int) -> dict[str, int]:
+    closed_rounds = 0
+    async with AsyncSessionLocal() as session:
+        rounds_result = await session.execute(
+            text(
+                """
+                UPDATE rounds
+                SET
+                    status = 'finished',
+                    consensus_status = CASE
+                        WHEN LOWER(COALESCE(consensus_status, '')) = 'pending' THEN 'failed'
+                        ELSE consensus_status
+                    END,
+                    ended_at = COALESCE(ended_at, NOW()),
+                    closed_by_validator_uid = COALESCE(closed_by_validator_uid, opened_by_validator_uid),
+                    end_block = COALESCE(end_block, planned_end_block, start_block),
+                    end_epoch = COALESCE(end_epoch, start_epoch),
+                    updated_at = NOW()
+                WHERE status = 'active'
+                  AND planned_end_block IS NOT NULL
+                  AND planned_end_block < :current_block
+                """
+            ),
+            {"current_block": int(current_block)},
+        )
+        closed_rounds = int(rounds_result.rowcount or 0)
+
+        await session.commit()
+
+    return {"closed_rounds": closed_rounds}
+
+
+def reconcile_rounds_and_seasons(current_block: int) -> bool:
+    try:
+        result = asyncio.run(_reconcile_rounds_and_seasons_async(current_block))
+        closed_rounds = int(result.get("closed_rounds", 0) or 0)
+        if closed_rounds:
+            logger.info(
+                "✅ Reconciliation closed expired rounds=%s (current_block=%s)",
+                closed_rounds,
+                current_block,
+            )
+        return True
+    except Exception as exc:
+        logger.error(f"❌ Failed round/season reconciliation: {exc}", exc_info=True)
         return False
 
 
@@ -190,6 +243,7 @@ def main():
     logger.info(f"   - Metagraph update interval: {METAGRAPH_UPDATE_INTERVAL / 60:.0f} minutes")
     logger.info(f"   - Price update interval: {PRICE_UPDATE_INTERVAL / 60:.0f} minutes")
     logger.info(f"   - Block update interval: {BLOCK_UPDATE_INTERVAL} seconds")
+    logger.info(f"   - Round/Season reconcile interval: {ROUND_RECONCILE_INTERVAL} seconds")
     logger.info(f"   - Round cache interval: {ROUND_CACHE_INTERVAL / 3600:.0f} hours")
     logger.info(f"   - Metagraph cache TTL: {METAGRAPH_CACHE_TTL / 60:.0f} minutes")
     logger.info("=" * 80)
@@ -262,10 +316,12 @@ def main():
     price_update_count = 0
     block_update_count = 0
     round_cache_count = 0
+    reconcile_count = 0
     last_metagraph_update = last_update or time.time()
     last_price_update = time.time()
     last_block_update = time.time()
     last_round_cache = time.time()
+    last_reconcile = time.time()
 
     # Main update loop
     logger.info("🔄 Entering main update loop...")
@@ -288,6 +344,10 @@ def main():
             # Check if round cache needs update
             time_since_round_cache = now - last_round_cache
             round_cache_due = time_since_round_cache >= ROUND_CACHE_INTERVAL
+
+            # Check if reconcile is due
+            time_since_reconcile = now - last_reconcile
+            reconcile_due = time_since_reconcile >= ROUND_RECONCILE_INTERVAL
 
             # Perform updates if due
             if metagraph_due:
@@ -314,20 +374,38 @@ def main():
                 cache_recent_rounds()
                 last_round_cache = now
 
+            if reconcile_due:
+                reconcile_count += 1
+                try:
+                    current_block = refresh_block_now()
+                    if current_block is not None:
+                        reconcile_rounds_and_seasons(int(current_block))
+                except Exception as exc:
+                    logger.error(f"❌ Reconcile run failed: {exc}", exc_info=True)
+                last_reconcile = now
+
             # Calculate next wakeup time (whichever comes first)
             time_until_metagraph = METAGRAPH_UPDATE_INTERVAL - time_since_metagraph
             time_until_price = PRICE_UPDATE_INTERVAL - time_since_price
             time_until_block = BLOCK_UPDATE_INTERVAL - time_since_block
             time_until_round_cache = ROUND_CACHE_INTERVAL - time_since_round_cache
-            time_until_next = min(time_until_metagraph, time_until_price, time_until_block, time_until_round_cache, 10)  # Max 10s sleep
+            time_until_reconcile = ROUND_RECONCILE_INTERVAL - time_since_reconcile
+            time_until_next = min(time_until_metagraph, time_until_price, time_until_block, time_until_round_cache, time_until_reconcile, 10)  # Max 10s sleep
 
             if time_until_next > 0:
                 time.sleep(time_until_next)
 
             # Log periodic status
-            total_updates = metagraph_update_count + price_update_count + block_update_count + round_cache_count
+            total_updates = metagraph_update_count + price_update_count + block_update_count + round_cache_count + reconcile_count
             if total_updates > 0 and total_updates % 50 == 0:
-                logger.info(f"📊 Updater status: {metagraph_update_count} metagraph, {price_update_count} price, {block_update_count} block, {round_cache_count} round cache updates")
+                logger.info(
+                    "📊 Updater status: %s metagraph, %s price, %s block, %s round cache, %s reconcile updates",
+                    metagraph_update_count,
+                    price_update_count,
+                    block_update_count,
+                    round_cache_count,
+                    reconcile_count,
+                )
 
     except KeyboardInterrupt:
         logger.info("🛑 Received shutdown signal")
@@ -340,6 +418,7 @@ def main():
         logger.info(f"   - Price updates performed: {price_update_count}")
         logger.info(f"   - Block updates performed: {block_update_count}")
         logger.info(f"   - Round cache updates performed: {round_cache_count}")
+        logger.info(f"   - Reconcile updates performed: {reconcile_count}")
         logger.info("=" * 80)
 
 

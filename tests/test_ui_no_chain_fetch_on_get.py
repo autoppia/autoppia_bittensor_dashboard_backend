@@ -35,4 +35,3 @@ async def test_ui_endpoints_do_not_fetch_chain(client, monkeypatch):
     for path in ui_paths:
         r = await client.get(path)
         assert r.status_code == 200
-

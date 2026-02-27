@@ -1,15 +1,16 @@
 """Redis-based caching service for API responses."""
 
+import hashlib
 import json
 import logging
 import pickle
-import hashlib
-from typing import Any, Callable, Optional, Dict
 from functools import wraps
+from typing import Any, Callable, Dict, Optional
 
 try:
     from redis import Redis
-    from redis.exceptions import RedisError, ConnectionError as RedisConnectionError
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    from redis.exceptions import RedisError
 
     REDIS_AVAILABLE = True
 except ImportError:
@@ -19,6 +20,7 @@ except ImportError:
     RedisConnectionError = Exception
 
 from app.config import settings
+
 logger = logging.getLogger(__name__)
 # Reduce cache hit verbosity - only show warnings/errors
 logger.setLevel(logging.WARNING)
@@ -60,10 +62,7 @@ class RedisCache:
         }
 
         if not REDIS_AVAILABLE:
-            logger.warning(
-                "⚠️  Redis library not installed. Install with: pip install redis\n"
-                "   Falling back to in-memory cache only."
-            )
+            logger.warning("⚠️  Redis library not installed. Install with: pip install redis\n   Falling back to in-memory cache only.")
         elif self._enabled:
             self._connect()
         else:
@@ -89,17 +88,11 @@ class RedisCache:
             # Test connection
             self._redis_client.ping()
             self._redis_available = True
-            logger.info(
-                f"✅ Redis connected at {self._host}:{self._port} "
-                f"(db={self._db}, timeout={self._socket_timeout}s)"
-            )
+            logger.info(f"✅ Redis connected at {self._host}:{self._port} (db={self._db}, timeout={self._socket_timeout}s)")
         except (RedisError, RedisConnectionError, OSError) as e:
             self._redis_available = False
             self._redis_client = None
-            logger.warning(
-                f"⚠️  Redis unavailable at {self._host}:{self._port}: {e}\n"
-                "   Falling back to in-memory cache."
-            )
+            logger.warning(f"⚠️  Redis unavailable at {self._host}:{self._port}: {e}\n   Falling back to in-memory cache.")
 
     def _serialize(self, value: Any) -> bytes:
         """Serialize value for Redis storage using pickle."""
@@ -174,9 +167,7 @@ class RedisCache:
                 serialized = self._serialize(value)
                 self._redis_client.setex(key, ttl, serialized)
                 self._stats["redis_sets"] += 1
-                logger.debug(
-                    f"✅ Redis cache set: {key} (TTL: {ttl}s, size: {len(serialized)} bytes)"
-                )
+                logger.debug(f"✅ Redis cache set: {key} (TTL: {ttl}s, size: {len(serialized)} bytes)")
                 success = True
             except (RedisError, RedisConnectionError, OSError) as e:
                 self._stats["redis_errors"] += 1
@@ -224,9 +215,7 @@ class RedisCache:
             try:
                 cursor = 0
                 while True:
-                    cursor, keys = self._redis_client.scan(
-                        cursor=cursor, match=pattern, count=100
-                    )
+                    cursor, keys = self._redis_client.scan(cursor=cursor, match=pattern, count=100)
                     if keys:
                         cleared += self._redis_client.delete(*keys)
                     if cursor == 0:
@@ -249,9 +238,7 @@ class RedisCache:
                 info = self._redis_client.info("stats")
                 stats["redis_keys"] = self._redis_client.dbsize()
                 stats["redis_memory_used"] = info.get("used_memory_human", "N/A")
-                stats["redis_total_connections"] = info.get(
-                    "total_connections_received", 0
-                )
+                stats["redis_total_connections"] = info.get("total_connections_received", 0)
                 stats["redis_keyspace_hits"] = info.get("keyspace_hits", 0)
                 stats["redis_keyspace_misses"] = info.get("keyspace_misses", 0)
             except (RedisError, RedisConnectionError, OSError):
@@ -344,12 +331,7 @@ def cached_redis(
         async def async_wrapper(*args, **kwargs):
             # Filter out session/db objects from cache key
             # These change on every request and shouldn't affect caching
-            filtered_kwargs = {
-                k: v
-                for k, v in kwargs.items()
-                if k not in ("session", "db")
-                and not str(type(v).__name__).endswith("Session")
-            }
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ("session", "db") and not str(type(v).__name__).endswith("Session")}
 
             # Generate cache key (without session)
             cache_key = redis_cache._generate_key(prefix, *args, **filtered_kwargs)
@@ -373,12 +355,7 @@ def cached_redis(
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
             # Filter out session/db objects from cache key
-            filtered_kwargs = {
-                k: v
-                for k, v in kwargs.items()
-                if k not in ("session", "db")
-                and not str(type(v).__name__).endswith("Session")
-            }
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ("session", "db") and not str(type(v).__name__).endswith("Session")}
 
             # Generate cache key (without session)
             cache_key = redis_cache._generate_key(prefix, *args, **filtered_kwargs)

@@ -39,7 +39,7 @@ if [ "$BACKGROUND_RUNNING" = true ] && [ -n "$BACKGROUND_NAME" ]; then
         echo "✅ Background updater ya está corriendo en PM2 (nombre: $BACKGROUND_NAME)"
         exit 0
     fi
-    
+
     echo "⚠️  Background updater ya está corriendo en PM2 (nombre: $BACKGROUND_NAME)"
     echo "📊 Estado:"
     pm2 list 2>/dev/null | grep "background-updater"
@@ -96,4 +96,3 @@ echo "  pm2 logs background-updater    # Ver logs"
 echo "  pm2 status                     # Ver estado"
 echo "  pm2 stop background-updater    # Detener"
 echo "  pm2 restart background-updater # Reiniciar"
-

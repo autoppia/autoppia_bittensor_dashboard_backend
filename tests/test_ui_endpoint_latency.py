@@ -44,4 +44,3 @@ async def test_ui_get_endpoints_are_fast(client, monkeypatch):
         elapsed = time.perf_counter() - t0
         assert resp.status_code == 200
         assert elapsed <= MAX_SECONDS, f"GET {path} took {elapsed:.3f}s (> {MAX_SECONDS}s)"
-

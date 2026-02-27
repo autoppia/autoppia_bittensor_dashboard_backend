@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Optional
 from urllib.parse import urlencode
 
-
 TAOSTATS_SUBNET_BASE = "https://taostats.io/subnets/36/metagraph"
 
 

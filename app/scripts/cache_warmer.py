@@ -16,8 +16,7 @@ from typing import Iterable
 from app.api.ui import overview as overview_api
 from app.api.ui import rounds as rounds_api
 from app.db.session import AsyncSessionLocal
-from app.services.ui.rounds_service import RoundsService
-
+from app.services.ui.ui_data_service import UIDataService
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +57,8 @@ async def _warm_overview(session) -> None:
         ),
     )
     await _safe_call("overview_statistics", overview_api.get_statistics(session=session))
-    await _safe_call(
-        "overview_network_status", overview_api.get_network_status(session=session)
-    )
-    await _safe_call(
-        "overview_current_round", overview_api.get_current_round(session=session)
-    )
+    await _safe_call("overview_network_status", overview_api.get_network_status(session=session))
+    await _safe_call("overview_current_round", overview_api.get_current_round(session=session))
 
 
 async def _warm_round_lists(session) -> None:
@@ -80,14 +75,10 @@ async def _warm_round_lists(session) -> None:
             skip=None,
         ),
     )
-    await _safe_call(
-        "rounds_current_overview", rounds_api.get_current_round(session=session)
-    )
+    await _safe_call("rounds_current_overview", rounds_api.get_current_round(session=session))
 
 
-async def _warm_round_details(
-    session, round_numbers: Iterable[int], miner_limit: int
-) -> None:
+async def _warm_round_details(session, round_numbers: Iterable[int], miner_limit: int) -> None:
     """Warm per-round caches (detail, statistics, miners) for the given rounds."""
     for number in round_numbers:
         round_id = str(number)
@@ -130,12 +121,9 @@ async def warm_caches(rounds_to_warm: int, miner_limit: int) -> None:
         await _warm_overview(session)
         await _warm_round_lists(session)
 
-        rounds_service = RoundsService(session)
-        round_numbers: list[int] = await rounds_service.list_round_ids(
-            limit=rounds_to_warm,
-            status=None,
-            sort_order="desc",
-        )
+        newdb = UIDataService(session)
+        recent_rounds, _ = await newdb.get_rounds_list(page=1, limit=rounds_to_warm)
+        round_numbers: list[int] = [int(r.get("id", 0)) for r in recent_rounds if int(r.get("id", 0)) > 0]
         if not round_numbers:
             logger.warning("No round numbers found to warm.")
             return
@@ -145,9 +133,7 @@ async def warm_caches(rounds_to_warm: int, miner_limit: int) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Warm Redis caches for dashboard endpoints."
-    )
+    parser = argparse.ArgumentParser(description="Warm Redis caches for dashboard endpoints.")
     parser.add_argument(
         "--rounds",
         type=int,

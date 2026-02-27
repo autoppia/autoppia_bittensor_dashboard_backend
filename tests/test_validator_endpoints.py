@@ -167,8 +167,8 @@ async def submit_round_via_validator_endpoints(client, payload):
     validator_round_id = round_data["validator_round_id"]
     # Ensure chain-derived backend accepts the requested round number
     try:
-        from app.config import settings as _settings
         import app.api.validator.validator_round as vmod
+        from app.config import settings as _settings
 
         blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
         dz = int(_settings.DZ_STARTING_BLOCK)

@@ -1,12 +1,15 @@
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
 from enum import Enum
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field, field_validator
+
 from app.utils.validation import validate_miner_image_url
 
 
 class MinerStatus(str, Enum):
     """Miner status enumeration."""
+
     ACTIVE = "active"
     INACTIVE = "inactive"
     MAINTENANCE = "maintenance"
@@ -14,6 +17,7 @@ class MinerStatus(str, Enum):
 
 class RunStatus(str, Enum):
     """Run status enumeration."""
+
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -22,6 +26,7 @@ class RunStatus(str, Enum):
 
 class TaskStatus(str, Enum):
     """Task status enumeration."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -30,6 +35,7 @@ class TaskStatus(str, Enum):
 
 class ActivityType(str, Enum):
     """Activity type enumeration."""
+
     RUN_STARTED = "run_started"
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"
@@ -40,6 +46,7 @@ class ActivityType(str, Enum):
 
 class TimeRange(str, Enum):
     """Time range enumeration."""
+
     ONE_HOUR = "1h"
     TWENTY_FOUR_HOURS = "24h"
     SEVEN_DAYS = "7d"
@@ -51,6 +58,7 @@ class TimeRange(str, Enum):
 
 class Granularity(str, Enum):
     """Data granularity enumeration."""
+
     HOUR = "hour"
     DAY = "day"
     WEEK = "week"
@@ -60,6 +68,7 @@ class Granularity(str, Enum):
 # Base Models
 class Miner(BaseModel):
     """Miner model."""
+
     id: str = Field(..., description="Unique identifier (string representation of UID)")
     uid: int = Field(..., description="Miner UID")
     name: str = Field(..., description="Miner name")
@@ -81,7 +90,7 @@ class Miner(BaseModel):
     createdAt: str = Field(..., description="Creation timestamp (ISO 8601)")
     updatedAt: str = Field(..., description="Last update timestamp (ISO 8601)")
 
-    @field_validator('imageUrl')
+    @field_validator("imageUrl")
     @classmethod
     def validate_image_url(cls, v):
         """Validate that imageUrl is a valid URL or empty string."""
@@ -90,6 +99,7 @@ class Miner(BaseModel):
 
 class Task(BaseModel):
     """Task model."""
+
     taskId: str = Field(..., description="Task ID")
     website: str = Field(..., description="Website name")
     useCase: str = Field(..., description="Use case description")
@@ -103,6 +113,7 @@ class Task(BaseModel):
 
 class MinerRun(BaseModel):
     """Miner run model."""
+
     runId: str = Field(..., description="Run ID")
     agentId: str = Field(..., description="Agent/Miner ID")
     validatorId: str = Field(..., description="Validator ID")
@@ -120,6 +131,7 @@ class MinerRun(BaseModel):
 
 class MinerActivity(BaseModel):
     """Miner activity model."""
+
     id: str = Field(..., description="Activity ID")
     type: ActivityType = Field(..., description="Activity type")
     uid: int = Field(..., description="Miner UID")
@@ -131,6 +143,7 @@ class MinerActivity(BaseModel):
 
 class ScoreDistribution(BaseModel):
     """Score distribution model."""
+
     excellent: int = Field(..., description="Number of excellent scores (>=0.9)")
     good: int = Field(..., description="Number of good scores (0.7-0.89)")
     average: int = Field(..., description="Number of average scores (0.5-0.69)")
@@ -139,6 +152,7 @@ class ScoreDistribution(BaseModel):
 
 class PerformanceTrend(BaseModel):
     """Performance trend model."""
+
     period: str = Field(..., description="Time period")
     score: float = Field(..., description="Average score for period (0-1)")
     successRate: float = Field(..., description="Success rate for period (0-100)")
@@ -147,6 +161,7 @@ class PerformanceTrend(BaseModel):
 
 class MinerPerformanceMetrics(BaseModel):
     """Miner performance metrics model."""
+
     uid: int = Field(..., description="Miner UID")
     timeRange: Dict[str, str] = Field(..., description="Time range")
     totalRuns: int = Field(..., description="Total runs in period")
@@ -165,6 +180,7 @@ class MinerPerformanceMetrics(BaseModel):
 
 class TopMiner(BaseModel):
     """Top performing miner model."""
+
     uid: int = Field(..., description="Miner UID")
     name: str = Field(..., description="Miner name")
     score: float = Field(..., description="Miner score")
@@ -172,6 +188,7 @@ class TopMiner(BaseModel):
 
 class MostActiveMiner(BaseModel):
     """Most active miner model."""
+
     uid: int = Field(..., description="Miner UID")
     name: str = Field(..., description="Miner name")
     runs: int = Field(..., description="Number of runs")
@@ -179,6 +196,7 @@ class MostActiveMiner(BaseModel):
 
 class PerformanceDistribution(BaseModel):
     """Performance distribution model."""
+
     excellent: int = Field(..., description="Number of excellent miners")
     good: int = Field(..., description="Number of good miners")
     average: int = Field(..., description="Number of average miners")
@@ -187,6 +205,7 @@ class PerformanceDistribution(BaseModel):
 
 class MinerStatistics(BaseModel):
     """Miner statistics model."""
+
     totalMiners: int = Field(..., description="Total number of miners")
     activeMiners: int = Field(..., description="Number of active miners")
     inactiveMiners: int = Field(..., description="Number of inactive miners")
@@ -203,6 +222,7 @@ class MinerStatistics(BaseModel):
 
 class MinerComparisonMetrics(BaseModel):
     """Miner comparison metrics model."""
+
     successRate: float = Field(..., description="Success rate")
     averageResponseTime: float = Field(..., description="Average response time")
     totalRuns: int = Field(..., description="Total runs")
@@ -211,6 +231,7 @@ class MinerComparisonMetrics(BaseModel):
 
 class MinerComparison(BaseModel):
     """Miner comparison model."""
+
     uid: int = Field(..., description="Miner UID")
     name: str = Field(..., description="Miner name")
     metrics: MinerComparisonMetrics = Field(..., description="Comparison metrics")
@@ -218,6 +239,7 @@ class MinerComparison(BaseModel):
 
 class ComparisonMetrics(BaseModel):
     """Comparison metrics model."""
+
     bestPerformer: int = Field(..., description="Best performing miner UID")
     mostReliable: int = Field(..., description="Most reliable miner UID")
     fastest: int = Field(..., description="Fastest miner UID")
@@ -226,6 +248,7 @@ class ComparisonMetrics(BaseModel):
 
 class MinerComparisonResponse(BaseModel):
     """Miner comparison response model."""
+
     miners: List[MinerComparison] = Field(..., description="List of compared miners")
     comparisonMetrics: ComparisonMetrics = Field(..., description="Comparison metrics")
     timeRange: Dict[str, str] = Field(..., description="Time range")
@@ -234,6 +257,7 @@ class MinerComparisonResponse(BaseModel):
 # Query Models
 class MinerListQuery(BaseModel):
     """Miner list query model."""
+
     page: int = Field(1, ge=1, description="Page number")
     limit: int = Field(50, ge=1, le=100, description="Items per page")
     isSota: Optional[bool] = Field(None, description="Filter by SOTA status")
@@ -245,6 +269,7 @@ class MinerListQuery(BaseModel):
 
 class MinerPerformanceQuery(BaseModel):
     """Miner performance query model."""
+
     timeRange: TimeRange = Field(TimeRange.SEVEN_DAYS, description="Time range")
     startDate: Optional[datetime] = Field(None, description="Start date")
     endDate: Optional[datetime] = Field(None, description="End date")
@@ -253,6 +278,7 @@ class MinerPerformanceQuery(BaseModel):
 
 class MinerRunsQuery(BaseModel):
     """Miner runs query model."""
+
     page: int = Field(1, ge=1, description="Page number")
     limit: int = Field(20, ge=1, le=100, description="Items per page")
     roundId: Optional[int] = Field(None, description="Filter by round ID")
@@ -266,6 +292,7 @@ class MinerRunsQuery(BaseModel):
 
 class MinerActivityQuery(BaseModel):
     """Miner activity query model."""
+
     limit: int = Field(20, ge=1, le=100, description="Number of activities")
     offset: int = Field(0, ge=0, description="Number of activities to skip")
     type: Optional[ActivityType] = Field(None, description="Filter by activity type")
@@ -274,6 +301,7 @@ class MinerActivityQuery(BaseModel):
 
 class AllMinerActivityQuery(BaseModel):
     """All miner activity query model."""
+
     limit: int = Field(20, ge=1, le=100, description="Number of activities")
     offset: int = Field(0, ge=0, description="Number of activities to skip")
     type: Optional[ActivityType] = Field(None, description="Filter by activity type")
@@ -283,6 +311,7 @@ class AllMinerActivityQuery(BaseModel):
 
 class MinerCompareRequest(BaseModel):
     """Miner compare request model."""
+
     uids: List[int] = Field(..., description="List of miner UIDs to compare")
     timeRange: Optional[TimeRange] = Field(TimeRange.SEVEN_DAYS, description="Time range")
     startDate: Optional[datetime] = Field(None, description="Start date")
@@ -293,6 +322,7 @@ class MinerCompareRequest(BaseModel):
 # Response Models
 class Pagination(BaseModel):
     """Pagination model."""
+
     page: int = Field(..., description="Current page")
     limit: int = Field(..., description="Items per page")
     total: int = Field(..., description="Total number of items")
@@ -301,44 +331,52 @@ class Pagination(BaseModel):
 
 class MinerListResponse(BaseModel):
     """Miner list response model."""
+
     miners: List[Miner] = Field(..., description="List of miners")
     pagination: Pagination = Field(..., description="Pagination information")
 
 
 class MinerDetailResponse(BaseModel):
     """Miner detail response model."""
+
     miner: Miner = Field(..., description="Miner details")
 
 
 class MinerPerformanceResponse(BaseModel):
     """Miner performance response model."""
+
     performanceTrend: List[PerformanceTrend] = Field(..., description="Performance trend data")
 
 
 class MinerRunsResponse(BaseModel):
     """Miner runs response model."""
+
     runs: List[MinerRun] = Field(..., description="List of runs")
     pagination: Pagination = Field(..., description="Pagination information")
 
 
 class MinerRunDetailResponse(BaseModel):
     """Miner run detail response model."""
+
     run: MinerRun = Field(..., description="Run details")
 
 
 class MinerActivityResponse(BaseModel):
     """Miner activity response model."""
+
     activities: List[MinerActivity] = Field(..., description="List of activities")
     total: int = Field(..., description="Total number of activities")
 
 
 class MinerStatisticsResponse(BaseModel):
     """Miner statistics response model."""
+
     statistics: MinerStatistics = Field(..., description="Miner statistics")
 
 
 class ErrorDetail(BaseModel):
     """Error detail model."""
+
     code: str = Field(..., description="Error code")
     message: str = Field(..., description="Error message")
     details: Dict[str, Any] = Field(default_factory=dict, description="Error details")
@@ -346,6 +384,7 @@ class ErrorDetail(BaseModel):
 
 class APIResponse(BaseModel):
     """Standard API response model."""
+
     success: bool = Field(True, description="Success status")
     data: Optional[Any] = Field(None, description="Response data")
     error: Optional[ErrorDetail] = Field(None, description="Error information")

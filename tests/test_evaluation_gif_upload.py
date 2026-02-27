@@ -7,35 +7,24 @@ from sqlalchemy import select
 from app.config import settings
 from app.db.models import EvaluationResultORM
 from app.services import media_storage
-
 from tests.test_validator_endpoints import (
     _make_submission_payload,
     submit_round_via_validator_endpoints,
 )
 
-
-MINIMAL_GIF = (
-    b"GIF89a"
-    b"\x01\x00\x01\x00"
-    b"\x80"
-    b"\x00"
-    b"\x00"
-    b"\x00\x00\x00"
-    b"\xff\xff\xff"
-    b"\x21\xf9\x04\x00\x00\x00\x00\x00"
-    b"\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00"
-    b"\x02\x02\x44\x01\x00"
-    b"\x3b"
-)
+MINIMAL_GIF = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x00\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b"
 
 
 @pytest.mark.asyncio
 async def test_uploads_gif_and_returns_s3_url(client, db_session, monkeypatch):
     from app.config import settings as _settings
+
     blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
     dz = int(_settings.DZ_STARTING_BLOCK)
+
     def inside_round(n: int) -> int:
         return dz + (n - 1) * blocks_per_round + 1
+
     # Patch chain to be inside the requested round number
     round_number = int("205")
     monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: inside_round(round_number))
@@ -73,11 +62,7 @@ async def test_uploads_gif_and_returns_s3_url(client, db_session, monkeypatch):
     gif_url = body["data"]["gifUrl"]
     assert gif_url == media_storage.build_public_url(object_key)
 
-    stored_row = await db_session.scalar(
-        select(EvaluationResultORM).where(
-            EvaluationResultORM.evaluation_id == evaluation_id
-        )
-    )
+    stored_row = await db_session.scalar(select(EvaluationResultORM).where(EvaluationResultORM.evaluation_id == evaluation_id))
     assert stored_row is not None
     assert stored_row.gif_recording == gif_url
 
@@ -85,10 +70,13 @@ async def test_uploads_gif_and_returns_s3_url(client, db_session, monkeypatch):
 @pytest.mark.asyncio
 async def test_upload_rejects_non_gif_images(client, monkeypatch):
     from app.config import settings as _settings
+
     blocks_per_round = int(_settings.ROUND_SIZE_EPOCHS * _settings.BLOCKS_PER_EPOCH)
     dz = int(_settings.DZ_STARTING_BLOCK)
+
     def inside_round(n: int) -> int:
         return dz + (n - 1) * blocks_per_round + 1
+
     round_number = int("206")
     monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: inside_round(round_number))
     payload = _make_submission_payload("206")

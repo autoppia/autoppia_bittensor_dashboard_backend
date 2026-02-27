@@ -21,7 +21,6 @@ from pydantic import (
     model_validator,
 )
 
-
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
@@ -253,32 +252,6 @@ class ValidatorRoundMiner(BaseModel):
         return values
 
 
-class ValidatorRoundSummary(BaseModel):
-    """Summary of miner performance in a validator round (local and post-consensus)."""
-
-    id: Optional[int] = None
-    validator_round_id: str = Field(..., description="Foreign key to the validator round")
-    miner_uid: int = Field(..., description="Miner UID")
-    miner_hotkey: Optional[str] = Field(default=None, description="Miner hotkey")
-
-    # Local evaluation (pre-consensus, from this validator)
-    local_rank: Optional[int] = Field(default=None, description="Local rank (pre-consensus)")
-    local_avg_reward: Optional[float] = Field(default=None, description="Local average reward")
-    local_avg_eval_score: Optional[float] = Field(default=None, description="Local average eval score")
-    local_avg_eval_time: Optional[float] = Field(default=None, description="Local average evaluation time")
-    local_tasks_received: Optional[int] = Field(default=None, description="Local tasks received")
-    local_tasks_success: Optional[int] = Field(default=None, description="Local tasks success")
-
-    # Post-consensus evaluation (aggregated from all validators)
-    post_consensus_rank: Optional[int] = Field(default=None, description="Post-consensus rank")
-    post_consensus_avg_reward: Optional[float] = Field(default=None, description="Post-consensus average reward")
-    post_consensus_avg_eval_score: Optional[float] = Field(default=None, description="Post-consensus average eval score")
-    post_consensus_avg_eval_time: Optional[float] = Field(default=None, description="Post-consensus average evaluation time")
-    post_consensus_tasks_received: Optional[int] = Field(default=None, description="Post-consensus tasks received")
-    post_consensus_tasks_success: Optional[int] = Field(default=None, description="Post-consensus tasks success")
-    weight: Optional[float] = Field(default=None, description="Final weight assigned to the miner")
-
-
 # ---------------------------------------------------------------------------
 # Agent evaluation runs
 # ---------------------------------------------------------------------------
@@ -380,10 +353,6 @@ class Task(BaseModel):
 
     task_id: str = Field(..., description="Primary identifier for the task")
     validator_round_id: str = Field(..., description="Validator round that owns this task")
-    is_web_real: bool = Field(
-        default=False,
-        description="Whether the task operates on a real web environment",
-    )
     web_project_id: Optional[str] = Field(default=None, description="Web project identifier if applicable")
     web_version: Optional[str] = Field(default=None, description="Version of the web project used for this task")
     url: str = Field(..., description="Target URL where the task must be executed")
@@ -479,53 +448,6 @@ class TaskSolution(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class TestResult(BaseModel):
-    """Represents the evaluation result of a single test."""
-
-    success: bool
-    extra_data: Optional[dict] = None
-
-
-class EvaluationStats(BaseModel):
-    """Statistics captured for a specific evaluation execution."""
-
-    web_agent_id: str
-    task_id: str
-    action_count: int
-    action_types: Dict[str, int] = Field(default_factory=dict)
-
-    start_time: float
-    total_time: float = 0.0
-    browser_setup_time: float = 0.0
-    action_execution_times: List[float] = Field(default_factory=list)
-    test_execution_time: float = 0.0
-    random_clicker_time: float = 0.0
-
-    raw_score: float = 0.0
-    final_score: float = 0.0
-    tests_passed: int = 0
-    total_tests: int = 0
-
-    had_errors: bool = False
-    error_message: str = ""
-
-    def get_summary_dict(self) -> Dict[str, Any]:
-        action_time = sum(self.action_execution_times) if self.action_execution_times else 0.0
-        return {
-            "agent_id": self.web_agent_id,
-            "task_id": self.task_id,
-            "actions": self.action_count,
-            "score": self.final_score,
-            "time_total": round(self.total_time, 2),
-            "time_browser_setup": round(self.browser_setup_time, 2),
-            "time_actions": round(action_time, 2),
-            "time_avg_per_action": round(action_time / max(1, len(self.action_execution_times)), 3),
-            "time_random": round(self.random_clicker_time, 2),
-            "tests_passed": f"{self.tests_passed}/{self.total_tests}",
-            "success": not self.had_errors,
-        }
-
-
 class Evaluation(BaseModel):
     """Evaluation of a task and its solution with detailed artefacts."""
 
@@ -589,10 +511,6 @@ class Evaluation(BaseModel):
         return base_dump
 
 
-# Backwards compatibility alias
-EvaluationResult = Evaluation
-
-
 # ---------------------------------------------------------------------------
 # Composite DTOs
 # ---------------------------------------------------------------------------
@@ -609,20 +527,6 @@ class AgentEvaluationRunWithDetails(AgentEvaluationRun):
     )
 
 
-class ValidatorRoundWithDetails(ValidatorRound):
-    """Validator round enriched with identity snapshots and run details."""
-
-    validator_snapshots: List[ValidatorRoundValidator] = Field(
-        default_factory=list,
-        description="Validator snapshots captured during the round",
-    )
-    miner_snapshots: List[ValidatorRoundMiner] = Field(default_factory=list, description="Miner snapshots captured during the round")
-    agent_evaluation_runs: List[AgentEvaluationRunWithDetails] = Field(
-        default_factory=list,
-        description="All agent evaluation runs with their related data",
-    )
-
-
 class ValidatorRoundSubmissionRequest(BaseModel):
     """Request payload for persisting a complete validator round."""
 
@@ -635,18 +539,6 @@ class ValidatorRoundSubmissionRequest(BaseModel):
     tasks: List[Task]
     task_solutions: List[TaskSolution]
     evaluations: List[Evaluation]
-
-
-class ValidatorRoundSubmissionResponse(BaseModel):
-    """Response payload emitted after a validator round is persisted."""
-
-    success: bool
-    message: str
-    validator_round_id: str
-    validator_uid: int
-    processing_time_seconds: float
-    entities_saved: Dict[str, Any]
-    summary: Dict[str, int]
 
 
 __all__ = [
@@ -670,17 +562,6 @@ __all__ = [
     "Action",
     "TaskSolution",
     "Evaluation",
-    "TestResult",
-    "EvaluationStats",
-    "EvaluationResult",
     "AgentEvaluationRunWithDetails",
-    "ValidatorRoundWithDetails",
     "ValidatorRoundSubmissionRequest",
-    "ValidatorRoundSubmissionResponse",
 ]
-
-# Backwards compatibility aliases
-ValidatorIdentity = Validator
-MinerIdentity = Miner
-ValidatorSnapshot = ValidatorRoundValidator
-MinerSnapshot = ValidatorRoundMiner

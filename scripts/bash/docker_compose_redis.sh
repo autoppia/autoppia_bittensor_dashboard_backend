@@ -36,4 +36,3 @@ fi
 
 # Ejecutar docker compose con los argumentos pasados
 docker compose "$@"
-

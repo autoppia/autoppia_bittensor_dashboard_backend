@@ -133,7 +133,7 @@ INSERT INTO miner_evaluation_runs (
 ### **Buscar evaluación para reutilizar:**
 
 ```sql
-SELECT 
+SELECT
     aer.agent_run_id,
     aer.average_score,
     aer.average_reward,
@@ -162,20 +162,20 @@ ORDER BY round_number;
 ### **Performance de un miner en una season:**
 
 ```sql
-SELECT 
+SELECT
     vr.round_number,
     vrm.github_url,
     aer.is_reused,
     aer.average_score,
     aer.average_reward,
-    CASE 
+    CASE
         WHEN aer.is_reused THEN aer.reused_from_agent_run_id
         ELSE NULL
     END as reused_from
 FROM miner_evaluation_runs aer
 JOIN validator_rounds vr ON aer.validator_round_id = vr.validator_round_id
-LEFT JOIN validator_round_miners vrm 
-    ON vrm.validator_round_id = vr.validator_round_id 
+LEFT JOIN validator_round_miners vrm
+    ON vrm.validator_round_id = vr.validator_round_id
     AND vrm.miner_uid = aer.miner_uid
 WHERE vr.season_number = 1
   AND aer.miner_uid = 123
@@ -187,23 +187,23 @@ ORDER BY vr.round_number;
 ```sql
 WITH RECURSIVE reuse_chain AS (
     -- Base: run original
-    SELECT 
-        agent_run_id, 
-        validator_round_id, 
+    SELECT
+        agent_run_id,
+        validator_round_id,
         github_url,
-        is_reused, 
-        reused_from_agent_run_id, 
+        is_reused,
+        reused_from_agent_run_id,
         0 as depth,
         average_score
     FROM miner_evaluation_runs
     WHERE agent_run_id = 'run-original-id'
-    
+
     UNION ALL
-    
+
     -- Recursivo: runs que reusan
-    SELECT 
-        aer.agent_run_id, 
-        aer.validator_round_id, 
+    SELECT
+        aer.agent_run_id,
+        aer.validator_round_id,
         aer.github_url,
         aer.is_reused,
         aer.reused_from_agent_run_id,
@@ -218,13 +218,13 @@ SELECT * FROM reuse_chain ORDER BY depth;
 ### **Estadísticas de reuse por season:**
 
 ```sql
-SELECT 
+SELECT
     vr.season_number,
     COUNT(*) as total_agent_runs,
     COUNT(*) FILTER (WHERE aer.is_reused = TRUE) as reused_runs,
     COUNT(*) FILTER (WHERE aer.is_reused = FALSE) as new_evaluations,
     ROUND(
-        100.0 * COUNT(*) FILTER (WHERE aer.is_reused = TRUE) / COUNT(*), 
+        100.0 * COUNT(*) FILTER (WHERE aer.is_reused = TRUE) / COUNT(*),
         2
     ) as reuse_percentage
 FROM miner_evaluation_runs aer
@@ -243,7 +243,7 @@ ORDER BY vr.season_number DESC;
 ```python
 class ValidatorRoundORM(TimestampMixin, Base):
     __tablename__ = "validator_rounds"
-    
+
     # ... campos existentes ...
     season_number: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True, index=True
@@ -255,9 +255,9 @@ class ValidatorRoundORM(TimestampMixin, Base):
 ```python
 class AgentEvaluationRunORM(TimestampMixin, Base):
     __tablename__ = "miner_evaluation_runs"
-    
+
     # ... campos existentes ...
-    
+
     # Code reuse tracking
     github_url: Mapped[Optional[str]] = mapped_column(
         String(1024), nullable=True, index=True
@@ -270,7 +270,7 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
         nullable=True,
         index=True
     )
-    
+
     # Relationship para acceder al run original
     reused_from: Mapped[Optional["AgentEvaluationRunORM"]] = relationship(
         "AgentEvaluationRunORM",

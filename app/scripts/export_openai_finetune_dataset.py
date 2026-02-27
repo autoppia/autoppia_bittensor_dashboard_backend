@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Export a JSONL dataset for OpenAI chat fine-tuning from the dashboard backend DB.
 
@@ -31,6 +29,8 @@ Notes:
     you want the model to learn to return.
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
@@ -38,12 +38,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, defer
+from sqlalchemy.orm import defer, selectinload
 
 from app.config import settings
+from app.db.models import EvaluationORM, TaskORM, TaskSolutionORM
 from app.db.session import AsyncSessionLocal
-from app.db.models import TaskORM, TaskSolutionORM, EvaluationORM
-
 
 SYSTEM_PROMPT_DEFAULT = (
     "You are a web automation planner. Given a target URL and a natural-language task, "

@@ -1,10 +1,13 @@
 from typing import List, Optional
+
 from pydantic import BaseModel, Field, field_validator
+
 from app.utils.validation import validate_miner_image_url
 
 
 class MinerListItem(BaseModel):
     """Minimal miner data for listing."""
+
     uid: int = Field(..., description="Miner UID")
     name: str = Field(..., description="Miner name")
     ranking: int = Field(..., description="Current ranking")
@@ -12,7 +15,7 @@ class MinerListItem(BaseModel):
     isSota: bool = Field(..., description="Whether miner is SOTA (company agent)")
     imageUrl: str = Field(..., description="Miner image URL (must be valid URL or empty string)")
 
-    @field_validator('imageUrl')
+    @field_validator("imageUrl")
     @classmethod
     def validate_image_url(cls, value: str) -> str:
         """Validate that imageUrl is a valid URL or empty string."""
@@ -21,6 +24,7 @@ class MinerListItem(BaseModel):
 
 class MinerListResponse(BaseModel):
     """Response model for miner list endpoint."""
+
     miners: List[MinerListItem] = Field(..., description="List of miners with minimal data")
     total: int = Field(..., description="Total number of miners")
     page: int = Field(..., description="Current page")
@@ -33,6 +37,7 @@ class MinerListResponse(BaseModel):
 
 class MinerDetail(BaseModel):
     """Complete miner data for detailed view."""
+
     uid: int = Field(..., description="Miner UID")
     name: str = Field(..., description="Miner name")
     hotkey: str = Field(..., description="Miner hotkey")
@@ -53,7 +58,7 @@ class MinerDetail(BaseModel):
     createdAt: str = Field(..., description="Creation timestamp (ISO 8601)")
     updatedAt: str = Field(..., description="Last update timestamp (ISO 8601)")
 
-    @field_validator('imageUrl')
+    @field_validator("imageUrl")
     @classmethod
     def validate_detail_image_url(cls, value: str) -> str:
         """Validate that imageUrl is a valid URL or empty string."""
@@ -62,4 +67,5 @@ class MinerDetail(BaseModel):
 
 class MinerDetailResponse(BaseModel):
     """Response model for miner detail endpoint."""
+
     miner: MinerDetail = Field(..., description="Complete miner details")

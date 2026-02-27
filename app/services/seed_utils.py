@@ -13,7 +13,6 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from app.config import settings
-from app.data import VALIDATOR_DIRECTORY
 from app.db.models import ValidatorRoundORM
 from app.db.session import AsyncSessionLocal
 from app.models.core import (
@@ -21,11 +20,11 @@ from app.models.core import (
     AgentEvaluationRun,
     Evaluation,
     Miner,
-    ValidatorRoundMiner,
     Task,
     TaskSolution,
     Validator,
     ValidatorRound,
+    ValidatorRoundMiner,
     ValidatorRoundSubmissionRequest,
     ValidatorRoundValidator,
 )
@@ -33,6 +32,7 @@ from app.services.validator.validator_storage import (
     PersistenceResult,
     ValidatorRoundPersistenceService,
 )
+from app.services.validator_directory import VALIDATOR_DIRECTORY
 from app.utils.images import FALLBACK_MINER_IMAGES, normalize_asset_path
 
 logger = logging.getLogger(__name__)
@@ -62,8 +62,8 @@ def _get_fastapi_app():
     can exercise the ingestion pipeline without requiring real signatures
     or on-chain stake checks.
     """
-    from app.main import app as fastapi_app
     from app.config import settings as _settings
+    from app.main import app as fastapi_app
 
     # In local/test runs we seed through the in-process ASGI app. The
     # validator endpoints normally require signed headers; for synthetic
