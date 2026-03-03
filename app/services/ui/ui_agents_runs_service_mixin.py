@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from sqlalchemy import text
 
@@ -89,6 +90,132 @@ class UIAgentsRunsServiceMixin:
             )
         ).scalar_one()
 
+        run_ctx = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                    SELECT
+                      mer.agent_run_id,
+                      mer.is_reused,
+                      mer.reused_from_agent_run_id,
+                      mer.zero_reason
+                    FROM miner_evaluation_runs mer
+                    WHERE mer.miner_uid = :uid
+                      AND mer.round_validator_id IN (
+                        SELECT rv.round_validator_id
+                        FROM round_validators rv
+                        WHERE rv.round_id = :round_id
+                      )
+                    ORDER BY mer.started_at DESC NULLS LAST, mer.created_at DESC NULLS LAST
+                    LIMIT 1
+                    """
+                    ),
+                    {"uid": miner_uid, "round_id": round_id},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        is_reused = bool(run_ctx["is_reused"]) if run_ctx else False
+        run_agent_run_id = run_ctx["agent_run_id"] if run_ctx else None
+        reused_from_agent_run_id = run_ctx["reused_from_agent_run_id"] if run_ctx else None
+        zero_reason = run_ctx["zero_reason"] if run_ctx else None
+        source_agent_run_id = reused_from_agent_run_id or run_agent_run_id
+
+        reused_from_round: Optional[str] = None
+        if reused_from_agent_run_id:
+            source_round = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                        SELECT s.season_number, r.round_number_in_season
+                        FROM miner_evaluation_runs mer
+                        JOIN round_validators rv ON rv.round_validator_id = mer.round_validator_id
+                        JOIN rounds r ON r.round_id = rv.round_id
+                        JOIN seasons s ON s.season_id = r.season_id
+                        WHERE mer.agent_run_id = :agent_run_id
+                        LIMIT 1
+                        """
+                        ),
+                        {"agent_run_id": reused_from_agent_run_id},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if source_round:
+                reused_from_round = f"{int(source_round['season_number'])}/{int(source_round['round_number_in_season'])}"
+
+        performance_by_website: List[Dict[str, Any]] = []
+
+        def _website_key_from_url(raw_url: Optional[str]) -> str:
+            if not isinstance(raw_url, str) or not raw_url.strip():
+                return "unknown"
+            parsed = urlparse(raw_url)
+            host = (parsed.hostname or "").strip()
+            port = parsed.port
+            if not host:
+                return "unknown"
+            # In local env, multiple IWA websites may share hostname (localhost)
+            # and differ only by port (e.g., 8000, 8001). Keep port to avoid collapsing.
+            if host in ("localhost", "127.0.0.1") and port:
+                return f"{host}:{port}"
+            return host
+
+        if source_agent_run_id:
+            task_rows = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                        SELECT
+                          ts.task_id,
+                          ts.actions,
+                          t.web_project_id,
+                          t.url AS task_url,
+                          e.evaluation_score,
+                          e.evaluation_time
+                        FROM task_solutions ts
+                        LEFT JOIN tasks t
+                          ON t.task_id = ts.task_id
+                        LEFT JOIN evaluations e
+                          ON e.task_solution_id = ts.solution_id
+                        WHERE ts.agent_run_id = :agent_run_id
+                        """
+                        ),
+                        {"agent_run_id": source_agent_run_id},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            by_website: Dict[str, Dict[str, Any]] = {}
+            for row in task_rows:
+                actions = row.get("actions") or []
+                website = str(row.get("web_project_id") or "").strip() or _website_key_from_url(row.get("task_url"))
+                action_url = None
+                if isinstance(actions, list) and actions:
+                    first_action = actions[0] if isinstance(actions[0], dict) else {}
+                    action_url = first_action.get("url")
+                if website == "unknown":
+                    website = _website_key_from_url(action_url)
+                item = by_website.setdefault(
+                    website,
+                    {"website": website, "tasks_received": 0, "tasks_success": 0, "success_rate": 0.0},
+                )
+                item["tasks_received"] += 1
+                score = float(row.get("evaluation_score") or 0.0)
+                if score > 0:
+                    item["tasks_success"] += 1
+            for entry in by_website.values():
+                tasks_received = int(entry["tasks_received"] or 0)
+                tasks_success = int(entry["tasks_success"] or 0)
+                entry["success_rate"] = (tasks_success / tasks_received) if tasks_received > 0 else 0.0
+                performance_by_website.append(entry)
+            performance_by_website.sort(key=lambda x: x["tasks_received"], reverse=True)
+
         return {
             "agent": {
                 "id": f"agent-{miner_uid}",
@@ -125,6 +252,12 @@ class UIAgentsRunsServiceMixin:
             },
             "scoreRoundData": [],
             "availableRounds": [season * 10000 + round_in_season],
+            "performanceByWebsite": performance_by_website,
+            "avg_cost_per_task": None,
+            "is_reused": is_reused,
+            "reused_from_agent_run_id": reused_from_agent_run_id,
+            "reused_from_round": reused_from_round,
+            "zero_reason": zero_reason,
             "roundMetrics": {
                 "roundId": season * 10000 + round_in_season,
                 "score": score,
@@ -139,6 +272,12 @@ class UIAgentsRunsServiceMixin:
                 "failedTasks": failed_tasks,
                 "successRate": (success_tasks / total_tasks) if total_tasks > 0 else 0.0,
                 "averageResponseTime": round(avg_time, 2),
+                "performanceByWebsite": performance_by_website,
+                "avgCostPerTask": None,
+                "isReused": is_reused,
+                "reusedFromAgentRunId": reused_from_agent_run_id,
+                "reusedFromRound": reused_from_round,
+                "zeroReason": zero_reason,
             },
         }
 

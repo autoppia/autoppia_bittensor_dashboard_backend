@@ -6,12 +6,34 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import func, select, text
 
+from app.config import settings
 from app.db.models import AgentEvaluationRunORM, ValidatorRoundORM, ValidatorRoundSummaryORM, ValidatorRoundValidatorORM
 
 logger = logging.getLogger(__name__)
 
 
 class ValidatorStorageSummaryMixin:
+    async def _get_handshake_participant_uids(self, validator_round_id: str) -> set[int]:
+        """Return miner UIDs that participated in handshake with valid required fields.
+
+        Business round metrics (winner/miners_evaluated/rollups) must be based on
+        this set, not on the full metagraph consensus vector.
+        """
+        rows = await self.session.execute(
+            text(
+                """
+                SELECT DISTINCT rvm.miner_uid
+                FROM round_validator_miners rvm
+                JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
+                WHERE rv.validator_round_id = :validator_round_id
+                  AND rvm.name IS NOT NULL
+                  AND rvm.github_url IS NOT NULL
+                """
+            ),
+            {"validator_round_id": validator_round_id},
+        )
+        return {int(r.miner_uid) for r in rows if r.miner_uid is not None}
+
     async def _enrich_validator_summary_post_consensus_from_db(self, round_row: ValidatorRoundORM) -> None:
         """Enrich validator_summary.evaluation_post_consensus with DB-derived metrics.
 
@@ -28,6 +50,8 @@ class ValidatorStorageSummaryMixin:
             or 0
         )
 
+        handshake_uids = await self._get_handshake_participant_uids(round_row.validator_round_id)
+
         miners_payload: List[Dict[str, Any]] = []
         tasks_evaluated_total = 0
         tasks_success_total = 0
@@ -35,17 +59,22 @@ class ValidatorStorageSummaryMixin:
         eval_scores: List[float] = []
         eval_times: List[float] = []
 
+        burn_uid = int(settings.BURN_UID)
+
         for row in summary_rows:
             post_tasks_received = int(row.post_consensus_tasks_received or 0)
             post_tasks_success = int(row.post_consensus_tasks_success or 0)
-            tasks_evaluated_total += post_tasks_received
-            tasks_success_total += post_tasks_success
-            if row.post_consensus_avg_reward is not None:
-                rewards.append(float(row.post_consensus_avg_reward))
-            if row.post_consensus_avg_eval_score is not None:
-                eval_scores.append(float(row.post_consensus_avg_eval_score))
-            if row.post_consensus_avg_eval_time is not None:
-                eval_times.append(float(row.post_consensus_avg_eval_time))
+            is_burn_row = int(row.miner_uid or -1) == burn_uid
+            is_handshake_participant = int(row.miner_uid or -1) in handshake_uids
+            if not is_burn_row and is_handshake_participant:
+                tasks_evaluated_total += post_tasks_received
+                tasks_success_total += post_tasks_success
+                if row.post_consensus_avg_reward is not None:
+                    rewards.append(float(row.post_consensus_avg_reward))
+                if row.post_consensus_avg_eval_score is not None:
+                    eval_scores.append(float(row.post_consensus_avg_eval_score))
+                if row.post_consensus_avg_eval_time is not None:
+                    eval_times.append(float(row.post_consensus_avg_eval_time))
 
             miners_payload.append(
                 {
@@ -58,13 +87,15 @@ class ValidatorStorageSummaryMixin:
                     "post_consensus_tasks_received": row.post_consensus_tasks_received,
                     "post_consensus_tasks_success": row.post_consensus_tasks_success,
                     "weight": row.weight,
+                    "is_handshake_participant": is_handshake_participant,
                 }
             )
 
-        winner = next((m for m in miners_payload if m.get("post_consensus_rank") == 1), None)
+        competitive_miners_payload = [m for m in miners_payload if int(m.get("miner_uid") or -1) != burn_uid and bool(m.get("is_handshake_participant"))]
+        winner = next((m for m in competitive_miners_payload if m.get("post_consensus_rank") == 1), None)
         if winner is None:
             winner = max(
-                miners_payload,
+                competitive_miners_payload,
                 key=lambda m: (
                     float(m.get("post_consensus_avg_reward") or 0.0),
                     float(m.get("post_consensus_avg_eval_score") or 0.0),
@@ -78,7 +109,7 @@ class ValidatorStorageSummaryMixin:
             "season_number": round_row.season_number,
             "round_number_in_season": round_row.round_number_in_season,
             "validators_count": validators_count,
-            "miners_evaluated": len(miners_payload),
+            "miners_evaluated": len(competitive_miners_payload),
             "tasks_evaluated": tasks_evaluated_total,
             "tasks_success": tasks_success_total,
             "avg_reward": (sum(rewards) / len(rewards)) if rewards else 0.0,
@@ -103,7 +134,8 @@ class ValidatorStorageSummaryMixin:
         else:
             enriched_post = {"raw": current_post}
 
-        enriched_post["miners"] = miners_payload
+        # Keep business-facing summary focused on active handshake participants.
+        enriched_post["miners"] = competitive_miners_payload
         # Avoid noisy internal fields in post-consensus payload.
         enriched_post.pop("schema_version", None)
         winner_uid = db_rollup.get("winner", {}).get("miner_uid") if isinstance(db_rollup.get("winner"), dict) else None
@@ -111,6 +143,10 @@ class ValidatorStorageSummaryMixin:
         winner_obj = round_summary.get("winner") if isinstance(round_summary.get("winner"), dict) else {}
         if winner_uid is not None:
             winner_obj["miner_uid"] = int(winner_uid)
+        else:
+            winner_obj.pop("miner_uid", None)
+            winner_obj.pop("uid", None)
+            winner_obj["reason"] = "no_handshake_participants"
         round_summary["winner"] = winner_obj
         enriched_post["round_summary"] = round_summary
 
@@ -118,8 +154,53 @@ class ValidatorStorageSummaryMixin:
         season_summary = enriched_post.get("season_summary") if isinstance(enriched_post.get("season_summary"), dict) else {}
         if winner_uid is not None:
             season_summary["current_winner_uid"] = int(winner_uid)
+        else:
+            season_summary.pop("current_winner_uid", None)
         if "dethroned" not in season_summary:
             season_summary["dethroned"] = bool(decision_obj.get("dethroned", False))
+
+        # Human-readable transition block: before -> candidate -> after.
+        reigning_uid_before = decision_obj.get("reigning_uid_before_round")
+        reigning_score_before = decision_obj.get("reigning_score_before_round")
+        top_candidate_uid = decision_obj.get("top_candidate_uid")
+        top_candidate_score = decision_obj.get("top_candidate_score")
+        required_improvement_pct = season_summary.get(
+            "required_improvement_pct",
+            decision_obj.get("required_improvement_pct"),
+        )
+        winner_after_uid = winner_obj.get("miner_uid") or winner_obj.get("uid")
+        winner_after_score = winner_obj.get("score")
+
+        try:
+            req_pct_f = float(required_improvement_pct) if required_improvement_pct is not None else None
+        except Exception:
+            req_pct_f = None
+        try:
+            reigning_score_f = float(reigning_score_before) if reigning_score_before is not None else None
+        except Exception:
+            reigning_score_f = None
+        try:
+            candidate_score_f = float(top_candidate_score) if top_candidate_score is not None else None
+        except Exception:
+            candidate_score_f = None
+
+        dethrone_threshold = reigning_score_f * (1.0 + req_pct_f) if reigning_score_f is not None and req_pct_f is not None else None
+        candidate_met_threshold = candidate_score_f >= dethrone_threshold if candidate_score_f is not None and dethrone_threshold is not None else None
+
+        season_summary["winner_before_round_uid"] = reigning_uid_before
+        season_summary["winner_before_round_score"] = reigning_score_before
+        season_summary["candidate_uid"] = top_candidate_uid
+        season_summary["candidate_score"] = top_candidate_score
+        season_summary["winner_after_round_uid"] = winner_after_uid
+        season_summary["winner_after_round_score"] = winner_after_score
+        season_summary["dethrone_threshold_score"] = dethrone_threshold
+        season_summary["candidate_met_threshold"] = candidate_met_threshold
+        if season_summary.get("dethroned") is True:
+            season_summary["round_result"] = "dethroned"
+        elif winner_after_uid is not None:
+            season_summary["round_result"] = "retained"
+        else:
+            season_summary["round_result"] = "no_winner"
         enriched_post["season_summary"] = season_summary
 
         def _to_int(value: Any) -> Optional[int]:
@@ -151,10 +232,11 @@ class ValidatorStorageSummaryMixin:
         round_row.dethroned = bool(dethroned_value) if dethroned_value is not None else None
 
         # Convenience top-level aliases to avoid ambiguity in consumers.
-        enriched_post.setdefault("validators_count", db_rollup["validators_count"])
-        enriched_post.setdefault("miners_evaluated", db_rollup["miners_evaluated"])
-        enriched_post.setdefault("tasks_evaluated", db_rollup["tasks_evaluated"])
-        enriched_post.setdefault("tasks_success", db_rollup["tasks_success"])
+        # Always overwrite these rollups with DB-derived business metrics.
+        enriched_post["validators_count"] = db_rollup["validators_count"]
+        enriched_post["miners_evaluated"] = db_rollup["miners_evaluated"]
+        enriched_post["tasks_evaluated"] = db_rollup["tasks_evaluated"]
+        enriched_post["tasks_success"] = db_rollup["tasks_success"]
         # winner is already represented in round_summary; avoid duplicated winner blocks here.
         enriched_post.pop("winner", None)
 
@@ -208,22 +290,26 @@ class ValidatorStorageSummaryMixin:
 
         round_id = int(ctx.round_id)
         source_round_validator_id = int(ctx.round_validator_id)
-        winner_row = next((row for row in summary_rows if int(row.post_consensus_rank or 0) == 1), None)
+        burn_uid = int(settings.BURN_UID)
+        handshake_uids = await self._get_handshake_participant_uids(round_row.validator_round_id)
+        competitive_rows = [row for row in summary_rows if int(row.miner_uid or -1) != burn_uid and int(row.miner_uid or -1) in handshake_uids]
+        winner_row = next((row for row in competitive_rows if int(row.post_consensus_rank or 0) == 1), None)
         if winner_row is None:
             winner_row = max(
-                summary_rows,
+                competitive_rows,
                 key=lambda row: (
                     float(row.post_consensus_avg_reward or 0.0),
                     float(row.post_consensus_avg_eval_score or 0.0),
                     -int(row.miner_uid or 0),
                 ),
+                default=None,
             )
 
-        rewards = [float(row.post_consensus_avg_reward) for row in summary_rows if row.post_consensus_avg_reward is not None]
-        eval_scores = [float(row.post_consensus_avg_eval_score) for row in summary_rows if row.post_consensus_avg_eval_score is not None]
-        eval_times = [float(row.post_consensus_avg_eval_time) for row in summary_rows if row.post_consensus_avg_eval_time is not None]
-        tasks_evaluated = sum(int(row.post_consensus_tasks_received or 0) for row in summary_rows)
-        tasks_success = sum(int(row.post_consensus_tasks_success or 0) for row in summary_rows)
+        rewards = [float(row.post_consensus_avg_reward) for row in competitive_rows if row.post_consensus_avg_reward is not None]
+        eval_scores = [float(row.post_consensus_avg_eval_score) for row in competitive_rows if row.post_consensus_avg_eval_score is not None]
+        eval_times = [float(row.post_consensus_avg_eval_time) for row in competitive_rows if row.post_consensus_avg_eval_time is not None]
+        tasks_evaluated = sum(int(row.post_consensus_tasks_received or 0) for row in competitive_rows)
+        tasks_success = sum(int(row.post_consensus_tasks_success or 0) for row in competitive_rows)
 
         validators_count = int(
             await self.session.scalar(
@@ -324,8 +410,8 @@ class ValidatorStorageSummaryMixin:
             ),
             {
                 "round_id": round_id,
-                "winner_miner_uid": int(getattr(winner_row, "miner_uid", 0) or 0),
-                "winner_score": float(getattr(winner_row, "post_consensus_avg_reward", 0.0) or 0.0),
+                "winner_miner_uid": (int(winner_row.miner_uid) if winner_row is not None else None),
+                "winner_score": (float(getattr(winner_row, "post_consensus_avg_reward", 0.0) or 0.0) if winner_row is not None else None),
                 "reigning_miner_uid_before_round": (int(round_row.reigning_uid_before_round) if getattr(round_row, "reigning_uid_before_round", None) is not None else None),
                 "reigning_score_before_round": (float(round_row.reigning_score_before_round) if getattr(round_row, "reigning_score_before_round", None) is not None else None),
                 "top_candidate_miner_uid": (int(round_row.top_candidate_uid) if getattr(round_row, "top_candidate_uid", None) is not None else None),
@@ -333,7 +419,7 @@ class ValidatorStorageSummaryMixin:
                 "required_improvement_pct": required_improvement_pct,
                 "dethroned": dethroned,
                 "validators_count": validators_count,
-                "miners_evaluated": len(summary_rows),
+                "miners_evaluated": len(competitive_rows),
                 "tasks_evaluated": tasks_evaluated,
                 "tasks_success": tasks_success,
                 "avg_reward": (sum(rewards) / len(rewards)) if rewards else 0.0,
@@ -344,6 +430,52 @@ class ValidatorStorageSummaryMixin:
                 "source_round_validator_id": source_round_validator_id,
             },
         )
+
+        # Keep season leader fields aligned with the latest round outcome.
+        # This guarantees season-level UI/reporting always has a concrete winner
+        # after a round is computed.
+        if winner_row is not None:
+            winner_uid = int(winner_row.miner_uid)
+            winner_score = float(getattr(winner_row, "post_consensus_avg_reward", 0.0) or 0.0)
+            winner_repo = await self.session.scalar(
+                text(
+                    """
+                    SELECT rvm.github_url
+                    FROM round_validator_miners rvm
+                    WHERE rvm.round_validator_id = :round_validator_id
+                      AND rvm.miner_uid = :winner_uid
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "round_validator_id": source_round_validator_id,
+                    "winner_uid": winner_uid,
+                },
+            )
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE seasons s
+                    SET
+                        leader_miner_uid = :winner_uid,
+                        leader_reward = :winner_score,
+                        leader_github_url = :winner_repo,
+                        updated_at = NOW()
+                    WHERE s.season_id = (
+                        SELECT r.season_id
+                        FROM rounds r
+                        WHERE r.round_id = :round_id
+                        LIMIT 1
+                    )
+                    """
+                ),
+                {
+                    "winner_uid": winner_uid,
+                    "winner_score": winner_score,
+                    "winner_repo": winner_repo,
+                    "round_id": round_id,
+                },
+            )
 
     async def _populate_round_summary(
         self,
@@ -515,3 +647,79 @@ class ValidatorStorageSummaryMixin:
                 # Create new record
                 new_summary = ValidatorRoundSummaryORM(validator_round_id=validator_round_id, **summary_data)
                 self.session.add(new_summary)
+
+        # Canonicalize post-consensus metrics across all validators in the same round.
+        # Reward/rank/weight come from consensus payloads and may contain tiny per-validator
+        # drifts; non-reward metrics must be globally consistent for round-level traceability.
+        # We derive a canonical post-consensus view per miner using:
+        # - rank/reward/weight aggregated from post-consensus fields
+        # - eval/time/tasks aggregated from local execution metrics
+        # Then write that same canonical payload to every validator_round_id in this round.
+        await self.session.execute(
+            text(
+                """
+                WITH target_round AS (
+                    SELECT rv.round_id
+                    FROM round_validators rv
+                    WHERE rv.validator_round_id = :validator_round_id
+                    LIMIT 1
+                ),
+                target_validator_rounds AS (
+                    SELECT rv.validator_round_id
+                    FROM round_validators rv
+                    JOIN target_round tr ON tr.round_id = rv.round_id
+                ),
+                canonical_per_miner AS (
+                    SELECT
+                        vrs.miner_uid,
+                        MIN(vrs.post_consensus_rank) FILTER (WHERE vrs.post_consensus_rank IS NOT NULL) AS canonical_rank,
+                        AVG(vrs.post_consensus_avg_reward) FILTER (WHERE vrs.post_consensus_avg_reward IS NOT NULL) AS canonical_reward,
+                        AVG(vrs.weight) FILTER (WHERE vrs.weight IS NOT NULL) AS canonical_weight,
+                        AVG(vrs.local_avg_eval_score) FILTER (WHERE vrs.local_avg_eval_score IS NOT NULL) AS canonical_eval_score,
+                        AVG(vrs.local_avg_eval_time) FILTER (WHERE vrs.local_avg_eval_time IS NOT NULL) AS canonical_eval_time,
+                        SUM(COALESCE(vrs.local_tasks_received, 0))::INTEGER AS canonical_tasks_received,
+                        SUM(COALESCE(vrs.local_tasks_success, 0))::INTEGER AS canonical_tasks_success
+                    FROM validator_round_summary_miners vrs
+                    JOIN target_validator_rounds tvr ON tvr.validator_round_id = vrs.validator_round_id
+                    GROUP BY vrs.miner_uid
+                )
+                UPDATE validator_round_summary_miners vrs
+                SET
+                    post_consensus_rank = COALESCE(cpm.canonical_rank, vrs.post_consensus_rank),
+                    post_consensus_avg_reward = COALESCE(cpm.canonical_reward, vrs.post_consensus_avg_reward),
+                    post_consensus_avg_eval_score = COALESCE(cpm.canonical_eval_score, vrs.post_consensus_avg_eval_score),
+                    post_consensus_avg_eval_time = COALESCE(cpm.canonical_eval_time, vrs.post_consensus_avg_eval_time),
+                    post_consensus_tasks_received = COALESCE(cpm.canonical_tasks_received, vrs.post_consensus_tasks_received),
+                    post_consensus_tasks_success = COALESCE(cpm.canonical_tasks_success, vrs.post_consensus_tasks_success),
+                    weight = COALESCE(cpm.canonical_weight, vrs.weight),
+                    updated_at = NOW()
+                FROM canonical_per_miner cpm
+                WHERE vrs.validator_round_id IN (SELECT validator_round_id FROM target_validator_rounds)
+                  AND vrs.miner_uid = cpm.miner_uid
+                """
+            ),
+            {"validator_round_id": validator_round_id},
+        )
+
+        # Keep effective_* projection materialized in round_validator_miners.
+        # Effective = post-consensus if present, otherwise local.
+        await self.session.execute(
+            text(
+                """
+                UPDATE round_validator_miners rvm
+                SET
+                    effective_rank = COALESCE(rvm.post_consensus_rank, rvm.local_rank),
+                    effective_reward = COALESCE(rvm.post_consensus_avg_reward, rvm.local_avg_reward),
+                    effective_eval_score = COALESCE(rvm.post_consensus_avg_eval_score, rvm.local_avg_eval_score),
+                    effective_eval_time = COALESCE(rvm.post_consensus_avg_eval_time, rvm.local_avg_eval_time),
+                    effective_tasks_received = COALESCE(rvm.post_consensus_tasks_received, rvm.local_tasks_received),
+                    effective_tasks_success = COALESCE(rvm.post_consensus_tasks_success, rvm.local_tasks_success),
+                    effective_eval_cost = COALESCE(rvm.post_consensus_avg_eval_cost, rvm.local_avg_eval_cost),
+                    updated_at = NOW()
+                FROM round_validators rv
+                WHERE rv.round_validator_id = rvm.round_validator_id
+                  AND rv.validator_round_id = :validator_round_id
+                """
+            ),
+            {"validator_round_id": validator_round_id},
+        )

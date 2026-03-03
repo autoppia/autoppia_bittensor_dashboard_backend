@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy import and_, func, literal, select
+from sqlalchemy import and_, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -77,6 +77,40 @@ async def get_validator_details(
                 round_filter = int(parts[1])
         except (ValueError, AttributeError):
             pass  # Ignore invalid format
+
+    # When filtering by round, reused runs may point to source runs from previous rounds.
+    # Collect those source run IDs so the analytics can show inherited evaluations.
+    filtered_round_ids: list[str] = []
+    reused_source_run_ids: list[str] = []
+    if season_filter is not None and round_filter is not None:
+        filtered_round_ids_query = (
+            select(ValidatorRoundORM.validator_round_id)
+            .join(ValidatorRoundValidatorORM, ValidatorRoundORM.validator_round_id == ValidatorRoundValidatorORM.validator_round_id)
+            .where(
+                and_(
+                    ValidatorRoundValidatorORM.validator_uid == uid,
+                    ValidatorRoundORM.season_number == season_filter,
+                    ValidatorRoundORM.round_number_in_season == round_filter,
+                )
+            )
+        )
+        filtered_round_ids_result = await session.execute(filtered_round_ids_query)
+        filtered_round_ids = [str(rid) for (rid,) in filtered_round_ids_result.all() if rid]
+
+        if filtered_round_ids:
+            reused_source_query = (
+                select(AgentEvaluationRunORM.reused_from_agent_run_id)
+                .where(
+                    and_(
+                        AgentEvaluationRunORM.validator_round_id.in_(filtered_round_ids),
+                        AgentEvaluationRunORM.is_reused.is_(True),
+                        AgentEvaluationRunORM.reused_from_agent_run_id.isnot(None),
+                    )
+                )
+                .distinct()
+            )
+            reused_source_result = await session.execute(reused_source_query)
+            reused_source_run_ids = [str(run_id) for (run_id,) in reused_source_result.all() if run_id]
 
     # Get validator information from the most recent validator snapshot
     validator_snapshot_query = (
@@ -188,11 +222,19 @@ async def get_validator_details(
         use_case_normalized = useCase.upper().replace(" ", "_")
         base_evaluations_query = base_evaluations_query.where(func.upper(func.replace(TaskORM.use_case["name"].astext, " ", "_")) == use_case_normalized)
 
-    # Filtro por round
+    # Filtro por round (including reused runs source data when applicable)
     if season_filter is not None and round_filter is not None:
-        base_evaluations_query = base_evaluations_query.join(ValidatorRoundORM, EvaluationORM.validator_round_id == ValidatorRoundORM.validator_round_id).where(
-            and_(ValidatorRoundORM.season_number == season_filter, ValidatorRoundORM.round_number_in_season == round_filter)
-        )
+        round_predicates = []
+        if filtered_round_ids:
+            round_predicates.append(EvaluationORM.validator_round_id.in_(filtered_round_ids))
+        if reused_source_run_ids:
+            round_predicates.append(EvaluationORM.agent_run_id.in_(reused_source_run_ids))
+
+        if round_predicates:
+            base_evaluations_query = base_evaluations_query.where(or_(*round_predicates))
+        else:
+            # No rounds found for this validator/selector -> force empty result
+            base_evaluations_query = base_evaluations_query.where(literal(False))
 
     # Aplicar límite configurable (por defecto 500k)
     base_evaluations_query = base_evaluations_query.limit(limit)
