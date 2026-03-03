@@ -122,6 +122,8 @@ class FinishRoundRequest(BaseModel):
     ipfs_uploaded: Dict[str, Any] | None = None
     ipfs_downloaded: Dict[str, Any] | None = None
     s3_logs: Dict[str, Any] | None = None
+    validator_state: Dict[str, Any] | None = None
+    validator_iwap_prev_round_json: Dict[str, Any] | None = None
 
 
 class ValidatorRoundLogUploadRequest(BaseModel):

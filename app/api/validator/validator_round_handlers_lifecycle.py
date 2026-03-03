@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import Depends, HTTPException, Query, Request, status
+from fastapi import Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 async def start_round(
     payload: StartRoundRequest,
     request: Request,
+    response: Response,
     force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
     session: AsyncSession = Depends(get_session),
 ):
@@ -178,6 +179,31 @@ async def start_round(
                 }
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except RoundConflictError as exc:
+        detail = str(exc)
+        detail_l = detail.lower()
+        authority_guard = "only main validator can open a new season/round before fallback grace elapses" in detail_l or "fallback start denied" in detail_l
+        if authority_guard:
+            # Persist validator-local round start in shadow mode so non-main validators
+            # do not lose round telemetry while canonical round authority stays on main.
+            await service.upsert_shadow_round_start(
+                validator_round=validator_round,
+                validator_snapshot=validator_snapshot,
+            )
+            await session.commit()
+            logger.warning(
+                "start_round accepted in SHADOW mode for validator_round_id=%s (validator_uid=%s): %s",
+                validator_round.validator_round_id,
+                validator_round.validator_uid,
+                detail,
+            )
+            response.status_code = status.HTTP_202_ACCEPTED
+            return {
+                "message": "Validator round accepted in shadow mode",
+                "validator_round_id": validator_round.validator_round_id,
+                "shadow_mode": True,
+                "reason": detail,
+            }
+
         # Si ya existe un round con ese season_number y round_number_in_season para este validator,
         # BORRAR todos los datos del round anterior y crear uno nuevo
         try:
@@ -256,7 +282,7 @@ async def start_round(
                 "message": "Validator round created (replaced existing round)",
                 "validator_round_id": validator_round.validator_round_id,
             }
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -644,6 +670,8 @@ async def finish_round(
             ipfs_uploaded=payload.ipfs_uploaded,
             ipfs_downloaded=payload.ipfs_downloaded,
             s3_logs=payload.s3_logs,
+            validator_state=payload.validator_state,
+            validator_iwap_prev_round_json=payload.validator_iwap_prev_round_json,
         )
         await session.commit()
 

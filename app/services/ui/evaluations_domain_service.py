@@ -170,7 +170,8 @@ class EvaluationsDomainServiceMixin:
         items = []
         for evaluation_row in evaluation_rows:
             try:
-                context = self._build_context(evaluation_row)
+                # Avoid MRO collision with TasksDomainServiceMixin._build_context (async).
+                context = EvaluationsDomainServiceMixin._build_context(self, evaluation_row)
                 item = self._build_list_item(context)
                 items.append(item)
             except Exception as e:
@@ -243,7 +244,8 @@ class EvaluationsDomainServiceMixin:
         evaluation_row = await self.session.scalar(stmt)
         if not evaluation_row:
             raise ValueError(f"Evaluation {evaluation_id} not found")
-        return self._build_context(evaluation_row)
+        # Avoid MRO collision with TasksDomainServiceMixin._build_context (async).
+        return EvaluationsDomainServiceMixin._build_context(self, evaluation_row)
 
     async def update_gif_recording(self, evaluation_id: str, gif_url: str) -> None:
         """Update GIF recording URL for an evaluation, with retry on connection errors."""
@@ -363,7 +365,7 @@ class EvaluationsDomainServiceMixin:
             id=context.task.task_id,
             url=context.task.url,
             prompt=context.task.prompt,
-            scope=context.task.scope,
+            scope=getattr(context.task, "scope", None),
             useCase=self._extract_use_case(context.task),
             useCaseMetadata=(dict(context.task.use_case) if isinstance(context.task.use_case, dict) else {}),
         )

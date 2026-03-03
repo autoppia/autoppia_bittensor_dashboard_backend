@@ -1,4 +1,5 @@
 import base64
+import json
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
@@ -993,6 +994,11 @@ class TasksDomainServiceMixin:
             },
         )
 
+        # Prefer current schema field, keep compatibility with legacy round_number.
+        round_number_value = getattr(context.round, "round_number_in_season", None)
+        if round_number_value is None:
+            round_number_value = getattr(context.round, "round_number", 0)
+
         # Ensure epochs are present for finished rounds even if seeding set them to None
         start_epoch_val = getattr(context.round, "start_epoch", None)
         end_epoch_val = getattr(context.round, "end_epoch", None)
@@ -1000,7 +1006,7 @@ class TasksDomainServiceMixin:
             try:
                 status_lower = str(context.round.status or "").lower()
                 if status_lower in {"completed", "finished", "complete"}:
-                    bounds = compute_boundaries_for_round(int(context.round.round_number or 0))
+                    bounds = compute_boundaries_for_round(int(round_number_value or 0))
                     end_epoch_val = int(bounds.end_epoch)
                     if start_epoch_val is None:
                         start_epoch_val = int(bounds.start_epoch)
@@ -1009,7 +1015,7 @@ class TasksDomainServiceMixin:
 
         round_summary = TaskRoundSummary(
             validatorRoundId=context.round.validator_round_id,
-            roundNumber=context.round.round_number,
+            roundNumber=int(round_number_value or 0),
             status=context.round.status,
             startedAt=_parse_iso(context.round.started_at),
             endedAt=(_parse_iso(context.round.ended_at) if context.round.ended_at else None),
@@ -1060,7 +1066,7 @@ class TasksDomainServiceMixin:
             name=(miner_model.agent_name if miner_model and miner_model.agent_name else _format_agent_id(context.agent_run.miner_uid)),
             github=getattr(miner_model, "github", None) if miner_model else None,
             image=resolve_agent_image(miner_model),
-            isSota=context.agent_run.is_sota,
+            isSota=bool(getattr(context.agent_run, "is_sota", getattr(context.agent_run.miner_info, "is_sota", False))),
         )
 
         started_at_dt = datetime.fromtimestamp(context.agent_run.started_at, tz=timezone.utc)
@@ -1080,18 +1086,36 @@ class TasksDomainServiceMixin:
             evaluation_status = TaskStatus.RUNNING
 
         validator_uid = _get_validator_uid_from_context(context)
+        task_count = getattr(context.agent_run, "n_tasks_total", None)
+        if task_count is None:
+            task_count = getattr(context.agent_run, "total_tasks", None)
+        if task_count is None:
+            task_count = len(getattr(context.agent_run, "task_ids", []) or [])
+
+        completed_tasks = getattr(context.agent_run, "n_tasks_completed", None)
+        if completed_tasks is None:
+            completed_tasks = getattr(context.agent_run, "success_tasks", 0)
+
+        failed_tasks = getattr(context.agent_run, "n_tasks_failed", None)
+        if failed_tasks is None:
+            failed_tasks = getattr(context.agent_run, "failed_tasks", 0)
+
+        average_score = getattr(context.agent_run, "avg_eval_score", None)
+        if average_score is None:
+            average_score = getattr(context.agent_run, "average_score", None)
+
         agent_run_summary = TaskAgentRunSummary(
             agentRunId=context.agent_run.agent_run_id,
             validatorUid=validator_uid,
             minerUid=context.agent_run.miner_uid,
-            isSota=context.agent_run.is_sota,
+            isSota=bool(getattr(context.agent_run, "is_sota", getattr(context.agent_run.miner_info, "is_sota", False))),
             startedAt=started_at_dt,
             endedAt=ended_at_dt,
             duration=duration,
-            taskCount=context.agent_run.n_tasks_total or len(context.agent_run.task_ids or []),
-            completedTasks=context.agent_run.n_tasks_completed,
-            failedTasks=context.agent_run.n_tasks_failed,
-            averageScore=context.agent_run.avg_eval_score,
+            taskCount=int(task_count or 0),
+            completedTasks=int(completed_tasks or 0),
+            failedTasks=int(failed_tasks or 0),
+            averageScore=average_score,
         )
 
         evaluation_summary: Optional[TaskEvaluationSummary] = None
@@ -1182,7 +1206,7 @@ class TasksDomainServiceMixin:
         agent_info = AgentInfo(
             id=_format_agent_id(context.agent_run.miner_uid),
             name=(miner.agent_name if miner and miner.agent_name else _format_agent_id(context.agent_run.miner_uid)),
-            type="sota" if context.agent_run.is_sota else "miner",
+            type="sota" if bool(getattr(context.agent_run, "is_sota", getattr(context.agent_run.miner_info, "is_sota", False))) else "miner",
             image=resolve_agent_image(miner),
             description=miner.description if miner and miner.description else "",
         )
@@ -1546,6 +1570,37 @@ class TasksDomainServiceMixin:
                         timestamp=datetime.fromtimestamp(base_ts + index, tz=timezone.utc),
                         level=LogLevel.INFO,
                         message=str(entry),
+                        metadata={"taskId": context.task.task_id},
+                    )
+                )
+        # Expose LLM prompt/response traces when available in evaluation metadata.
+        llm_calls = None
+        try:
+            llm_calls = (context.evaluation.metadata or {}).get("llm_calls") if context.evaluation else None
+        except Exception:
+            llm_calls = None
+        if isinstance(llm_calls, list) and llm_calls:
+            base_ts = context.agent_run.started_at or context.round.started_at or 0.0
+            base_index = len(logs)
+            for offset, call in enumerate(llm_calls):
+                if not isinstance(call, dict):
+                    continue
+                logs.append(
+                    TaskLog(
+                        timestamp=datetime.fromtimestamp(base_ts + base_index + offset, tz=timezone.utc),
+                        level=LogLevel.INFO,
+                        message=json.dumps(
+                            {
+                                "event": "llm_call",
+                                "provider": call.get("provider"),
+                                "model": call.get("model"),
+                                "tokens": call.get("tokens"),
+                                "cost": call.get("cost"),
+                                "input": call.get("input"),
+                                "output": call.get("output"),
+                            },
+                            ensure_ascii=False,
+                        ),
                         metadata={"taskId": context.task.task_id},
                     )
                 )
@@ -1983,13 +2038,17 @@ class TasksDomainServiceMixin:
         miner_run_id = context.agent_run.agent_run_id
 
         # Build round info
+        round_number_value = getattr(context.round, "round_number_in_season", None)
+        if round_number_value is None:
+            round_number_value = getattr(context.round, "round_number", 0)
+
         start_epoch_val = getattr(context.round, "start_epoch", None)
         end_epoch_val = getattr(context.round, "end_epoch", None)
         if end_epoch_val is None:
             try:
                 status_lower = str(context.round.status or "").lower()
                 if status_lower in {"completed", "finished", "complete"}:
-                    bounds = compute_boundaries_for_round(int(context.round.round_number or 0))
+                    bounds = compute_boundaries_for_round(int(round_number_value or 0))
                     end_epoch_val = int(bounds.end_epoch)
                     if start_epoch_val is None:
                         start_epoch_val = int(bounds.start_epoch)
@@ -1998,7 +2057,7 @@ class TasksDomainServiceMixin:
 
         round_info = {
             "validatorRoundId": context.round.validator_round_id,
-            "roundNumber": context.round.round_number,
+            "roundNumber": int(round_number_value or 0),
             "status": context.round.status,
             "startedAt": _parse_iso(context.round.started_at).isoformat() if context.round.started_at else None,
             "endedAt": _parse_iso(context.round.ended_at).isoformat() if context.round.ended_at else None,
@@ -2050,7 +2109,7 @@ class TasksDomainServiceMixin:
             "name": (miner_model.agent_name if miner_model and miner_model.agent_name else _format_agent_id(context.agent_run.miner_uid)),
             "github": getattr(miner_model, "github", None) if miner_model else None,
             "image": resolve_agent_image(miner_model),
-            "isSota": context.agent_run.is_sota,
+            "isSota": bool(getattr(context.agent_run, "is_sota", getattr(miner_model, "is_sota", False))),
         }
 
         return {

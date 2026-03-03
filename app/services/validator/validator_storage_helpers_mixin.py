@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter
 from typing import Any, Dict, Iterable, List, Optional
@@ -41,6 +42,55 @@ logger = logging.getLogger(__name__)
 
 
 class ValidatorStorageHelpersMixin:
+    async def _close_stale_active_seasons_for_incoming(self, incoming_season_number: int) -> None:
+        """
+        Close older active seasons that no longer have active rounds.
+
+        This prevents false conflicts like:
+        "Cannot start season N: season N-1 is still active"
+        when season N-1 already finished all its rounds but its season row
+        remained active due missing finalize transition.
+        """
+        if incoming_season_number <= 0:
+            return
+        await self.session.execute(
+            text(
+                """
+                WITH stale AS (
+                    SELECT
+                        s.season_id,
+                        s.season_number,
+                        COALESCE(
+                            (
+                                SELECT MAX(r.ended_at)
+                                FROM rounds r
+                                WHERE r.season_id = s.season_id
+                                  AND r.ended_at IS NOT NULL
+                            ),
+                            NOW()
+                        ) AS inferred_end_at
+                    FROM seasons s
+                    WHERE LOWER(COALESCE(s.status, '')) = 'active'
+                      AND s.season_number < :incoming_season_number
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM rounds r
+                          WHERE r.season_id = s.season_id
+                            AND LOWER(COALESCE(r.status, '')) = 'active'
+                      )
+                )
+                UPDATE seasons s
+                SET
+                    status = 'finished',
+                    end_at = COALESCE(s.end_at, stale.inferred_end_at),
+                    updated_at = NOW()
+                FROM stale
+                WHERE s.season_id = stale.season_id
+                """
+            ),
+            {"incoming_season_number": int(incoming_season_number)},
+        )
+
     async def _get_main_validator_cfg(self) -> tuple[Optional[int], str]:
         row = (
             await self.session.execute(
@@ -60,19 +110,23 @@ class ValidatorStorageHelpersMixin:
 
     async def _is_highest_stake_backup(self, validator_uid: int, validator_stake: Optional[float]) -> bool:
         cfg_uid, _ = await self._get_main_validator_cfg()
+        sql_text = """
+            SELECT rv.validator_uid, MAX(COALESCE(rv.stake, 0)) AS max_stake
+            FROM round_validators rv
+            WHERE rv.validator_uid IS NOT NULL
+        """
+        params: dict[str, Any] = {}
+        if cfg_uid is not None:
+            sql_text += "\n  AND rv.validator_uid <> :main_uid"
+            params["main_uid"] = int(cfg_uid)
+        sql_text += """
+            GROUP BY rv.validator_uid
+            ORDER BY MAX(COALESCE(rv.stake, 0)) DESC, rv.validator_uid ASC
+        """
         rows = (
             await self.session.execute(
-                text(
-                    """
-                    SELECT rv.validator_uid, MAX(COALESCE(rv.stake, 0)) AS max_stake
-                    FROM round_validators rv
-                    WHERE rv.validator_uid IS NOT NULL
-                      AND (:main_uid IS NULL OR rv.validator_uid <> :main_uid)
-                    GROUP BY rv.validator_uid
-                    ORDER BY MAX(COALESCE(rv.stake, 0)) DESC, rv.validator_uid ASC
-                    """
-                ),
-                {"main_uid": cfg_uid},
+                text(sql_text),
+                params,
             )
         ).all()
         if not rows:
@@ -218,12 +272,16 @@ class ValidatorStorageHelpersMixin:
         self,
         validator_round: ValidatorRound,
         validator_stake: Optional[float],
+        validator_version: Optional[str] = None,
+        validator_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         is_main = await self._is_main_validator_identity(
             validator_round.validator_uid,
             validator_round.validator_hotkey,
         )
         if is_main:
+            # Reconcile stale previous seasons before validating conflicts.
+            await self._close_stale_active_seasons_for_incoming(int(validator_round.season_number))
             active_season = (
                 await self.session.execute(
                     text(
@@ -321,6 +379,91 @@ class ValidatorStorageHelpersMixin:
         if round_status != "active":
             raise RoundConflictError(
                 f"Cannot attach validator run to a non-active round (season={validator_round.season_number}, round={validator_round.round_number_in_season}, status={round_status or 'unknown'})"
+            )
+        await self._assert_runtime_alignment_with_main(
+            season_number=int(validator_round.season_number),
+            round_number_in_season=int(validator_round.round_number_in_season),
+            validator_uid=int(validator_round.validator_uid),
+            validator_hotkey=(validator_round.validator_hotkey or "").strip() or None,
+            validator_version=validator_version,
+            validator_config=validator_config,
+        )
+
+    @staticmethod
+    def _normalize_runtime_config_for_compare(config: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not isinstance(config, dict) or not config:
+            return None
+        # Remove obvious identity/noise keys that can differ per validator process.
+        ignored_keys = {
+            "validator_uid",
+            "validator_hotkey",
+            "validator_coldkey",
+            "wallet",
+            "hotkey",
+            "coldkey",
+        }
+        cleaned = {k: v for k, v in config.items() if k not in ignored_keys}
+        if not cleaned:
+            return None
+        return json.dumps(cleaned, sort_keys=True, separators=(",", ":"))
+
+    async def _assert_runtime_alignment_with_main(
+        self,
+        *,
+        season_number: int,
+        round_number_in_season: int,
+        validator_uid: int,
+        validator_hotkey: Optional[str],
+        validator_version: Optional[str],
+        validator_config: Optional[Dict[str, Any]],
+    ) -> None:
+        # Only applies to non-main validators once the canonical round is active.
+        is_main = await self._is_main_validator_identity(validator_uid, validator_hotkey)
+        if is_main:
+            return
+
+        row = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT
+                        rv.validator_uid,
+                        rv.validator_hotkey,
+                        rv.version,
+                        rv.config
+                    FROM round_validators rv
+                    WHERE rv.season_number = :season_number
+                      AND rv.round_number_in_season = :round_number_in_season
+                      AND COALESCE(rv.is_main_validator, FALSE) = TRUE
+                    ORDER BY rv.updated_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "season_number": int(season_number),
+                    "round_number_in_season": int(round_number_in_season),
+                },
+            )
+        ).first()
+        if not row:
+            return
+
+        main_uid = int(row[0]) if row[0] is not None else None
+        main_hotkey = (row[1] or "").strip() or None
+        main_version = (row[2] or "").strip() or None
+        main_config = row[3] if isinstance(row[3], dict) else None
+
+        incoming_version = (validator_version or "").strip() or None
+        if main_version and incoming_version and main_version != incoming_version:
+            raise RoundConflictError(
+                f"Validator runtime mismatch with main validator: version mismatch (incoming={incoming_version}, main={main_version}, main_uid={main_uid}, main_hotkey={main_hotkey})"
+            )
+
+        normalized_main_cfg = self._normalize_runtime_config_for_compare(main_config)
+        normalized_incoming_cfg = self._normalize_runtime_config_for_compare(validator_config)
+        if normalized_main_cfg and normalized_incoming_cfg and normalized_main_cfg != normalized_incoming_cfg:
+            raise RoundConflictError(
+                f"Validator runtime mismatch with main validator: config mismatch (season={season_number}, round={round_number_in_season}, main_uid={main_uid}, main_hotkey={main_hotkey})"
             )
 
     async def _assert_finish_round_authority_and_state(
@@ -540,6 +683,68 @@ class ValidatorStorageHelpersMixin:
         round_row: ValidatorRoundORM,
         snapshot: ValidatorRoundMiner,
     ) -> ValidatorRoundMinerORM:
+        # Shadow-mode start can create round_validators with round_id=NULL until canonical
+        # round linking completes. Ensure link exists before writing miner snapshots because
+        # compat layer inserts into round_validator_miners where round_id is NOT NULL.
+        rv_round_id = await self.session.scalar(
+            text(
+                """
+                SELECT round_id
+                FROM round_validators
+                WHERE validator_round_id = :validator_round_id
+                LIMIT 1
+                """
+            ),
+            {"validator_round_id": round_row.validator_round_id},
+        )
+        if rv_round_id is None:
+            await self.session.execute(
+                text(
+                    """
+                    WITH canonical AS (
+                        SELECT r.round_id
+                        FROM rounds r
+                        JOIN seasons s ON s.season_id = r.season_id
+                        WHERE s.season_number = :season_number
+                          AND r.round_number_in_season = :round_number_in_season
+                        LIMIT 1
+                    )
+                    UPDATE round_validators rv
+                    SET
+                        round_id = c.round_id,
+                        pending_round_link = FALSE,
+                        updated_at = NOW()
+                    FROM canonical c
+                    WHERE rv.validator_round_id = :validator_round_id
+                      AND rv.round_id IS NULL
+                    """
+                ),
+                {
+                    "validator_round_id": round_row.validator_round_id,
+                    "season_number": int(round_row.season_number),
+                    "round_number_in_season": int(round_row.round_number_in_season),
+                },
+            )
+            rv_round_id = await self.session.scalar(
+                text(
+                    """
+                    SELECT round_id
+                    FROM round_validators
+                    WHERE validator_round_id = :validator_round_id
+                    LIMIT 1
+                    """
+                ),
+                {"validator_round_id": round_row.validator_round_id},
+            )
+        if rv_round_id is None:
+            # Non-main validators may arrive slightly before the canonical round row is
+            # created/linked. Do not block run persistence; keep miner snapshot writes
+            # and backfill round_id later when canonical linking completes.
+            logger.warning(
+                "Canonical round not linked yet for validator_round_id=%s; persisting miner snapshot with deferred round_id link.",
+                round_row.validator_round_id,
+            )
+
         stmt = select(ValidatorRoundMinerORM).where(
             ValidatorRoundMinerORM.validator_round_id == round_row.validator_round_id,
             ValidatorRoundMinerORM.miner_uid == snapshot.miner_uid,

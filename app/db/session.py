@@ -175,7 +175,14 @@ async def init_db() -> None:
             """
             CREATE TABLE IF NOT EXISTS round_validators (
                 round_validator_id BIGSERIAL PRIMARY KEY,
-                round_id BIGINT NOT NULL REFERENCES rounds(round_id) ON DELETE CASCADE,
+                round_id BIGINT NULL REFERENCES rounds(round_id) ON DELETE CASCADE,
+                season_number INTEGER NULL,
+                round_number_in_season INTEGER NULL,
+                start_block BIGINT NULL,
+                end_block BIGINT NULL,
+                start_epoch INTEGER NULL,
+                end_epoch INTEGER NULL,
+                pending_round_link BOOLEAN NOT NULL DEFAULT FALSE,
                 validator_uid INTEGER NULL,
                 validator_hotkey VARCHAR(128) NULL,
                 validator_coldkey VARCHAR(128) NULL,
@@ -193,6 +200,8 @@ async def init_db() -> None:
                 post_consensus_summary JSONB NULL,
                 ipfs_uploaded JSONB NULL,
                 ipfs_downloaded JSONB NULL,
+                validator_state JSONB NULL,
+                validator_iwap_prev_round_json JSONB NULL,
                 is_main_validator BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -202,7 +211,7 @@ async def init_db() -> None:
             CREATE TABLE IF NOT EXISTS round_validator_miners (
                 id BIGSERIAL PRIMARY KEY,
                 round_validator_id BIGINT NOT NULL REFERENCES round_validators(round_validator_id) ON DELETE CASCADE,
-                round_id BIGINT NOT NULL REFERENCES rounds(round_id) ON DELETE CASCADE,
+                round_id BIGINT REFERENCES rounds(round_id) ON DELETE CASCADE,
                 miner_uid INTEGER NOT NULL,
                 miner_hotkey VARCHAR(128) NULL,
                 miner_coldkey VARCHAR(128) NULL,
@@ -671,6 +680,36 @@ async def init_db() -> None:
         await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_miner_eval_runs_round_validator_id ON miner_evaluation_runs(round_validator_id)"))
 
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS validator_round_id VARCHAR(128)"))
+        await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS validator_state JSONB"))
+        await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS validator_iwap_prev_round_json JSONB"))
+        await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS season_number INTEGER"))
+        await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS round_number_in_season INTEGER"))
+        await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS start_block BIGINT"))
+        await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS end_block BIGINT"))
+        await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS start_epoch INTEGER"))
+        await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS end_epoch INTEGER"))
+        await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS pending_round_link BOOLEAN NOT NULL DEFAULT FALSE"))
+        await conn.execute(text("ALTER TABLE round_validators ALTER COLUMN round_id DROP NOT NULL"))
+        await conn.execute(text("ALTER TABLE round_validator_miners ALTER COLUMN round_id DROP NOT NULL"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_round_validators_season_round ON round_validators(season_number, round_number_in_season)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_round_validators_pending_link ON round_validators(pending_round_link)"))
+        await conn.execute(
+            text(
+                """
+                UPDATE round_validators rv
+                SET
+                    season_number = COALESCE(rv.season_number, s.season_number),
+                    round_number_in_season = COALESCE(rv.round_number_in_season, r.round_number_in_season),
+                    start_block = COALESCE(rv.start_block, r.start_block),
+                    end_block = COALESCE(rv.end_block, r.end_block),
+                    start_epoch = COALESCE(rv.start_epoch, r.start_epoch),
+                    end_epoch = COALESCE(rv.end_epoch, r.end_epoch)
+                FROM rounds r
+                JOIN seasons s ON s.season_id = r.season_id
+                WHERE rv.round_id = r.round_id
+                """
+            )
+        )
         await conn.execute(
             text(
                 """
@@ -723,16 +762,16 @@ async def init_db() -> None:
                 SELECT
                     rv.round_validator_id AS id,
                     rv.validator_round_id::TEXT AS validator_round_id,
-                    s.season_number,
-                    r.round_number_in_season,
-                    r.start_block,
-                    r.end_block,
-                    r.start_epoch::INTEGER AS start_epoch,
-                    r.end_epoch::INTEGER AS end_epoch,
-                    EXTRACT(EPOCH FROM r.started_at)::DOUBLE PRECISION AS started_at,
-                    EXTRACT(EPOCH FROM r.ended_at)::DOUBLE PRECISION AS ended_at,
+                    COALESCE(s.season_number, rv.season_number) AS season_number,
+                    COALESCE(r.round_number_in_season, rv.round_number_in_season) AS round_number_in_season,
+                    COALESCE(r.start_block, rv.start_block, 0) AS start_block,
+                    COALESCE(r.end_block, rv.end_block) AS end_block,
+                    COALESCE(r.start_epoch::INTEGER, rv.start_epoch, 0) AS start_epoch,
+                    COALESCE(r.end_epoch::INTEGER, rv.end_epoch) AS end_epoch,
+                    COALESCE(EXTRACT(EPOCH FROM r.started_at)::DOUBLE PRECISION, EXTRACT(EPOCH FROM rv.started_at)::DOUBLE PRECISION, 0.0) AS started_at,
+                    COALESCE(EXTRACT(EPOCH FROM r.ended_at)::DOUBLE PRECISION, EXTRACT(EPOCH FROM rv.finished_at)::DOUBLE PRECISION) AS ended_at,
                     COALESCE(t.tasks_count, 0) AS n_tasks,
-                    COALESCE(r.status, 'finished')::VARCHAR(32) AS status,
+                    COALESCE(r.status, 'active')::VARCHAR(32) AS status,
                     rv.post_consensus_summary AS validator_summary,
                     NULL::JSONB AS s3_logs,
                     ro.winner_miner_uid AS winner_uid,
@@ -746,8 +785,8 @@ async def init_db() -> None:
                     rv.created_at,
                     rv.updated_at
                 FROM round_validators rv
-                JOIN rounds r ON r.round_id = rv.round_id
-                JOIN seasons s ON s.season_id = r.season_id
+                LEFT JOIN rounds r ON r.round_id = rv.round_id
+                LEFT JOIN seasons s ON s.season_id = r.season_id
                 LEFT JOIN round_outcomes ro ON ro.round_id = r.round_id
                 LEFT JOIN (
                     SELECT tasks.round_validator_id, COUNT(*)::INTEGER AS tasks_count
@@ -1036,11 +1075,15 @@ async def init_db() -> None:
                         LIMIT 1;
                         IF rvid IS NULL THEN
                             INSERT INTO round_validators (
-                                round_id, validator_uid, validator_hotkey, validator_round_id,
+                                round_id, season_number, round_number_in_season,
+                                start_block, end_block, start_epoch, end_epoch,
+                                validator_uid, validator_hotkey, validator_round_id,
                                 started_at, finished_at, post_consensus_summary, post_consensus_json, is_main_validator, created_at, updated_at
                             )
                             VALUES (
-                                rid, 0, NULL, NEW.validator_round_id,
+                                rid, NEW.season_number, NEW.round_number_in_season,
+                                NEW.start_block, NEW.end_block, NEW.start_epoch, NEW.end_epoch,
+                                0, NULL, NEW.validator_round_id,
                                 ts, te, NEW.validator_summary, NEW.validator_summary, FALSE, NOW(), NOW()
                             )
                             RETURNING round_validator_id INTO rvid;
@@ -1048,15 +1091,20 @@ async def init_db() -> None:
                             UPDATE round_validators
                             SET
                                 round_id = rid,
+                                season_number = COALESCE(NEW.season_number, season_number),
+                                round_number_in_season = COALESCE(NEW.round_number_in_season, round_number_in_season),
+                                start_block = COALESCE(NEW.start_block, start_block),
+                                end_block = COALESCE(NEW.end_block, end_block),
+                                start_epoch = COALESCE(NEW.start_epoch, start_epoch),
+                                end_epoch = COALESCE(NEW.end_epoch, end_epoch),
+                                pending_round_link = CASE WHEN rid IS NULL THEN TRUE ELSE FALSE END,
                                 started_at = COALESCE(ts, started_at),
                                 finished_at = COALESCE(te, finished_at),
                                 post_consensus_summary = COALESCE(NEW.validator_summary, post_consensus_summary),
                                 post_consensus_json = COALESCE(NEW.validator_summary, post_consensus_json),
                                 updated_at = NOW()
                             WHERE round_validator_id = rvid;
-                        END IF;
-
-                        NEW.id := rvid;
+                        END IF;                        NEW.id := rvid;
                         RETURN NEW;
                     ELSIF TG_OP = 'UPDATE' THEN
                         ts := CASE WHEN NEW.started_at IS NULL THEN NULL ELSE to_timestamp(NEW.started_at) END;
@@ -1103,6 +1151,14 @@ async def init_db() -> None:
 
                         UPDATE round_validators
                         SET
+                            round_id = COALESCE(rid, round_id),
+                            season_number = COALESCE(NEW.season_number, season_number),
+                            round_number_in_season = COALESCE(NEW.round_number_in_season, round_number_in_season),
+                            start_block = COALESCE(NEW.start_block, start_block),
+                            end_block = COALESCE(NEW.end_block, end_block),
+                            start_epoch = COALESCE(NEW.start_epoch, start_epoch),
+                            end_epoch = COALESCE(NEW.end_epoch, end_epoch),
+                            pending_round_link = CASE WHEN rid IS NULL THEN TRUE ELSE FALSE END,
                             finished_at = COALESCE(te, finished_at),
                             post_consensus_summary = COALESCE(NEW.validator_summary, post_consensus_summary),
                             post_consensus_json = COALESCE(NEW.validator_summary, post_consensus_json),
@@ -1224,9 +1280,7 @@ async def init_db() -> None:
                             config = NEW.config,
                             is_main_validator = COALESCE(is_main, is_main_validator),
                             updated_at = NOW()
-                        WHERE round_validator_id = rvid;
-
-                        UPDATE rounds
+                        WHERE round_validator_id = rvid;                        UPDATE rounds
                         SET
                             opened_by_validator_uid = COALESCE(opened_by_validator_uid, NEW.validator_uid),
                             authority_mode = COALESCE(

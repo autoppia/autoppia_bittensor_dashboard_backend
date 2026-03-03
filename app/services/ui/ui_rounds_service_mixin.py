@@ -62,9 +62,21 @@ class UIRoundsServiceMixin:
                       COALESCE(name, 'miner ' || miner_uid::text) AS name,
                       post_consensus_avg_reward,
                       post_consensus_rank,
-                      effective_reward
+                      effective_reward,
+                      COALESCE(
+                        effective_tasks_received,
+                        post_consensus_tasks_received,
+                        local_tasks_received,
+                        0
+                      ) AS tasks_received
                     FROM round_validator_miners
                     WHERE round_id = :round_id
+                      AND COALESCE(
+                        effective_tasks_received,
+                        post_consensus_tasks_received,
+                        local_tasks_received,
+                        0
+                      ) > 0
                     ORDER BY post_consensus_rank ASC NULLS LAST, post_consensus_avg_reward DESC NULLS LAST
                     """
                     ),
@@ -87,6 +99,7 @@ class UIRoundsServiceMixin:
                     "name": r["name"],
                     "image": f"/miners/{uid % 100}.svg",
                     "post_consensus_avg_reward": score,
+                    "tasks_received": int(r["tasks_received"] or 0),
                     "round_score": score,
                     "best_score_in_season": score,
                     "effective_round_score": float(r["effective_reward"] or score),
@@ -771,7 +784,10 @@ class UIRoundsServiceMixin:
                         SELECT name, miner_hotkey, github_url,
                                post_consensus_avg_reward, post_consensus_avg_eval_score, post_consensus_avg_eval_time
                         FROM round_validator_miners
-                        WHERE round_id=:rid AND miner_uid=:uid
+                        WHERE round_id=:rid
+                          AND miner_uid=:uid
+                          AND name IS NOT NULL
+                          AND github_url IS NOT NULL
                         ORDER BY post_consensus_rank ASC NULLS LAST, post_consensus_avg_reward DESC NULLS LAST
                         LIMIT 1
                         """
@@ -784,7 +800,15 @@ class UIRoundsServiceMixin:
             )
         miners_evaluated = (
             await self.session.execute(
-                text("SELECT COUNT(DISTINCT miner_uid) FROM round_validator_miners WHERE round_id=:rid"),
+                text(
+                    """
+                    SELECT COUNT(DISTINCT miner_uid)
+                    FROM round_validator_miners
+                    WHERE round_id=:rid
+                      AND name IS NOT NULL
+                      AND github_url IS NOT NULL
+                    """
+                ),
                 {"rid": round_id},
             )
         ).scalar_one()
@@ -826,6 +850,8 @@ class UIRoundsServiceMixin:
                           COALESCE(COUNT(DISTINCT miner_uid), 0) AS local_miners
                         FROM round_validator_miners
                         WHERE round_validator_id=:rvid
+                          AND name IS NOT NULL
+                          AND github_url IS NOT NULL
                         """
                         ),
                         {"rvid": rvid},
@@ -848,6 +874,8 @@ class UIRoundsServiceMixin:
                         SELECT miner_uid, name, miner_hotkey
                         FROM round_validator_miners
                         WHERE round_validator_id=:rvid
+                          AND name IS NOT NULL
+                          AND github_url IS NOT NULL
                         ORDER BY local_rank ASC NULLS LAST, local_avg_reward DESC NULLS LAST
                         LIMIT 1
                         """
@@ -866,6 +894,8 @@ class UIRoundsServiceMixin:
                         SELECT miner_uid, name, miner_hotkey, local_rank, local_avg_reward, local_avg_eval_score, local_avg_eval_time
                         FROM round_validator_miners
                         WHERE round_validator_id=:rvid
+                          AND name IS NOT NULL
+                          AND github_url IS NOT NULL
                         ORDER BY local_rank ASC NULLS LAST, local_avg_reward DESC NULLS LAST
                         """
                         ),
@@ -910,8 +940,11 @@ class UIRoundsServiceMixin:
                     ],
                     "ipfs_uploaded": vr["ipfs_uploaded"],
                     "ipfs_downloaded": vr["ipfs_downloaded"],
+                    # Keep both key families for UI compatibility.
                     "consensus_summary": vr["local_summary_json"],
                     "post_consensus_evaluation": vr["post_consensus_json"],
+                    "evaluation_pre_consensus": vr["local_summary_json"],
+                    "evaluation_post_consensus": vr["post_consensus_json"],
                 }
             )
 

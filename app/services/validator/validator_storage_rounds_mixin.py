@@ -15,12 +15,224 @@ from app.db.models import (
     ValidatorRoundValidatorORM,
 )
 from app.models.core import AgentEvaluationRun, ValidatorRound, ValidatorRoundMiner, ValidatorRoundSubmissionRequest, ValidatorRoundValidator
-from app.services.validator.validator_storage_common import DuplicateIdentifierError, PersistenceResult
+from app.services.validator.validator_storage_common import DuplicateIdentifierError, PersistenceResult, RoundConflictError
 
 logger = logging.getLogger(__name__)
 
 
 class ValidatorStorageRoundsMixin:
+    async def upsert_shadow_round_start(
+        self,
+        *,
+        validator_round: ValidatorRound,
+        validator_snapshot: ValidatorRoundValidator,
+    ) -> None:
+        """
+        Persist a non-authoritative validator round "shadow" record.
+
+        This path is used when a non-main validator is blocked by main-validator
+        authority/grace to open the canonical round. We still store validator-local
+        round state so it can later be linked to the canonical round row.
+        """
+        started_at_sql = "to_timestamp(:started_at)" if validator_round.started_at else "NULL"
+        await self.session.execute(
+            text(
+                f"""
+                INSERT INTO round_validators (
+                    round_id,
+                    season_number,
+                    round_number_in_season,
+                    start_block,
+                    end_block,
+                    start_epoch,
+                    end_epoch,
+                    pending_round_link,
+                    is_main_validator,
+                    validator_uid,
+                    validator_hotkey,
+                    validator_coldkey,
+                    validator_round_id,
+                    name,
+                    image_url,
+                    version,
+                    stake,
+                    vtrust,
+                    config,
+                    started_at,
+                    updated_at
+                )
+                VALUES (
+                    NULL,
+                    :season_number,
+                    :round_number_in_season,
+                    :start_block,
+                    :end_block,
+                    :start_epoch,
+                    :end_epoch,
+                    TRUE,
+                    FALSE,
+                    :validator_uid,
+                    :validator_hotkey,
+                    :validator_coldkey,
+                    :validator_round_id,
+                    :name,
+                    :image_url,
+                    :version,
+                    :stake,
+                    :vtrust,
+                    CAST(:config AS JSONB),
+                    {started_at_sql},
+                    NOW()
+                )
+                ON CONFLICT (validator_round_id) DO UPDATE SET
+                    season_number = COALESCE(EXCLUDED.season_number, round_validators.season_number),
+                    round_number_in_season = COALESCE(EXCLUDED.round_number_in_season, round_validators.round_number_in_season),
+                    start_block = COALESCE(EXCLUDED.start_block, round_validators.start_block),
+                    end_block = COALESCE(EXCLUDED.end_block, round_validators.end_block),
+                    start_epoch = COALESCE(EXCLUDED.start_epoch, round_validators.start_epoch),
+                    end_epoch = COALESCE(EXCLUDED.end_epoch, round_validators.end_epoch),
+                    pending_round_link = CASE
+                        WHEN round_validators.round_id IS NULL THEN TRUE
+                        ELSE round_validators.pending_round_link
+                    END,
+                    validator_uid = COALESCE(EXCLUDED.validator_uid, round_validators.validator_uid),
+                    validator_hotkey = COALESCE(EXCLUDED.validator_hotkey, round_validators.validator_hotkey),
+                    validator_coldkey = COALESCE(EXCLUDED.validator_coldkey, round_validators.validator_coldkey),
+                    name = COALESCE(EXCLUDED.name, round_validators.name),
+                    image_url = COALESCE(EXCLUDED.image_url, round_validators.image_url),
+                    version = COALESCE(EXCLUDED.version, round_validators.version),
+                    stake = COALESCE(EXCLUDED.stake, round_validators.stake),
+                    vtrust = COALESCE(EXCLUDED.vtrust, round_validators.vtrust),
+                    config = COALESCE(EXCLUDED.config, round_validators.config),
+                    started_at = COALESCE(EXCLUDED.started_at, round_validators.started_at),
+                    updated_at = NOW()
+                """
+            ),
+            {
+                "season_number": int(validator_round.season_number),
+                "round_number_in_season": int(validator_round.round_number_in_season),
+                "start_block": int(getattr(validator_round, "start_block", 0) or 0),
+                "end_block": int(getattr(validator_round, "end_block", 0) or 0) if getattr(validator_round, "end_block", None) is not None else None,
+                "start_epoch": int(getattr(validator_round, "start_epoch", 0) or 0),
+                "end_epoch": int(getattr(validator_round, "end_epoch", 0) or 0) if getattr(validator_round, "end_epoch", None) is not None else None,
+                "validator_uid": int(validator_snapshot.validator_uid),
+                "validator_hotkey": validator_snapshot.validator_hotkey,
+                "validator_coldkey": validator_snapshot.validator_coldkey,
+                "validator_round_id": validator_round.validator_round_id,
+                "name": validator_snapshot.name,
+                "image_url": validator_snapshot.image_url,
+                "version": validator_snapshot.version,
+                "stake": validator_snapshot.stake,
+                "vtrust": validator_snapshot.vtrust,
+                "config": json.dumps(validator_snapshot.config) if validator_snapshot.config is not None else None,
+                "started_at": float(validator_round.started_at) if validator_round.started_at is not None else None,
+            },
+        )
+
+    async def _link_pending_shadow_round_validators(
+        self,
+        *,
+        season_number: int,
+        round_number_in_season: int,
+    ) -> None:
+        """
+        Link shadow round_validators rows (round_id IS NULL) to canonical round_id
+        once the canonical round exists.
+        """
+        await self.session.execute(
+            text(
+                """
+                WITH canonical AS (
+                    SELECT r.round_id, r.start_block, r.end_block, r.start_epoch, r.end_epoch
+                    FROM rounds r
+                    JOIN seasons s ON s.season_id = r.season_id
+                    WHERE s.season_number = :season_number
+                      AND r.round_number_in_season = :round_number_in_season
+                    LIMIT 1
+                )
+                UPDATE round_validators rv
+                SET
+                    round_id = c.round_id,
+                    pending_round_link = FALSE,
+                    start_block = COALESCE(rv.start_block, c.start_block),
+                    end_block = COALESCE(rv.end_block, c.end_block),
+                    start_epoch = COALESCE(rv.start_epoch, c.start_epoch),
+                    end_epoch = COALESCE(rv.end_epoch, c.end_epoch),
+                    updated_at = NOW()
+                FROM canonical c
+                WHERE rv.round_id IS NULL
+                  AND COALESCE(rv.pending_round_link, FALSE) = TRUE
+                  AND rv.season_number = :season_number
+                  AND rv.round_number_in_season = :round_number_in_season
+                """
+            ),
+            {
+                "season_number": int(season_number),
+                "round_number_in_season": int(round_number_in_season),
+            },
+        )
+        # Backfill per-miner rows that were persisted before canonical linking.
+        await self.session.execute(
+            text(
+                """
+                UPDATE round_validator_miners rvm
+                SET
+                    round_id = rv.round_id,
+                    updated_at = NOW()
+                FROM round_validators rv
+                WHERE rv.round_validator_id = rvm.round_validator_id
+                  AND rv.round_id IS NOT NULL
+                  AND rvm.round_id IS NULL
+                  AND rv.season_number = :season_number
+                  AND rv.round_number_in_season = :round_number_in_season
+                """
+            ),
+            {
+                "season_number": int(season_number),
+                "round_number_in_season": int(round_number_in_season),
+            },
+        )
+
+    async def _sync_round_validator_miner_reuse_flags(
+        self,
+        *,
+        validator_round_id: str,
+        miner_uid: Optional[int] = None,
+    ) -> None:
+        """Keep round_validator_miners reuse flags aligned with miner_evaluation_runs."""
+        sql_base = """
+            UPDATE round_validator_miners rvm
+            SET
+                is_reused = COALESCE(mer.is_reused, FALSE),
+                reused_from_agent_run_id = CASE
+                    WHEN COALESCE(mer.is_reused, FALSE) THEN mer.reused_from_agent_run_id
+                    ELSE NULL
+                END,
+                reused_from_round_id = CASE
+                    WHEN COALESCE(mer.is_reused, FALSE) AND mer.reused_from_agent_run_id IS NOT NULL THEN (
+                        SELECT rv_src.round_id
+                        FROM miner_evaluation_runs mer_src
+                        JOIN round_validators rv_src
+                            ON rv_src.validator_round_id = mer_src.validator_round_id
+                        WHERE mer_src.agent_run_id = mer.reused_from_agent_run_id
+                        LIMIT 1
+                    )
+                    ELSE NULL
+                END,
+                updated_at = NOW()
+            FROM round_validators rv, miner_evaluation_runs mer
+            WHERE rv.round_validator_id = rvm.round_validator_id
+              AND rv.validator_round_id = :validator_round_id
+              AND mer.validator_round_id = rv.validator_round_id
+              AND mer.miner_uid = rvm.miner_uid
+        """
+        params: Dict[str, Any] = {"validator_round_id": validator_round_id}
+        if miner_uid is not None:
+            sql_base += "\n  AND rvm.miner_uid = :miner_uid\n"
+            params["miner_uid"] = int(miner_uid)
+
+        await self.session.execute(text(sql_base), params)
+
     async def start_round(
         self,
         *,
@@ -31,6 +243,8 @@ class ValidatorStorageRoundsMixin:
         await self._assert_start_round_authority_and_state(
             validator_round,
             validator_snapshot.stake,
+            validator_snapshot.version,
+            validator_snapshot.config,
         )
         # Check for existing round with same season and round_in_season for this validator
         await self._purge_round_for_validator_season_and_round(validator_round.validator_uid, validator_round.season_number, validator_round.round_number_in_season)
@@ -65,6 +279,10 @@ class ValidatorStorageRoundsMixin:
             pass
 
         await self._upsert_validator_snapshot(round_row, validator_snapshot)
+        await self._link_pending_shadow_round_validators(
+            season_number=int(validator_round.season_number),
+            round_number_in_season=int(validator_round.round_number_in_season),
+        )
 
         return round_row
 
@@ -116,6 +334,22 @@ class ValidatorStorageRoundsMixin:
         await self._upsert_miner_snapshot(round_row, miner_snapshot)
 
         kwargs = self._agent_run_kwargs(agent_run)
+        resolved_reuse_source = None
+        requested_reuse_id = kwargs.get("reused_from_agent_run_id")
+        if kwargs.get("is_reused") and requested_reuse_id:
+            resolved_reuse_source = await self._resolve_reused_source_run(str(requested_reuse_id))
+            if resolved_reuse_source is None:
+                logger.warning(
+                    "start_agent_run: reused_from_agent_run_id=%s not found for validator_round_id=%s miner_uid=%s; downgrading to non-reused run to avoid FK failure.",
+                    requested_reuse_id,
+                    validator_round_id,
+                    kwargs.get("miner_uid"),
+                )
+                kwargs["is_reused"] = False
+                kwargs["reused_from_agent_run_id"] = None
+            else:
+                # Canonicalize chain reuse to the original source run id.
+                kwargs["reused_from_agent_run_id"] = resolved_reuse_source.agent_run_id
 
         row = AgentEvaluationRunORM(**kwargs)
         self.session.add(row)
@@ -123,10 +357,10 @@ class ValidatorStorageRoundsMixin:
 
         # Reused runs: copy result metrics from source at creation time (instant, no evaluation).
         # Do NOT copy ended_at/elapsed_sec: reused = 0s "evaluation" time (we didn't run anything).
-        is_reused = getattr(agent_run, "is_reused", False)
-        reused_from_id = getattr(agent_run, "reused_from_agent_run_id", None)
+        is_reused = bool(kwargs.get("is_reused"))
+        reused_from_id = kwargs.get("reused_from_agent_run_id")
         if is_reused and reused_from_id:
-            source = await self._resolve_reused_source_run(reused_from_id)
+            source = resolved_reuse_source or await self._resolve_reused_source_run(str(reused_from_id))
             if source:
                 # Always anchor reused runs to the original source run.
                 row.reused_from_agent_run_id = source.agent_run_id
@@ -154,6 +388,13 @@ class ValidatorStorageRoundsMixin:
                     row.agent_run_id,
                 )
 
+        # Keep round-level miner reuse flags in sync for UI/analytics consistency.
+        if row.miner_uid is not None:
+            await self._sync_round_validator_miner_reuse_flags(
+                validator_round_id=validator_round_id,
+                miner_uid=int(row.miner_uid),
+            )
+
         return row
 
     async def finish_round(
@@ -170,17 +411,33 @@ class ValidatorStorageRoundsMixin:
         ipfs_uploaded: Optional[Dict[str, Any]] = None,
         ipfs_downloaded: Optional[Dict[str, Any]] = None,
         s3_logs: Optional[Dict[str, Any]] = None,
+        validator_state: Optional[Dict[str, Any]] = None,
+        validator_iwap_prev_round_json: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Mark a validator round as completed."""
         round_row = await self._ensure_round_exists(validator_round_id)
+        authoritative_finish = True
+        authority_conflict_reason: Optional[str] = None
         snapshot = getattr(round_row, "validator_snapshot", None)
         if snapshot is not None:
-            await self._assert_finish_round_authority_and_state(
-                round_row,
-                int(snapshot.validator_uid),
-                snapshot.validator_hotkey,
-                snapshot.stake,
-            )
+            try:
+                await self._assert_finish_round_authority_and_state(
+                    round_row,
+                    int(snapshot.validator_uid),
+                    snapshot.validator_hotkey,
+                    snapshot.stake,
+                )
+            except RoundConflictError as exc:
+                # Important: a non-main validator may be disallowed to close the GLOBAL round
+                # during main-validator grace windows, but it should still be able to persist
+                # its own validator_round artifacts (logs, summaries, run states).
+                authoritative_finish = False
+                authority_conflict_reason = str(exc)
+                logger.warning(
+                    "finish_round non-authoritative for validator_round_id=%s: %s. Persisting validator-local data only.",
+                    validator_round_id,
+                    authority_conflict_reason,
+                )
 
         # If round metadata was provided by the validator, persist boundary fields.
         # This is the only place end_block/end_epoch are communicated back to the backend.
@@ -286,14 +543,24 @@ class ValidatorStorageRoundsMixin:
             round_with_emission = {"emission": emission_info}
 
         vs = validator_summary or {}
+        # IMPORTANT: keep local and post-consensus summaries fully separated.
+        # Local comes strictly from local_evaluation payload; post comes strictly
+        # from post_consensus_evaluation payload. Do not cross-populate.
+        local_summary_payload = local_evaluation.get("summary") if isinstance(local_evaluation, dict) else None
+        post_summary_payload = post_consensus_evaluation.get("summary") if isinstance(post_consensus_evaluation, dict) else None
+
         merged = {
             "round": round_with_emission or vs.get("round"),
             "s3_logs": s3_logs if s3_logs is not None else vs.get("s3_logs"),
             "ipfs_uploaded": ipfs_uploaded or vs.get("ipfs_uploaded"),
             "ipfs_downloaded": ipfs_downloaded or vs.get("ipfs_downloaded"),
-            "evaluation_pre_consensus": vs.get("evaluation_pre_consensus") or (local_evaluation.get("summary") if isinstance(local_evaluation, dict) else None),
-            "evaluation_post_consensus": vs.get("evaluation_post_consensus") or (post_consensus_evaluation.get("summary") if isinstance(post_consensus_evaluation, dict) else None),
+            "evaluation_pre_consensus": local_summary_payload if local_summary_payload is not None else vs.get("evaluation_pre_consensus"),
+            "evaluation_post_consensus": post_summary_payload if post_summary_payload is not None else vs.get("evaluation_post_consensus"),
             "handshake_results": vs.get("handshake_results"),
+        }
+        merged["finish_authority"] = {
+            "authoritative": authoritative_finish,
+            "reason": authority_conflict_reason,
         }
 
         # Normalize consensus summaries for stable UI/API shape
@@ -336,11 +603,6 @@ class ValidatorStorageRoundsMixin:
             pre_summary["season_summary"] = season_summary
             merged["evaluation_pre_consensus"] = pre_summary
 
-        # When backend has no explicit post-consensus payload (e.g. single validator
-        # or no evaluated miners), preserve a stable shape by mirroring pre-consensus.
-        if merged.get("evaluation_post_consensus") is None and isinstance(merged.get("evaluation_pre_consensus"), dict):
-            merged["evaluation_post_consensus"] = dict(merged["evaluation_pre_consensus"])
-
         post_summary = merged.get("evaluation_post_consensus")
         if isinstance(post_summary, dict):
             # Remove noisy internal key from post-consensus summary shown in UI payloads.
@@ -366,6 +628,8 @@ class ValidatorStorageRoundsMixin:
                         post_consensus_summary = COALESCE(CAST(:post_consensus_json AS JSONB), post_consensus_summary),
                         ipfs_uploaded = COALESCE(CAST(:ipfs_uploaded AS JSONB), ipfs_uploaded),
                         ipfs_downloaded = COALESCE(CAST(:ipfs_downloaded AS JSONB), ipfs_downloaded),
+                        validator_state = COALESCE(CAST(:validator_state AS JSONB), validator_state),
+                        validator_iwap_prev_round_json = COALESCE(CAST(:validator_iwap_prev_round_json AS JSONB), validator_iwap_prev_round_json),
                         updated_at = NOW()
                     WHERE validator_round_id = :validator_round_id
                     """
@@ -376,6 +640,8 @@ class ValidatorStorageRoundsMixin:
                     "post_consensus_json": json.dumps(post_summary_json) if post_summary_json is not None else None,
                     "ipfs_uploaded": json.dumps(merged.get("ipfs_uploaded")) if merged.get("ipfs_uploaded") is not None else None,
                     "ipfs_downloaded": json.dumps(merged.get("ipfs_downloaded")) if merged.get("ipfs_downloaded") is not None else None,
+                    "validator_state": json.dumps(validator_state) if validator_state is not None else None,
+                    "validator_iwap_prev_round_json": json.dumps(validator_iwap_prev_round_json) if validator_iwap_prev_round_json is not None else None,
                 },
             )
         except Exception:
@@ -535,6 +801,18 @@ class ValidatorStorageRoundsMixin:
                         reused_row.agent_run_id,
                     )
 
+        canonical_round_id = await self.session.scalar(
+            text("SELECT round_id FROM round_validators WHERE validator_round_id = :validator_round_id LIMIT 1"),
+            {"validator_round_id": validator_round_id},
+        )
+        is_shadow_only_round = canonical_round_id is None
+        if is_shadow_only_round:
+            logger.info(
+                "finish_round: shadow-only validator_round_id=%s (no canonical round_id yet); skipping round_summary/round_outcomes materialization and keeping validator-local JSON persisted.",
+                validator_round_id,
+            )
+            return
+
         # Populate validator_round_summary_miners table
         await self._populate_round_summary(
             validator_round_id=validator_round_id,
@@ -542,15 +820,25 @@ class ValidatorStorageRoundsMixin:
             post_consensus_evaluation=post_consensus_evaluation,
             subnet_price=alpha_price,
         )
+        # Ensure summary rows carry reuse provenance from agent runs.
+        await self._sync_round_validator_miner_reuse_flags(
+            validator_round_id=validator_round_id,
+        )
         await self._enrich_validator_summary_post_consensus_from_db(round_row)
         try:
             await self._sync_round_validators_post_consensus_json(round_row)
         except Exception:
             logger.exception("finish_round: failed to sync enriched post-consensus summary into round_validators")
-        try:
-            await self._upsert_round_outcome_from_summary(round_row)
-        except Exception:
-            logger.exception("finish_round: failed to upsert round_outcomes from summary tables")
+        if authoritative_finish:
+            try:
+                await self._upsert_round_outcome_from_summary(round_row)
+            except Exception:
+                logger.exception("finish_round: failed to upsert round_outcomes from summary tables")
+        else:
+            logger.info(
+                "finish_round: skipped round_outcomes upsert for non-authoritative validator_round_id=%s",
+                validator_round_id,
+            )
 
     async def submit_round(self, payload: ValidatorRoundSubmissionRequest) -> PersistenceResult:
         """Persist the entire round submission payload."""
