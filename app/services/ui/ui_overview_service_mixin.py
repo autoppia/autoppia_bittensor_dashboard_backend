@@ -158,11 +158,14 @@ class UIOverviewServiceMixin:
                         """
                     SELECT rv.round_validator_id, rv.validator_uid, rv.validator_hotkey, rv.name, rv.image_url,
                            rv.version, rv.stake, rv.vtrust, rv.started_at, rv.finished_at,
-                           rr.round_number_in_season, s.season_number
+                           rr.round_number_in_season, s.season_number, rr.status AS round_status
                     FROM round_validators rv
                     JOIN rounds rr ON rr.round_id = rv.round_id
                     JOIN seasons s ON s.season_id = rr.season_id
-                    ORDER BY rv.finished_at DESC NULLS LAST, rv.started_at DESC NULLS LAST
+                    ORDER BY
+                        CASE WHEN lower(coalesce(rr.status,''))='active' THEN 0 ELSE 1 END,
+                        rv.started_at DESC NULLS LAST,
+                        rv.finished_at DESC NULLS LAST
                     """
                     )
                 )
@@ -181,16 +184,47 @@ class UIOverviewServiceMixin:
                     {"rvid": int(r["round_validator_id"])},
                 )
             ).scalar_one()
+
+            task_ctx = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT web_project_id, use_case
+                            FROM tasks
+                            WHERE round_validator_id=:rvid
+                            ORDER BY id DESC
+                            LIMIT 1
+                            """
+                        ),
+                        {"rvid": int(r["round_validator_id"])},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            website = None
+            use_case = None
+            if task_ctx:
+                website = task_ctx.get("web_project_id")
+                uc = task_ctx.get("use_case")
+                if isinstance(uc, dict):
+                    use_case = uc.get("name") or uc.get("event")
+            round_status = str(r.get("round_status") or "").lower()
+            is_active = round_status == "active"
+            status_label = "Evaluating" if is_active else "Waiting"
+            current_task = f"Round {int(r['round_number_in_season'])}" if is_active else "Idle"
+
             item = {
                 "id": f"validator-{uid}",
                 "validatorUid": uid,
                 "name": r["name"] or f"Validator {uid}",
                 "hotkey": r["validator_hotkey"] or "",
                 "icon": r["image_url"] or "/validators/Other.png",
-                "currentTask": "Idle",
-                "currentWebsite": None,
-                "currentUseCase": None,
-                "status": "Waiting",
+                "currentTask": current_task,
+                "currentWebsite": website,
+                "currentUseCase": use_case,
+                "status": status_label,
                 "totalTasks": int(total_tasks or 0),
                 "weight": 1.0,
                 "trust": float(r["vtrust"] or 0.0),

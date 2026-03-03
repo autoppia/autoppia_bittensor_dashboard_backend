@@ -943,7 +943,6 @@ async def init_db() -> None:
                 """
             )
         )
-
         await conn.execute(
             text(
                 """
