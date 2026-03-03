@@ -33,7 +33,7 @@ async def _service(session: AsyncSession) -> UIDataService:
 
 
 @router.get("")
-@cache("agent_runs_list_v3", ttl=600)
+@cache("agent_runs_list_v5", ttl=600)
 async def list_agent_runs(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),
@@ -45,6 +45,7 @@ async def list_agent_runs(
     status: Optional[str] = Query(None),
     startDate: Optional[datetime] = Query(None),
     endDate: Optional[datetime] = Query(None),
+    includeUnfinished: bool = Query(False, description="Include runs from active/non-finalized rounds"),
     sortBy: str = Query("startTime"),
     sortOrder: str = Query("desc"),
 ) -> AgentRunsListResponse:
@@ -59,6 +60,7 @@ async def list_agent_runs(
         status=status,
         start_date=startDate,
         end_date=endDate,
+        include_unfinished=includeUnfinished,
         sort_by=sortBy,
         sort_order=sortOrder,
     )

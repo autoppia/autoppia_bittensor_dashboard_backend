@@ -886,12 +886,13 @@ class ValidatorStorageHelpersMixin:
         except Exception:
             reward_val = 0.0
 
-        # Enforce minimum reward when evaluation_score > 0: at least EVAL_SCORE_WEIGHT
-        # If evaluation_score == 0, reward must be 0
+        # Preserve reward provided by validator (it already includes score/time/cost shaping).
+        # Only fall back to EVAL_SCORE_WEIGHT when reward is missing/invalid for solved tasks.
+        # If evaluation_score == 0, reward must be 0.
         if eval_score_val > 0.0:
             eval_score_weight = float(settings.EVAL_SCORE_WEIGHT)
-
-            reward_val = max(reward_val, eval_score_weight)
+            if reward_val <= 0.0:
+                reward_val = eval_score_weight
         else:
             reward_val = 0.0
 

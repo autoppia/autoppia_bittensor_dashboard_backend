@@ -782,13 +782,15 @@ class UIRoundsServiceMixin:
                         text(
                             """
                         SELECT name, miner_hotkey, github_url,
-                               post_consensus_avg_reward, post_consensus_avg_eval_score, post_consensus_avg_eval_time
+                               post_consensus_avg_reward, post_consensus_avg_eval_score, post_consensus_avg_eval_time,
+                               effective_reward, effective_eval_score, effective_eval_time
                         FROM round_validator_miners
                         WHERE round_id=:rid
                           AND miner_uid=:uid
                           AND name IS NOT NULL
                           AND github_url IS NOT NULL
-                        ORDER BY post_consensus_rank ASC NULLS LAST, post_consensus_avg_reward DESC NULLS LAST
+                        ORDER BY COALESCE(effective_rank, post_consensus_rank) ASC NULLS LAST,
+                                 COALESCE(effective_reward, post_consensus_avg_reward) DESC NULLS LAST
                         LIMIT 1
                         """
                         ),
@@ -845,8 +847,8 @@ class UIRoundsServiceMixin:
                         text(
                             """
                         SELECT
-                          COALESCE(MAX(local_avg_reward), 0) AS local_top_reward,
-                          COALESCE(AVG(local_avg_eval_time), 0) AS local_avg_eval_time,
+                          COALESCE(MAX(COALESCE(effective_reward, local_avg_reward)), 0) AS local_top_reward,
+                          COALESCE(AVG(COALESCE(effective_eval_time, local_avg_eval_time)), 0) AS local_avg_eval_time,
                           COALESCE(COUNT(DISTINCT miner_uid), 0) AS local_miners
                         FROM round_validator_miners
                         WHERE round_validator_id=:rvid
@@ -876,7 +878,8 @@ class UIRoundsServiceMixin:
                         WHERE round_validator_id=:rvid
                           AND name IS NOT NULL
                           AND github_url IS NOT NULL
-                        ORDER BY local_rank ASC NULLS LAST, local_avg_reward DESC NULLS LAST
+                        ORDER BY COALESCE(effective_rank, local_rank) ASC NULLS LAST,
+                                 COALESCE(effective_reward, local_avg_reward) DESC NULLS LAST
                         LIMIT 1
                         """
                         ),
@@ -891,12 +894,14 @@ class UIRoundsServiceMixin:
                     await self.session.execute(
                         text(
                             """
-                        SELECT miner_uid, name, miner_hotkey, local_rank, local_avg_reward, local_avg_eval_score, local_avg_eval_time
+                        SELECT miner_uid, name, miner_hotkey, local_rank, local_avg_reward, local_avg_eval_score, local_avg_eval_time,
+                               effective_rank, effective_reward, effective_eval_score, effective_eval_time
                         FROM round_validator_miners
                         WHERE round_validator_id=:rvid
                           AND name IS NOT NULL
                           AND github_url IS NOT NULL
-                        ORDER BY local_rank ASC NULLS LAST, local_avg_reward DESC NULLS LAST
+                        ORDER BY COALESCE(effective_rank, local_rank) ASC NULLS LAST,
+                                 COALESCE(effective_reward, local_avg_reward) DESC NULLS LAST
                         """
                         ),
                         {"rvid": rvid},
@@ -931,10 +936,10 @@ class UIRoundsServiceMixin:
                             "name": m["name"] or f"miner {int(m['miner_uid'])}",
                             "hotkey": m["miner_hotkey"],
                             "image": f"/miners/{int(m['miner_uid']) % 100}.svg",
-                            "local_rank": int(m["local_rank"]) if m["local_rank"] is not None else None,
-                            "local_avg_reward": float(m["local_avg_reward"] or 0.0),
-                            "local_avg_eval_score": float(m["local_avg_eval_score"] or 0.0),
-                            "local_avg_eval_time": float(m["local_avg_eval_time"] or 0.0),
+                            "local_rank": int(m["effective_rank"] or m["local_rank"]) if (m["effective_rank"] is not None or m["local_rank"] is not None) else None,
+                            "local_avg_reward": float(m["effective_reward"] or m["local_avg_reward"] or 0.0),
+                            "local_avg_eval_score": float(m["effective_eval_score"] or m["local_avg_eval_score"] or 0.0),
+                            "local_avg_eval_time": float(m["effective_eval_time"] or m["local_avg_eval_time"] or 0.0),
                         }
                         for m in local_miners
                     ],
@@ -960,9 +965,9 @@ class UIRoundsServiceMixin:
                         "image": f"/miners/{winner_uid % 100}.svg",
                         "hotkey": winner_row["miner_hotkey"] if winner_row else None,
                         "github_url": winner_row["github_url"] if winner_row else None,
-                        "avg_reward": float(winner_row["post_consensus_avg_reward"] or 0.0) if winner_row else float(outcome["winner_score"] or 0.0),
-                        "avg_eval_score": float(winner_row["post_consensus_avg_eval_score"] or 0.0) if winner_row else 0.0,
-                        "avg_eval_time": float(winner_row["post_consensus_avg_eval_time"] or 0.0) if winner_row else 0.0,
+                        "avg_reward": float(winner_row["effective_reward"] or winner_row["post_consensus_avg_reward"] or 0.0) if winner_row else float(outcome["winner_score"] or 0.0),
+                        "avg_eval_score": float(winner_row["effective_eval_score"] or winner_row["post_consensus_avg_eval_score"] or 0.0) if winner_row else 0.0,
+                        "avg_eval_time": float(winner_row["effective_eval_time"] or winner_row["post_consensus_avg_eval_time"] or 0.0) if winner_row else 0.0,
                     }
                     if winner_uid is not None
                     else None

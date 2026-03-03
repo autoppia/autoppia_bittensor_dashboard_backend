@@ -115,10 +115,14 @@ class AgentRun(BaseModel):
     score: float
     ranking: int
     duration: int
-    overallScore: int
+    overallScore: float
     averageEvaluationTime: Optional[float] = Field(
         default=None,
         description="Average evaluation duration recorded for the run (seconds)",
+    )
+    avgCostPerTask: Optional[float] = Field(
+        default=None,
+        description="Average LLM cost per evaluated task (USD)",
     )
     totalWebsites: int = Field(default=0, description="Total number of unique websites in this run")
     websites: List[Website] = Field(default_factory=list)
@@ -205,7 +209,7 @@ class Statistics(BaseModel):
     """Detailed statistics for an agent run."""
 
     runId: str
-    overallScore: int
+    overallScore: float
     totalTasks: int
     successfulTasks: int
     failedTasks: int
@@ -253,7 +257,7 @@ class Summary(BaseModel):
     startTime: str
     endTime: Optional[str] = None
     status: RunStatus
-    overallScore: int
+    overallScore: float
     totalTasks: int
     successfulTasks: int
     failedTasks: int
