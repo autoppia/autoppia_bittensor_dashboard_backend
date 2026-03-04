@@ -8,6 +8,7 @@ on:
       - fix/**
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_dispatch:  # Allow manual execution
 
 jobs:
   sonarcloud:
