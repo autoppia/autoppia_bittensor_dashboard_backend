@@ -397,7 +397,7 @@ async def init_db() -> None:
         )
         validator_rounds_is_table = validator_rounds_relkind == "r"
         if validator_rounds_is_table:
-            await conn.execute(text("ALTER TABLE validator_rounds ADD COLUMN IF NOT EXISTS s3_logs JSONB"))
+            await conn.execute(text("ALTER TABLE validator_rounds DROP COLUMN IF EXISTS s3_logs"))
             await conn.execute(text("ALTER TABLE validator_rounds ADD COLUMN IF NOT EXISTS s3_logs_url TEXT"))
             await conn.execute(text("ALTER TABLE validator_rounds ADD COLUMN IF NOT EXISTS winner_uid INTEGER"))
             await conn.execute(text("ALTER TABLE validator_rounds ADD COLUMN IF NOT EXISTS winner_score DOUBLE PRECISION"))
@@ -411,7 +411,6 @@ async def init_db() -> None:
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_validator_rounds_reigning_uid_before_round ON validator_rounds(reigning_uid_before_round)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_validator_rounds_top_candidate_uid ON validator_rounds(top_candidate_uid)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_validator_rounds_dethroned ON validator_rounds(dethroned)"))
-            await conn.execute(text("COMMENT ON COLUMN validator_rounds.s3_logs IS 'Structured S3 log references captured during validator finish (task logs / round artifacts).'"))
             await conn.execute(text("COMMENT ON COLUMN validator_rounds.s3_logs_url IS 'Public URL to validator round logs stored in S3.'"))
             await conn.execute(
                 text(
@@ -420,7 +419,7 @@ async def init_db() -> None:
                     SET
                       s3_logs_url = COALESCE(
                         s3_logs_url,
-                        NULLIF(s3_logs->'round_log'->>'url', ''),
+                        NULLIF(validator_summary->>'s3_logs_url', ''),
                         NULLIF(validator_summary->'s3_logs'->'round_log'->>'url', '')
                       ),
                       winner_uid = COALESCE(
@@ -782,7 +781,6 @@ async def init_db() -> None:
                     COALESCE(t.tasks_count, 0) AS n_tasks,
                     COALESCE(r.status, 'active')::VARCHAR(32) AS status,
                     rv.post_consensus_summary AS validator_summary,
-                    NULL::JSONB AS s3_logs,
                     rv.s3_logs_url AS s3_logs_url,
                     ro.winner_miner_uid AS winner_uid,
                     ro.winner_score,
