@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from collections import defaultdict
 from typing import Any, Dict
 
 from fastapi import Body, Depends, HTTPException, Query, Request, status
@@ -13,9 +15,57 @@ from app.db.session import get_session
 from app.models.core import Evaluation
 from app.services.chain_state import get_current_block
 from app.services.round_calc import is_inside_window
+from app.services.validator.validator_auth import VALIDATOR_HOTKEY_HEADER
 from app.services.validator.validator_storage import DuplicateIdentifierError, ValidatorRoundPersistenceService
 
 logger = logging.getLogger(__name__)
+_MISSING_ROUND_STATS: dict[str, dict[str, Any]] = defaultdict(dict)
+
+
+def _record_missing_round_alert(
+    *,
+    request: Request,
+    validator_round_id: str,
+    agent_run_id: str,
+    endpoint: str,
+    validator_uid: int | None,
+    batch_size: int = 1,
+) -> None:
+    hotkey = (request.headers.get(VALIDATOR_HOTKEY_HEADER) or "").strip()
+    uid_label = str(int(validator_uid)) if validator_uid is not None else "unknown"
+    key = f"{uid_label}:{hotkey or 'unknown'}"
+    now = float(time.time())
+    stats = _MISSING_ROUND_STATS.get(key) or {
+        "count": 0,
+        "first_seen": now,
+        "last_seen": now,
+        "last_round_id": validator_round_id,
+        "last_agent_run_id": agent_run_id,
+        "uid": validator_uid,
+        "hotkey": hotkey,
+    }
+    stats["count"] = int(stats.get("count", 0)) + 1
+    stats["last_seen"] = now
+    stats["last_round_id"] = validator_round_id
+    stats["last_agent_run_id"] = agent_run_id
+    stats["uid"] = validator_uid
+    stats["hotkey"] = hotkey
+    _MISSING_ROUND_STATS[key] = stats
+
+    # Alert on first hit and then every 10 hits for same validator identity.
+    count = int(stats["count"])
+    if count == 1 or count % 10 == 0:
+        logger.warning(
+            "ALERT validator_out_of_sync: endpoint=%s uid=%s hotkey=%s round_id=%s agent_run_id=%s batch_size=%s hits=%s window_sec=%.1f",
+            endpoint,
+            uid_label,
+            hotkey or "<missing>",
+            validator_round_id,
+            agent_run_id,
+            int(batch_size),
+            count,
+            float(stats["last_seen"]) - float(stats["first_seen"]),
+        )
 
 
 async def add_evaluations_batch(
@@ -36,8 +86,46 @@ async def add_evaluations_batch(
     # does not abort the whole transaction (InFailedSQLTransactionError on next query).
     evaluations_created = 0
     errors = []
+    inferred_uid = None
+    try:
+        first = payload[0]
+        inferred_uid = first.evaluation.validator_uid or first.task_solution.validator_uid
+        inferred_uid = int(inferred_uid) if inferred_uid is not None else None
+    except Exception:
+        inferred_uid = None
 
     try:
+        try:
+            round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+        except ValueError as exc:
+            _record_missing_round_alert(
+                request=request,
+                validator_round_id=validator_round_id,
+                agent_run_id=agent_run_id,
+                endpoint="add_evaluations_batch",
+                validator_uid=inferred_uid,
+                batch_size=len(payload),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "validator_round_not_found",
+                    "message": str(exc),
+                    "validator_round_id": validator_round_id,
+                    "agent_run_id": agent_run_id,
+                    "validator_uid": inferred_uid,
+                    "validator_hotkey": (request.headers.get(VALIDATOR_HOTKEY_HEADER) or "").strip() or None,
+                    "hint": "Validator appears out of sync (old round/version/config). Please sync and restart validator.",
+                },
+            ) from exc
+
+        _ensure_request_matches_round_owner(request, round_row)
+        if not round_row.validator_snapshot:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Validator snapshot not found for round",
+            )
+
         for idx, eval_request in enumerate(payload):
             try:
                 async with session.begin_nested():
@@ -79,8 +167,6 @@ async def add_evaluations_batch(
                         f"[batch {idx}] evaluation.task_solution_id",
                     )
 
-                    round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
-                    _ensure_request_matches_round_owner(request, round_row)
                     check_pairs = [
                         (
                             task_solution.validator_uid,
@@ -89,11 +175,6 @@ async def add_evaluations_batch(
                         ),
                         (evaluation.validator_uid, evaluation.validator_hotkey, "evaluation"),
                     ]
-                    if not round_row.validator_snapshot:
-                        raise HTTPException(
-                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Validator snapshot not found for round",
-                        )
                     for uid_value, hotkey_value, label in check_pairs:
                         if uid_value is not None and int(uid_value) != int(round_row.validator_snapshot.validator_uid):
                             raise HTTPException(
@@ -268,8 +349,37 @@ async def add_evaluation(
             "evaluation.task_solution_id",
         )
 
-        # Cross-check validator identity on payloads matches the round
-        round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+        # Cross-check validator identity on payloads matches the round.
+        # Return explicit out-of-sync error when validator sends unknown round id.
+        try:
+            round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+        except ValueError as exc:
+            inferred_uid = None
+            try:
+                inferred_uid = int(evaluation.validator_uid) if evaluation.validator_uid is not None else None
+            except Exception:
+                inferred_uid = None
+            _record_missing_round_alert(
+                request=request,
+                validator_round_id=validator_round_id,
+                agent_run_id=agent_run_id,
+                endpoint="add_evaluation",
+                validator_uid=inferred_uid,
+                batch_size=1,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "validator_round_not_found",
+                    "message": str(exc),
+                    "validator_round_id": validator_round_id,
+                    "agent_run_id": agent_run_id,
+                    "validator_uid": inferred_uid,
+                    "validator_hotkey": (request.headers.get(VALIDATOR_HOTKEY_HEADER) or "").strip() or None,
+                    "hint": "Validator appears out of sync (old round/version/config). Please sync and restart validator.",
+                },
+            ) from exc
+
         _ensure_request_matches_round_owner(request, round_row)
         check_pairs = [
             (
