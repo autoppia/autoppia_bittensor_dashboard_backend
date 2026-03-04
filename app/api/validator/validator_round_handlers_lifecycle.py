@@ -669,7 +669,7 @@ async def finish_round(
             post_consensus_evaluation=payload.post_consensus_evaluation,
             ipfs_uploaded=payload.ipfs_uploaded,
             ipfs_downloaded=payload.ipfs_downloaded,
-            s3_logs=payload.s3_logs,
+            s3_logs_url=payload.s3_logs_url,
             validator_state=payload.validator_state,
             validator_iwap_prev_round_json=payload.validator_iwap_prev_round_json,
         )

@@ -412,7 +412,7 @@ class ValidatorStorageRoundsMixin:
         post_consensus_evaluation: Optional[Dict[str, Any]] = None,
         ipfs_uploaded: Optional[Dict[str, Any]] = None,
         ipfs_downloaded: Optional[Dict[str, Any]] = None,
-        s3_logs: Optional[Dict[str, Any]] = None,
+        s3_logs_url: Optional[str] = None,
         validator_state: Optional[Dict[str, Any]] = None,
         validator_iwap_prev_round_json: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -553,7 +553,6 @@ class ValidatorStorageRoundsMixin:
 
         merged = {
             "round": round_with_emission or vs.get("round"),
-            "s3_logs": s3_logs if s3_logs is not None else vs.get("s3_logs"),
             "ipfs_uploaded": ipfs_uploaded or vs.get("ipfs_uploaded"),
             "ipfs_downloaded": ipfs_downloaded or vs.get("ipfs_downloaded"),
             "evaluation_pre_consensus": local_summary_payload if local_summary_payload is not None else vs.get("evaluation_pre_consensus"),
@@ -611,22 +610,24 @@ class ValidatorStorageRoundsMixin:
             post_summary.pop("schema_version", None)
             merged["evaluation_post_consensus"] = post_summary
 
-        resolved_s3_logs = s3_logs if s3_logs is not None else merged.get("s3_logs")
-        s3_logs_url: Optional[str] = None
-        if isinstance(resolved_s3_logs, dict):
-            round_log = resolved_s3_logs.get("round_log")
-            if isinstance(round_log, dict):
-                for key in ("url", "s3_url", "public_url", "download_url"):
-                    candidate = round_log.get(key)
+        resolved_s3_logs_url = (s3_logs_url or "").strip() or None
+        if resolved_s3_logs_url is None:
+            summary_s3_url = vs.get("s3_logs_url")
+            if isinstance(summary_s3_url, str) and summary_s3_url.strip():
+                resolved_s3_logs_url = summary_s3_url.strip()
+        if resolved_s3_logs_url is None:
+            legacy_s3_logs = vs.get("s3_logs")
+            if isinstance(legacy_s3_logs, dict):
+                round_log = legacy_s3_logs.get("round_log")
+                if isinstance(round_log, dict):
+                    candidate = round_log.get("url")
                     if isinstance(candidate, str) and candidate.strip():
-                        s3_logs_url = candidate.strip()
-                        break
+                        resolved_s3_logs_url = candidate.strip()
 
         round_row.validator_summary = merged
-        if resolved_s3_logs is not None:
-            round_row.s3_logs = resolved_s3_logs
-        if s3_logs_url:
-            round_row.s3_logs_url = s3_logs_url
+        if resolved_s3_logs_url:
+            round_row.s3_logs_url = resolved_s3_logs_url
+            merged["s3_logs_url"] = resolved_s3_logs_url
 
         round_row.ended_at = ended_at
         # Keep canonical round_validators table aligned with finish payloads.
@@ -656,7 +657,7 @@ class ValidatorStorageRoundsMixin:
                     "post_consensus_json": json.dumps(post_summary_json) if post_summary_json is not None else None,
                     "ipfs_uploaded": json.dumps(merged.get("ipfs_uploaded")) if merged.get("ipfs_uploaded") is not None else None,
                     "ipfs_downloaded": json.dumps(merged.get("ipfs_downloaded")) if merged.get("ipfs_downloaded") is not None else None,
-                    "s3_logs_url": s3_logs_url,
+                    "s3_logs_url": resolved_s3_logs_url,
                     "validator_state": json.dumps(validator_state) if validator_state is not None else None,
                     "validator_iwap_prev_round_json": json.dumps(validator_iwap_prev_round_json) if validator_iwap_prev_round_json is not None else None,
                 },
