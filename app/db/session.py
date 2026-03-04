@@ -200,6 +200,7 @@ async def init_db() -> None:
                 post_consensus_summary JSONB NULL,
                 ipfs_uploaded JSONB NULL,
                 ipfs_downloaded JSONB NULL,
+                s3_logs_url TEXT NULL,
                 validator_state JSONB NULL,
                 validator_iwap_prev_round_json JSONB NULL,
                 is_main_validator BOOLEAN NOT NULL DEFAULT FALSE,
@@ -397,6 +398,7 @@ async def init_db() -> None:
         validator_rounds_is_table = validator_rounds_relkind == "r"
         if validator_rounds_is_table:
             await conn.execute(text("ALTER TABLE validator_rounds ADD COLUMN IF NOT EXISTS s3_logs JSONB"))
+            await conn.execute(text("ALTER TABLE validator_rounds ADD COLUMN IF NOT EXISTS s3_logs_url TEXT"))
             await conn.execute(text("ALTER TABLE validator_rounds ADD COLUMN IF NOT EXISTS winner_uid INTEGER"))
             await conn.execute(text("ALTER TABLE validator_rounds ADD COLUMN IF NOT EXISTS winner_score DOUBLE PRECISION"))
             await conn.execute(text("ALTER TABLE validator_rounds ADD COLUMN IF NOT EXISTS reigning_uid_before_round INTEGER"))
@@ -410,11 +412,17 @@ async def init_db() -> None:
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_validator_rounds_top_candidate_uid ON validator_rounds(top_candidate_uid)"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_validator_rounds_dethroned ON validator_rounds(dethroned)"))
             await conn.execute(text("COMMENT ON COLUMN validator_rounds.s3_logs IS 'Structured S3 log references captured during validator finish (task logs / round artifacts).'"))
+            await conn.execute(text("COMMENT ON COLUMN validator_rounds.s3_logs_url IS 'Public URL to validator round logs stored in S3.'"))
             await conn.execute(
                 text(
                     """
                     UPDATE validator_rounds
                     SET
+                      s3_logs_url = COALESCE(
+                        s3_logs_url,
+                        NULLIF(s3_logs->'round_log'->>'url', ''),
+                        NULLIF(validator_summary->'s3_logs'->'round_log'->>'url', '')
+                      ),
                       winner_uid = COALESCE(
                         winner_uid,
                         CASE
@@ -682,6 +690,7 @@ async def init_db() -> None:
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS validator_round_id VARCHAR(128)"))
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS validator_state JSONB"))
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS validator_iwap_prev_round_json JSONB"))
+        await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS s3_logs_url TEXT"))
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS season_number INTEGER"))
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS round_number_in_season INTEGER"))
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS start_block BIGINT"))
@@ -774,6 +783,7 @@ async def init_db() -> None:
                     COALESCE(r.status, 'active')::VARCHAR(32) AS status,
                     rv.post_consensus_summary AS validator_summary,
                     NULL::JSONB AS s3_logs,
+                    rv.s3_logs_url AS s3_logs_url,
                     ro.winner_miner_uid AS winner_uid,
                     ro.winner_score,
                     ro.reigning_miner_uid_before_round AS reigning_uid_before_round,
@@ -1077,13 +1087,13 @@ async def init_db() -> None:
                                 round_id, season_number, round_number_in_season,
                                 start_block, end_block, start_epoch, end_epoch,
                                 validator_uid, validator_hotkey, validator_round_id,
-                                started_at, finished_at, post_consensus_summary, post_consensus_json, is_main_validator, created_at, updated_at
+                                started_at, finished_at, post_consensus_summary, post_consensus_json, s3_logs_url, is_main_validator, created_at, updated_at
                             )
                             VALUES (
                                 rid, NEW.season_number, NEW.round_number_in_season,
                                 NEW.start_block, NEW.end_block, NEW.start_epoch, NEW.end_epoch,
                                 0, NULL, NEW.validator_round_id,
-                                ts, te, NEW.validator_summary, NEW.validator_summary, FALSE, NOW(), NOW()
+                                ts, te, NEW.validator_summary, NEW.validator_summary, NEW.s3_logs_url, FALSE, NOW(), NOW()
                             )
                             RETURNING round_validator_id INTO rvid;
                         ELSE
@@ -1101,6 +1111,7 @@ async def init_db() -> None:
                                 finished_at = COALESCE(te, finished_at),
                                 post_consensus_summary = COALESCE(NEW.validator_summary, post_consensus_summary),
                                 post_consensus_json = COALESCE(NEW.validator_summary, post_consensus_json),
+                                s3_logs_url = COALESCE(NEW.s3_logs_url, s3_logs_url),
                                 updated_at = NOW()
                             WHERE round_validator_id = rvid;
                         END IF;                        NEW.id := rvid;
@@ -1161,6 +1172,7 @@ async def init_db() -> None:
                             finished_at = COALESCE(te, finished_at),
                             post_consensus_summary = COALESCE(NEW.validator_summary, post_consensus_summary),
                             post_consensus_json = COALESCE(NEW.validator_summary, post_consensus_json),
+                            s3_logs_url = COALESCE(NEW.s3_logs_url, s3_logs_url),
                             is_main_validator = COALESCE(is_main, is_main_validator),
                             updated_at = NOW()
                         WHERE round_validator_id = rvid;

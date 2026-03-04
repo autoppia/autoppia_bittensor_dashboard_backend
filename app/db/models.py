@@ -75,6 +75,7 @@ class ValidatorRoundORM(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     validator_summary: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     s3_logs: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    s3_logs_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Consensus decision snapshot (round-level, queryable source of truth)
     winner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     winner_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -120,11 +121,14 @@ class ValidatorRoundORM(TimestampMixin, Base):
         meta = dict(self.validator_summary or {})
         if self.s3_logs:
             meta["s3_logs"] = self.s3_logs
+        if self.s3_logs_url:
+            meta["s3_logs_url"] = self.s3_logs_url
         return {
             "status": legacy_status,
             "meta": meta,
             "validator_summary": self.validator_summary,
             "s3_logs": self.s3_logs,
+            "s3_logs_url": self.s3_logs_url,
         }
 
 
