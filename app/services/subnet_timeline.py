@@ -182,6 +182,8 @@ class SubnetTimelineService:
                             COALESCE(effective_reward, post_consensus_avg_reward, 0) AS score
                           FROM round_validator_miners
                           WHERE round_id = :rid
+                            AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
+                            AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
                           ORDER BY miner_uid, COALESCE(effective_rank, post_consensus_rank, 9999) ASC, COALESCE(effective_reward, post_consensus_avg_reward, 0) DESC
                         )
                         SELECT miner_uid, name, rank, score

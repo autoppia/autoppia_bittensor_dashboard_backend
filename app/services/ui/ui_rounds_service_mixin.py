@@ -71,6 +71,8 @@ class UIRoundsServiceMixin:
                       ) AS tasks_received
                     FROM round_validator_miners
                     WHERE round_id = :round_id
+                      AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
+                      AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
                       AND COALESCE(
                         effective_tasks_received,
                         post_consensus_tasks_received,
@@ -156,6 +158,27 @@ class UIRoundsServiceMixin:
 
     async def get_rounds_list(self, page: int, limit: int) -> Tuple[List[Dict[str, Any]], int]:
         offset = (page - 1) * limit
+        current_row = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                    SELECT r.round_id
+                    FROM rounds r
+                    JOIN seasons s ON s.season_id = r.season_id
+                    ORDER BY
+                      CASE WHEN LOWER(COALESCE(r.status, '')) = 'active' THEN 0 ELSE 1 END,
+                      s.season_number DESC,
+                      r.round_number_in_season DESC
+                    LIMIT 1
+                    """
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+        current_round_id = int(current_row["round_id"]) if current_row else None
         rows = (
             (
                 await self.session.execute(
@@ -183,7 +206,7 @@ class UIRoundsServiceMixin:
             .all()
         )
         total = (await self.session.execute(text("SELECT COUNT(*) FROM rounds"))).scalar_one()
-        return [self._round_row_to_payload(r) for r in rows], int(total or 0)
+        return [self._round_row_to_payload(r, is_current=(current_round_id is not None and int(r["round_id"]) == current_round_id)) for r in rows], int(total or 0)
 
     async def get_current_round(self) -> Optional[Dict[str, Any]]:
         row = (
@@ -202,7 +225,10 @@ class UIRoundsServiceMixin:
                       r.status
                     FROM rounds r
                     JOIN seasons s ON s.season_id = r.season_id
-                    ORDER BY s.season_number DESC, r.round_number_in_season DESC
+                    ORDER BY
+                      CASE WHEN LOWER(COALESCE(r.status, '')) = 'active' THEN 0 ELSE 1 END,
+                      s.season_number DESC,
+                      r.round_number_in_season DESC
                     LIMIT 1
                     """
                     )
@@ -211,7 +237,18 @@ class UIRoundsServiceMixin:
             .mappings()
             .first()
         )
-        return self._round_row_to_payload(row) if row else None
+        if not row:
+            return None
+
+        # Use chain block when available for consistent "current/progress" values.
+        current_block = None
+        try:
+            from app.services.chain_state import get_current_block
+
+            current_block = get_current_block()
+        except Exception:
+            current_block = None
+        return self._round_row_to_payload(row, is_current=True, current_block=current_block)
 
     async def get_round_detail(self, season: int, round_in_season: int) -> Dict[str, Any]:
         row = (
@@ -312,13 +349,29 @@ class UIRoundsServiceMixin:
             raise ValueError(f"Round {round_id} not found")
         return await self.get_round_detail(int(row["season_number"]), int(row["round_number_in_season"]))
 
-    def _round_row_to_payload(self, row: Any) -> Dict[str, Any]:
+    def _round_row_to_payload(self, row: Any, *, is_current: bool = False, current_block: Optional[int] = None) -> Dict[str, Any]:
         season = int(row["season_number"])
         round_in_season = int(row["round_number_in_season"])
         round_id = int(row["round_id"])
         start_block = int(row["start_block"] or 0)
         end_block = int(row["end_block"] or start_block)
+        if end_block < start_block:
+            end_block = start_block
         status = str(row["status"] or "finished")
+        status_l = status.lower()
+        active_like = status_l == "active"
+        if current_block is None:
+            effective_current_block = end_block if not active_like else start_block
+        else:
+            effective_current_block = int(current_block)
+        if active_like:
+            blocks_remaining = max(end_block - effective_current_block, 0)
+            span = max(end_block - start_block, 1)
+            progress = min(max((effective_current_block - start_block) / span, 0.0), 1.0)
+        else:
+            blocks_remaining = 0
+            progress = 1.0 if status_l in ("finished", "completed", "evaluating_finished") else 0.0
+
         return {
             "id": season * 10000 + round_in_season,
             "round": round_in_season,
@@ -328,15 +381,15 @@ class UIRoundsServiceMixin:
             "roundInSeason": round_in_season,
             "startBlock": start_block,
             "endBlock": end_block,
-            "current": False,
+            "current": bool(is_current),
             "startTime": row["started_at"].isoformat() if row["started_at"] else None,
             "endTime": row["ended_at"].isoformat() if row["ended_at"] else None,
             "status": status,
             "totalTasks": 0,
             "completedTasks": 0,
-            "currentBlock": end_block,
-            "blocksRemaining": 0,
-            "progress": 1.0 if status in ("finished", "completed") else 0.0,
+            "currentBlock": effective_current_block,
+            "blocksRemaining": blocks_remaining,
+            "progress": progress,
             "roundIdRaw": round_id,
         }
 
@@ -444,7 +497,15 @@ class UIRoundsServiceMixin:
         encoded_id = int(ref["season_number"]) * 10000 + int(ref["round_number_in_season"])
         total_miners = (
             await self.session.execute(
-                text("SELECT COUNT(DISTINCT miner_uid) FROM round_validator_miners WHERE round_id = :rid"),
+                text(
+                    """
+                    SELECT COUNT(DISTINCT miner_uid)
+                    FROM round_validator_miners
+                    WHERE round_id = :rid
+                      AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
+                      AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
+                    """
+                ),
                 {"rid": round_id},
             )
         ).scalar_one()
@@ -484,6 +545,8 @@ class UIRoundsServiceMixin:
                         post_consensus_tasks_success
                       FROM round_validator_miners
                       WHERE round_id = :rid
+                        AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
+                        AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
                       ORDER BY miner_uid, post_consensus_rank ASC NULLS LAST, post_consensus_avg_reward DESC NULLS LAST
                     )
                     SELECT
@@ -548,6 +611,8 @@ class UIRoundsServiceMixin:
                         post_consensus_tasks_received, post_consensus_tasks_success
                       FROM round_validator_miners
                       WHERE round_id = :rid
+                        AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
+                        AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
                       ORDER BY miner_uid, post_consensus_rank ASC NULLS LAST, post_consensus_avg_reward DESC NULLS LAST
                     )
                     SELECT * FROM ranked
@@ -622,7 +687,16 @@ class UIRoundsServiceMixin:
                       rv.started_at,
                       rv.finished_at,
                       COALESCE(COUNT(DISTINCT t.task_id), 0) AS total_tasks,
-                      COALESCE(COUNT(DISTINCT rvm.miner_uid), 0) AS total_miners,
+                      COALESCE(
+                        COUNT(
+                          DISTINCT CASE
+                            WHEN NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
+                              AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
+                            THEN rvm.miner_uid
+                          END
+                        ),
+                        0
+                      ) AS total_miners,
                       COALESCE(AVG(rvm.local_avg_reward), 0) AS avg_score,
                       COALESCE(MAX(rvm.local_avg_reward), 0) AS top_score
                     FROM round_validators rv
@@ -734,7 +808,15 @@ class UIRoundsServiceMixin:
         round_in_season = int(ref["round_number_in_season"])
         miners = (
             await self.session.execute(
-                text("SELECT COUNT(DISTINCT miner_uid) FROM round_validator_miners WHERE round_id=:rid"),
+                text(
+                    """
+                    SELECT COUNT(DISTINCT miner_uid)
+                    FROM round_validator_miners
+                    WHERE round_id=:rid
+                      AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
+                      AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
+                    """
+                ),
                 {"rid": round_id},
             )
         ).scalar_one()
@@ -746,7 +828,15 @@ class UIRoundsServiceMixin:
         ).scalar_one_or_none()
         avg = (
             await self.session.execute(
-                text("SELECT COALESCE(AVG(post_consensus_avg_reward),0) FROM round_validator_miners WHERE round_id=:rid"),
+                text(
+                    """
+                    SELECT COALESCE(AVG(post_consensus_avg_reward),0)
+                    FROM round_validator_miners
+                    WHERE round_id=:rid
+                      AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
+                      AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
+                    """
+                ),
                 {"rid": round_id},
             )
         ).scalar_one()

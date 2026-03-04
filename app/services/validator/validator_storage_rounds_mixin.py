@@ -442,7 +442,8 @@ class ValidatorStorageRoundsMixin:
                 )
 
         # If round metadata was provided by the validator, persist boundary fields.
-        # This is the only place end_block/end_epoch are communicated back to the backend.
+        # Only authoritative finishes are allowed to mutate canonical boundaries/config.
+        # Non-authoritative finishes still persist validator-local artifacts.
         if round_metadata and isinstance(round_metadata, dict):
             # Keep summary round_number coherent with persisted round id fields.
             # Some validators can compute round_number from a later block during finish.
@@ -452,42 +453,73 @@ class ValidatorStorageRoundsMixin:
                     round_metadata["round_number"] = persisted_round_in_season
             except Exception:
                 pass
-            try:
-                rb = round_metadata.get("start_block")
-                if rb is not None and int(rb) > 0 and (getattr(round_row, "start_block", None) in (None, 0)):
-                    round_row.start_block = int(rb)
-            except Exception:
-                pass
-            try:
-                rb = round_metadata.get("end_block")
-                if rb is not None and int(rb) > 0 and (getattr(round_row, "end_block", None) in (None, 0)):
-                    round_row.end_block = int(rb)
-            except Exception:
-                pass
-            try:
-                re = round_metadata.get("start_epoch")
-                if re is not None and int(re) > 0 and (getattr(round_row, "start_epoch", None) in (None, 0)):
-                    round_row.start_epoch = int(re)
-            except Exception:
-                pass
-            try:
-                re = round_metadata.get("end_epoch")
-                if re is not None and int(re) > 0 and (getattr(round_row, "end_epoch", None) in (None, 0)):
-                    round_row.end_epoch = int(re)
-            except Exception:
-                pass
-            try:
-                rs = round_metadata.get("started_at")
-                if rs is not None and (getattr(round_row, "started_at", None) in (None, 0)):
-                    round_row.started_at = float(rs)
-            except Exception:
-                pass
-            try:
-                ra = round_metadata.get("ended_at")
-                if ra is not None and (getattr(round_row, "ended_at", None) in (None, 0)):
-                    round_row.ended_at = float(ra)
-            except Exception:
-                pass
+
+            def _as_pos_int(value: Any) -> Optional[int]:
+                try:
+                    if value is None:
+                        return None
+                    parsed = int(value)
+                    return parsed if parsed > 0 else None
+                except Exception:
+                    return None
+
+            def _as_pos_float(value: Any) -> Optional[float]:
+                try:
+                    if value is None:
+                        return None
+                    parsed = float(value)
+                    return parsed if parsed > 0 else None
+                except Exception:
+                    return None
+
+            incoming_start_block = _as_pos_int(round_metadata.get("start_block"))
+            incoming_end_block = _as_pos_int(round_metadata.get("end_block"))
+            incoming_start_epoch = _as_pos_int(round_metadata.get("start_epoch"))
+            incoming_end_epoch = _as_pos_int(round_metadata.get("end_epoch"))
+            incoming_started_at = _as_pos_float(round_metadata.get("started_at"))
+            incoming_ended_at = _as_pos_float(round_metadata.get("ended_at"))
+
+            if incoming_start_block and incoming_end_block and incoming_end_block < incoming_start_block:
+                logger.warning(
+                    "finish_round ignored invalid round_metadata boundaries for %s (start_block=%s, end_block=%s)",
+                    validator_round_id,
+                    incoming_start_block,
+                    incoming_end_block,
+                )
+                incoming_end_block = None
+
+            if incoming_start_epoch and incoming_end_epoch and incoming_end_epoch < incoming_start_epoch:
+                logger.warning(
+                    "finish_round ignored invalid epoch boundaries for %s (start_epoch=%s, end_epoch=%s)",
+                    validator_round_id,
+                    incoming_start_epoch,
+                    incoming_end_epoch,
+                )
+                incoming_end_epoch = None
+
+            if incoming_started_at and incoming_ended_at and incoming_ended_at < incoming_started_at:
+                logger.warning(
+                    "finish_round ignored invalid time boundaries for %s (started_at=%s, ended_at=%s)",
+                    validator_round_id,
+                    incoming_started_at,
+                    incoming_ended_at,
+                )
+                incoming_ended_at = None
+
+            if authoritative_finish:
+                if incoming_start_block is not None and (getattr(round_row, "start_block", None) in (None, 0)):
+                    round_row.start_block = incoming_start_block
+                if incoming_end_block is not None and (getattr(round_row, "end_block", None) in (None, 0)):
+                    round_row.end_block = incoming_end_block
+                if incoming_start_epoch is not None and (getattr(round_row, "start_epoch", None) in (None, 0)):
+                    round_row.start_epoch = incoming_start_epoch
+                if incoming_end_epoch is not None and (getattr(round_row, "end_epoch", None) in (None, 0)):
+                    round_row.end_epoch = incoming_end_epoch
+                if incoming_started_at is not None and (getattr(round_row, "started_at", None) in (None, 0)):
+                    round_row.started_at = incoming_started_at
+                if incoming_ended_at is not None and (getattr(round_row, "ended_at", None) in (None, 0)):
+                    round_row.ended_at = incoming_ended_at
+
             # Main validator can persist round/season config so backend uses it instead of .env
             if authoritative_finish and snapshot is not None:
                 try:
