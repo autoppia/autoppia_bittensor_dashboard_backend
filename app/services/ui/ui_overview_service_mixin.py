@@ -8,7 +8,7 @@ from sqlalchemy import text
 
 class UIOverviewServiceMixin:
     async def get_overview_metrics(self) -> Dict[str, Any]:
-        latest = (
+        latest_any = (
             (
                 await self.session.execute(
                     text(
@@ -26,7 +26,26 @@ class UIOverviewServiceMixin:
             .first()
         )
 
-        if not latest:
+        latest_finished = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                    SELECT s.season_number, r.round_number_in_season, r.round_id
+                    FROM rounds r
+                    JOIN seasons s ON s.season_id = r.season_id
+                    WHERE lower(COALESCE(r.status, '')) IN ('finished', 'evaluating_finished')
+                    ORDER BY s.season_number DESC, r.round_number_in_season DESC
+                    LIMIT 1
+                    """
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+
+        if not latest_any:
             return {
                 "topMinerUid": None,
                 "topMinerName": None,
@@ -47,9 +66,13 @@ class UIOverviewServiceMixin:
                 "lastUpdated": datetime.now(timezone.utc).isoformat(),
             }
 
-        season = int(latest["season_number"])
-        round_in_season = int(latest["round_number_in_season"])
-        round_id = int(latest["round_id"])
+        metrics_source = latest_finished or latest_any
+        metrics_season = int(metrics_source["season_number"])
+        metrics_round_in_season = int(metrics_source["round_number_in_season"])
+        metrics_round_id = int(metrics_source["round_id"])
+
+        current_season = int(latest_any["season_number"])
+        current_round_in_season = int(latest_any["round_number_in_season"])
 
         winner = (
             (
@@ -65,7 +88,7 @@ class UIOverviewServiceMixin:
                     LIMIT 1
                     """
                     ),
-                    {"round_id": round_id},
+                    {"round_id": metrics_round_id},
                 )
             )
             .mappings()
@@ -94,13 +117,13 @@ class UIOverviewServiceMixin:
                 .first()
             )
 
-        total_validators = (await self.session.execute(text("SELECT COUNT(DISTINCT validator_uid) FROM round_validators WHERE round_id=:rid"), {"rid": round_id})).scalar_one()
-        total_miners = (await self.session.execute(text("SELECT COUNT(DISTINCT miner_uid) FROM round_validator_miners WHERE round_id=:rid"), {"rid": round_id})).scalar_one()
+        total_validators = (await self.session.execute(text("SELECT COUNT(DISTINCT validator_uid) FROM round_validators WHERE round_id=:rid"), {"rid": metrics_round_id})).scalar_one()
+        total_miners = (await self.session.execute(text("SELECT COUNT(DISTINCT miner_uid) FROM round_validator_miners WHERE round_id=:rid"), {"rid": metrics_round_id})).scalar_one()
         miners = (
             (
                 await self.session.execute(
                     text("SELECT DISTINCT miner_uid AS uid, COALESCE(name, 'miner '||miner_uid::text) AS name FROM round_validator_miners WHERE round_id=:rid ORDER BY miner_uid"),
-                    {"rid": round_id},
+                    {"rid": metrics_round_id},
                 )
             )
             .mappings()
@@ -119,7 +142,7 @@ class UIOverviewServiceMixin:
                     ) x
                     """
                 ),
-                {"rid": round_id},
+                {"rid": metrics_round_id},
             )
         ).scalar_one()
 
@@ -133,12 +156,12 @@ class UIOverviewServiceMixin:
             "tasksPerValidator": int(tasks_per_validator or 0),
             "totalTasksPerValidator": int(tasks_per_validator or 0),
             "minerList": [dict(m) for m in miners],
-            "currentRound": int((season * 10000) + round_in_season),
-            "currentSeason": season,
-            "currentRoundInSeason": round_in_season,
-            "metricsRound": round_in_season,
-            "metricsSeason": season,
-            "metricsRoundInSeason": round_in_season,
+            "currentRound": int((current_season * 10000) + current_round_in_season),
+            "currentSeason": current_season,
+            "currentRoundInSeason": current_round_in_season,
+            "metricsRound": metrics_round_in_season,
+            "metricsSeason": metrics_season,
+            "metricsRoundInSeason": metrics_round_in_season,
             "subnetVersion": "12.2.0",
             "lastUpdated": datetime.now(timezone.utc).isoformat(),
         }
