@@ -407,6 +407,63 @@ class ValidatorStorageHelpersMixin:
             return None
         return json.dumps(cleaned, sort_keys=True, separators=(",", ":"))
 
+    @staticmethod
+    def _coerce_int(value: Any) -> Optional[int]:
+        try:
+            if value is None:
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _coerce_float(value: Any) -> Optional[float]:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _apply_runtime_config_defaults(self, config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not isinstance(config, dict):
+            return config
+        normalized = dict(config)
+        timing = normalized.get("timing")
+        if isinstance(timing, dict):
+            timing_normalized = dict(timing)
+        else:
+            timing_normalized = {}
+        # Keep backend and validator defaults aligned for late-start skip window.
+        timing_normalized.setdefault(
+            "skip_round_if_started_after_fraction",
+            float(getattr(settings, "VALIDATOR_SKIP_ROUND_STARTED_AFTER_FRACTION_DEFAULT", 0.6)),
+        )
+        normalized["timing"] = timing_normalized
+        return normalized
+
+    def _extract_runtime_guardrails(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not isinstance(config, dict):
+            return {}
+        round_cfg = config.get("round") if isinstance(config.get("round"), dict) else {}
+        return {
+            "season_number": self._coerce_int(round_cfg.get("season_number", config.get("season_number"))),
+            "round_number_in_season": self._coerce_int(round_cfg.get("round_number_in_season", round_cfg.get("round_number", config.get("round_number_in_season")))),
+            "start_block": self._coerce_int(round_cfg.get("start_block", config.get("start_block"))),
+            "end_block": self._coerce_int(round_cfg.get("end_block", config.get("end_block"))),
+            "start_epoch": self._coerce_int(round_cfg.get("start_epoch", config.get("start_epoch"))),
+            "end_epoch": self._coerce_int(round_cfg.get("end_epoch", config.get("end_epoch"))),
+        }
+
+    def _extract_skip_round_fraction(self, config: Optional[Dict[str, Any]]) -> Optional[float]:
+        default_fraction = float(getattr(settings, "VALIDATOR_SKIP_ROUND_STARTED_AFTER_FRACTION_DEFAULT", 0.6))
+        if not isinstance(config, dict):
+            return default_fraction
+        timing_cfg = config.get("timing") if isinstance(config.get("timing"), dict) else {}
+        value = timing_cfg.get("skip_round_if_started_after_fraction")
+        parsed = self._coerce_float(value)
+        return parsed if parsed is not None else default_fraction
+
     async def _assert_runtime_alignment_with_main(
         self,
         *,
@@ -451,7 +508,7 @@ class ValidatorStorageHelpersMixin:
         main_uid = int(row[0]) if row[0] is not None else None
         main_hotkey = (row[1] or "").strip() or None
         main_version = (row[2] or "").strip() or None
-        main_config = row[3] if isinstance(row[3], dict) else None
+        main_config = self._apply_runtime_config_defaults(row[3] if isinstance(row[3], dict) else None)
 
         incoming_version = (validator_version or "").strip() or None
         if main_version and incoming_version and main_version != incoming_version:
@@ -459,11 +516,44 @@ class ValidatorStorageHelpersMixin:
                 f"Validator runtime mismatch with main validator: version mismatch (incoming={incoming_version}, main={main_version}, main_uid={main_uid}, main_hotkey={main_hotkey})"
             )
 
+        incoming_config = self._apply_runtime_config_defaults(validator_config)
+        main_guardrails = self._extract_runtime_guardrails(main_config)
+        incoming_guardrails = self._extract_runtime_guardrails(incoming_config)
+        for key in ("season_number", "round_number_in_season", "start_block", "end_block", "start_epoch", "end_epoch"):
+            main_val = main_guardrails.get(key)
+            incoming_val = incoming_guardrails.get(key)
+            if main_val is None or incoming_val is None:
+                continue
+            if main_val != incoming_val:
+                raise RoundConflictError(
+                    "Validator runtime mismatch with main validator: "
+                    f"critical field mismatch ({key}, incoming={incoming_val}, main={main_val}, "
+                    f"season={season_number}, round={round_number_in_season}, main_uid={main_uid}, main_hotkey={main_hotkey})"
+                )
+
+        main_skip_fraction = self._extract_skip_round_fraction(main_config)
+        incoming_skip_fraction = self._extract_skip_round_fraction(incoming_config)
+        if main_skip_fraction is not None and incoming_skip_fraction is not None and abs(main_skip_fraction - incoming_skip_fraction) > 1e-9:
+            logger.warning(
+                "Validator runtime drift (non-blocking): skip_round_if_started_after_fraction incoming=%s main=%s (season=%s round=%s validator_uid=%s main_uid=%s)",
+                incoming_skip_fraction,
+                main_skip_fraction,
+                season_number,
+                round_number_in_season,
+                validator_uid,
+                main_uid,
+            )
+
         normalized_main_cfg = self._normalize_runtime_config_for_compare(main_config)
-        normalized_incoming_cfg = self._normalize_runtime_config_for_compare(validator_config)
+        normalized_incoming_cfg = self._normalize_runtime_config_for_compare(incoming_config)
         if normalized_main_cfg and normalized_incoming_cfg and normalized_main_cfg != normalized_incoming_cfg:
-            raise RoundConflictError(
-                f"Validator runtime mismatch with main validator: config mismatch (season={season_number}, round={round_number_in_season}, main_uid={main_uid}, main_hotkey={main_hotkey})"
+            logger.warning(
+                "Validator runtime drift (non-blocking): non-critical config mismatch (season=%s round=%s validator_uid=%s main_uid=%s main_hotkey=%s)",
+                season_number,
+                round_number_in_season,
+                validator_uid,
+                main_uid,
+                main_hotkey,
             )
 
     async def _assert_finish_round_authority_and_state(
@@ -667,7 +757,7 @@ class ValidatorStorageHelpersMixin:
             "vtrust": snapshot.vtrust,
             "image_url": snapshot.image_url,
             "version": snapshot.version,
-            "config": snapshot.config,  # Include validator configuration
+            "config": self._apply_runtime_config_defaults(snapshot.config),  # Include validator configuration
         }
         if existing:
             for key, value in kwargs.items():

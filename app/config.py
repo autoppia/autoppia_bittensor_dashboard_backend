@@ -207,6 +207,7 @@ class Settings(BaseSettings):
     # If set, only this validator drives canonical round/season outcomes in DB rollups.
     MAIN_VALIDATOR_UID: Optional[int] = int(_env_var("MAIN_VALIDATOR_UID")) if _env_var("MAIN_VALIDATOR_UID") not in (None, "") else None
     MAIN_VALIDATOR_HOTKEY: Optional[str] = _env_var("MAIN_VALIDATOR_HOTKEY", None)
+    VALIDATOR_SKIP_ROUND_STARTED_AFTER_FRACTION_DEFAULT: float = float(_env_var("VALIDATOR_SKIP_ROUND_STARTED_AFTER_FRACTION_DEFAULT", "0.6"))
 
     # CORS Configuration
     # Prefer explicit origins to support credentials; fallback to wildcard in local env

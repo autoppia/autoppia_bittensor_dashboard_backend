@@ -35,6 +35,7 @@ class ValidatorStorageRoundsMixin:
         round state so it can later be linked to the canonical round row.
         """
         started_at_sql = "to_timestamp(:started_at)" if validator_round.started_at else "NULL"
+        normalized_config = self._apply_runtime_config_defaults(validator_snapshot.config)
         await self.session.execute(
             text(
                 f"""
@@ -124,7 +125,7 @@ class ValidatorStorageRoundsMixin:
                 "version": validator_snapshot.version,
                 "stake": validator_snapshot.stake,
                 "vtrust": validator_snapshot.vtrust,
-                "config": json.dumps(validator_snapshot.config) if validator_snapshot.config is not None else None,
+                "config": json.dumps(normalized_config) if normalized_config is not None else None,
                 "started_at": float(validator_round.started_at) if validator_round.started_at is not None else None,
             },
         )
@@ -240,6 +241,7 @@ class ValidatorStorageRoundsMixin:
         validator_snapshot: ValidatorRoundValidator,
     ) -> ValidatorRoundORM:
         """Create a new validator round and store the initial snapshot."""
+        validator_snapshot.config = self._apply_runtime_config_defaults(validator_snapshot.config)
         await self._assert_start_round_authority_and_state(
             validator_round,
             validator_snapshot.stake,
@@ -609,9 +611,22 @@ class ValidatorStorageRoundsMixin:
             post_summary.pop("schema_version", None)
             merged["evaluation_post_consensus"] = post_summary
 
+        resolved_s3_logs = s3_logs if s3_logs is not None else merged.get("s3_logs")
+        s3_logs_url: Optional[str] = None
+        if isinstance(resolved_s3_logs, dict):
+            round_log = resolved_s3_logs.get("round_log")
+            if isinstance(round_log, dict):
+                for key in ("url", "s3_url", "public_url", "download_url"):
+                    candidate = round_log.get(key)
+                    if isinstance(candidate, str) and candidate.strip():
+                        s3_logs_url = candidate.strip()
+                        break
+
         round_row.validator_summary = merged
-        if s3_logs is not None:
-            round_row.s3_logs = s3_logs
+        if resolved_s3_logs is not None:
+            round_row.s3_logs = resolved_s3_logs
+        if s3_logs_url:
+            round_row.s3_logs_url = s3_logs_url
 
         round_row.ended_at = ended_at
         # Keep canonical round_validators table aligned with finish payloads.
@@ -628,6 +643,7 @@ class ValidatorStorageRoundsMixin:
                         post_consensus_summary = COALESCE(CAST(:post_consensus_json AS JSONB), post_consensus_summary),
                         ipfs_uploaded = COALESCE(CAST(:ipfs_uploaded AS JSONB), ipfs_uploaded),
                         ipfs_downloaded = COALESCE(CAST(:ipfs_downloaded AS JSONB), ipfs_downloaded),
+                        s3_logs_url = COALESCE(:s3_logs_url, s3_logs_url),
                         validator_state = COALESCE(CAST(:validator_state AS JSONB), validator_state),
                         validator_iwap_prev_round_json = COALESCE(CAST(:validator_iwap_prev_round_json AS JSONB), validator_iwap_prev_round_json),
                         updated_at = NOW()
@@ -640,6 +656,7 @@ class ValidatorStorageRoundsMixin:
                     "post_consensus_json": json.dumps(post_summary_json) if post_summary_json is not None else None,
                     "ipfs_uploaded": json.dumps(merged.get("ipfs_uploaded")) if merged.get("ipfs_uploaded") is not None else None,
                     "ipfs_downloaded": json.dumps(merged.get("ipfs_downloaded")) if merged.get("ipfs_downloaded") is not None else None,
+                    "s3_logs_url": s3_logs_url,
                     "validator_state": json.dumps(validator_state) if validator_state is not None else None,
                     "validator_iwap_prev_round_json": json.dumps(validator_iwap_prev_round_json) if validator_iwap_prev_round_json is not None else None,
                 },
