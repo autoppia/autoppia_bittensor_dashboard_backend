@@ -773,7 +773,9 @@ class UIRoundsServiceMixin:
             .mappings()
             .first()
         )
-        winner_uid = int(outcome["winner_miner_uid"]) if outcome and outcome["winner_miner_uid"] is not None else None
+        outcome = dict(outcome) if outcome else {}
+        winner_uid_raw = outcome.get("winner_miner_uid")
+        winner_uid = int(winner_uid_raw) if winner_uid_raw is not None else None
         winner_row = None
         if winner_uid is not None:
             winner_row = (
@@ -800,26 +802,35 @@ class UIRoundsServiceMixin:
                 .mappings()
                 .first()
             )
-        miners_evaluated = (
-            await self.session.execute(
-                text(
-                    """
-                    SELECT COUNT(DISTINCT miner_uid)
-                    FROM round_validator_miners
-                    WHERE round_id=:rid
-                      AND name IS NOT NULL
-                      AND github_url IS NOT NULL
-                    """
-                ),
-                {"rid": round_id},
-            )
-        ).scalar_one()
-        tasks_evaluated = (
-            await self.session.execute(
-                text("SELECT COUNT(*) FROM tasks WHERE round_validator_id IN (SELECT round_validator_id FROM round_validators WHERE round_id=:rid)"),
-                {"rid": round_id},
-            )
-        ).scalar_one()
+            winner_row = dict(winner_row) if winner_row is not None else None
+        try:
+            miners_evaluated = (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT COUNT(DISTINCT miner_uid)
+                        FROM round_validator_miners
+                        WHERE round_id=:rid
+                          AND name IS NOT NULL
+                          AND github_url IS NOT NULL
+                        """
+                    ),
+                    {"rid": round_id},
+                )
+            ).scalar_one_or_none()
+            miners_evaluated = int(miners_evaluated or 0)
+        except Exception:
+            miners_evaluated = 0
+        try:
+            tasks_evaluated = (
+                await self.session.execute(
+                    text("SELECT COUNT(*) FROM tasks WHERE round_validator_id IN (SELECT round_validator_id FROM round_validators WHERE round_id=:rid)"),
+                    {"rid": round_id},
+                )
+            ).scalar_one_or_none()
+            tasks_evaluated = int(tasks_evaluated or 0)
+        except Exception:
+            tasks_evaluated = 0
 
         validators_raw = (
             (
@@ -840,7 +851,10 @@ class UIRoundsServiceMixin:
         )
         validators: List[Dict[str, Any]] = []
         for vr in validators_raw:
-            rvid = int(vr["round_validator_id"])
+            vr = dict(vr) if vr is not None else {}
+            rvid = int(vr.get("round_validator_id", 0))
+            if rvid <= 0:
+                continue
             local_stats = (
                 (
                     await self.session.execute(
@@ -862,12 +876,16 @@ class UIRoundsServiceMixin:
                 .mappings()
                 .first()
             )
-            local_tasks = (
-                await self.session.execute(
-                    text("SELECT COUNT(*) FROM tasks WHERE round_validator_id=:rvid"),
-                    {"rvid": rvid},
-                )
-            ).scalar_one()
+            try:
+                local_tasks = (
+                    await self.session.execute(
+                        text("SELECT COUNT(*) FROM tasks WHERE round_validator_id=:rvid"),
+                        {"rvid": rvid},
+                    )
+                ).scalar_one_or_none()
+                local_tasks = int(local_tasks or 0)
+            except Exception:
+                local_tasks = 0
             local_winner = (
                 (
                     await self.session.execute(
@@ -889,6 +907,7 @@ class UIRoundsServiceMixin:
                 .mappings()
                 .first()
             )
+            local_winner = dict(local_winner) if local_winner is not None else None
             local_miners = (
                 (
                     await self.session.execute(
@@ -912,44 +931,44 @@ class UIRoundsServiceMixin:
             )
             validators.append(
                 {
-                    "validator_uid": int(vr["validator_uid"]),
-                    "validator_name": vr["name"] or f"validator {int(vr['validator_uid'])}",
-                    "validator_hotkey": vr["validator_hotkey"],
+                    "validator_uid": int(vr.get("validator_uid", 0)),
+                    "validator_name": (vr.get("name") or f"validator {int(vr.get('validator_uid', 0))}"),
+                    "validator_hotkey": vr.get("validator_hotkey", ""),
                     "winner": (
                         {
-                            "uid": int(local_winner["miner_uid"]),
-                            "name": local_winner["name"] or f"miner {int(local_winner['miner_uid'])}",
-                            "image": f"/miners/{int(local_winner['miner_uid']) % 100}.svg",
-                            "hotkey": local_winner["miner_hotkey"],
+                            "uid": int(local_winner.get("miner_uid", 0)),
+                            "name": local_winner.get("name") or f"miner {int(local_winner.get('miner_uid', 0))}",
+                            "image": f"/miners/{int(local_winner.get('miner_uid', 0)) % 100}.svg",
+                            "hotkey": local_winner.get("miner_hotkey"),
                         }
                         if local_winner
                         else None
                     ),
-                    "topScore": float(local_stats["local_top_reward"] or 0.0),
-                    "local_avg_winner_score": float(local_stats["local_top_reward"] or 0.0),
-                    "local_avg_eval_time": float(local_stats["local_avg_eval_time"] or 0.0),
-                    "local_miners_evaluated": int(local_stats["local_miners"] or 0),
+                    "topScore": float(local_stats.get("local_top_reward") or 0.0),
+                    "local_avg_winner_score": float(local_stats.get("local_top_reward") or 0.0),
+                    "local_avg_eval_time": float(local_stats.get("local_avg_eval_time") or 0.0),
+                    "local_miners_evaluated": int(local_stats.get("local_miners") or 0),
                     "local_tasks_evaluated": int(local_tasks or 0),
                     "miners": [
                         {
-                            "uid": int(m["miner_uid"]),
-                            "name": m["name"] or f"miner {int(m['miner_uid'])}",
-                            "hotkey": m["miner_hotkey"],
-                            "image": f"/miners/{int(m['miner_uid']) % 100}.svg",
-                            "local_rank": int(m["effective_rank"] or m["local_rank"]) if (m["effective_rank"] is not None or m["local_rank"] is not None) else None,
-                            "local_avg_reward": float(m["effective_reward"] or m["local_avg_reward"] or 0.0),
-                            "local_avg_eval_score": float(m["effective_eval_score"] or m["local_avg_eval_score"] or 0.0),
-                            "local_avg_eval_time": float(m["effective_eval_time"] or m["local_avg_eval_time"] or 0.0),
+                            "uid": int(m.get("miner_uid", 0)),
+                            "name": m.get("name") or f"miner {int(m.get('miner_uid', 0))}",
+                            "hotkey": m.get("miner_hotkey"),
+                            "image": f"/miners/{int(m.get('miner_uid', 0)) % 100}.svg",
+                            "local_rank": int(m.get("effective_rank") or m.get("local_rank")) if (m.get("effective_rank") is not None or m.get("local_rank") is not None) else None,
+                            "local_avg_reward": float(m.get("effective_reward") or m.get("local_avg_reward") or 0.0),
+                            "local_avg_eval_score": float(m.get("effective_eval_score") or m.get("local_avg_eval_score") or 0.0),
+                            "local_avg_eval_time": float(m.get("effective_eval_time") or m.get("local_avg_eval_time") or 0.0),
                         }
-                        for m in local_miners
+                        for m in (local_miners or [])
                     ],
-                    "ipfs_uploaded": vr["ipfs_uploaded"],
-                    "ipfs_downloaded": vr["ipfs_downloaded"],
+                    "ipfs_uploaded": vr.get("ipfs_uploaded"),
+                    "ipfs_downloaded": vr.get("ipfs_downloaded"),
                     # Keep both key families for UI compatibility.
-                    "consensus_summary": vr["local_summary_json"],
-                    "post_consensus_evaluation": vr["post_consensus_json"],
-                    "evaluation_pre_consensus": vr["local_summary_json"],
-                    "evaluation_post_consensus": vr["post_consensus_json"],
+                    "consensus_summary": vr.get("local_summary_json"),
+                    "post_consensus_evaluation": vr.get("post_consensus_json"),
+                    "evaluation_pre_consensus": vr.get("local_summary_json"),
+                    "evaluation_post_consensus": vr.get("post_consensus_json"),
                 }
             )
 
@@ -961,20 +980,20 @@ class UIRoundsServiceMixin:
                 "winner": (
                     {
                         "uid": winner_uid,
-                        "name": (winner_row["name"] if winner_row else f"miner {winner_uid}"),
+                        "name": (winner_row.get("name") if winner_row else f"miner {winner_uid}"),
                         "image": f"/miners/{winner_uid % 100}.svg",
-                        "hotkey": winner_row["miner_hotkey"] if winner_row else None,
-                        "github_url": winner_row["github_url"] if winner_row else None,
-                        "avg_reward": float(winner_row["effective_reward"] or winner_row["post_consensus_avg_reward"] or 0.0) if winner_row else float(outcome["winner_score"] or 0.0),
-                        "avg_eval_score": float(winner_row["effective_eval_score"] or winner_row["post_consensus_avg_eval_score"] or 0.0) if winner_row else 0.0,
-                        "avg_eval_time": float(winner_row["effective_eval_time"] or winner_row["post_consensus_avg_eval_time"] or 0.0) if winner_row else 0.0,
+                        "hotkey": winner_row.get("miner_hotkey") if winner_row else None,
+                        "github_url": winner_row.get("github_url") if winner_row else None,
+                        "avg_reward": float(winner_row.get("effective_reward") or winner_row.get("post_consensus_avg_reward") or 0.0) if winner_row else float(outcome.get("winner_score") or 0.0),
+                        "avg_eval_score": float(winner_row.get("effective_eval_score") or winner_row.get("post_consensus_avg_eval_score") or 0.0) if winner_row else 0.0,
+                        "avg_eval_time": float(winner_row.get("effective_eval_time") or winner_row.get("post_consensus_avg_eval_time") or 0.0) if winner_row else 0.0,
                     }
                     if winner_uid is not None
                     else None
                 ),
                 "miners_evaluated": int(miners_evaluated or 0),
                 "tasks_evaluated": int(tasks_evaluated or 0),
-                "raw_summary": outcome["post_consensus_summary"] if outcome else None,
+                "raw_summary": outcome.get("post_consensus_summary"),
             },
             "validators": validators,
         }
