@@ -102,7 +102,7 @@ echo ""
 echo "Insert initial round_config with these values?"
 echo "  round_size_epochs:    0.4166667"
 echo "  season_size_epochs:   280.0"
-echo "  minimum_start_block:  7672257"
+echo "  minimum_start_block:  7672644"
 echo "  blocks_per_epoch:      360"
 echo "  updated_by_validator_uid: 83"
 echo ""
@@ -122,7 +122,7 @@ if [[ "${INSERT_ROUND_CONFIG,,}" == "y" || "${INSERT_ROUND_CONFIG,,}" == "yes" ]
     --username="${POSTGRES_USER}" \
     --dbname="${POSTGRES_DB}" \
     --set=ON_ERROR_STOP=1 \
-    -c "INSERT INTO round_config (id, round_size_epochs, season_size_epochs, minimum_start_block, blocks_per_epoch, updated_by_validator_uid) VALUES (1, 0.4166667, 280.0, 7672257, 360, 83) ON CONFLICT (id) DO UPDATE SET round_size_epochs = EXCLUDED.round_size_epochs, season_size_epochs = EXCLUDED.season_size_epochs, minimum_start_block = EXCLUDED.minimum_start_block, blocks_per_epoch = EXCLUDED.blocks_per_epoch, updated_by_validator_uid = EXCLUDED.updated_by_validator_uid, updated_at = NOW();"
+    -c "INSERT INTO round_config (id, round_size_epochs, season_size_epochs, minimum_start_block, blocks_per_epoch, updated_by_validator_uid) VALUES (1, 0.4166667, 280.0, 7672644, 360, 83) ON CONFLICT (id) DO UPDATE SET round_size_epochs = EXCLUDED.round_size_epochs, season_size_epochs = EXCLUDED.season_size_epochs, minimum_start_block = EXCLUDED.minimum_start_block, blocks_per_epoch = EXCLUDED.blocks_per_epoch, updated_by_validator_uid = EXCLUDED.updated_by_validator_uid, updated_at = NOW();"
   echo "✅ Initial round_config inserted/updated."
 else
   echo "⏭️  Skipped round_config insert."
