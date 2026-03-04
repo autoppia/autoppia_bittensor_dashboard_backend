@@ -141,48 +141,71 @@ def perform_metagraph_update() -> bool:
         return False
 
 
+async def _cache_recent_rounds_async(current_block: int) -> bool:
+    """
+    Prefer round IDs from DB (last validator round containing current_block, then previous 3).
+    Fall back to config-based compute_round_number when no round in DB.
+    """
+    import requests
+
+    from app.services.round_config_from_db import (
+        get_previous_round_ids,
+        get_round_containing_block,
+    )
+
+    async with AsyncSessionLocal() as session:
+        round_row = await get_round_containing_block(session, current_block)
+        if round_row and round_row.get("round_id") is not None:
+            current_round_id = int(round_row["round_id"])
+            round_ids_to_cache = await get_previous_round_ids(session, current_round_id, limit=3)
+        else:
+            from app.services.round_calc import compute_round_number
+
+            current_round = compute_round_number(current_block)
+            # Fallback: API accepts round_id; if DB round_id matches global index, use it
+            round_ids_to_cache = [
+                current_round - 1,
+                current_round - 2,
+                current_round - 3,
+            ]
+
+    cached_count = 0
+    for round_id in round_ids_to_cache:
+        if round_id <= 0:
+            continue
+        try:
+            response = requests.get(
+                f"http://localhost:8080/api/v1/rounds/{round_id}",
+                timeout=60,
+            )
+            if response.status_code == 200:
+                logger.info(f"✅ Cached round {round_id}")
+                cached_count += 1
+            else:
+                logger.warning(f"⚠️  Failed to cache round {round_id}: HTTP {response.status_code}")
+        except Exception as e:
+            logger.error(f"❌ Error caching round {round_id}: {e}")
+
+    if cached_count > 0:
+        logger.info(f"✅ Cached {cached_count} rounds successfully")
+        return True
+    return False
+
+
 def cache_recent_rounds() -> bool:
     """
     Cache recent completed rounds by calling the API endpoint.
-    This pre-warms the round_snapshots table for faster frontend loading.
+    Uses last validator round from DB when available; else env-based round number.
     """
     try:
-        import requests
-
         from app.services.chain_state import get_current_block_estimate
-        from app.services.round_calc import compute_round_number
 
-        # Get current round number
         current_block = get_current_block_estimate()
         if not current_block:
             logger.warning("⚠️  Could not get current block for round caching")
             return False
 
-        current_round = compute_round_number(current_block)
-
-        # Cache last 3 completed rounds
-        rounds_to_cache = [current_round - 1, current_round - 2, current_round - 3]
-
-        cached_count = 0
-        for round_num in rounds_to_cache:
-            if round_num <= 0:
-                continue
-
-            try:
-                # Call the API endpoint which will create the snapshot if missing
-                response = requests.get(f"http://localhost:8080/api/v1/rounds/{round_num}", timeout=60)
-                if response.status_code == 200:
-                    logger.info(f"✅ Cached round {round_num}")
-                    cached_count += 1
-                else:
-                    logger.warning(f"⚠️  Failed to cache round {round_num}: HTTP {response.status_code}")
-            except Exception as e:
-                logger.error(f"❌ Error caching round {round_num}: {e}")
-
-        if cached_count > 0:
-            logger.info(f"✅ Cached {cached_count} rounds successfully")
-            return True
-        return False
+        return asyncio.run(_cache_recent_rounds_async(current_block))
     except Exception as exc:
         logger.error(f"❌ Failed to cache rounds: {exc}")
         return False

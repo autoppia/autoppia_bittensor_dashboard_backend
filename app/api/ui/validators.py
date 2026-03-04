@@ -487,8 +487,8 @@ async def get_validator_details(
                     },
                     "context": {
                         "lastRoundWinner": last_round_winner,
-                        "lastRoundWinnerReward": float(last_round_winner_reward) if last_round_winner_reward else None,
-                        "lastRoundWinnerWeight": float(last_round_winner_weight) if last_round_winner_weight else None,
+                        "lastRoundWinnerReward": float(last_round_winner_reward) if last_round_winner_reward is not None else None,
+                        "lastRoundWinnerWeight": float(last_round_winner_weight) if last_round_winner_weight is not None else None,
                         "lastRoundWinnerName": last_round_winner_name,
                         "lastRoundWinnerImage": last_round_winner_image,
                         "lastRoundWinnerHotkey": last_round_winner_hotkey,
@@ -673,8 +673,8 @@ async def get_validator_details(
             "globalStats": global_stats,
             "context": {
                 "lastRoundWinner": last_round_winner,
-                "lastRoundWinnerReward": float(last_round_winner_reward) if last_round_winner_reward else None,
-                "lastRoundWinnerWeight": float(last_round_winner_weight) if last_round_winner_weight else None,
+                "lastRoundWinnerReward": float(last_round_winner_reward) if last_round_winner_reward is not None else None,
+                "lastRoundWinnerWeight": float(last_round_winner_weight) if last_round_winner_weight is not None else None,
                 "lastRoundWinnerName": last_round_winner_name,
                 "lastRoundWinnerImage": last_round_winner_image,
                 "lastRoundWinnerHotkey": last_round_winner_hotkey,

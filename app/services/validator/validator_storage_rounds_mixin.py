@@ -260,7 +260,7 @@ class ValidatorStorageRoundsMixin:
         if existing_round is not None:
             raise DuplicateIdentifierError(f"validator_round_id {validator_round.validator_round_id} is already registered")
 
-        round_kwargs = self._validator_round_kwargs(validator_round)
+        round_kwargs = await self._validator_round_kwargs(validator_round)
 
         round_row = ValidatorRoundORM(**round_kwargs)
         self.session.add(round_row)
@@ -488,6 +488,26 @@ class ValidatorStorageRoundsMixin:
                     round_row.ended_at = float(ra)
             except Exception:
                 pass
+            # Main validator can persist round/season config so backend uses it instead of .env
+            if authoritative_finish and snapshot is not None:
+                try:
+                    from app.services.round_config_service import upsert_round_config
+
+                    rse = round_metadata.get("round_size_epochs")
+                    sse = round_metadata.get("season_size_epochs")
+                    msb = round_metadata.get("minimum_start_block")
+                    bpe = round_metadata.get("blocks_per_epoch", 360)
+                    if rse is not None and sse is not None and msb is not None:
+                        await upsert_round_config(
+                            self.session,
+                            validator_uid=int(snapshot.validator_uid),
+                            round_size_epochs=float(rse),
+                            season_size_epochs=float(sse),
+                            minimum_start_block=int(msb),
+                            blocks_per_epoch=int(bpe) if bpe is not None else 360,
+                        )
+                except Exception:
+                    pass
         # Ensure start/end epoch are populated even when testing overrides bypassed chain-boundary fill
         try:
             if getattr(round_row, "start_epoch", None) is None or getattr(round_row, "end_epoch", None) is None:
@@ -615,14 +635,6 @@ class ValidatorStorageRoundsMixin:
             summary_s3_url = vs.get("s3_logs_url")
             if isinstance(summary_s3_url, str) and summary_s3_url.strip():
                 resolved_s3_logs_url = summary_s3_url.strip()
-        if resolved_s3_logs_url is None:
-            legacy_s3_logs = vs.get("s3_logs")
-            if isinstance(legacy_s3_logs, dict):
-                round_log = legacy_s3_logs.get("round_log")
-                if isinstance(round_log, dict):
-                    candidate = round_log.get("url")
-                    if isinstance(candidate, str) and candidate.strip():
-                        resolved_s3_logs_url = candidate.strip()
 
         round_row.validator_summary = merged
         if resolved_s3_logs_url:
@@ -870,7 +882,7 @@ class ValidatorStorageRoundsMixin:
         )
 
         existing_round = await self._get_round_row(validator_round.validator_round_id)
-        round_kwargs = self._validator_round_kwargs(validator_round)
+        round_kwargs = await self._validator_round_kwargs(validator_round)
 
         if existing_round:
             for key, value in round_kwargs.items():

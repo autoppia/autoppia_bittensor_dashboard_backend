@@ -861,16 +861,20 @@ class ValidatorStorageHelpersMixin:
         await self.session.flush()
         return row
 
-    def _validator_round_kwargs(self, model: ValidatorRound) -> Dict[str, Any]:
+    async def _validator_round_kwargs(self, model: ValidatorRound) -> Dict[str, Any]:
         # validator_uid, validator_hotkey, validator_coldkey moved to ValidatorRoundValidatorORM
         # metadata/round summary is stored in validator_summary at finish_round, not at start
         start_block = int(model.start_block or 0)
         end_block = int(model.end_block) if getattr(model, "end_block", None) not in (None, 0) else None
         if end_block is None and start_block > 0:
             try:
-                from app.config import settings
+                from app.services.round_config_from_db import get_round_blocks_from_latest_round
 
-                round_blocks = int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
+                round_blocks = await get_round_blocks_from_latest_round(self.session)
+                if not round_blocks or round_blocks <= 0:
+                    from app.services.round_config_service import get_round_config
+
+                    round_blocks = get_round_config().round_blocks()
                 if round_blocks > 0:
                     end_block = start_block + round_blocks
             except Exception:

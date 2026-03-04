@@ -27,8 +27,7 @@ if ENVIRONMENT not in ("local", "development", "production"):
     raise ValueError(f"Invalid ENVIRONMENT: {ENVIRONMENT}. Must be 'local', 'development', or 'production'")
 
 # TESTING mode: Independent of ENVIRONMENT
-# TESTING=true → use testing round config (ROUND_SIZE_EPOCHS=0.347)
-# TESTING=false → use production round config (ROUND_SIZE_EPOCHS=3.0)
+# TESTING=true/false use defaults equivalent to 30-minute rounds (0.4166667 epochs)
 # This allows running in production environment but with testing round sizes
 _legacy_testing = os.getenv("TESTING")
 if _legacy_testing is not None:
@@ -94,22 +93,18 @@ class Settings(BaseSettings):
     ASSET_BASE_URL: str = "https://infinitewebarena.autoppia.com"
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # ROUND CONFIGURATION (chain-derived, matches subnet validator/config.py)
+    # ROUND CONFIGURATION (fallback only when round_config table is empty)
+    # Primary source: round_config table, written only by main validator at finish_round.
+    # These env/defaults are used only until the main validator persists config.
     # ═══════════════════════════════════════════════════════════════════════════
-    # Reads from .env with environment suffix:
-    # ROUND_SIZE_EPOCHS_LOCAL, ROUND_SIZE_EPOCHS_DEVELOPMENT, etc.
-    #
-    # TESTING mode: align defaults with validator/config.py
-    # TESTING=true  -> ROUND=0.5,  MIN_START=7586110, SEASON=2
-    # TESTING=false -> ROUND=4.0, MIN_START=7586110, SEASON=280
     if TESTING_MODE:
         # Validator TESTING defaults
-        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.5"))
+        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.4166667"))
         MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7586110"))
         SEASON_SIZE_EPOCHS: float = float(_env_var("SEASON_SIZE_EPOCHS", "2.0"))
     else:
         # Validator production defaults
-        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "4.0"))
+        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.4166667"))
         MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7586110"))
         SEASON_SIZE_EPOCHS: float = float(_env_var("SEASON_SIZE_EPOCHS", "280.0"))
     BLOCKS_PER_EPOCH: int = int(_env_var("BLOCKS_PER_EPOCH", "360"))
