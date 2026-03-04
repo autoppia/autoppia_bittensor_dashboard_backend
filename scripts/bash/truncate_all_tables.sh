@@ -46,6 +46,9 @@ POSTGRES_HOST=$(_get_var "POSTGRES_HOST") || POSTGRES_HOST="127.0.0.1"
 POSTGRES_PORT=$(_get_var "POSTGRES_PORT") || POSTGRES_PORT="5432"
 POSTGRES_DB=$(_get_var "POSTGRES_DB") || POSTGRES_DB=""
 DEFAULT_MINIMUM_START_BLOCK="${TRUNCATE_MINIMUM_START_BLOCK:-${MINIMUM_START_BLOCK:-7672644}}"
+DEFAULT_ROUND_SIZE_EPOCHS="${TRUNCATE_ROUND_SIZE_EPOCHS:-${ROUND_SIZE_EPOCHS:-0.8333333}}"
+DEFAULT_SEASON_SIZE_EPOCHS="${TRUNCATE_SEASON_SIZE_EPOCHS:-${SEASON_SIZE_EPOCHS:-280.0}}"
+DEFAULT_BLOCKS_PER_EPOCH="${TRUNCATE_BLOCKS_PER_EPOCH:-${BLOCKS_PER_EPOCH:-360}}"
 
 # --- Validate required vars ---
 : "${POSTGRES_USER:?POSTGRES_USER or POSTGRES_USER_${ENV_SUFFIX} is missing}"
@@ -106,12 +109,18 @@ if [[ ! "$INPUT_MINIMUM_START_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "❌ minimum_start_block must be a positive integer."
   exit 1
 fi
+read -r -p "round_size_epochs to insert [${DEFAULT_ROUND_SIZE_EPOCHS}]: " INPUT_ROUND_SIZE_EPOCHS
+INPUT_ROUND_SIZE_EPOCHS="${INPUT_ROUND_SIZE_EPOCHS:-$DEFAULT_ROUND_SIZE_EPOCHS}"
+read -r -p "season_size_epochs to insert [${DEFAULT_SEASON_SIZE_EPOCHS}]: " INPUT_SEASON_SIZE_EPOCHS
+INPUT_SEASON_SIZE_EPOCHS="${INPUT_SEASON_SIZE_EPOCHS:-$DEFAULT_SEASON_SIZE_EPOCHS}"
+read -r -p "blocks_per_epoch to insert [${DEFAULT_BLOCKS_PER_EPOCH}]: " INPUT_BLOCKS_PER_EPOCH
+INPUT_BLOCKS_PER_EPOCH="${INPUT_BLOCKS_PER_EPOCH:-$DEFAULT_BLOCKS_PER_EPOCH}"
 
 echo "Insert initial round_config with these values?"
-echo "  round_size_epochs:    0.4166667"
-echo "  season_size_epochs:   280.0"
+echo "  round_size_epochs:    ${INPUT_ROUND_SIZE_EPOCHS}"
+echo "  season_size_epochs:   ${INPUT_SEASON_SIZE_EPOCHS}"
 echo "  minimum_start_block:  ${INPUT_MINIMUM_START_BLOCK}"
-echo "  blocks_per_epoch:      360"
+echo "  blocks_per_epoch:      ${INPUT_BLOCKS_PER_EPOCH}"
 echo "  updated_by_validator_uid: 83"
 echo ""
 read -r -p "Insert initial round_config? [y/N]: " INSERT_ROUND_CONFIG
@@ -130,7 +139,7 @@ if [[ "${INSERT_ROUND_CONFIG,,}" == "y" || "${INSERT_ROUND_CONFIG,,}" == "yes" ]
     --username="${POSTGRES_USER}" \
     --dbname="${POSTGRES_DB}" \
     --set=ON_ERROR_STOP=1 \
-    -c "INSERT INTO round_config (id, round_size_epochs, season_size_epochs, minimum_start_block, blocks_per_epoch, updated_by_validator_uid) VALUES (1, 0.4166667, 280.0, ${INPUT_MINIMUM_START_BLOCK}, 360, 83) ON CONFLICT (id) DO UPDATE SET round_size_epochs = EXCLUDED.round_size_epochs, season_size_epochs = EXCLUDED.season_size_epochs, minimum_start_block = EXCLUDED.minimum_start_block, blocks_per_epoch = EXCLUDED.blocks_per_epoch, updated_by_validator_uid = EXCLUDED.updated_by_validator_uid, updated_at = NOW();"
+    -c "INSERT INTO round_config (id, round_size_epochs, season_size_epochs, minimum_start_block, blocks_per_epoch, updated_by_validator_uid) VALUES (1, ${INPUT_ROUND_SIZE_EPOCHS}, ${INPUT_SEASON_SIZE_EPOCHS}, ${INPUT_MINIMUM_START_BLOCK}, ${INPUT_BLOCKS_PER_EPOCH}, 83) ON CONFLICT (id) DO UPDATE SET round_size_epochs = EXCLUDED.round_size_epochs, season_size_epochs = EXCLUDED.season_size_epochs, minimum_start_block = EXCLUDED.minimum_start_block, blocks_per_epoch = EXCLUDED.blocks_per_epoch, updated_by_validator_uid = EXCLUDED.updated_by_validator_uid, updated_at = NOW();"
   echo "✅ Initial round_config inserted/updated."
 else
   echo "⏭️  Skipped round_config insert."
