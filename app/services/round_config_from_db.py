@@ -3,8 +3,7 @@ Round config derived from validator round data in DB.
 
 Use these helpers so the backend uses the same timing as the validator (main):
 round/season boundaries and block lengths come from what the validator sent,
-not from duplicate env (ROUND_SIZE_EPOCHS, etc.). Env config is only fallback
-when no validator round data exists yet.
+not from duplicate env (ROUND_SIZE_EPOCHS, etc.).
 """
 
 from __future__ import annotations

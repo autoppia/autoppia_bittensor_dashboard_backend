@@ -3,8 +3,7 @@ Round/season config: single source of truth from DB, written only by main valida
 
 The backend reads round_size_epochs, season_size_epochs, minimum_start_block, blocks_per_epoch
 from the round_config table (one row). Only the main validator can persist this config
-(via finish_round with round_metadata). Env vars are used only as fallback when
-the table is empty (e.g. before the first validator run).
+(via finish_round with round_metadata). No .env fallback is allowed for round timing.
 """
 
 from __future__ import annotations
@@ -41,18 +40,12 @@ def set_round_config_cache(config: Optional[RoundConfig]) -> None:
 
 def get_round_config() -> RoundConfig:
     """
-    Return current round config. Uses cache (from DB) if set; otherwise fallback from settings.
+    Return current round config from cache loaded from DB.
+    Raises when round_config has not been loaded yet.
     """
     if _round_config_cache is not None:
         return _round_config_cache
-    from app.config import settings
-
-    return RoundConfig(
-        round_size_epochs=settings.ROUND_SIZE_EPOCHS,
-        season_size_epochs=settings.SEASON_SIZE_EPOCHS,
-        minimum_start_block=settings.MINIMUM_START_BLOCK,
-        blocks_per_epoch=settings.BLOCKS_PER_EPOCH,
-    )
+    raise RuntimeError("round_config is not loaded. Initialize table row id=1 and refresh cache before serving requests.")
 
 
 async def load_round_config_from_db(session: AsyncSession) -> Optional[RoundConfig]:
@@ -84,8 +77,10 @@ async def load_round_config_from_db(session: AsyncSession) -> Optional[RoundConf
 
 
 async def refresh_round_config_cache(session: AsyncSession) -> None:
-    """Load round_config from DB into cache. Call at startup and after main validator upserts."""
+    """Load round_config from DB into cache. Fails when DB row is missing."""
     config = await load_round_config_from_db(session)
+    if config is None:
+        raise RuntimeError("round_config row id=1 is missing. Backend requires DB round_config and does not fallback to .env.")
     set_round_config_cache(config)
 
 

@@ -252,14 +252,14 @@ async def on_startup():
         await init_db()
         logger.info("SQL schema ready")
 
-        # Load round config from DB (main validator is the only writer; fallback to .env when empty)
+        # Load round config from DB (required; no .env fallback for round timing)
         from app.services.round_config_service import get_round_config, refresh_round_config_cache
 
         async with AsyncSessionLocal() as session:
             await refresh_round_config_cache(session)
         cfg = get_round_config()
         logger.info("=" * 80)
-        logger.info("🔧 ROUND CONFIG (from DB when set by main validator, else .env fallback)")
+        logger.info("🔧 ROUND CONFIG (DB source of truth)")
         logger.info("=" * 80)
         logger.info(f"🔢 MINIMUM_START_BLOCK: {cfg.minimum_start_block:,}")
         logger.info(f"⏱️  Round size: {cfg.round_size_epochs} epochs")
