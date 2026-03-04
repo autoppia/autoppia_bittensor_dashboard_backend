@@ -7,14 +7,16 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import time
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import TaskExecutionLogORM
+from app.db.models import AgentEvaluationRunORM, TaskExecutionLogORM
 from app.db.session import get_session
 from app.services.media_storage import (
     GifStorageConfigError,
@@ -43,6 +45,54 @@ class TaskExecutionLogUploadResponse(BaseModel):
     success: bool
     data: Optional[dict[str, Any]] = None
     error: Optional[str] = None
+
+
+async def _ensure_agent_run_exists(
+    session: AsyncSession,
+    request: TaskExecutionLogUploadRequest,
+) -> None:
+    """
+    Ensure FK target miner_evaluation_runs(agent_run_id) exists.
+
+    Task logs can arrive before /start-agent-run under high concurrency. In that
+    case we create a lightweight placeholder row and let the normal run flow
+    update it later.
+    """
+    stmt = select(AgentEvaluationRunORM.id, AgentEvaluationRunORM.validator_round_id).where(AgentEvaluationRunORM.agent_run_id == request.agent_run_id)
+    existing = (await session.execute(stmt)).first()
+    if existing:
+        existing_round_id = existing[1]
+        if existing_round_id and existing_round_id != request.validator_round_id:
+            logger.warning(
+                "task-log agent_run_id=%s already exists for validator_round_id=%s (incoming=%s)",
+                request.agent_run_id,
+                existing_round_id,
+                request.validator_round_id,
+            )
+        return
+
+    placeholder = AgentEvaluationRunORM(
+        agent_run_id=request.agent_run_id,
+        validator_round_id=request.validator_round_id,
+        miner_uid=request.miner_uid,
+        started_at=float(time.time()),
+        total_tasks=0,
+        success_tasks=0,
+        failed_tasks=0,
+        meta={"placeholder": True, "source": "task_logs"},
+    )
+    try:
+        async with session.begin_nested():
+            session.add(placeholder)
+            await session.flush()
+            logger.info(
+                "Created placeholder agent_run for early task-log: agent_run_id=%s validator_round_id=%s",
+                request.agent_run_id,
+                request.validator_round_id,
+            )
+    except IntegrityError:
+        # Concurrent request created the same agent_run_id first.
+        logger.debug("Placeholder agent_run already created concurrently: %s", request.agent_run_id)
 
 
 @router.post("", response_model=TaskExecutionLogUploadResponse)
@@ -90,6 +140,7 @@ async def upload_task_execution_log(
     payload_url = build_public_url(object_key)
 
     try:
+        await _ensure_agent_run_exists(session, request)
         stmt = select(TaskExecutionLogORM).where(
             TaskExecutionLogORM.task_id == request.task_id,
             TaskExecutionLogORM.agent_run_id == request.agent_run_id,
