@@ -108,6 +108,14 @@ echo "  updated_by_validator_uid: 83"
 echo ""
 read -r -p "Insert initial round_config? [y/N]: " INSERT_ROUND_CONFIG
 if [[ "${INSERT_ROUND_CONFIG,,}" == "y" || "${INSERT_ROUND_CONFIG,,}" == "yes" ]]; then
+  # Trigger requires app_runtime_config.main_validator_uid to be set (truncate leaves it empty)
+  psql \
+    --host="${POSTGRES_HOST}" \
+    --port="${POSTGRES_PORT}" \
+    --username="${POSTGRES_USER}" \
+    --dbname="${POSTGRES_DB}" \
+    --set=ON_ERROR_STOP=1 \
+    -c "INSERT INTO app_runtime_config (id, main_validator_uid, main_validator_hotkey, updated_at) VALUES (1, 83, NULL, NOW()) ON CONFLICT (id) DO UPDATE SET main_validator_uid = EXCLUDED.main_validator_uid, main_validator_hotkey = COALESCE(EXCLUDED.main_validator_hotkey, app_runtime_config.main_validator_hotkey), updated_at = NOW();"
   psql \
     --host="${POSTGRES_HOST}" \
     --port="${POSTGRES_PORT}" \
