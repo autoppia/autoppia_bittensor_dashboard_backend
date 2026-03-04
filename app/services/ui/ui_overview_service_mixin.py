@@ -118,7 +118,7 @@ class UIOverviewServiceMixin:
             )
 
         total_validators = (await self.session.execute(text("SELECT COUNT(DISTINCT validator_uid) FROM round_validators WHERE round_id=:rid"), {"rid": metrics_round_id})).scalar_one()
-        total_miners = (
+        total_miners_active = (
             await self.session.execute(
                 text(
                     """
@@ -141,10 +141,48 @@ class UIOverviewServiceMixin:
                 {"rid": metrics_round_id},
             )
         ).scalar_one()
+        outcome_counts = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT validators_count, miners_evaluated
+                        FROM round_outcomes
+                        WHERE round_id = :rid
+                        LIMIT 1
+                        """
+                    ),
+                    {"rid": metrics_round_id},
+                )
+            )
+            .mappings()
+            .first()
+        )
         miners = (
             (
                 await self.session.execute(
-                    text("SELECT DISTINCT miner_uid AS uid, COALESCE(name, 'miner '||miner_uid::text) AS name FROM round_validator_miners WHERE round_id=:rid ORDER BY miner_uid"),
+                    text(
+                        """
+                        WITH ranked AS (
+                          SELECT DISTINCT ON (miner_uid)
+                            miner_uid AS uid,
+                            COALESCE(name, 'miner '||miner_uid::text) AS name,
+                            COALESCE(
+                              effective_tasks_received,
+                              post_consensus_tasks_received,
+                              local_tasks_received,
+                              0
+                            ) AS tasks_received
+                          FROM round_validator_miners
+                          WHERE round_id = :rid
+                          ORDER BY miner_uid, post_consensus_rank ASC NULLS LAST, post_consensus_avg_reward DESC NULLS LAST
+                        )
+                        SELECT uid, name
+                        FROM ranked
+                        WHERE tasks_received > 0
+                        ORDER BY uid
+                        """
+                    ),
                     {"rid": metrics_round_id},
                 )
             )
@@ -167,14 +205,16 @@ class UIOverviewServiceMixin:
                 {"rid": metrics_round_id},
             )
         ).scalar_one()
+        final_total_validators = int((outcome_counts or {}).get("validators_count") or total_validators or 0)
+        final_total_miners = int((outcome_counts or {}).get("miners_evaluated") or total_miners_active or 0)
 
         return {
             "topMinerUid": int(winner["winner_miner_uid"]) if winner and winner["winner_miner_uid"] is not None else None,
             "topMinerName": winner["name"] if winner else None,
             "topReward": float(winner["winner_score"] or 0.0) if winner else 0.0,
             "totalWebsites": 14,
-            "totalValidators": int(total_validators or 0),
-            "totalMiners": int(total_miners or 0),
+            "totalValidators": final_total_validators,
+            "totalMiners": final_total_miners,
             "tasksPerValidator": int(tasks_per_validator or 0),
             "totalTasksPerValidator": int(tasks_per_validator or 0),
             "minerList": [dict(m) for m in miners],

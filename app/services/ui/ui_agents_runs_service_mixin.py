@@ -272,16 +272,31 @@ class UIAgentsRunsServiceMixin:
         )
         season_leadership = None
         if season_leadership_row:
+            round_winner_uid = int(season_leadership_row["winner_miner_uid"]) if season_leadership_row["winner_miner_uid"] is not None else None
+            round_winner_score = float(season_leadership_row["winner_score"]) if season_leadership_row["winner_score"] is not None else None
+            reigning_uid_before_round = int(season_leadership_row["reigning_miner_uid_before_round"]) if season_leadership_row["reigning_miner_uid_before_round"] is not None else None
+            reigning_score_before_round = float(season_leadership_row["reigning_score_before_round"]) if season_leadership_row["reigning_score_before_round"] is not None else None
+            top_candidate_uid = int(season_leadership_row["top_candidate_miner_uid"]) if season_leadership_row["top_candidate_miner_uid"] is not None else None
+            top_candidate_score = float(season_leadership_row["top_candidate_score"]) if season_leadership_row["top_candidate_score"] is not None else None
+            dethroned = bool(season_leadership_row["dethroned"]) if season_leadership_row["dethroned"] is not None else False
+            if dethroned:
+                season_leader_uid = top_candidate_uid or round_winner_uid
+                season_leader_score = top_candidate_score if top_candidate_score is not None else round_winner_score
+            else:
+                season_leader_uid = reigning_uid_before_round or round_winner_uid
+                season_leader_score = reigning_score_before_round if reigning_score_before_round is not None else round_winner_score
+
             season_leadership = {
-                "round_winner_uid": (int(season_leadership_row["winner_miner_uid"]) if season_leadership_row["winner_miner_uid"] is not None else None),
-                "round_winner_score": (float(season_leadership_row["winner_score"]) if season_leadership_row["winner_score"] is not None else None),
-                "season_leader_uid": (int(season_leadership_row["winner_miner_uid"]) if season_leadership_row["winner_miner_uid"] is not None else None),
-                "reigning_uid_before_round": (int(season_leadership_row["reigning_miner_uid_before_round"]) if season_leadership_row["reigning_miner_uid_before_round"] is not None else None),
-                "reigning_score_before_round": (float(season_leadership_row["reigning_score_before_round"]) if season_leadership_row["reigning_score_before_round"] is not None else None),
-                "top_candidate_uid": (int(season_leadership_row["top_candidate_miner_uid"]) if season_leadership_row["top_candidate_miner_uid"] is not None else None),
-                "top_candidate_score": (float(season_leadership_row["top_candidate_score"]) if season_leadership_row["top_candidate_score"] is not None else None),
+                "round_winner_uid": round_winner_uid,
+                "round_winner_score": round_winner_score,
+                "season_leader_uid": season_leader_uid,
+                "season_leader_score": season_leader_score,
+                "reigning_uid_before_round": reigning_uid_before_round,
+                "reigning_score_before_round": reigning_score_before_round,
+                "top_candidate_uid": top_candidate_uid,
+                "top_candidate_score": top_candidate_score,
                 "required_improvement_pct": (float(season_leadership_row["required_improvement_pct"]) if season_leadership_row["required_improvement_pct"] is not None else 0.05),
-                "dethroned": bool(season_leadership_row["dethroned"]) if season_leadership_row["dethroned"] is not None else False,
+                "dethroned": dethroned,
             }
 
         return {
