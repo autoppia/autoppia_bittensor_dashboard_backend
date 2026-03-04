@@ -93,9 +93,10 @@ class Settings(BaseSettings):
     ASSET_BASE_URL: str = "https://infinitewebarena.autoppia.com"
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # ROUND CONFIGURATION (fallback only when round_config table is empty)
-    # Primary source: round_config table, written only by main validator at finish_round.
-    # These env/defaults are used only until the main validator persists config.
+    # ROUND CONFIGURATION (DB source of truth)
+    # Runtime round timing is read from round_config table.
+    # These env values are retained only for compatibility/testing and are not used
+    # as runtime fallback for round timing.
     # ═══════════════════════════════════════════════════════════════════════════
     if TESTING_MODE:
         # Validator TESTING defaults
