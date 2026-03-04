@@ -575,6 +575,7 @@ __all__ = [
     "TaskORM",
     "TaskSolutionORM",
     "EvaluationORM",
+    "EvaluationResultORM",
     "EvaluationExecutionHistoryORM",
     "EvaluationLLMUsageORM",
     "TaskExecutionLogORM",
@@ -583,3 +584,4 @@ __all__ = [
 
 # Backwards compatibility aliases (must be after __all__ for export)
 RoundORM = ValidatorRoundORM
+EvaluationResultORM = EvaluationORM
