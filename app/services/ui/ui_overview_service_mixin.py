@@ -118,7 +118,29 @@ class UIOverviewServiceMixin:
             )
 
         total_validators = (await self.session.execute(text("SELECT COUNT(DISTINCT validator_uid) FROM round_validators WHERE round_id=:rid"), {"rid": metrics_round_id})).scalar_one()
-        total_miners = (await self.session.execute(text("SELECT COUNT(DISTINCT miner_uid) FROM round_validator_miners WHERE round_id=:rid"), {"rid": metrics_round_id})).scalar_one()
+        total_miners = (
+            await self.session.execute(
+                text(
+                    """
+                    WITH ranked AS (
+                      SELECT DISTINCT ON (miner_uid)
+                        miner_uid,
+                        COALESCE(
+                          effective_tasks_received,
+                          post_consensus_tasks_received,
+                          local_tasks_received,
+                          0
+                        ) AS tasks_received
+                      FROM round_validator_miners
+                      WHERE round_id = :rid
+                      ORDER BY miner_uid, post_consensus_rank ASC NULLS LAST, post_consensus_avg_reward DESC NULLS LAST
+                    )
+                    SELECT COUNT(*) FROM ranked WHERE tasks_received > 0
+                    """
+                ),
+                {"rid": metrics_round_id},
+            )
+        ).scalar_one()
         miners = (
             (
                 await self.session.execute(
