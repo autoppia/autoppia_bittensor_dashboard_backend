@@ -992,9 +992,12 @@ class UIAgentsRunsServiceMixin:
     ) -> Dict[str, Any]:
         where = ["1=1"]
         params: Dict[str, Any] = {}
+        # Catalog should only list runs linked to a canonical round row.
+        # Shadow/orphan runs (rv.round_id IS NULL) create "Round 0" artifacts in UI.
+        where.append("rv.round_id IS NOT NULL")
         if not include_unfinished:
             # Hide in-progress rounds by default: they often carry provisional ranks/scores.
-            where.append("(rr.status IS NULL OR LOWER(rr.status) IN ('finished', 'completed', 'evaluating_finished'))")
+            where.append("LOWER(COALESCE(rr.status, '')) IN ('finished', 'completed', 'evaluating_finished')")
         if agent_id:
             uid = int(str(agent_id).replace("agent-", ""))
             where.append("mer.miner_uid = :uid")
