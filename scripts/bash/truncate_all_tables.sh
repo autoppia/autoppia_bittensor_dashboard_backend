@@ -45,6 +45,7 @@ POSTGRES_PASSWORD=$(_get_var "POSTGRES_PASSWORD") || POSTGRES_PASSWORD=""
 POSTGRES_HOST=$(_get_var "POSTGRES_HOST") || POSTGRES_HOST="127.0.0.1"
 POSTGRES_PORT=$(_get_var "POSTGRES_PORT") || POSTGRES_PORT="5432"
 POSTGRES_DB=$(_get_var "POSTGRES_DB") || POSTGRES_DB=""
+DEFAULT_MINIMUM_START_BLOCK="${TRUNCATE_MINIMUM_START_BLOCK:-${MINIMUM_START_BLOCK:-7672644}}"
 
 # --- Validate required vars ---
 : "${POSTGRES_USER:?POSTGRES_USER or POSTGRES_USER_${ENV_SUFFIX} is missing}"
@@ -99,10 +100,17 @@ echo "✅ All user tables truncated successfully in '${POSTGRES_DB}'."
 
 # --- Ask whether to insert initial round_config ---
 echo ""
+read -r -p "minimum_start_block to insert [${DEFAULT_MINIMUM_START_BLOCK}]: " INPUT_MINIMUM_START_BLOCK
+INPUT_MINIMUM_START_BLOCK="${INPUT_MINIMUM_START_BLOCK:-$DEFAULT_MINIMUM_START_BLOCK}"
+if [[ ! "$INPUT_MINIMUM_START_BLOCK" =~ ^[0-9]+$ ]]; then
+  echo "❌ minimum_start_block must be a positive integer."
+  exit 1
+fi
+
 echo "Insert initial round_config with these values?"
 echo "  round_size_epochs:    0.4166667"
 echo "  season_size_epochs:   280.0"
-echo "  minimum_start_block:  7672644"
+echo "  minimum_start_block:  ${INPUT_MINIMUM_START_BLOCK}"
 echo "  blocks_per_epoch:      360"
 echo "  updated_by_validator_uid: 83"
 echo ""
@@ -115,14 +123,14 @@ if [[ "${INSERT_ROUND_CONFIG,,}" == "y" || "${INSERT_ROUND_CONFIG,,}" == "yes" ]
     --username="${POSTGRES_USER}" \
     --dbname="${POSTGRES_DB}" \
     --set=ON_ERROR_STOP=1 \
-    -c "INSERT INTO app_runtime_config (id, main_validator_uid, main_validator_hotkey, updated_at) VALUES (1, 83, NULL, NOW()) ON CONFLICT (id) DO UPDATE SET main_validator_uid = EXCLUDED.main_validator_uid, main_validator_hotkey = COALESCE(EXCLUDED.main_validator_hotkey, app_runtime_config.main_validator_hotkey), updated_at = NOW();"
+    -c "INSERT INTO app_runtime_config (id, main_validator_uid, main_validator_hotkey, created_at, updated_at) VALUES (1, 83, NULL, NOW(), NOW()) ON CONFLICT (id) DO UPDATE SET main_validator_uid = EXCLUDED.main_validator_uid, main_validator_hotkey = COALESCE(EXCLUDED.main_validator_hotkey, app_runtime_config.main_validator_hotkey), updated_at = NOW();"
   psql \
     --host="${POSTGRES_HOST}" \
     --port="${POSTGRES_PORT}" \
     --username="${POSTGRES_USER}" \
     --dbname="${POSTGRES_DB}" \
     --set=ON_ERROR_STOP=1 \
-    -c "INSERT INTO round_config (id, round_size_epochs, season_size_epochs, minimum_start_block, blocks_per_epoch, updated_by_validator_uid) VALUES (1, 0.4166667, 280.0, 7672644, 360, 83) ON CONFLICT (id) DO UPDATE SET round_size_epochs = EXCLUDED.round_size_epochs, season_size_epochs = EXCLUDED.season_size_epochs, minimum_start_block = EXCLUDED.minimum_start_block, blocks_per_epoch = EXCLUDED.blocks_per_epoch, updated_by_validator_uid = EXCLUDED.updated_by_validator_uid, updated_at = NOW();"
+    -c "INSERT INTO round_config (id, round_size_epochs, season_size_epochs, minimum_start_block, blocks_per_epoch, updated_by_validator_uid) VALUES (1, 0.4166667, 280.0, ${INPUT_MINIMUM_START_BLOCK}, 360, 83) ON CONFLICT (id) DO UPDATE SET round_size_epochs = EXCLUDED.round_size_epochs, season_size_epochs = EXCLUDED.season_size_epochs, minimum_start_block = EXCLUDED.minimum_start_block, blocks_per_epoch = EXCLUDED.blocks_per_epoch, updated_by_validator_uid = EXCLUDED.updated_by_validator_uid, updated_at = NOW();"
   echo "✅ Initial round_config inserted/updated."
 else
   echo "⏭️  Skipped round_config insert."
