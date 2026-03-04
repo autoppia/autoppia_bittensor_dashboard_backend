@@ -32,7 +32,7 @@ from app.api.ui.tasks import router as tasks_router
 from app.api.ui.validators import router as validators_router
 from app.api.validator.task_logs import router as task_logs_router
 from app.api.validator.validator_round import router as validator_rounds_router
-from app.db.session import get_session, init_db
+from app.db.session import AsyncSessionLocal, get_session, init_db
 from app.middleware.logging_middleware import DetailedLoggingMiddleware
 from app.services.idempotency import get_cache_stats
 
@@ -252,14 +252,18 @@ async def on_startup():
         await init_db()
         logger.info("SQL schema ready")
 
-        # Log round configuration (matches validator config)
+        # Load round config from DB (main validator is the only writer; fallback to .env when empty)
+        from app.services.round_config_service import get_round_config, refresh_round_config_cache
+
+        async with AsyncSessionLocal() as session:
+            await refresh_round_config_cache(session)
+        cfg = get_round_config()
         logger.info("=" * 80)
-        logger.info("🔧 BACKEND ROUND CONFIGURATION")
+        logger.info("🔧 ROUND CONFIG (from DB when set by main validator, else .env fallback)")
         logger.info("=" * 80)
-        logger.info(f"📊 Mode: {'TESTING' if settings.TESTING else 'PRODUCTION'}")
-        logger.info(f"🔢 MINIMUM_START_BLOCK: {settings.MINIMUM_START_BLOCK:,}")
-        logger.info(f"⏱️  Round Size: {settings.ROUND_SIZE_EPOCHS} epochs")
-        logger.info(f"📦 Blocks per Round: {int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)}")
+        logger.info(f"🔢 MINIMUM_START_BLOCK: {cfg.minimum_start_block:,}")
+        logger.info(f"⏱️  Round size: {cfg.round_size_epochs} epochs")
+        logger.info(f"📦 Blocks per round: {cfg.round_blocks()}")
         logger.info("=" * 80)
 
         logger.info(f"API server ready on {settings.HOST}:{settings.PORT}")

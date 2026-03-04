@@ -656,6 +656,72 @@ async def init_db() -> None:
             )
         )
 
+        # Round config: single row, only main validator can write. Backend reads from here instead of .env.
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS round_config (
+                    id SMALLINT PRIMARY KEY DEFAULT 1,
+                    round_size_epochs DOUBLE PRECISION NOT NULL,
+                    season_size_epochs DOUBLE PRECISION NOT NULL,
+                    minimum_start_block BIGINT NOT NULL,
+                    blocks_per_epoch INTEGER NOT NULL DEFAULT 360,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_by_validator_uid INTEGER NULL,
+                    CONSTRAINT round_config_singleton CHECK (id = 1)
+                )
+                """
+            )
+        )
+        await conn.execute(text("ALTER TABLE round_config ADD COLUMN IF NOT EXISTS updated_by_validator_uid INTEGER"))
+        await conn.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION enforce_round_config_main_validator()
+                RETURNS trigger AS $$
+                DECLARE
+                    main_uid INTEGER;
+                BEGIN
+                    SELECT main_validator_uid
+                    INTO main_uid
+                    FROM app_runtime_config
+                    WHERE id = 1;
+
+                    IF main_uid IS NULL THEN
+                        RAISE EXCEPTION 'round_config write blocked: app_runtime_config.main_validator_uid is NULL';
+                    END IF;
+
+                    IF NEW.updated_by_validator_uid IS NULL THEN
+                        RAISE EXCEPTION 'round_config write blocked: updated_by_validator_uid is required';
+                    END IF;
+
+                    IF NEW.updated_by_validator_uid <> main_uid THEN
+                        RAISE EXCEPTION
+                            'round_config write blocked: uid % is not main validator uid %',
+                            NEW.updated_by_validator_uid,
+                            main_uid;
+                    END IF;
+
+                    NEW.id := 1;
+                    NEW.updated_at := NOW();
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+                """
+            )
+        )
+        await conn.execute(text("DROP TRIGGER IF EXISTS trg_round_config_enforce_main_validator ON round_config"))
+        await conn.execute(
+            text(
+                """
+                CREATE TRIGGER trg_round_config_enforce_main_validator
+                BEFORE INSERT OR UPDATE ON round_config
+                FOR EACH ROW
+                EXECUTE FUNCTION enforce_round_config_main_validator()
+                """
+            )
+        )
+
         # Bridge legacy tables with canonical round_validators table.
         await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS round_validator_id BIGINT"))
         await conn.execute(text("ALTER TABLE miner_evaluation_runs ADD COLUMN IF NOT EXISTS round_validator_id BIGINT"))

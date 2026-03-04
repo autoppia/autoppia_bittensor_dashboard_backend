@@ -95,7 +95,7 @@ class FinishRoundAgentRun(BaseModel):
 
 
 class RoundMetadata(BaseModel):
-    """Round timing and metadata."""
+    """Round timing and metadata. Optional round/season config is persisted to round_config by main validator only."""
 
     round_number: int
     started_at: float
@@ -108,6 +108,10 @@ class RoundMetadata(BaseModel):
     tasks_completed: int
     miners_responded_handshake: int  # miners that answered the round handshake
     miners_evaluated: int  # miners that had at least one task evaluated
+    round_size_epochs: float | None = None
+    season_size_epochs: float | None = None
+    minimum_start_block: int | None = None
+    blocks_per_epoch: int | None = None
 
 
 class FinishRoundRequest(BaseModel):

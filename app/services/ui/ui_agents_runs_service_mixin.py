@@ -439,8 +439,22 @@ class UIAgentsRunsServiceMixin:
                 # Some rounds are persisted with equal epochs; treat them as at least 1 epoch.
                 round_epochs = max(end_epoch - start_epoch, 1)
             else:
-                # Fallback when epochs are missing/incomplete
-                round_epochs = max(int(float(settings.ROUND_SIZE_EPOCHS)), 1)
+                # Prefer round length from last validator round in DB; else round_config (DB or .env fallback)
+                round_epochs = None
+                try:
+                    from app.services.round_config_from_db import get_round_blocks_from_latest_round
+                    from app.services.round_config_service import get_round_config
+
+                    round_blocks = await get_round_blocks_from_latest_round(self.session)
+                    cfg = get_round_config()
+                    if round_blocks and cfg.blocks_per_epoch:
+                        round_epochs = max(int(round_blocks / cfg.blocks_per_epoch), 1)
+                except Exception:
+                    pass
+                if round_epochs is None:
+                    from app.services.round_config_service import get_round_config
+
+                    round_epochs = max(int(float(get_round_config().round_size_epochs)), 1)
             weight = float(r["weight"] or 0.0)
             subnet_price = float(r["subnet_price"] or 0.0)
             alpha_earned = float(settings.ALPHA_EMISSION_PER_EPOCH) * float(round_epochs) * weight
