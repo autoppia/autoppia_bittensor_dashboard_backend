@@ -2,7 +2,5 @@
     "sonarlint.connectedMode.project": {
         "connectionId": "autoppia",
         "projectKey": "autoppia_autoppia_bittensor_dashboard_backend"
-    },
-    "sonarlint.output.showAnalyzerLogs": true,
-    "sonarlint.output.showVerboseLogs": true
+    }
 }
