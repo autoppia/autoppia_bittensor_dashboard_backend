@@ -791,10 +791,13 @@ class UIAgentsRunsServiceMixin:
                     await self.session.execute(
                         text(
                             """
-                        SELECT s.season_number, rr.round_number_in_season, rv.validator_uid
+                        SELECT
+                          COALESCE(s.season_number, rv.season_number) AS season_number,
+                          COALESCE(rr.round_number_in_season, rv.round_number_in_season) AS round_number_in_season,
+                          rv.validator_uid
                         FROM round_validators rv
-                        JOIN rounds rr ON rr.round_id = rv.round_id
-                        JOIN seasons s ON s.season_id = rr.season_id
+                        LEFT JOIN rounds rr ON rr.round_id = rv.round_id
+                        LEFT JOIN seasons s ON s.season_id = rr.season_id
                         WHERE rv.round_validator_id = :rvid
                         LIMIT 1
                         """
@@ -805,7 +808,12 @@ class UIAgentsRunsServiceMixin:
                 .mappings()
                 .first()
             )
-            round_id = (int(rv["season_number"]) * 10000 + int(rv["round_number_in_season"])) if rv else 0
+            round_id = None
+            if rv and rv.get("season_number") is not None and rv.get("round_number_in_season") is not None:
+                round_id = int(rv["season_number"]) * 10000 + int(rv["round_number_in_season"])
+            if round_id is None:
+                # Avoid surfacing synthetic "Round 0" cards for orphan/shadow rows.
+                continue
             total_tasks = int(r["total_tasks"] or 0)
             success_tasks = int(r["success_tasks"] or 0)
             status = "completed"
@@ -838,7 +846,7 @@ class UIAgentsRunsServiceMixin:
             "total": int(total or 0),
             "page": page,
             "limit": limit,
-            "availableRounds": sorted(list({int(run["roundId"]) for run in runs if int(run["roundId"]) > 0}), reverse=True),
+            "availableRounds": sorted(list({int(run["roundId"]) for run in runs if run.get("roundId") is not None}), reverse=True),
             "selectedRound": None,
         }
 

@@ -33,7 +33,7 @@ async def _service(session: AsyncSession) -> UIDataService:
 
 
 @router.get("")
-@cache("agent_runs_list_v5", ttl=600)
+@cache("agent_runs_list_v6", ttl=600)
 async def list_agent_runs(
     session: AsyncSession = Depends(get_session),
     page: int = Query(1, ge=1),

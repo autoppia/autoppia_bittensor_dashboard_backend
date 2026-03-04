@@ -133,6 +133,8 @@ class UIOverviewServiceMixin:
                         ) AS tasks_received
                       FROM round_validator_miners
                       WHERE round_id = :rid
+                        AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
+                        AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
                       ORDER BY miner_uid, post_consensus_rank ASC NULLS LAST, post_consensus_avg_reward DESC NULLS LAST
                     )
                     SELECT COUNT(*) FROM ranked WHERE tasks_received > 0
@@ -175,6 +177,8 @@ class UIOverviewServiceMixin:
                             ) AS tasks_received
                           FROM round_validator_miners
                           WHERE round_id = :rid
+                            AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
+                            AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
                           ORDER BY miner_uid, post_consensus_rank ASC NULLS LAST, post_consensus_avg_reward DESC NULLS LAST
                         )
                         SELECT uid, name
@@ -443,9 +447,31 @@ class UIOverviewServiceMixin:
 
     async def get_overview_statistics(self) -> Dict[str, Any]:
         total_validators = (await self.session.execute(text("SELECT COUNT(DISTINCT validator_uid) FROM round_validators"))).scalar_one()
-        total_miners = (await self.session.execute(text("SELECT COUNT(DISTINCT miner_uid) FROM round_validator_miners"))).scalar_one()
+        total_miners = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT COUNT(DISTINCT miner_uid)
+                    FROM round_validator_miners
+                    WHERE NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
+                      AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
+                    """
+                )
+            )
+        ).scalar_one()
         total_tasks = (await self.session.execute(text("SELECT COUNT(*) FROM tasks"))).scalar_one()
-        avg_score = (await self.session.execute(text("SELECT COALESCE(AVG(post_consensus_avg_reward),0) FROM round_validator_miners"))).scalar_one()
+        avg_score = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT COALESCE(AVG(post_consensus_avg_reward),0)
+                    FROM round_validator_miners
+                    WHERE NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
+                      AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
+                    """
+                )
+            )
+        ).scalar_one()
         avg_trust = (await self.session.execute(text("SELECT COALESCE(AVG(vtrust),0) FROM round_validators"))).scalar_one()
         total_stake = (
             await self.session.execute(

@@ -637,6 +637,7 @@ async def init_db() -> None:
                     id SMALLINT PRIMARY KEY DEFAULT 1,
                     main_validator_uid INTEGER NULL,
                     main_validator_hotkey VARCHAR(128) NULL,
+                    minimum_validator_version VARCHAR(32) NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     CONSTRAINT app_runtime_config_singleton CHECK (id = 1)
@@ -645,11 +646,12 @@ async def init_db() -> None:
             )
         )
         await conn.execute(text("ALTER TABLE app_runtime_config ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"))
+        await conn.execute(text("ALTER TABLE app_runtime_config ADD COLUMN IF NOT EXISTS minimum_validator_version VARCHAR(32)"))
         await conn.execute(
             text(
                 f"""
-                INSERT INTO app_runtime_config (id, main_validator_uid, main_validator_hotkey, created_at, updated_at)
-                VALUES (1, {str(int(main_uid)) if main_uid is not None else "NULL"}, {("'" + main_hotkey_sql + "'") if main_hotkey else "NULL"}, NOW(), NOW())
+                INSERT INTO app_runtime_config (id, main_validator_uid, main_validator_hotkey, minimum_validator_version, created_at, updated_at)
+                VALUES (1, {str(int(main_uid)) if main_uid is not None else "NULL"}, {("'" + main_hotkey_sql + "'") if main_hotkey else "NULL"}, NULL, NOW(), NOW())
                 ON CONFLICT (id) DO UPDATE SET
                     main_validator_uid = EXCLUDED.main_validator_uid,
                     main_validator_hotkey = EXCLUDED.main_validator_hotkey,
@@ -723,6 +725,31 @@ async def init_db() -> None:
                 """
             )
         )
+
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS task_execution_logs_pending (
+                    id BIGSERIAL PRIMARY KEY,
+                    task_id VARCHAR(128) NOT NULL,
+                    agent_run_id VARCHAR(128) NOT NULL,
+                    validator_round_id VARCHAR(128) NOT NULL,
+                    validator_uid INTEGER NULL,
+                    miner_uid INTEGER NULL,
+                    season INTEGER NULL,
+                    round_in_season INTEGER NULL,
+                    payload_ref TEXT NOT NULL,
+                    payload_size BIGINT NOT NULL DEFAULT 0,
+                    last_error TEXT NULL,
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_task_execution_logs_pending UNIQUE (task_id, agent_run_id)
+                )
+                """
+            )
+        )
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_task_execution_logs_pending_round ON task_execution_logs_pending(validator_round_id)"))
 
         # Bridge legacy tables with canonical round_validators table.
         await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS round_validator_id BIGINT"))
@@ -1049,8 +1076,8 @@ async def init_db() -> None:
                             RAISE EXCEPTION 'season_number and round_number_in_season are required';
                         END IF;
 
-                        ts := CASE WHEN NEW.started_at IS NULL THEN NULL ELSE to_timestamp(NEW.started_at) END;
-                        te := CASE WHEN NEW.ended_at IS NULL THEN NULL ELSE to_timestamp(NEW.ended_at) END;
+                        ts := CASE WHEN NEW.started_at IS NULL OR NEW.started_at <= 0 THEN NULL ELSE to_timestamp(NEW.started_at) END;
+                        te := CASE WHEN NEW.ended_at IS NULL OR NEW.ended_at <= 0 THEN NULL ELSE to_timestamp(NEW.ended_at) END;
 
                         SELECT season_id INTO sid
                         FROM seasons
@@ -1183,8 +1210,8 @@ async def init_db() -> None:
                         END IF;                        NEW.id := rvid;
                         RETURN NEW;
                     ELSIF TG_OP = 'UPDATE' THEN
-                        ts := CASE WHEN NEW.started_at IS NULL THEN NULL ELSE to_timestamp(NEW.started_at) END;
-                        te := CASE WHEN NEW.ended_at IS NULL THEN NULL ELSE to_timestamp(NEW.ended_at) END;
+                        ts := CASE WHEN NEW.started_at IS NULL OR NEW.started_at <= 0 THEN NULL ELSE to_timestamp(NEW.started_at) END;
+                        te := CASE WHEN NEW.ended_at IS NULL OR NEW.ended_at <= 0 THEN NULL ELSE to_timestamp(NEW.ended_at) END;
 
                         SELECT rv.round_validator_id, rv.round_id
                         INTO rvid, rid
@@ -1551,6 +1578,122 @@ async def init_db() -> None:
                 INSTEAD OF INSERT OR UPDATE OR DELETE ON validator_round_summary_miners
                 FOR EACH ROW
                 EXECUTE FUNCTION compat_validator_round_summary_miners_iou()
+                """
+            )
+        )
+
+        # Enforce sane boundaries across canonical tables regardless of write path
+        # (new API, compatibility views, or old validators).
+        await conn.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION normalize_round_boundaries()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    IF NEW.start_block IS NOT NULL AND NEW.end_block IS NOT NULL AND NEW.end_block < NEW.start_block THEN
+                        NEW.end_block := NEW.start_block;
+                    END IF;
+                    IF NEW.started_at IS NOT NULL AND NEW.ended_at IS NOT NULL AND NEW.ended_at < NEW.started_at THEN
+                        NEW.ended_at := NEW.started_at;
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+                """
+            )
+        )
+        await conn.execute(text("DROP TRIGGER IF EXISTS trg_normalize_round_boundaries ON rounds"))
+        await conn.execute(
+            text(
+                """
+                CREATE TRIGGER trg_normalize_round_boundaries
+                BEFORE INSERT OR UPDATE ON rounds
+                FOR EACH ROW
+                EXECUTE FUNCTION normalize_round_boundaries()
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION normalize_round_validator_boundaries()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    IF NEW.start_block IS NOT NULL AND NEW.end_block IS NOT NULL AND NEW.end_block < NEW.start_block THEN
+                        NEW.end_block := NEW.start_block;
+                    END IF;
+                    IF NEW.started_at IS NOT NULL AND NEW.finished_at IS NOT NULL AND NEW.finished_at < NEW.started_at THEN
+                        NEW.finished_at := NEW.started_at;
+                    END IF;
+                    IF NEW.started_at IS NOT NULL AND NEW.started_at < TIMESTAMP WITH TIME ZONE '2001-01-01 00:00:00+00' THEN
+                        NEW.started_at := NULL;
+                    END IF;
+                    IF NEW.finished_at IS NOT NULL AND NEW.finished_at < TIMESTAMP WITH TIME ZONE '2001-01-01 00:00:00+00' THEN
+                        NEW.finished_at := NULL;
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+                """
+            )
+        )
+        await conn.execute(text("DROP TRIGGER IF EXISTS trg_normalize_round_validator_boundaries ON round_validators"))
+        await conn.execute(
+            text(
+                """
+                CREATE TRIGGER trg_normalize_round_validator_boundaries
+                BEFORE INSERT OR UPDATE ON round_validators
+                FOR EACH ROW
+                EXECUTE FUNCTION normalize_round_validator_boundaries()
+                """
+            )
+        )
+
+        # One-time self-healing for previously persisted malformed rows.
+        await conn.execute(
+            text(
+                """
+                UPDATE rounds
+                SET
+                    end_block = CASE
+                        WHEN start_block IS NOT NULL AND end_block IS NOT NULL AND end_block < start_block THEN start_block
+                        ELSE end_block
+                    END,
+                    ended_at = CASE
+                        WHEN started_at IS NOT NULL AND ended_at IS NOT NULL AND ended_at < started_at THEN started_at
+                        ELSE ended_at
+                    END,
+                    updated_at = NOW()
+                WHERE
+                    (start_block IS NOT NULL AND end_block IS NOT NULL AND end_block < start_block)
+                    OR (started_at IS NOT NULL AND ended_at IS NOT NULL AND ended_at < started_at)
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE round_validators
+                SET
+                    end_block = CASE
+                        WHEN start_block IS NOT NULL AND end_block IS NOT NULL AND end_block < start_block THEN start_block
+                        ELSE end_block
+                    END,
+                    finished_at = CASE
+                        WHEN finished_at IS NOT NULL AND finished_at < TIMESTAMP WITH TIME ZONE '2001-01-01 00:00:00+00' THEN NULL
+                        WHEN started_at IS NOT NULL AND finished_at IS NOT NULL AND finished_at < started_at THEN started_at
+                        ELSE finished_at
+                    END,
+                    started_at = CASE
+                        WHEN started_at IS NOT NULL AND started_at < TIMESTAMP WITH TIME ZONE '2001-01-01 00:00:00+00' THEN NULL
+                        ELSE started_at
+                    END,
+                    updated_at = NOW()
+                WHERE
+                    (start_block IS NOT NULL AND end_block IS NOT NULL AND end_block < start_block)
+                    OR (started_at IS NOT NULL AND finished_at IS NOT NULL AND finished_at < started_at)
+                    OR (started_at IS NOT NULL AND started_at < TIMESTAMP WITH TIME ZONE '2001-01-01 00:00:00+00')
+                    OR (finished_at IS NOT NULL AND finished_at < TIMESTAMP WITH TIME ZONE '2001-01-01 00:00:00+00')
                 """
             )
         )

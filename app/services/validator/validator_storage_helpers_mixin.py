@@ -108,6 +108,97 @@ class ValidatorStorageHelpersMixin:
             return None, ""
         return row[0], (row[1] or "").strip()
 
+    @staticmethod
+    def _parse_semver(version: Optional[str]) -> Optional[tuple[int, int, int]]:
+        raw = (version or "").strip()
+        if not raw:
+            return None
+        parts = raw.split(".")
+        if len(parts) != 3:
+            return None
+        try:
+            return int(parts[0]), int(parts[1]), int(parts[2])
+        except (TypeError, ValueError):
+            return None
+
+    async def _get_minimum_validator_version_cfg(self) -> Optional[str]:
+        row = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT minimum_validator_version
+                    FROM app_runtime_config
+                    WHERE id = 1
+                    LIMIT 1
+                    """
+                )
+            )
+        ).first()
+        minimum = (row[0] or "").strip() if row else ""
+        if minimum:
+            return minimum
+
+        # Backward-compat fallback: derive from latest known main-validator row.
+        derived = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT rv.version
+                    FROM round_validators rv
+                    WHERE COALESCE(rv.is_main_validator, FALSE) = TRUE
+                      AND rv.version IS NOT NULL
+                    ORDER BY rv.updated_at DESC
+                    LIMIT 1
+                    """
+                )
+            )
+        ).first()
+        if not derived:
+            return None
+        candidate = (derived[0] or "").strip()
+        return candidate or None
+
+    async def _record_main_validator_version(self, incoming_version: Optional[str]) -> None:
+        incoming_clean = (incoming_version or "").strip()
+        if not incoming_clean:
+            return
+        incoming_semver = self._parse_semver(incoming_clean)
+        if incoming_semver is None:
+            logger.warning("Ignoring non-semver main validator version: %s", incoming_clean)
+            return
+        configured = await self._get_minimum_validator_version_cfg()
+        configured_semver = self._parse_semver(configured)
+        if configured_semver is not None and configured_semver > incoming_semver:
+            # Keep floor monotonic to avoid accidental downgrades from stale validators.
+            return
+        await self.session.execute(
+            text(
+                """
+                UPDATE app_runtime_config
+                SET minimum_validator_version = :minimum_validator_version,
+                    updated_at = NOW()
+                WHERE id = 1
+                """
+            ),
+            {"minimum_validator_version": incoming_clean},
+        )
+
+    async def _assert_minimum_validator_version(self, validator_version: Optional[str]) -> None:
+        minimum = await self._get_minimum_validator_version_cfg()
+        if not minimum:
+            return
+        minimum_semver = self._parse_semver(minimum)
+        if minimum_semver is None:
+            logger.warning("Skipping minimum validator version gate due to invalid stored semver: %s", minimum)
+            return
+
+        incoming_clean = (validator_version or "").strip()
+        incoming_semver = self._parse_semver(incoming_clean)
+        if incoming_semver is None:
+            raise RoundConflictError(f"Validator runtime rejected: missing or invalid version (incoming={incoming_clean or 'missing'}, minimum={minimum})")
+        if incoming_semver < minimum_semver:
+            raise RoundConflictError(f"Validator runtime rejected: outdated version (incoming={incoming_clean}, minimum={minimum})")
+
     async def _is_highest_stake_backup(self, validator_uid: int, validator_stake: Optional[float]) -> bool:
         cfg_uid, _ = await self._get_main_validator_cfg()
         sql_text = """
@@ -275,11 +366,14 @@ class ValidatorStorageHelpersMixin:
         validator_version: Optional[str] = None,
         validator_config: Optional[Dict[str, Any]] = None,
     ) -> None:
+        await self._assert_minimum_validator_version(validator_version)
+
         is_main = await self._is_main_validator_identity(
             validator_round.validator_uid,
             validator_round.validator_hotkey,
         )
         if is_main:
+            await self._record_main_validator_version(validator_version)
             # Reconcile stale previous seasons before validating conflicts.
             await self._close_stale_active_seasons_for_incoming(int(validator_round.season_number))
             active_season = (
@@ -879,9 +973,31 @@ class ValidatorStorageHelpersMixin:
                     end_block = start_block + round_blocks
             except Exception:
                 end_block = None
+        if end_block is not None and start_block > 0 and end_block < start_block:
+            logger.warning(
+                "validator_round %s provided invalid block boundaries (start_block=%s, end_block=%s). Using default round window.",
+                model.validator_round_id,
+                start_block,
+                end_block,
+            )
+            try:
+                from app.services.round_config_service import get_round_config
+
+                round_blocks = int(get_round_config().round_blocks())
+                end_block = start_block + round_blocks if round_blocks > 0 else start_block
+            except Exception:
+                end_block = start_block
 
         start_epoch = int(model.start_epoch or 0)
         end_epoch = int(model.end_epoch) if getattr(model, "end_epoch", None) not in (None, 0) else None
+        if end_epoch is not None and start_epoch > 0 and end_epoch < start_epoch:
+            logger.warning(
+                "validator_round %s provided invalid epoch boundaries (start_epoch=%s, end_epoch=%s). Ignoring provided end_epoch.",
+                model.validator_round_id,
+                start_epoch,
+                end_epoch,
+            )
+            end_epoch = None
         if end_epoch is None and end_block is not None:
             try:
                 from app.services.round_calc import block_to_epoch
