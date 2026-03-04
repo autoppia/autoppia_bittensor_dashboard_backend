@@ -637,17 +637,19 @@ async def init_db() -> None:
                     id SMALLINT PRIMARY KEY DEFAULT 1,
                     main_validator_uid INTEGER NULL,
                     main_validator_hotkey VARCHAR(128) NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     CONSTRAINT app_runtime_config_singleton CHECK (id = 1)
                 )
                 """
             )
         )
+        await conn.execute(text("ALTER TABLE app_runtime_config ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"))
         await conn.execute(
             text(
                 f"""
-                INSERT INTO app_runtime_config (id, main_validator_uid, main_validator_hotkey, updated_at)
-                VALUES (1, {str(int(main_uid)) if main_uid is not None else "NULL"}, {("'" + main_hotkey_sql + "'") if main_hotkey else "NULL"}, NOW())
+                INSERT INTO app_runtime_config (id, main_validator_uid, main_validator_hotkey, created_at, updated_at)
+                VALUES (1, {str(int(main_uid)) if main_uid is not None else "NULL"}, {("'" + main_hotkey_sql + "'") if main_hotkey else "NULL"}, NOW(), NOW())
                 ON CONFLICT (id) DO UPDATE SET
                     main_validator_uid = EXCLUDED.main_validator_uid,
                     main_validator_hotkey = EXCLUDED.main_validator_hotkey,
