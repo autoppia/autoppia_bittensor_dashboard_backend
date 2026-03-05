@@ -498,7 +498,12 @@ async def set_tasks(
                 detail="Duplicate task_id values in payload",
             )
 
-        expected_tasks = int(round_row.n_tasks or 0)
+        # Primary source of truth: sender validator config embedded in its own start_round payload.
+        # This avoids races where a non-main validator starts before main and round_row.n_tasks
+        # still reflects stale/default values.
+        expected_tasks = _tasks_per_season_from_validator_config(getattr(round_row, "config", None)) or 0
+        if expected_tasks <= 0:
+            expected_tasks = int(round_row.n_tasks or 0)
         if expected_tasks <= 0:
             expected_tasks = len(payload.tasks)
 
