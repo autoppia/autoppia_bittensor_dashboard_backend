@@ -61,6 +61,23 @@ class StartRoundRequest(BaseModel):
         return round_model
 
 
+class RuntimeConfigPayload(BaseModel):
+    """Runtime round/season configuration sent by validators."""
+
+    round_size_epochs: float
+    season_size_epochs: float
+    minimum_start_block: int
+    blocks_per_epoch: int = Field(default=360, ge=1)
+    minimum_validator_version: Optional[str] = None
+
+
+class SyncRuntimeConfigRequest(BaseModel):
+    """Bootstrap/sync request for DB round_config."""
+
+    validator_identity: Validator
+    runtime_config: RuntimeConfigPayload
+
+
 class SetTasksRequest(BaseModel):
     tasks: list[Task] = Field(default_factory=list)
 

@@ -6,13 +6,14 @@ from fastapi import APIRouter, Depends
 
 from app.api.validator.validator_round_handlers_auth import validator_auth_check
 from app.api.validator.validator_round_handlers_evaluations import add_evaluation, add_evaluations_batch
-from app.api.validator.validator_round_handlers_lifecycle import finish_round, set_tasks, start_agent_run, start_round
+from app.api.validator.validator_round_handlers_lifecycle import finish_round, set_tasks, start_agent_run, start_round, sync_runtime_config
 from app.api.validator.validator_round_handlers_logs import upload_round_log
 from app.services.validator.validator_auth import require_validator_auth
 
 router = APIRouter(prefix="/api/v1/validator-rounds", tags=["validator-rounds"])
 
 router.post("/auth-check", dependencies=[Depends(require_validator_auth)])(validator_auth_check)
+router.post("/runtime-config", dependencies=[Depends(require_validator_auth)])(sync_runtime_config)
 router.post("/start", dependencies=[Depends(require_validator_auth)])(start_round)
 router.post("/{validator_round_id}/tasks", dependencies=[Depends(require_validator_auth)])(set_tasks)
 router.post("/{validator_round_id}/agent-runs", dependencies=[Depends(require_validator_auth)])(start_agent_run)
