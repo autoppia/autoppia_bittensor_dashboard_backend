@@ -4,7 +4,7 @@ import logging
 import time
 
 from fastapi import Depends, HTTPException, Query, Request, Response, status
-from sqlalchemy import select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.validator.common import _ensure_request_matches_round_owner, _require_round_match
@@ -17,6 +17,7 @@ from app.api.validator.schemas import (
     _resolve_miner_snapshot_image,
 )
 from app.config import settings
+from app.db.models import AgentEvaluationRunORM, EvaluationORM, TaskORM
 from app.db.session import get_session
 from app.services.chain_state import get_current_block
 from app.services.round_calc import is_inside_window
@@ -30,6 +31,20 @@ from app.services.validator_directory import get_validator_metadata
 from app.utils.images import resolve_validator_image
 
 logger = logging.getLogger(__name__)
+
+
+def _tasks_per_season_from_validator_config(config: object) -> int | None:
+    if not isinstance(config, dict):
+        return None
+    round_cfg = config.get("round")
+    if not isinstance(round_cfg, dict):
+        return None
+    raw = round_cfg.get("tasks_per_season")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 async def _ensure_round_config_cache_loaded(session: AsyncSession) -> None:
@@ -195,6 +210,16 @@ async def start_round(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Validator snapshot identity does not match validator round metadata",
         )
+
+    config_tasks = _tasks_per_season_from_validator_config(validator_snapshot.config)
+    if config_tasks is not None and int(validator_round.n_tasks or 0) != config_tasks:
+        logger.warning(
+            "start_round n_tasks mismatch for validator_round_id=%s: payload n_tasks=%s, validator_config.round.tasks_per_season=%s. Using validator_config value.",
+            validator_round.validator_round_id,
+            validator_round.n_tasks,
+            config_tasks,
+        )
+        validator_round.n_tasks = int(config_tasks)
 
     # Ensure payload identity matches validator auth header hotkey (if provided)
     header_hotkey = request.headers.get(VALIDATOR_HOTKEY_HEADER)
@@ -466,6 +491,58 @@ async def set_tasks(
         round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
         _ensure_request_matches_round_owner(request, round_row)
 
+        incoming_task_ids = [task.task_id for task in payload.tasks]
+        if len(set(incoming_task_ids)) != len(incoming_task_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Duplicate task_id values in payload",
+            )
+
+        expected_tasks = int(round_row.n_tasks or 0)
+        if expected_tasks <= 0:
+            expected_tasks = len(payload.tasks)
+
+        # Canonical cap: if main validator already published round config for this season/round,
+        # require all validators to align with that task count.
+        canonical_tasks_row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT (rv.config->'round'->>'tasks_per_season')::INTEGER AS tasks_per_season
+                    FROM round_validators rv
+                    WHERE rv.season_number = :season_number
+                      AND rv.round_number_in_season = :round_number_in_season
+                      AND COALESCE(rv.is_main_validator, FALSE) = TRUE
+                    ORDER BY rv.started_at DESC
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "season_number": int(round_row.season_number or 0),
+                    "round_number_in_season": int(round_row.round_number_in_season or 0),
+                },
+            )
+        ).first()
+        canonical_tasks = None
+        if canonical_tasks_row and canonical_tasks_row[0]:
+            try:
+                canonical_tasks = int(canonical_tasks_row[0])
+            except (TypeError, ValueError):
+                canonical_tasks = None
+        if canonical_tasks is not None and canonical_tasks > 0:
+            expected_tasks = canonical_tasks
+
+        if len(payload.tasks) != expected_tasks:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "invalid task count for round",
+                    "expectedTasks": expected_tasks,
+                    "receivedTasks": len(payload.tasks),
+                    "validatorRoundId": validator_round_id,
+                },
+            )
+
         testing_override = settings.TESTING and bool(force)
         if testing_override:
             logger.warning(
@@ -530,9 +607,39 @@ async def set_tasks(
                     },
                 )
 
-        # Idempotent: allow existing tasks to be skipped silently
+        # Strong idempotency: same payload can be replayed safely; different payload can
+        # replace existing tasks only before agent runs/evaluations start.
+        existing_task_ids = set((await session.execute(select(TaskORM.task_id).where(TaskORM.validator_round_id == validator_round_id))).scalars())
+        incoming_task_id_set = set(incoming_task_ids)
+        if existing_task_ids:
+            if existing_task_ids == incoming_task_id_set:
+                logger.info(
+                    "set_tasks idempotent replay for validator_round_id=%s (tasks=%d)",
+                    validator_round_id,
+                    len(existing_task_ids),
+                )
+                await session.commit()
+                return {"message": "Tasks stored", "count": 0, "idempotent": True}
+
+            has_runs = bool((await session.execute(select(func.count()).select_from(AgentEvaluationRunORM).where(AgentEvaluationRunORM.validator_round_id == validator_round_id))).scalar_one())
+            has_evaluations = bool((await session.execute(select(func.count()).select_from(EvaluationORM).where(EvaluationORM.validator_round_id == validator_round_id))).scalar_one())
+            if has_runs or has_evaluations:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=("Tasks already locked for this round (agent runs/evaluations exist). Refusing to replace task set."),
+                )
+
+            logger.warning(
+                "Replacing task set for validator_round_id=%s before evaluation start: old=%d new=%d",
+                validator_round_id,
+                len(existing_task_ids),
+                len(incoming_task_id_set),
+            )
+            await session.execute(delete(TaskORM).where(TaskORM.validator_round_id == validator_round_id))
+            await session.flush()
+
         # Session already has a transaction from get_session dependency
-        count = await service.add_tasks(validator_round_id, payload.tasks, allow_existing=True)
+        count = await service.add_tasks(validator_round_id, payload.tasks, allow_existing=False)
         await session.commit()
     except DuplicateIdentifierError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
