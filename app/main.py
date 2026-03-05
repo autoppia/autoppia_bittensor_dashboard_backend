@@ -253,18 +253,27 @@ async def on_startup():
         logger.info("SQL schema ready")
 
         # Load round config from DB (required; no .env fallback for round timing)
-        from app.services.round_config_service import get_round_config, refresh_round_config_cache
+        from app.services.round_config_service import get_round_config, refresh_round_config_cache, set_round_config_cache
 
+        cfg = None
         async with AsyncSessionLocal() as session:
-            await refresh_round_config_cache(session)
-        cfg = get_round_config()
-        logger.info("=" * 80)
-        logger.info("🔧 ROUND CONFIG (DB source of truth)")
-        logger.info("=" * 80)
-        logger.info(f"🔢 MINIMUM_START_BLOCK: {cfg.minimum_start_block:,}")
-        logger.info(f"⏱️  Round size: {cfg.round_size_epochs} epochs")
-        logger.info(f"📦 Blocks per round: {cfg.round_blocks()}")
-        logger.info("=" * 80)
+            try:
+                await refresh_round_config_cache(session)
+                cfg = get_round_config()
+            except RuntimeError as exc:
+                # Allow API startup even if round_config is not initialized yet.
+                # Main validator can bootstrap it through /api/v1/validator-rounds/runtime-config.
+                set_round_config_cache(None)
+                logger.warning("round_config not initialized yet: %s", exc)
+                logger.warning("Waiting for main validator runtime-config sync. Endpoints requiring round boundaries may fail until config is set.")
+        if cfg is not None:
+            logger.info("=" * 80)
+            logger.info("🔧 ROUND CONFIG (DB source of truth)")
+            logger.info("=" * 80)
+            logger.info(f"🔢 MINIMUM_START_BLOCK: {cfg.minimum_start_block:,}")
+            logger.info(f"⏱️  Round size: {cfg.round_size_epochs} epochs")
+            logger.info(f"📦 Blocks per round: {cfg.round_blocks()}")
+            logger.info("=" * 80)
 
         logger.info(f"API server ready on {settings.HOST}:{settings.PORT}")
         logger.info("API documentation available at /docs")

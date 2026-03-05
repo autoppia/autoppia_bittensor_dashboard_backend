@@ -4,7 +4,7 @@ import logging
 import time
 
 from fastapi import Depends, HTTPException, Query, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.validator.common import _ensure_request_matches_round_owner, _require_round_match
@@ -13,6 +13,7 @@ from app.api.validator.schemas import (
     SetTasksRequest,
     StartAgentRunRequest,
     StartRoundRequest,
+    SyncRuntimeConfigRequest,
     _resolve_miner_snapshot_image,
 )
 from app.config import settings
@@ -29,6 +30,116 @@ from app.services.validator_directory import get_validator_metadata
 from app.utils.images import resolve_validator_image
 
 logger = logging.getLogger(__name__)
+
+
+async def sync_runtime_config(
+    payload: SyncRuntimeConfigRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Persist runtime round config into DB.
+    Only the configured main validator is allowed to update round_config.
+    """
+    validator_identity = payload.validator_identity
+    runtime_cfg = payload.runtime_config
+
+    header_hotkey = request.headers.get(VALIDATOR_HOTKEY_HEADER)
+    if header_hotkey and header_hotkey != validator_identity.hotkey:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Validator header hotkey does not match payload hotkey",
+        )
+
+    from app.services.round_config_service import load_round_config_from_db, upsert_round_config
+
+    # Ensure singleton runtime config row exists even right after truncate/reset.
+    if settings.MAIN_VALIDATOR_UID is not None:
+        await session.execute(
+            text(
+                """
+                INSERT INTO app_runtime_config (
+                    id,
+                    main_validator_uid,
+                    main_validator_hotkey,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    1,
+                    :main_validator_uid,
+                    :main_validator_hotkey,
+                    NOW(),
+                    NOW()
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    main_validator_uid = EXCLUDED.main_validator_uid,
+                    main_validator_hotkey = COALESCE(EXCLUDED.main_validator_hotkey, app_runtime_config.main_validator_hotkey),
+                    updated_at = NOW()
+                """
+            ),
+            {
+                "main_validator_uid": int(settings.MAIN_VALIDATOR_UID),
+                "main_validator_hotkey": (settings.MAIN_VALIDATOR_HOTKEY or "").strip() or None,
+            },
+        )
+
+    updated = await upsert_round_config(
+        session=session,
+        validator_uid=int(validator_identity.uid),
+        round_size_epochs=float(runtime_cfg.round_size_epochs),
+        season_size_epochs=float(runtime_cfg.season_size_epochs),
+        minimum_start_block=int(runtime_cfg.minimum_start_block),
+        blocks_per_epoch=int(runtime_cfg.blocks_per_epoch or 360),
+    )
+    if updated:
+        min_version = (runtime_cfg.minimum_validator_version or "").strip()
+        if min_version:
+            await session.execute(
+                text(
+                    """
+                    UPDATE app_runtime_config
+                    SET minimum_validator_version = :minimum_validator_version,
+                        updated_at = NOW()
+                    WHERE id = 1
+                    """
+                ),
+                {"minimum_validator_version": min_version},
+            )
+    await session.commit()
+
+    current_cfg = await load_round_config_from_db(session)
+    cfg_payload = None
+    if current_cfg is not None:
+        cfg_payload = {
+            "round_size_epochs": float(current_cfg.round_size_epochs),
+            "season_size_epochs": float(current_cfg.season_size_epochs),
+            "minimum_start_block": int(current_cfg.minimum_start_block),
+            "blocks_per_epoch": int(current_cfg.blocks_per_epoch),
+        }
+
+    current_min_version_row = (
+        await session.execute(
+            text(
+                """
+                SELECT minimum_validator_version
+                FROM app_runtime_config
+                WHERE id = 1
+                LIMIT 1
+                """
+            )
+        )
+    ).first()
+    current_min_version = None
+    if current_min_version_row and current_min_version_row[0]:
+        current_min_version = str(current_min_version_row[0]).strip() or None
+
+    return {
+        "message": "Runtime config synced" if updated else "Runtime config ignored (only main validator can update it)",
+        "updated": bool(updated),
+        "round_config": cfg_payload,
+        "minimum_validator_version": current_min_version,
+    }
 
 
 async def start_round(
@@ -94,7 +205,13 @@ async def start_round(
     # Calculate boundaries from start_block (round boundaries are based on start_block)
     from app.services.round_calc import _round_blocks, block_to_epoch
 
-    round_blocks = _round_blocks()
+    try:
+        round_blocks = _round_blocks()
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"round_config unavailable: {exc}",
+        ) from exc
     calculated_start_block = validator_round.start_block
     calculated_end_block = calculated_start_block + round_blocks
 
@@ -346,7 +463,13 @@ async def set_tasks(
             # Calculate boundaries from start_block (no longer using round_number)
             from app.services.round_calc import _round_blocks, block_to_epoch
 
-            round_blocks = _round_blocks()
+            try:
+                round_blocks = _round_blocks()
+            except RuntimeError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"round_config unavailable: {exc}",
+                ) from exc
             calculated_start_block = round_row.start_block
             calculated_end_block = calculated_start_block + round_blocks
 

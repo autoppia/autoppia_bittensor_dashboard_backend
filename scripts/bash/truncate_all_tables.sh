@@ -45,10 +45,9 @@ POSTGRES_PASSWORD=$(_get_var "POSTGRES_PASSWORD") || POSTGRES_PASSWORD=""
 POSTGRES_HOST=$(_get_var "POSTGRES_HOST") || POSTGRES_HOST="127.0.0.1"
 POSTGRES_PORT=$(_get_var "POSTGRES_PORT") || POSTGRES_PORT="5432"
 POSTGRES_DB=$(_get_var "POSTGRES_DB") || POSTGRES_DB=""
-DEFAULT_MINIMUM_START_BLOCK="${TRUNCATE_MINIMUM_START_BLOCK:-${MINIMUM_START_BLOCK:-7677881}}"
-DEFAULT_ROUND_SIZE_EPOCHS="${TRUNCATE_ROUND_SIZE_EPOCHS:-${ROUND_SIZE_EPOCHS:-0.8333333}}"
-DEFAULT_SEASON_SIZE_EPOCHS="${TRUNCATE_SEASON_SIZE_EPOCHS:-${SEASON_SIZE_EPOCHS:-280.0}}"
-DEFAULT_BLOCKS_PER_EPOCH="${TRUNCATE_BLOCKS_PER_EPOCH:-${BLOCKS_PER_EPOCH:-360}}"
+MAIN_VALIDATOR_UID=$(_get_var "MAIN_VALIDATOR_UID") || MAIN_VALIDATOR_UID="${MAIN_VALIDATOR_UID:-83}"
+MAIN_VALIDATOR_HOTKEY=$(_get_var "MAIN_VALIDATOR_HOTKEY") || MAIN_VALIDATOR_HOTKEY="${MAIN_VALIDATOR_HOTKEY:-}"
+MINIMUM_VALIDATOR_VERSION=$(_get_var "MINIMUM_VALIDATOR_VERSION") || MINIMUM_VALIDATOR_VERSION="${MINIMUM_VALIDATOR_VERSION:-}"
 
 # --- Validate required vars ---
 : "${POSTGRES_USER:?POSTGRES_USER or POSTGRES_USER_${ENV_SUFFIX} is missing}"
@@ -56,6 +55,10 @@ DEFAULT_BLOCKS_PER_EPOCH="${TRUNCATE_BLOCKS_PER_EPOCH:-${BLOCKS_PER_EPOCH:-360}}
 : "${POSTGRES_HOST:?POSTGRES_HOST or POSTGRES_HOST_${ENV_SUFFIX} is missing}"
 : "${POSTGRES_PORT:?POSTGRES_PORT or POSTGRES_PORT_${ENV_SUFFIX} is missing}"
 : "${POSTGRES_DB:?POSTGRES_DB or POSTGRES_DB_${ENV_SUFFIX} is missing}"
+if [[ ! "${MAIN_VALIDATOR_UID}" =~ ^[0-9]+$ ]]; then
+  echo "❌ MAIN_VALIDATOR_UID must be a positive integer. Got: '${MAIN_VALIDATOR_UID}'"
+  exit 1
+fi
 
 export PGPASSWORD="${POSTGRES_PASSWORD}"
 
@@ -100,47 +103,38 @@ END $$;
 SQL
 
 echo "✅ All user tables truncated successfully in '${POSTGRES_DB}'."
+psql \
+  --host="${POSTGRES_HOST}" \
+  --port="${POSTGRES_PORT}" \
+  --username="${POSTGRES_USER}" \
+  --dbname="${POSTGRES_DB}" \
+  --set=ON_ERROR_STOP=1 \
+  --set=main_uid="${MAIN_VALIDATOR_UID}" \
+  --set=main_hotkey="${MAIN_VALIDATOR_HOTKEY}" \
+  --set=min_validator_version="${MINIMUM_VALIDATOR_VERSION}" \
+<<'SQL'
+INSERT INTO app_runtime_config (
+  id,
+  main_validator_uid,
+  main_validator_hotkey,
+  minimum_validator_version,
+  created_at,
+  updated_at
+)
+VALUES (
+  1,
+  :main_uid,
+  NULLIF(:'main_hotkey', ''),
+  NULLIF(:'min_validator_version', ''),
+  NOW(),
+  NOW()
+)
+ON CONFLICT (id) DO UPDATE SET
+  main_validator_uid = EXCLUDED.main_validator_uid,
+  main_validator_hotkey = COALESCE(EXCLUDED.main_validator_hotkey, app_runtime_config.main_validator_hotkey),
+  minimum_validator_version = COALESCE(EXCLUDED.minimum_validator_version, app_runtime_config.minimum_validator_version),
+  updated_at = NOW();
+SQL
 
-# --- Ask whether to insert initial round_config ---
-echo ""
-read -r -p "minimum_start_block to insert [${DEFAULT_MINIMUM_START_BLOCK}]: " INPUT_MINIMUM_START_BLOCK
-INPUT_MINIMUM_START_BLOCK="${INPUT_MINIMUM_START_BLOCK:-$DEFAULT_MINIMUM_START_BLOCK}"
-if [[ ! "$INPUT_MINIMUM_START_BLOCK" =~ ^[0-9]+$ ]]; then
-  echo "❌ minimum_start_block must be a positive integer."
-  exit 1
-fi
-read -r -p "round_size_epochs to insert [${DEFAULT_ROUND_SIZE_EPOCHS}]: " INPUT_ROUND_SIZE_EPOCHS
-INPUT_ROUND_SIZE_EPOCHS="${INPUT_ROUND_SIZE_EPOCHS:-$DEFAULT_ROUND_SIZE_EPOCHS}"
-read -r -p "season_size_epochs to insert [${DEFAULT_SEASON_SIZE_EPOCHS}]: " INPUT_SEASON_SIZE_EPOCHS
-INPUT_SEASON_SIZE_EPOCHS="${INPUT_SEASON_SIZE_EPOCHS:-$DEFAULT_SEASON_SIZE_EPOCHS}"
-read -r -p "blocks_per_epoch to insert [${DEFAULT_BLOCKS_PER_EPOCH}]: " INPUT_BLOCKS_PER_EPOCH
-INPUT_BLOCKS_PER_EPOCH="${INPUT_BLOCKS_PER_EPOCH:-$DEFAULT_BLOCKS_PER_EPOCH}"
-
-echo "Insert initial round_config with these values?"
-echo "  round_size_epochs:    ${INPUT_ROUND_SIZE_EPOCHS}"
-echo "  season_size_epochs:   ${INPUT_SEASON_SIZE_EPOCHS}"
-echo "  minimum_start_block:  ${INPUT_MINIMUM_START_BLOCK}"
-echo "  blocks_per_epoch:      ${INPUT_BLOCKS_PER_EPOCH}"
-echo "  updated_by_validator_uid: 83"
-echo ""
-read -r -p "Insert initial round_config? [y/N]: " INSERT_ROUND_CONFIG
-if [[ "${INSERT_ROUND_CONFIG,,}" == "y" || "${INSERT_ROUND_CONFIG,,}" == "yes" ]]; then
-  # Trigger requires app_runtime_config.main_validator_uid to be set (truncate leaves it empty)
-  psql \
-    --host="${POSTGRES_HOST}" \
-    --port="${POSTGRES_PORT}" \
-    --username="${POSTGRES_USER}" \
-    --dbname="${POSTGRES_DB}" \
-    --set=ON_ERROR_STOP=1 \
-    -c "INSERT INTO app_runtime_config (id, main_validator_uid, main_validator_hotkey, created_at, updated_at) VALUES (1, 83, NULL, NOW(), NOW()) ON CONFLICT (id) DO UPDATE SET main_validator_uid = EXCLUDED.main_validator_uid, main_validator_hotkey = COALESCE(EXCLUDED.main_validator_hotkey, app_runtime_config.main_validator_hotkey), updated_at = NOW();"
-  psql \
-    --host="${POSTGRES_HOST}" \
-    --port="${POSTGRES_PORT}" \
-    --username="${POSTGRES_USER}" \
-    --dbname="${POSTGRES_DB}" \
-    --set=ON_ERROR_STOP=1 \
-    -c "INSERT INTO round_config (id, round_size_epochs, season_size_epochs, minimum_start_block, blocks_per_epoch, updated_by_validator_uid) VALUES (1, ${INPUT_ROUND_SIZE_EPOCHS}, ${INPUT_SEASON_SIZE_EPOCHS}, ${INPUT_MINIMUM_START_BLOCK}, ${INPUT_BLOCKS_PER_EPOCH}, 83) ON CONFLICT (id) DO UPDATE SET round_size_epochs = EXCLUDED.round_size_epochs, season_size_epochs = EXCLUDED.season_size_epochs, minimum_start_block = EXCLUDED.minimum_start_block, blocks_per_epoch = EXCLUDED.blocks_per_epoch, updated_by_validator_uid = EXCLUDED.updated_by_validator_uid, updated_at = NOW();"
-  echo "✅ Initial round_config inserted/updated."
-else
-  echo "⏭️  Skipped round_config insert."
-fi
+echo "✅ app_runtime_config bootstrapped (main_uid=${MAIN_VALIDATOR_UID})."
+echo "ℹ️  round_config is intentionally left empty; main validator will sync it via /api/v1/validator-rounds/runtime-config."
