@@ -32,6 +32,25 @@ from app.utils.images import resolve_validator_image
 logger = logging.getLogger(__name__)
 
 
+async def _ensure_round_config_cache_loaded(session: AsyncSession) -> None:
+    """
+    Ensure this worker has round_config in memory.
+
+    With multiple Uvicorn workers, runtime-config may be written by one worker while
+    another still has an empty in-process cache. Load from DB on-demand before using
+    round boundary helpers.
+    """
+    from app.services.round_config_service import get_round_config, refresh_round_config_cache
+
+    try:
+        get_round_config()
+        return
+    except RuntimeError:
+        pass
+
+    await refresh_round_config_cache(session)
+
+
 async def sync_runtime_config(
     payload: SyncRuntimeConfigRequest,
     request: Request,
@@ -201,6 +220,15 @@ async def start_round(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Chain state unavailable",
             )
+
+    # Ensure this worker sees latest round_config before using round boundary helpers.
+    try:
+        await _ensure_round_config_cache_loaded(session)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"round_config unavailable: {exc}",
+        ) from exc
 
     # Calculate boundaries from start_block (round boundaries are based on start_block)
     from app.services.round_calc import _round_blocks, block_to_epoch
@@ -445,6 +473,14 @@ async def set_tasks(
                 validator_round_id,
             )
         else:
+            try:
+                await _ensure_round_config_cache_loaded(session)
+            except RuntimeError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"round_config unavailable: {exc}",
+                ) from exc
+
             current_block = get_current_block()
             if current_block is None:
                 if settings.TESTING and bool(force):
@@ -590,6 +626,14 @@ async def start_agent_run(
 
         # Enforce chain-derived round constraints
         # In TESTING mode, allow bypass if chain state is unavailable
+        try:
+            await _ensure_round_config_cache_loaded(session)
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"round_config unavailable: {exc}",
+            ) from exc
+
         current_block = get_current_block()
         if current_block is None:
             if settings.TESTING and bool(force):
