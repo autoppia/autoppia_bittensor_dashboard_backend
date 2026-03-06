@@ -101,7 +101,7 @@ class FinishRoundAgentRun(BaseModel):
     weight: float | None = None
     # FASE 1: Nuevos campos opcionales
     miner_name: str | None = None
-    avg_reward: float | None = None  # Average reward (evaluation_score + time_score)
+    avg_reward: float | None = None  # Local per-validator average reward used as consensus input
     avg_evaluation_time: float | None = None
     tasks_attempted: int | None = None
     tasks_completed: int | None = None
@@ -138,7 +138,14 @@ class FinishRoundRequest(BaseModel):
     round_metadata: RoundMetadata | None = Field(default=None, alias="round")
     validator_summary: Dict[str, Any] | None = None
     local_evaluation: Dict[str, Any] | None = None
-    post_consensus_evaluation: Dict[str, Any] | None = None
+    post_consensus_evaluation: Dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Stake-weighted post-consensus metrics across included validators. "
+            "`consensus_reward` is the reward used for ranking/weights; "
+            "`avg_eval_score`, `avg_eval_time`, and `avg_cost` are aggregated observability metrics."
+        ),
+    )
     # IPFS data
     ipfs_uploaded: Dict[str, Any] | None = None
     ipfs_downloaded: Dict[str, Any] | None = None

@@ -434,12 +434,12 @@ class UIOverviewServiceMixin:
                     "season": int(r["season_number"]),
                     "subnet36": float(r["winner_score"] or 0.0),
                     "post_consensus_reward": float(r["winner_score"] or 0.0),
+                    "reward": float(r["winner_score"] or 0.0),
                     "winnerUid": int(r["winner_miner_uid"]) if r["winner_miner_uid"] is not None else None,
                     "winnerName": None,
                     "timestamp": (r["ended_at"] or datetime.now(timezone.utc)).isoformat(),
-                    "post_consensus_eval_score": float(r["winner_score"] or 0.0),
+                    "post_consensus_eval_score": None,
                     "post_consensus_eval_time": 0.0,
-                    "score": float(r["winner_score"] or 0.0),
                     "time": 0.0,
                 }
             )

@@ -92,8 +92,8 @@ class Agent(BaseModel):
     status: AgentStatus = Field(..., description="Agent status")
     totalRuns: int = Field(default=0, description="Total number of runs")
     successfulRuns: int = Field(default=0, description="Number of successful runs")
-    currentScore: float = Field(default=0.0, description="Current score (renamed from average score)")
-    currentTopScore: float = Field(default=0.0, description="Current top score (renamed from best score)")
+    currentReward: float = Field(default=0.0, description="Current reward")
+    currentTopReward: float = Field(default=0.0, description="Current top reward")
     currentRank: int = Field(default=0, description="Current rank")
     bestRankEver: int = Field(default=0, description="Best rank ever achieved")
     bestRankRoundId: int = Field(default=0, description="Round where best rank occurred")
@@ -101,8 +101,8 @@ class Agent(BaseModel):
     roundsWon: int = Field(default=0, description="Number of rounds won (global winner)")
     alphaWonInPrizes: float = Field(default=0.0, description="Alpha won in prizes")
     taoWonInPrizes: float = Field(default=0.0, description="TAO won in prizes (derived)")
-    bestRoundScore: float = Field(default=0.0, description="Best average score achieved across all rounds")
-    bestRoundId: int = Field(default=0, description="Round number where best score was achieved")
+    bestRoundReward: float = Field(default=0.0, description="Best average reward achieved across all rounds")
+    bestRoundId: int = Field(default=0, description="Round number where best reward was achieved")
     averageResponseTime: float = Field(default=0.0, description="Average response time in seconds")
     totalTasks: int = Field(default=0, description="Total number of tasks")
     completedTasks: int = Field(default=0, description="Number of completed tasks")
@@ -137,7 +137,7 @@ class AgentRun(BaseModel):
     status: RunStatus = Field(..., description="Run status")
     totalTasks: int = Field(default=0, description="Total number of tasks")
     completedTasks: int = Field(default=0, description="Number of completed tasks")
-    score: float = Field(default=0.0, description="Run score")
+    reward: float = Field(default=0.0, description="Run reward")
     duration: int = Field(default=0, description="Run duration in seconds")
     ranking: Optional[int] = Field(None, description="Run ranking")
     tasks: List[Task] = Field(default_factory=list, description="List of tasks")
@@ -170,18 +170,17 @@ class PerformanceTrend(BaseModel):
     """Performance trend data point keyed by round number."""
 
     round: int = Field(..., description="Round number represented by this data point")
-    score: float = Field(..., description="Average score for the round")
+    reward: float = Field(..., description="Average reward for the round")
     responseTime: Optional[float] = Field(default=None, description="Average response time recorded for the round")
     successRate: Optional[float] = Field(default=None, description="Success rate percentage recorded for the round")
 
 
-class ScoreRoundDataPoint(BaseModel):
-    """Score vs round data point."""
+class RewardRoundDataPoint(BaseModel):
+    """Reward vs round data point."""
 
     round_id: int = Field(..., description="Round identifier")
-    score: float = Field(..., description="Score achieved in this round")
+    reward: float = Field(..., description="Reward achieved in this round")
     rank: Optional[int] = Field(None, description="Rank in this round")
-    reward: Optional[float] = Field(None, description="Reward received in this round")
     timestamp: datetime = Field(..., description="Round timestamp")
     benchmarks: Optional[List[Dict[str, Any]]] = Field(default=None, description="Benchmark scores recorded during this round")
 
@@ -195,8 +194,8 @@ class AgentPerformanceMetrics(BaseModel):
     successfulRuns: int = Field(default=0, description="Successful runs in time range")
     failedRuns: int = Field(default=0, description="Failed runs in time range")
     successRate: float = Field(default=0.0, description="Success rate percentage")
-    currentScore: float = Field(default=0.0, description="Current score")
-    worstScore: float = Field(default=0.0, description="Worst score")
+    currentReward: float = Field(default=0.0, description="Current reward")
+    worstReward: float = Field(default=0.0, description="Worst reward")
     averageResponseTime: float = Field(default=0.0, description="Average response time")
     totalTasks: int = Field(default=0, description="Total tasks")
     completedTasks: int = Field(default=0, description="Completed tasks")
@@ -209,7 +208,7 @@ class AgentRoundMetrics(BaseModel):
     """Round-specific metrics for an agent."""
 
     roundId: int = Field(..., description="Round identifier")
-    score: float = Field(..., description="Average score achieved in the round")
+    reward: float = Field(..., description="Average reward achieved in the round")
     rank: Optional[int] = Field(None, description="Agent rank within the round leaderboard")
     totalRuns: int = Field(default=0, description="Number of validator runs for the agent in the round")
     totalValidators: int = Field(default=0, description="Number of validators that evaluated the agent in the round")
@@ -232,8 +231,8 @@ class AgentRoundMetrics(BaseModel):
 class AgentComparisonMetrics(BaseModel):
     """Agent comparison metrics model."""
 
-    currentScore: float = Field(default=0.0, description="Average score")
-    currentTopScore: float = Field(default=0.0, description="Top benchmark score")
+    currentReward: float = Field(default=0.0, description="Average reward")
+    currentTopReward: float = Field(default=0.0, description="Top benchmark reward")
     successRate: float = Field(default=0.0, description="Success rate percentage")
     averageResponseTime: float = Field(default=0.0, description="Average response time")
     totalRuns: int = Field(default=0, description="Total runs")
@@ -271,7 +270,7 @@ class TopAgent(BaseModel):
 
     id: str = Field(..., description="Agent identifier")
     name: str = Field(..., description="Agent name")
-    score: float = Field(..., description="Agent score")
+    reward: float = Field(..., description="Agent reward")
 
 
 class MostActiveAgent(BaseModel):
@@ -300,7 +299,7 @@ class AgentStatistics(BaseModel):
     totalRuns: int = Field(default=0, description="Total number of runs")
     successfulRuns: int = Field(default=0, description="Number of successful runs")
     averageSuccessRate: float = Field(default=0.0, description="Average success rate")
-    averageCurrentScore: float = Field(default=0.0, description="Average current score")
+    averageCurrentReward: float = Field(default=0.0, description="Average current reward")
     topPerformingAgent: TopAgent = Field(..., description="Top performing agent")
     mostActiveAgent: MostActiveAgent = Field(..., description="Most active agent")
     performanceDistribution: PerformanceDistribution = Field(default_factory=PerformanceDistribution, description="Performance distribution")
@@ -321,7 +320,7 @@ class AgentDetailResponse(BaseModel):
     """Agent detail response model."""
 
     agent: Agent = Field(..., description="Agent details")
-    scoreRoundData: List[ScoreRoundDataPoint] = Field(default_factory=list, description="Score vs round data points")
+    rewardRoundData: List[RewardRoundDataPoint] = Field(default_factory=list, description="Reward vs round data points")
     availableRounds: List[int] = Field(
         default_factory=list,
         description="Rounds where the agent participated",
