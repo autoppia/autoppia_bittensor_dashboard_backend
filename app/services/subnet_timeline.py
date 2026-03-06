@@ -165,7 +165,7 @@ class SubnetTimelineService:
     ) -> Tuple[List[TimelineRound], List[MinerRosterEntry]]:
         per_round: Dict[int, List[Dict[str, object]]] = {}
         miner_presence: Dict[str, int] = defaultdict(int)
-        miner_best_score: Dict[str, float] = defaultdict(float)
+        miner_best_reward: Dict[str, float] = defaultdict(float)
         miner_names: Dict[str, str] = {}
 
         for encoded, round_id, _round_in, _ts in selected_rounds:
@@ -179,16 +179,16 @@ class SubnetTimelineService:
                             miner_uid,
                             COALESCE(name, 'Miner ' || miner_uid::text) AS name,
                             COALESCE(effective_rank, post_consensus_rank, 9999) AS rank,
-                            COALESCE(effective_reward, post_consensus_avg_reward, 0) AS score
+                            COALESCE(effective_reward, post_consensus_avg_reward, 0) AS reward
                           FROM round_validator_miners
                           WHERE round_id = :rid
                             AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
                             AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
                           ORDER BY miner_uid, COALESCE(effective_rank, post_consensus_rank, 9999) ASC, COALESCE(effective_reward, post_consensus_avg_reward, 0) DESC
                         )
-                        SELECT miner_uid, name, rank, score
+                        SELECT miner_uid, name, rank, reward
                         FROM ranked
-                        ORDER BY rank ASC, score DESC
+                        ORDER BY rank ASC, reward DESC
                         """
                         ),
                         {"rid": round_id},
@@ -201,23 +201,23 @@ class SubnetTimelineService:
             for row in rows:
                 miner_uid = int(row["miner_uid"])
                 miner_id = f"miner-{miner_uid}"
-                score_pct = max(0.0, min(float(row["score"] or 0.0) * 100.0, 100.0))
+                reward_pct = max(0.0, min(float(row["reward"] or 0.0) * 100.0, 100.0))
                 miners_for_round.append(
                     {
                         "miner_id": miner_id,
                         "name": str(row["name"]),
                         "rank": int(row["rank"] or 9999),
-                        "score": score_pct,
+                        "reward": reward_pct,
                     }
                 )
                 miner_presence[miner_id] += 1
-                miner_best_score[miner_id] = max(miner_best_score[miner_id], score_pct)
+                miner_best_reward[miner_id] = max(miner_best_reward[miner_id], reward_pct)
                 miner_names[miner_id] = str(row["name"])
             per_round[encoded] = miners_for_round
 
         ordered_miners = sorted(
             miner_presence.keys(),
-            key=lambda mid: (-miner_presence[mid], -miner_best_score[mid], int(mid.split("-")[-1])),
+            key=lambda mid: (-miner_presence[mid], -miner_best_reward[mid], int(mid.split("-")[-1])),
         )[:roster_size]
 
         roster: List[MinerRosterEntry] = []
@@ -234,7 +234,7 @@ class SubnetTimelineService:
             )
 
         prev_rank: Dict[str, Optional[int]] = {r.miner_id: None for r in roster}
-        prev_score: Dict[str, float] = {r.miner_id: 0.0 for r in roster}
+        prev_reward: Dict[str, float] = {r.miner_id: 0.0 for r in roster}
         timeline: List[TimelineRound] = []
         for encoded, _round_id, _round_in, ts in selected_rounds:
             round_rows = per_round.get(encoded, [])
@@ -243,23 +243,23 @@ class SubnetTimelineService:
             for roster_entry in roster:
                 row = by_id.get(roster_entry.miner_id)
                 current_rank = int(row["rank"]) if row else max(1, len(round_rows) + 1)
-                current_score = float(row["score"]) if row else 0.0
+                current_reward = float(row["reward"]) if row else 0.0
                 previous_rank = prev_rank.get(roster_entry.miner_id)
-                previous_score = prev_score.get(roster_entry.miner_id, 0.0)
+                previous_reward = prev_reward.get(roster_entry.miner_id, 0.0)
                 rank_change = 0 if previous_rank is None else previous_rank - current_rank
-                score_change = current_score - previous_score
+                reward_change = current_reward - previous_reward
                 snapshots.append(
                     MinerSnapshot(
                         miner_id=roster_entry.miner_id,
-                        score=current_score,
+                        reward=current_reward,
                         rank=current_rank,
                         rank_change=rank_change,
-                        score_change=score_change,
+                        reward_change=reward_change,
                         previous_rank=previous_rank,
                     )
                 )
                 prev_rank[roster_entry.miner_id] = current_rank
-                prev_score[roster_entry.miner_id] = current_score
+                prev_reward[roster_entry.miner_id] = current_reward
             timeline.append(TimelineRound(round=encoded, timestamp=_iso_timestamp(ts), snapshots=snapshots))
 
         return timeline, roster

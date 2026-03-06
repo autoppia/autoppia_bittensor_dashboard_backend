@@ -92,7 +92,7 @@ class UIRoundsServiceMixin:
         dedup: Dict[int, Dict[str, Any]] = {}
         for r in rows:
             uid = int(r["uid"])
-            score = float(r["post_consensus_avg_reward"] or 0.0)
+            reward = float(r["post_consensus_avg_reward"] or 0.0)
             rank = int(r["post_consensus_rank"]) if r["post_consensus_rank"] is not None else None
             current = dedup.get(uid)
             if current is None or (rank is not None and (current["post_consensus_rank"] is None or rank < current["post_consensus_rank"])):
@@ -100,11 +100,11 @@ class UIRoundsServiceMixin:
                     "uid": uid,
                     "name": r["name"],
                     "image": f"/miners/{uid % 100}.svg",
-                    "post_consensus_avg_reward": score,
+                    "post_consensus_avg_reward": reward,
                     "tasks_received": int(r["tasks_received"] or 0),
-                    "round_score": score,
-                    "best_score_in_season": score,
-                    "effective_round_score": float(r["effective_reward"] or score),
+                    "round_reward": reward,
+                    "best_reward_in_season": reward,
+                    "effective_round_reward": float(r["effective_reward"] or reward),
                     "post_consensus_rank": rank or 9999,
                 }
         miners = sorted(dedup.values(), key=lambda x: (x["post_consensus_rank"], -x["post_consensus_avg_reward"]))
@@ -574,11 +574,11 @@ class UIRoundsServiceMixin:
             "completedTasks": int(total_tasks or 0),
             "totalValidators": int(total_validators or 0),
             "averageTasksPerValidator": (float(total_tasks or 0) / float(total_validators or 1)) if int(total_validators or 0) > 0 else 0.0,
-            "averageScore": float(agg["avg_reward"] or 0.0),
-            "winnerAverageScore": float(winner["winner_score"] or 0.0) if winner else float(agg["top_reward"] or 0.0),
+            "averageReward": float(agg["avg_reward"] or 0.0),
+            "winnerAverageReward": float(winner["winner_score"] or 0.0) if winner else float(agg["top_reward"] or 0.0),
             "winnerMinerUid": int(winner["winner_miner_uid"]) if winner and winner["winner_miner_uid"] is not None else None,
-            "validatorAverageTopScore": float(agg["top_reward"] or 0.0),
-            "topScore": float(agg["top_reward"] or 0.0),
+            "validatorAverageTopReward": float(agg["top_reward"] or 0.0),
+            "topReward": float(agg["top_reward"] or 0.0),
             "successRate": (tasks_success / tasks_received) if tasks_received > 0 else 0.0,
             "averageDuration": float(agg["avg_time"] or 0.0),
             "totalStake": 0,
@@ -628,13 +628,13 @@ class UIRoundsServiceMixin:
         for r in rows:
             tasks_total = int(r["post_consensus_tasks_received"] or 0)
             tasks_ok = int(r["post_consensus_tasks_success"] or 0)
-            score = float(r["post_consensus_avg_reward"] or 0.0)
+            reward = float(r["post_consensus_avg_reward"] or 0.0)
             item = {
                 "uid": int(r["miner_uid"]),
                 "name": r["name"] or f"miner {int(r['miner_uid'])}",
                 "hotkey": r["miner_hotkey"],
                 "success": tasks_ok > 0,
-                "score": score,
+                "reward": reward,
                 "duration": float(r["post_consensus_avg_eval_time"] or 0.0),
                 "ranking": int(r["post_consensus_rank"] or 9999),
                 "tasksCompleted": tasks_ok,
@@ -651,17 +651,18 @@ class UIRoundsServiceMixin:
         if success is not None:
             miners = [m for m in miners if bool(m["success"]) is success]
         if min_score is not None:
-            miners = [m for m in miners if float(m["score"]) >= float(min_score)]
+            miners = [m for m in miners if float(m["reward"]) >= float(min_score)]
         if max_score is not None:
-            miners = [m for m in miners if float(m["score"]) <= float(max_score)]
+            miners = [m for m in miners if float(m["reward"]) <= float(max_score)]
         reverse = str(sort_order).lower() != "asc"
         key_map = {
             "uid": lambda m: m["uid"],
             "duration": lambda m: m["duration"],
             "ranking": lambda m: m["ranking"],
-            "score": lambda m: m["score"],
+            "reward": lambda m: m["reward"],
+            "score": lambda m: m["reward"],
         }
-        sort_key = key_map.get(sort_by, key_map["score"])
+        sort_key = key_map.get(sort_by, key_map["reward"])
         miners = sorted(miners, key=sort_key, reverse=reverse)
         total = len(miners)
         start = (page - 1) * limit
@@ -697,7 +698,7 @@ class UIRoundsServiceMixin:
                         ),
                         0
                       ) AS total_miners,
-                      COALESCE(AVG(rvm.local_avg_reward), 0) AS avg_score,
+                      COALESCE(AVG(rvm.local_avg_reward), 0) AS avg_reward,
                       COALESCE(MAX(rvm.local_avg_reward), 0) AS top_score
                     FROM round_validators rv
                     LEFT JOIN tasks t ON t.round_validator_id = rv.round_validator_id
@@ -726,8 +727,8 @@ class UIRoundsServiceMixin:
                     "completedTasks": int(r["total_tasks"] or 0),
                     "totalMiners": int(r["total_miners"] or 0),
                     "activeMiners": int(r["total_miners"] or 0),
-                    "averageScore": float(r["avg_score"] or 0.0),
-                    "topScore": float(r["top_score"] or 0.0),
+                    "averageReward": float(r["avg_reward"] or 0.0),
+                    "topReward": float(r["top_score"] or 0.0),
                     "weight": 1,
                     "trust": float(r["vtrust"] or 0.0),
                     "version": str(r["version"] or ""),
@@ -845,8 +846,8 @@ class UIRoundsServiceMixin:
             "status": str(ref["status"] or "finished"),
             "progress": 1.0 if str(ref["status"] or "finished") in ("finished", "completed") else 0.0,
             "totalMiners": int(miners or 0),
-            "averageScore": float(avg or 0.0),
-            "topScore": float(winner or 0.0),
+            "averageReward": float(avg or 0.0),
+            "topReward": float(winner or 0.0),
             "timeRemaining": "0s",
         }
 
@@ -1034,8 +1035,8 @@ class UIRoundsServiceMixin:
                         if local_winner
                         else None
                     ),
-                    "topScore": float(local_stats.get("local_top_reward") or 0.0),
-                    "local_avg_winner_score": float(local_stats.get("local_top_reward") or 0.0),
+                    "topReward": float(local_stats.get("local_top_reward") or 0.0),
+                    "local_avg_winner_reward": float(local_stats.get("local_top_reward") or 0.0),
                     "local_avg_eval_time": float(local_stats.get("local_avg_eval_time") or 0.0),
                     "local_miners_evaluated": int(local_stats.get("local_miners") or 0),
                     "local_tasks_evaluated": int(local_tasks or 0),

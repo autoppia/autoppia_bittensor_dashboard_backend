@@ -65,7 +65,7 @@ class UIAgentsRunsServiceMixin:
         success_tasks = int(sum(int(r["local_tasks_success"] or 0) for r in miner_rows))
         failed_tasks = max(total_tasks - success_tasks, 0)
         avg_time = (sum(float(r["local_avg_eval_time"] or 0.0) for r in miner_rows) / len(miner_rows)) if miner_rows else 0.0
-        score = float(first["effective_reward"] or first["post_consensus_avg_reward"] or first["local_avg_reward"] or 0.0)
+        reward = float(first["effective_reward"] or first["post_consensus_avg_reward"] or first["local_avg_reward"] or 0.0)
         rank = int(first["effective_rank"] or first["post_consensus_rank"] or first["local_rank"] or 0)
 
         runs_count = (
@@ -273,28 +273,28 @@ class UIAgentsRunsServiceMixin:
         season_leadership = None
         if season_leadership_row:
             round_winner_uid = int(season_leadership_row["winner_miner_uid"]) if season_leadership_row["winner_miner_uid"] is not None else None
-            round_winner_score = float(season_leadership_row["winner_score"]) if season_leadership_row["winner_score"] is not None else None
+            round_winner_reward = float(season_leadership_row["winner_score"]) if season_leadership_row["winner_score"] is not None else None
             reigning_uid_before_round = int(season_leadership_row["reigning_miner_uid_before_round"]) if season_leadership_row["reigning_miner_uid_before_round"] is not None else None
-            reigning_score_before_round = float(season_leadership_row["reigning_score_before_round"]) if season_leadership_row["reigning_score_before_round"] is not None else None
+            reigning_reward_before_round = float(season_leadership_row["reigning_score_before_round"]) if season_leadership_row["reigning_score_before_round"] is not None else None
             top_candidate_uid = int(season_leadership_row["top_candidate_miner_uid"]) if season_leadership_row["top_candidate_miner_uid"] is not None else None
-            top_candidate_score = float(season_leadership_row["top_candidate_score"]) if season_leadership_row["top_candidate_score"] is not None else None
+            top_candidate_reward = float(season_leadership_row["top_candidate_score"]) if season_leadership_row["top_candidate_score"] is not None else None
             dethroned = bool(season_leadership_row["dethroned"]) if season_leadership_row["dethroned"] is not None else False
             if dethroned:
                 season_leader_uid = top_candidate_uid or round_winner_uid
-                season_leader_score = top_candidate_score if top_candidate_score is not None else round_winner_score
+                season_leader_reward = top_candidate_reward if top_candidate_reward is not None else round_winner_reward
             else:
                 season_leader_uid = reigning_uid_before_round or round_winner_uid
-                season_leader_score = reigning_score_before_round if reigning_score_before_round is not None else round_winner_score
+                season_leader_reward = reigning_reward_before_round if reigning_reward_before_round is not None else round_winner_reward
 
             season_leadership = {
                 "round_winner_uid": round_winner_uid,
-                "round_winner_score": round_winner_score,
+                "round_winner_reward": round_winner_reward,
                 "season_leader_uid": season_leader_uid,
-                "season_leader_score": season_leader_score,
+                "season_leader_reward": season_leader_reward,
                 "reigning_uid_before_round": reigning_uid_before_round,
-                "reigning_score_before_round": reigning_score_before_round,
+                "reigning_reward_before_round": reigning_reward_before_round,
                 "top_candidate_uid": top_candidate_uid,
-                "top_candidate_score": top_candidate_score,
+                "top_candidate_reward": top_candidate_reward,
                 "required_improvement_pct": (float(season_leadership_row["required_improvement_pct"]) if season_leadership_row["required_improvement_pct"] is not None else 0.05),
                 "dethroned": dethroned,
             }
@@ -315,8 +315,8 @@ class UIAgentsRunsServiceMixin:
                 "status": "active",
                 "totalRuns": int(runs_count or 0),
                 "successfulRuns": int(success_runs or 0),
-                "currentScore": score,
-                "currentTopScore": score,
+                "currentReward": reward,
+                "currentTopReward": reward,
                 "currentRank": rank,
                 "bestRankEver": rank,
                 "bestRankRoundId": season * 10000 + round_in_season,
@@ -324,7 +324,7 @@ class UIAgentsRunsServiceMixin:
                 "roundsWon": int(rounds_won or 0),
                 "alphaWonInPrizes": 0.0,
                 "taoWonInPrizes": 0.0,
-                "bestRoundScore": score,
+                "bestRoundReward": reward,
                 "bestRoundId": season * 10000 + round_in_season,
                 "averageResponseTime": round(avg_time, 2),
                 "totalTasks": total_tasks,
@@ -333,7 +333,7 @@ class UIAgentsRunsServiceMixin:
                 "createdAt": None,
                 "updatedAt": None,
             },
-            "scoreRoundData": [],
+            "rewardRoundData": [],
             "availableRounds": [season * 10000 + round_in_season],
             "performanceByWebsite": performance_by_website,
             "avg_cost_per_task": avg_cost_per_task,
@@ -344,8 +344,8 @@ class UIAgentsRunsServiceMixin:
             "season_leadership": season_leadership,
             "roundMetrics": {
                 "roundId": season * 10000 + round_in_season,
-                "score": score,
-                "topScore": score,
+                "reward": reward,
+                "topReward": reward,
                 "rank": rank,
                 "totalRuns": len(miner_rows),
                 "totalValidators": len(validators),
@@ -581,11 +581,11 @@ class UIAgentsRunsServiceMixin:
                 "totalTasksFailed": max(total_tasks - total_success, 0),
                 "overallSuccessRate": (total_success / total_tasks) if total_tasks > 0 else 0.0,
                 "averageDuration": sum(x["post_consensus_avg_eval_time"] for x in rounds_history) / len(rounds_history),
-                "bestScore": best_score,
-                "bestScoreRound": best_score_round,
+                "bestReward": best_score,
+                "bestRewardRound": best_score_round,
                 "bestRank": best,
                 "bestRankRound": best_rank_round,
-                "averageScore": sum(x["post_consensus_avg_reward"] for x in rounds_history) / len(rounds_history),
+                "averageReward": sum(x["post_consensus_avg_reward"] for x in rounds_history) / len(rounds_history),
                 "totalAlphaEarned": total_alpha_earned,
                 "totalTaoEarned": total_tao_earned,
                 "distinctGithubUrls": int(distinct_github_urls or 0),
@@ -725,7 +725,7 @@ class UIAgentsRunsServiceMixin:
             trend.append(
                 {
                     "round": i,
-                    "score": float(r["average_reward"] or 0.0),
+                    "reward": float(r["average_reward"] or 0.0),
                     "responseTime": float(r["average_execution_time"] or 0.0),
                     "successRate": (succ / tasks) if tasks > 0 else 0.0,
                 }
@@ -740,8 +740,8 @@ class UIAgentsRunsServiceMixin:
             "successfulRuns": successful_runs,
             "failedRuns": failed_runs,
             "successRate": (successful_runs / total_runs) if total_runs > 0 else 0.0,
-            "currentScore": current_score,
-            "worstScore": worst_score,
+            "currentReward": current_score,
+            "worstReward": worst_score,
             "averageResponseTime": avg_response,
             "totalTasks": total_tasks,
             "completedTasks": completed_tasks,
@@ -834,7 +834,7 @@ class UIAgentsRunsServiceMixin:
                     "status": status,
                     "totalTasks": total_tasks,
                     "completedTasks": success_tasks,
-                    "score": float(r["average_reward"] or 0.0),
+                    "reward": float(r["average_reward"] or 0.0),
                     "duration": int(float(r["elapsed_sec"] or 0.0)),
                     "ranking": None,
                     "tasks": [],
@@ -972,7 +972,7 @@ class UIAgentsRunsServiceMixin:
                 "uid": int(r["miner_uid"]),
                 "name": r["name"] or f"miner {int(r['miner_uid'])}",
                 "ranking": int(r["effective_rank"] or 9999),
-                "score": float(r["effective_reward"] or 0.0),
+                "reward": float(r["effective_reward"] or 0.0),
                 "isSota": bool(r["is_sota"]),
                 "imageUrl": r["image_url"] or f"/miners/{int(r['miner_uid']) % 100}.svg",
                 "provider": "autoppia",
@@ -981,12 +981,14 @@ class UIAgentsRunsServiceMixin:
         ]
         reverse = str(sort_order).lower() != "asc"
         key_map = {
-            "averageScore": lambda a: float(a["score"]),
-            "score": lambda a: float(a["score"]),
+            "averageReward": lambda a: float(a["reward"]),
+            "reward": lambda a: float(a["reward"]),
+            "averageScore": lambda a: float(a["reward"]),
+            "score": lambda a: float(a["reward"]),
             "ranking": lambda a: int(a["ranking"]),
             "name": lambda a: str(a["name"]).lower(),
         }
-        sort_key = key_map.get(sort_by, key_map["score"])
+        sort_key = key_map.get(sort_by, key_map["reward"])
         agents = sorted(agents, key=sort_key, reverse=reverse)
         total = len(agents)
         start = (page - 1) * limit
@@ -1111,7 +1113,8 @@ class UIAgentsRunsServiceMixin:
                     "totalTasks": total_tasks,
                     "completedTasks": successful,
                     "successfulTasks": successful,
-                    "overallScore": float(r["average_reward"] or 0.0),
+                    "reward": float(r["average_reward"] or 0.0),
+                    "overallReward": float(r["average_reward"] or 0.0),
                     "avgCostPerTask": (float(r["avg_cost_per_task"]) if r["avg_cost_per_task"] is not None else None),
                     "successRate": (successful / total_tasks) if total_tasks > 0 else 0.0,
                     "ranking": int(r["effective_rank"] or 9999),
@@ -1124,7 +1127,8 @@ class UIAgentsRunsServiceMixin:
         reverse = str(sort_order).lower() != "asc"
         key_map = {
             "startTime": lambda x: x["startTime"],
-            "score": lambda x: float(x["overallScore"]),
+            "reward": lambda x: float(x["overallReward"]),
+            "score": lambda x: float(x["overallReward"]),
             "duration": lambda x: float(x.get("averageEvaluationTime") or 0.0),
             "ranking": lambda x: int(x.get("ranking") or 9999),
         }
@@ -1338,10 +1342,10 @@ class UIAgentsRunsServiceMixin:
             "completedTasks": successful_tasks,
             "successfulTasks": successful_tasks,
             "failedTasks": failed_tasks,
-            "score": float(run["average_reward"] or 0.0),
+            "reward": float(run["average_reward"] or 0.0),
             "ranking": 1,
             "duration": int(float(run["elapsed_sec"] or 0.0)),
-            "overallScore": float(run["average_reward"] or 0.0),
+            "overallReward": float(run["average_reward"] or 0.0),
             "averageEvaluationTime": float(run["average_execution_time"] or 0.0),
             "totalWebsites": len(performance),
             "websites": [],
@@ -1389,7 +1393,6 @@ class UIAgentsRunsServiceMixin:
         statistics = {
             "totalTasks": total_tasks,
             "websites": len(performance),
-            "avg_score": float(run["average_reward"] or 0.0),
             "avg_reward": float(run["average_reward"] or 0.0),
             "avg_time": float(run["average_execution_time"] or 0.0),
             "successfulTasks": successful_tasks,
@@ -1407,7 +1410,7 @@ class UIAgentsRunsServiceMixin:
             "startTime": run_data["startTime"],
             "endTime": run_data["endTime"] or None,
             "status": run_data["status"],
-            "overallScore": run_data["overallScore"],
+            "overallReward": run_data["overallReward"],
             "totalTasks": run_data["totalTasks"],
             "successfulTasks": run_data["successfulTasks"],
             "failedTasks": run_data["failedTasks"],
@@ -1416,13 +1419,13 @@ class UIAgentsRunsServiceMixin:
             "topPerformingWebsite": (
                 {
                     "website": performance[0]["website"],
-                    "score": performance[0]["averageScore"],
+                    "averageEvalScore": performance[0]["averageScore"],
                     "tasks": performance[0]["tasks"],
                 }
                 if performance
-                else {"website": "N/A", "score": 0.0, "tasks": 0}
+                else {"website": "N/A", "averageEvalScore": 0.0, "tasks": 0}
             ),
-            "topPerformingUseCase": {"useCase": "N/A", "score": 0.0, "tasks": 0},
+            "topPerformingUseCase": {"useCase": "N/A", "averageEvalScore": 0.0, "tasks": 0},
             "recentActivity": [],
         }
         timeline = [
@@ -1563,8 +1566,8 @@ class UIAgentsRunsServiceMixin:
             except ValueError:
                 continue
         if not complete:
-            return {"bestScore": "", "fastest": "", "mostTasks": "", "bestSuccessRate": "", "runs": []}
-        best_score = max(complete, key=lambda x: float(x.get("overallScore") or 0.0))
+            return {"bestReward": "", "fastest": "", "mostTasks": "", "bestSuccessRate": "", "runs": []}
+        best_reward = max(complete, key=lambda x: float(x.get("overallReward") or 0.0))
         fastest = min(complete, key=lambda x: float(x.get("duration") or 0.0))
         most_tasks = max(complete, key=lambda x: int(x.get("totalTasks") or 0))
         best_success = max(
@@ -1572,7 +1575,7 @@ class UIAgentsRunsServiceMixin:
             key=lambda x: (float(x.get("successfulTasks") or 0.0) / float(x.get("totalTasks") or 1.0)) if int(x.get("totalTasks") or 0) > 0 else 0.0,
         )
         return {
-            "bestScore": best_score.get("runId", ""),
+            "bestReward": best_reward.get("runId", ""),
             "fastest": fastest.get("runId", ""),
             "mostTasks": most_tasks.get("runId", ""),
             "bestSuccessRate": best_success.get("runId", ""),

@@ -435,8 +435,8 @@ class EvaluationORM(TimestampMixin, Base):
     validator_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     validator_hotkey: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
 
-    evaluation_score: Mapped[float] = mapped_column("evaluation_score", Float, nullable=False, default=0.0)  # Evaluation score (tests/actions only, 0-1)
-    reward: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # Reward value (evaluation_score + time_score, used for consensus)
+    evaluation_score: Mapped[float] = mapped_column("evaluation_score", Float, nullable=False, default=0.0)  # Pure evaluation score (tests/actions only, 0-1)
+    reward: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # Final task reward used by consensus
     evaluation_time: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     gif_recording: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     extra_info: Mapped[dict[str, Any]] = mapped_column("extra_info", JSON, nullable=False, default=dict)  # e.g. timeout flag; was "meta"

@@ -275,9 +275,9 @@ class AgentEvaluationRun(BaseModel):
     elapsed_sec: Optional[float] = Field(default=None, description="Elapsed time in seconds")
 
     # Aggregated metrics
-    average_score: Optional[float] = Field(default=None, description="Average evaluation score across tasks")
+    average_score: Optional[float] = Field(default=None, description="Average pure evaluation score across tasks (quality/tests only)")
     average_execution_time: Optional[float] = Field(default=None, description="Average execution time per task")
-    average_reward: Optional[float] = Field(default=None, description="Average reward produced across tasks")
+    average_reward: Optional[float] = Field(default=None, description="Average final reward across tasks for this validator run")
     total_tasks: int = Field(default=0, description="Total tasks attempted")
     success_tasks: int = Field(default=0, alias="completed_tasks", description="Tasks completed successfully (evaluation_score >= 0.5)")
     failed_tasks: int = Field(default=0, description="Tasks that failed (evaluation_score < 0.5)")
@@ -469,7 +469,7 @@ class Evaluation(BaseModel):
         description="Evaluation score (0.0-1.0).",
     )
 
-    reward: float = Field(default=0.0, description="Reward value (evaluation_score + time_score, used for consensus)")
+    reward: float = Field(default=0.0, description="Final task reward used by consensus after combining evaluation_score with timing/penalties")
     evaluation_time: float = Field(default=0.0, description="Time taken to evaluate the solution (seconds)")
     execution_history: List[Any] = Field(
         default_factory=list,

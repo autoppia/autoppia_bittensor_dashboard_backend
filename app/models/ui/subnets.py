@@ -24,10 +24,10 @@ class MinerSnapshot(BaseModel):
     """Per-round snapshot for an individual miner."""
 
     miner_id: str = Field(..., description="Identifier matching a roster entry")
-    score: float = Field(..., ge=0.0, le=100.0, description="Performance score for the round (0-100)")
+    reward: float = Field(..., ge=0.0, le=100.0, description="Consensus reward for the round (0-100)")
     rank: int = Field(..., ge=1, description="Ranking position at this round")
     rank_change: int = Field(..., description="Rank delta compared to previous round")
-    score_change: float = Field(..., description="Score delta compared to previous round")
+    reward_change: float = Field(..., description="Reward delta compared to previous round")
     previous_rank: Optional[int] = Field(None, description="Previous round rank if available")
 
 
