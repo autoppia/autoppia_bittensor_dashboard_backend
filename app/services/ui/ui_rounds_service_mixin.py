@@ -7,6 +7,26 @@ from sqlalchemy import text
 
 
 class UIRoundsServiceMixin:
+    async def get_latest_season_number(self) -> Optional[int]:
+        row = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                    SELECT s.season_number
+                    FROM seasons s
+                    JOIN rounds r ON r.season_id = s.season_id
+                    ORDER BY s.season_number DESC
+                    LIMIT 1
+                    """
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+        return int(row["season_number"]) if row and row["season_number"] is not None else None
+
     async def _round_ref(self, season: int, round_in_season: int) -> Optional[Dict[str, Any]]:
         row = (
             (
@@ -110,49 +130,144 @@ class UIRoundsServiceMixin:
         miners = sorted(dedup.values(), key=lambda x: (x["post_consensus_rank"], -x["post_consensus_avg_reward"]))
         return {"round": f"{season}/{round_in_season}", "miners": miners}
 
-    async def get_latest_round_top_miner(self) -> Optional[Dict[str, Any]]:
-        row = (
+    async def get_season_miners(self, season: int) -> Dict[str, Any]:
+        season_row = (
             (
                 await self.session.execute(
                     text(
                         """
-                    SELECT s.season_number, r.round_number_in_season, ro.winner_miner_uid
-                    FROM round_outcomes ro
-                    JOIN rounds r ON r.round_id = ro.round_id
-                    JOIN seasons s ON s.season_id = r.season_id
-                    ORDER BY s.season_number DESC, r.round_number_in_season DESC
+                    SELECT leader_miner_uid, leader_reward
+                    FROM seasons
+                    WHERE season_number = :season
                     LIMIT 1
                     """
-                    )
+                    ),
+                    {"season": season},
                 )
             )
             .mappings()
             .first()
         )
-        if not row:
+        rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                    WITH season_rows AS (
+                      SELECT
+                        rvm.miner_uid AS uid,
+                        COALESCE(NULLIF(TRIM(COALESCE(rvm.name, '')), ''), 'miner ' || rvm.miner_uid::text) AS name,
+                        rvm.image_url AS image,
+                        COALESCE(rvm.effective_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) AS effective_reward,
+                        COALESCE(rvm.effective_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) AS effective_rank,
+                        r.round_number_in_season AS round_number
+                      FROM round_validator_miners rvm
+                      JOIN rounds r ON r.round_id = rvm.round_id
+                      JOIN seasons s ON s.season_id = r.season_id
+                      WHERE s.season_number = :season
+                        AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
+                        AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
+                        AND COALESCE(
+                          rvm.effective_tasks_received,
+                          rvm.post_consensus_tasks_received,
+                          rvm.local_tasks_received,
+                          0
+                        ) > 0
+                    ),
+                    best_rows AS (
+                      SELECT DISTINCT ON (uid)
+                        uid,
+                        name,
+                        image,
+                        effective_reward,
+                        effective_rank,
+                        round_number
+                      FROM season_rows
+                      ORDER BY uid, effective_reward DESC, effective_rank ASC, round_number ASC
+                    ),
+                    ranked AS (
+                      SELECT
+                        uid,
+                        name,
+                        image,
+                        effective_reward,
+                        round_number,
+                        ROW_NUMBER() OVER (
+                          ORDER BY effective_reward DESC, effective_rank ASC, uid ASC
+                        ) AS season_rank
+                      FROM best_rows
+                    )
+                    SELECT
+                      uid,
+                      name,
+                      image,
+                      effective_reward,
+                      round_number,
+                      season_rank
+                    FROM ranked
+                    ORDER BY season_rank ASC, uid ASC
+                    """
+                    ),
+                    {"season": season},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+        miners = [
+            {
+                "uid": int(r["uid"]),
+                "name": r["name"],
+                "image": r["image"] or f"/miners/{int(r['uid']) % 100}.svg",
+                "post_consensus_avg_reward": float(r["effective_reward"] or 0.0),
+                "best_reward_in_season": float(r["effective_reward"] or 0.0),
+                "effective_round_reward": float(r["effective_reward"] or 0.0),
+                "best_round_in_season": int(r["round_number"]) if r["round_number"] is not None else None,
+                "post_consensus_rank": int(r["season_rank"] or 9999),
+                "is_reigning_leader": (season_row is not None and season_row["leader_miner_uid"] is not None and int(season_row["leader_miner_uid"]) == int(r["uid"])),
+            }
+            for r in rows
+        ]
+        return {
+            "round": f"season/{season}",
+            "season": season,
+            "season_leader_uid": (int(season_row["leader_miner_uid"]) if season_row and season_row["leader_miner_uid"] is not None else None),
+            "season_leader_reward": (float(season_row["leader_reward"]) if season_row and season_row["leader_reward"] is not None else None),
+            "miners": miners,
+        }
+
+    async def get_latest_round_top_miner(self) -> Optional[Dict[str, Any]]:
+        latest_season = await self.get_latest_season_number()
+        if latest_season is None:
             return None
+
+        season_miners = await self.get_season_miners(latest_season)
+        miners = season_miners.get("miners") or []
+        if not miners:
+            return None
+
+        top_miner = miners[0]
         miner_hotkey = (
             await self.session.execute(
                 text(
                     """
                     SELECT miner_hotkey
                     FROM round_validator_miners
-                    WHERE round_id = (
-                      SELECT r.round_id
-                      FROM rounds r JOIN seasons s ON s.season_id = r.season_id
-                      WHERE s.season_number = :season AND r.round_number_in_season = :round
-                      LIMIT 1
-                    ) AND miner_uid = :uid
+                    JOIN rounds r ON r.round_id = round_validator_miners.round_id
+                    JOIN seasons s ON s.season_id = r.season_id
+                    WHERE s.season_number = :season
+                      AND miner_uid = :uid
                     LIMIT 1
                     """
                 ),
-                {"season": int(row["season_number"]), "round": int(row["round_number_in_season"]), "uid": int(row["winner_miner_uid"])},
+                {"season": latest_season, "uid": int(top_miner["uid"])},
             )
         ).scalar_one_or_none()
         return {
-            "season": int(row["season_number"]),
-            "round": int(row["round_number_in_season"]),
-            "miner_uid": int(row["winner_miner_uid"]),
+            "season": latest_season,
+            "round": None,
+            "miner_uid": int(top_miner["uid"]),
             "miner_hotkey": miner_hotkey,
         }
 
@@ -857,7 +972,11 @@ class UIRoundsServiceMixin:
         outcome = (
             (
                 await self.session.execute(
-                    text("SELECT winner_miner_uid, winner_score, post_consensus_summary FROM round_outcomes WHERE round_id=:rid LIMIT 1"),
+                    text("""
+                        SELECT winner_miner_uid, winner_score, post_consensus_summary,
+                               dethroned, reigning_miner_uid_before_round, reigning_score_before_round
+                        FROM round_outcomes WHERE round_id=:rid LIMIT 1
+                    """),
                     {"rid": round_id},
                 )
             )
@@ -867,33 +986,156 @@ class UIRoundsServiceMixin:
         outcome = dict(outcome) if outcome else {}
         winner_uid_raw = outcome.get("winner_miner_uid")
         winner_uid = int(winner_uid_raw) if winner_uid_raw is not None else None
-        winner_row = None
+        dethroned = bool(outcome.get("dethroned")) if outcome.get("dethroned") is not None else False
+        reigning_uid_raw = outcome.get("reigning_miner_uid_before_round")
+        reigning_uid = int(reigning_uid_raw) if reigning_uid_raw is not None else None
+
+        # Season leader = winner only if they dethroned the reigning champion (or no reigning champion exists).
+        # Otherwise the reigning champion IS still the season leader, even if they didn't win this round.
         if winner_uid is not None:
+            season_leader_uid = winner_uid if (dethroned or reigning_uid is None) else reigning_uid
+        elif reigning_uid is not None:
+            # Round has no winner yet (e.g. round still processing) but we know who was reigning
+            season_leader_uid = reigning_uid
+        else:
+            # No outcome at all - look at the most recent finished round in this season to find who was reigning
+            prev_reigning = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT ro.winner_miner_uid, ro.reigning_miner_uid_before_round, ro.dethroned
+                            FROM round_outcomes ro
+                            JOIN rounds r ON r.round_id = ro.round_id
+                            WHERE r.season_id = (SELECT season_id FROM rounds WHERE round_id = :rid)
+                              AND ro.round_id < :rid
+                              AND ro.winner_miner_uid IS NOT NULL
+                            ORDER BY ro.round_id DESC
+                            LIMIT 1
+                            """
+                        ),
+                        {"rid": round_id},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if prev_reigning:
+                prev_dethroned = bool(prev_reigning.get("dethroned"))
+                prev_reigning_uid = prev_reigning.get("reigning_miner_uid_before_round")
+                prev_winner = prev_reigning.get("winner_miner_uid")
+                season_leader_uid = (
+                    int(prev_winner)
+                    if (prev_dethroned or prev_reigning_uid is None)
+                    else int(prev_reigning_uid)
+                    if prev_reigning_uid is not None
+                    else int(prev_winner)
+                    if prev_winner is not None
+                    else None
+                )
+            else:
+                season_leader_uid = None
+
+        # Season leader score: use reigning_score_before_round when the season leader IS the reigning champion,
+        # or winner_score when the winner is also the season leader (they dethroned the previous champion).
+        reigning_score = outcome.get("reigning_score_before_round")
+        if season_leader_uid is not None and season_leader_uid == winner_uid:
+            season_leader_score = outcome.get("winner_score")
+        elif reigning_score is not None:
+            season_leader_score = reigning_score
+        else:
+            season_leader_score = outcome.get("winner_score")
+
+        # Fetch the season leader's identity + best performance metrics.
+        # We look across ALL rounds up to the current one (not just the current round),
+        # prioritising the round where they had the highest reward — this ensures we get
+        # real data even when the season leader sat out the current round.
+        winner_row = None
+        if season_leader_uid is not None:
             winner_row = (
                 (
                     await self.session.execute(
                         text(
                             """
-                        SELECT name, miner_hotkey, github_url,
-                               post_consensus_avg_reward, post_consensus_avg_eval_score, post_consensus_avg_eval_time,
-                               effective_reward, effective_eval_score, effective_eval_time
-                        FROM round_validator_miners
-                        WHERE round_id=:rid
-                          AND miner_uid=:uid
-                          AND name IS NOT NULL
-                          AND github_url IS NOT NULL
-                        ORDER BY COALESCE(effective_rank, post_consensus_rank) ASC NULLS LAST,
-                                 COALESCE(effective_reward, post_consensus_avg_reward) DESC NULLS LAST
-                        LIMIT 1
-                        """
+                            SELECT rvm.name, rvm.miner_hotkey, rvm.github_url,
+                                   rvm.post_consensus_avg_reward, rvm.post_consensus_avg_eval_score,
+                                   rvm.post_consensus_avg_eval_time, rvm.post_consensus_avg_eval_cost,
+                                   rvm.local_avg_eval_cost,
+                                   rvm.effective_reward, rvm.effective_eval_score, rvm.effective_eval_time,
+                                   COALESCE(rvm.effective_eval_cost, rvm.post_consensus_avg_eval_cost, rvm.local_avg_eval_cost) AS effective_eval_cost
+                            FROM round_validator_miners rvm
+                            WHERE rvm.miner_uid = :uid
+                              AND rvm.round_id <= :rid
+                              AND COALESCE(rvm.effective_reward, rvm.post_consensus_avg_reward) > 0
+                            ORDER BY COALESCE(rvm.effective_reward, rvm.post_consensus_avg_reward) DESC NULLS LAST
+                            LIMIT 1
+                            """
                         ),
-                        {"rid": round_id, "uid": winner_uid},
+                        {"uid": season_leader_uid, "rid": round_id},
                     )
                 )
                 .mappings()
                 .first()
             )
             winner_row = dict(winner_row) if winner_row is not None else None
+            # If still no row with real metrics, fall back to any row with just identity info
+            if winner_row is None:
+                winner_row = (
+                    (
+                        await self.session.execute(
+                            text(
+                                """
+                                SELECT rvm.name, rvm.miner_hotkey, rvm.github_url,
+                                       NULL::double precision AS post_consensus_avg_reward,
+                                       NULL::double precision AS post_consensus_avg_eval_time,
+                                       NULL::double precision AS post_consensus_avg_eval_cost,
+                                       NULL::double precision AS local_avg_eval_cost,
+                                       NULL::double precision AS effective_reward,
+                                       NULL::double precision AS effective_eval_time,
+                                       NULL::double precision AS effective_eval_cost
+                                FROM round_validator_miners rvm
+                                WHERE rvm.miner_uid = :uid
+                                  AND rvm.round_id <= :rid
+                                  AND rvm.name IS NOT NULL
+                                ORDER BY rvm.round_id DESC
+                                LIMIT 1
+                                """
+                            ),
+                            {"uid": season_leader_uid, "rid": round_id},
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+                winner_row = dict(winner_row) if winner_row is not None else None
+
+        # Save the original round winner UID (may differ from season_leader_uid when not dethroned)
+        round_winner_uid = int(outcome.get("winner_miner_uid")) if outcome.get("winner_miner_uid") is not None else None
+        round_winner_score = float(outcome.get("winner_score")) if outcome.get("winner_score") is not None else None
+
+        # Fetch round winner's name for the leadership rule display (only if different from season leader)
+        round_winner_name: str | None = None
+        if round_winner_uid is not None and round_winner_uid != season_leader_uid:
+            rw_name_row = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT name FROM round_validator_miners
+                            WHERE round_id = :rid AND miner_uid = :uid AND name IS NOT NULL
+                            LIMIT 1
+                            """
+                        ),
+                        {"rid": round_id, "uid": round_winner_uid},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            round_winner_name = rw_name_row.get("name") if rw_name_row else None
+
+        # Keep winner_uid pointing to the season leader for the response dict below
+        winner_uid = season_leader_uid
         try:
             miners_evaluated = (
                 await self.session.execute(
@@ -1071,13 +1313,67 @@ class UIRoundsServiceMixin:
                 "winner": (
                     {
                         "uid": winner_uid,
-                        "name": (winner_row.get("name") if winner_row else f"miner {winner_uid}"),
+                        "name": (winner_row.get("name") or f"Miner {winner_uid}") if winner_row else f"Miner {winner_uid}",
                         "image": f"/miners/{winner_uid % 100}.svg",
-                        "hotkey": winner_row.get("miner_hotkey") if winner_row else None,
-                        "github_url": winner_row.get("github_url") if winner_row else None,
-                        "avg_reward": float(winner_row.get("effective_reward") or winner_row.get("post_consensus_avg_reward") or 0.0) if winner_row else float(outcome.get("winner_score") or 0.0),
-                        "avg_eval_score": float(winner_row.get("effective_eval_score") or winner_row.get("post_consensus_avg_eval_score") or 0.0) if winner_row else 0.0,
-                        "avg_eval_time": float(winner_row.get("effective_eval_time") or winner_row.get("post_consensus_avg_eval_time") or 0.0) if winner_row else 0.0,
+                        "hotkey": (winner_row.get("miner_hotkey") or None) if winner_row else None,
+                        "github_url": (winner_row.get("github_url") or None) if winner_row else None,
+                        # season_leader_score is the authoritative score for the season leader
+                        # (reigning_score_before_round when they're the reigning champ,
+                        #  or winner_score when they dethroned the previous champion).
+                        "avg_reward": (
+                            next(
+                                (
+                                    float(v)
+                                    for v in [
+                                        season_leader_score,
+                                        winner_row.get("effective_reward") if winner_row else None,
+                                        winner_row.get("post_consensus_avg_reward") if winner_row else None,
+                                    ]
+                                    if v is not None and float(v) > 0
+                                ),
+                                0.0,
+                            )
+                        ),
+                        "avg_eval_score": (
+                            next(
+                                (
+                                    float(v)
+                                    for v in [
+                                        winner_row.get("effective_eval_score") if winner_row else None,
+                                        winner_row.get("post_consensus_avg_eval_score") if winner_row else None,
+                                    ]
+                                    if v is not None and float(v) > 0
+                                ),
+                                0.0,
+                            )
+                        ),
+                        "avg_eval_time": (
+                            next(
+                                (
+                                    float(v)
+                                    for v in [
+                                        winner_row.get("effective_eval_time") if winner_row else None,
+                                        winner_row.get("post_consensus_avg_eval_time") if winner_row else None,
+                                    ]
+                                    if v is not None and float(v) > 0
+                                ),
+                                0.0,
+                            )
+                        ),
+                        "avg_eval_cost": (
+                            next(
+                                (
+                                    float(v)
+                                    for v in [
+                                        winner_row.get("effective_eval_cost") if winner_row else None,
+                                        winner_row.get("post_consensus_avg_eval_cost") if winner_row else None,
+                                        winner_row.get("local_avg_eval_cost") if winner_row else None,
+                                    ]
+                                    if v is not None and float(v) > 0
+                                ),
+                                None,
+                            )
+                        ),
                     }
                     if winner_uid is not None
                     else None
@@ -1085,6 +1381,19 @@ class UIRoundsServiceMixin:
                 "miners_evaluated": int(miners_evaluated or 0),
                 "tasks_evaluated": int(tasks_evaluated or 0),
                 "raw_summary": outcome.get("post_consensus_summary"),
+                "leadership_rule": {
+                    "required_improvement_pct": float(outcome.get("required_improvement_pct") or 0.05),
+                    "reigning_uid": reigning_uid,
+                    "reigning_name": (winner_row.get("name") if winner_row else None) or (f"Miner {reigning_uid}" if reigning_uid else None),
+                    "reigning_score": float(outcome.get("reigning_score_before_round")) if outcome.get("reigning_score_before_round") is not None else None,
+                    "challenger_uid": round_winner_uid if round_winner_uid != season_leader_uid else None,
+                    "challenger_name": round_winner_name or (f"Miner {round_winner_uid}" if round_winner_uid else None),
+                    "challenger_score": round_winner_score,
+                    "dethroned": dethroned,
+                    "season_leader_uid": season_leader_uid,
+                }
+                if (reigning_uid is not None or round_winner_uid is not None)
+                else None,
             },
             "validators": validators,
         }
