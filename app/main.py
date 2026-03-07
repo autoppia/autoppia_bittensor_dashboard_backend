@@ -253,18 +253,18 @@ async def on_startup():
         logger.info("SQL schema ready")
 
         # Load round config from DB (required; no .env fallback for round timing)
-        from app.services.round_config_service import get_round_config, refresh_round_config_cache, set_round_config_cache
+        from app.services.round_config_service import get_config_season_round, refresh_config_season_round_cache, set_config_season_round_cache
 
         cfg = None
         async with AsyncSessionLocal() as session:
             try:
-                await refresh_round_config_cache(session)
-                cfg = get_round_config()
+                await refresh_config_season_round_cache(session)
+                cfg = get_config_season_round()
             except RuntimeError as exc:
-                # Allow API startup even if round_config is not initialized yet.
+                # Allow API startup even if config_season_round is not initialized yet.
                 # Main validator can bootstrap it through /api/v1/validator-rounds/runtime-config.
-                set_round_config_cache(None)
-                logger.warning("round_config not initialized yet: %s", exc)
+                set_config_season_round_cache(None)
+                logger.warning("config_season_round not initialized yet: %s", exc)
                 logger.warning("Waiting for main validator runtime-config sync. Endpoints requiring round boundaries may fail until config is set.")
         if cfg is not None:
             logger.info("=" * 80)

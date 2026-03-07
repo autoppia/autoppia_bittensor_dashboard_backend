@@ -72,7 +72,7 @@ class RuntimeConfigPayload(BaseModel):
 
 
 class SyncRuntimeConfigRequest(BaseModel):
-    """Bootstrap/sync request for DB round_config."""
+    """Bootstrap/sync request for DB config_season_round."""
 
     validator_identity: Validator
     runtime_config: RuntimeConfigPayload
@@ -112,7 +112,7 @@ class FinishRoundAgentRun(BaseModel):
 
 
 class RoundMetadata(BaseModel):
-    """Round timing and metadata. Optional round/season config is persisted to round_config by main validator only."""
+    """Round timing and metadata. Optional round/season config is persisted to config_season_round by main validator only."""
 
     round_number: int
     started_at: float

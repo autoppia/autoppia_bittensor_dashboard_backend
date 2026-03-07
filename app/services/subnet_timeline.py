@@ -178,13 +178,13 @@ class SubnetTimelineService:
                           SELECT DISTINCT ON (miner_uid)
                             miner_uid,
                             COALESCE(name, 'Miner ' || miner_uid::text) AS name,
-                            COALESCE(effective_rank, post_consensus_rank, 9999) AS rank,
-                            COALESCE(effective_reward, post_consensus_avg_reward, 0) AS reward
+                            COALESCE(best_local_rank, post_consensus_rank, 9999) AS rank,
+                            COALESCE(best_local_reward, post_consensus_avg_reward, 0) AS reward
                           FROM round_validator_miners
                           WHERE round_id = :rid
                             AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
                             AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
-                          ORDER BY miner_uid, COALESCE(effective_rank, post_consensus_rank, 9999) ASC, COALESCE(effective_reward, post_consensus_avg_reward, 0) DESC
+                          ORDER BY miner_uid, COALESCE(best_local_rank, post_consensus_rank, 9999) ASC, COALESCE(best_local_reward, post_consensus_avg_reward, 0) DESC
                         )
                         SELECT miner_uid, name, rank, reward
                         FROM ranked

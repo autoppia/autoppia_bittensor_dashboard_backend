@@ -74,39 +74,56 @@ class UIOverviewServiceMixin:
         current_season = int(latest_any["season_number"])
         current_round_in_season = int(latest_any["round_number_in_season"])
 
-        winner = (
+        leader = (
             (
                 await self.session.execute(
                     text(
                         """
-                    SELECT ro.winner_miner_uid, rvm.name, ro.winner_score
-                    FROM round_outcomes ro
-                    LEFT JOIN round_validator_miners rvm
-                      ON rvm.round_id = ro.round_id
-                     AND rvm.miner_uid = ro.winner_miner_uid
-                    WHERE ro.round_id = :round_id
+                    SELECT
+                      s.leader_miner_uid,
+                      s.leader_reward,
+                      (
+                        SELECT rvm.name
+                        FROM round_validator_miners rvm
+                        JOIN rounds rr ON rr.round_id = rvm.round_id
+                        WHERE rvm.miner_uid = s.leader_miner_uid
+                          AND rr.season_id = s.season_id
+                          AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
+                        ORDER BY rr.round_number_in_season DESC, rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
+                        LIMIT 1
+                      ) AS leader_name
+                    FROM seasons s
+                    WHERE s.season_number = :season
                     LIMIT 1
                     """
                     ),
-                    {"round_id": metrics_round_id},
+                    {"season": metrics_season},
                 )
             )
             .mappings()
             .first()
         )
-        if not winner:
-            winner = (
+        if not leader:
+            leader = (
                 (
                     await self.session.execute(
                         text(
                             """
-                        SELECT ro.winner_miner_uid, rvm.name, ro.winner_score
-                        FROM round_outcomes ro
-                        JOIN rounds rr ON rr.round_id = ro.round_id
+                        SELECT
+                          rs.leader_after_miner_uid AS leader_miner_uid,
+                          rs.leader_after_reward AS leader_reward,
+                          (
+                            SELECT rvm.name
+                            FROM round_validator_miners rvm
+                            WHERE rvm.round_id = rs.round_id
+                              AND rvm.miner_uid = rs.leader_after_miner_uid
+                              AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
+                            ORDER BY rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
+                            LIMIT 1
+                          ) AS leader_name
+                        FROM round_summary rs
+                        JOIN rounds rr ON rr.round_id = rs.round_id
                         JOIN seasons ss ON ss.season_id = rr.season_id
-                        LEFT JOIN round_validator_miners rvm
-                          ON rvm.round_id = ro.round_id
-                         AND rvm.miner_uid = ro.winner_miner_uid
                         ORDER BY ss.season_number DESC, rr.round_number_in_season DESC
                         LIMIT 1
                         """
@@ -117,77 +134,100 @@ class UIOverviewServiceMixin:
                 .first()
             )
 
-        total_validators = (await self.session.execute(text("SELECT COUNT(DISTINCT validator_uid) FROM round_validators WHERE round_id=:rid"), {"rid": metrics_round_id})).scalar_one()
+        total_validators = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT COUNT(DISTINCT rv.validator_uid)
+                    FROM round_validators rv
+                    JOIN rounds r ON r.round_id = rv.round_id
+                    JOIN seasons s ON s.season_id = r.season_id
+                    WHERE s.season_number = :season
+                    """
+                ),
+                {"season": metrics_season},
+            )
+        ).scalar_one()
         total_miners_active = (
             await self.session.execute(
                 text(
                     """
-                    WITH ranked AS (
-                      SELECT DISTINCT ON (miner_uid)
-                        miner_uid,
+                    WITH season_participants AS (
+                      SELECT DISTINCT ON (rvm.miner_uid)
+                        rvm.miner_uid,
                         COALESCE(
-                          effective_tasks_received,
-                          post_consensus_tasks_received,
-                          local_tasks_received,
+                          rvm.best_local_tasks_received,
+                          rvm.post_consensus_tasks_received,
+                          rvm.local_tasks_received,
                           0
                         ) AS tasks_received
-                      FROM round_validator_miners
-                      WHERE round_id = :rid
-                        AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
-                        AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
-                      ORDER BY miner_uid, post_consensus_rank ASC NULLS LAST, post_consensus_avg_reward DESC NULLS LAST
+                      FROM round_validator_miners rvm
+                      JOIN rounds r ON r.round_id = rvm.round_id
+                      JOIN seasons s ON s.season_id = r.season_id
+                      WHERE s.season_number = :season
+                        AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
+                        AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
+                      ORDER BY rvm.miner_uid, r.round_number_in_season DESC, rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
                     )
-                    SELECT COUNT(*) FROM ranked WHERE tasks_received > 0
+                    SELECT COUNT(*) FROM season_participants WHERE tasks_received > 0
                     """
                 ),
-                {"rid": metrics_round_id},
+                {"season": metrics_season},
             )
         ).scalar_one()
-        outcome_counts = (
-            (
-                await self.session.execute(
-                    text(
-                        """
-                        SELECT validators_count, miners_evaluated
-                        FROM round_outcomes
-                        WHERE round_id = :rid
-                        LIMIT 1
-                        """
-                    ),
-                    {"rid": metrics_round_id},
-                )
-            )
-            .mappings()
-            .first()
-        )
         miners = (
             (
                 await self.session.execute(
                     text(
                         """
-                        WITH ranked AS (
-                          SELECT DISTINCT ON (miner_uid)
-                            miner_uid AS uid,
-                            COALESCE(name, 'miner '||miner_uid::text) AS name,
+                        WITH season_rows AS (
+                          SELECT
+                            rvm.miner_uid AS uid,
+                            COALESCE(NULLIF(TRIM(COALESCE(rvm.name, '')), ''), 'miner '||rvm.miner_uid::text) AS name,
                             COALESCE(
-                              effective_tasks_received,
-                              post_consensus_tasks_received,
-                              local_tasks_received,
+                              rvm.best_local_reward,
+                              rvm.post_consensus_avg_reward,
+                              rvm.local_avg_reward,
                               0
-                            ) AS tasks_received
-                          FROM round_validator_miners
-                          WHERE round_id = :rid
-                            AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
-                            AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
-                          ORDER BY miner_uid, post_consensus_rank ASC NULLS LAST, post_consensus_avg_reward DESC NULLS LAST
+                            ) AS best_local_reward,
+                            COALESCE(
+                              rvm.best_local_rank,
+                              rvm.post_consensus_rank,
+                              rvm.local_rank,
+                              9999
+                            ) AS best_local_rank,
+                            COALESCE(
+                              rvm.best_local_tasks_received,
+                              rvm.post_consensus_tasks_received,
+                              rvm.local_tasks_received,
+                              0
+                            ) AS tasks_received,
+                            r.round_number_in_season
+                          FROM round_validator_miners rvm
+                          JOIN rounds r ON r.round_id = rvm.round_id
+                          JOIN seasons s ON s.season_id = r.season_id
+                          WHERE s.season_number = :season
+                            AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
+                            AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
+                        ),
+                        best_rows AS (
+                          SELECT DISTINCT ON (uid)
+                            uid,
+                            name,
+                            tasks_received,
+                            best_local_reward,
+                            best_local_rank,
+                            round_number_in_season
+                          FROM season_rows
+                          ORDER BY uid, best_local_reward DESC, best_local_rank ASC, round_number_in_season ASC
                         )
                         SELECT uid, name
-                        FROM ranked
+                        FROM best_rows
                         WHERE tasks_received > 0
-                        ORDER BY uid
+                        ORDER BY best_local_reward DESC, best_local_rank ASC, uid ASC
                         """
                     ),
-                    {"rid": metrics_round_id},
+                    {"season": metrics_season},
                 )
             )
             .mappings()
@@ -209,16 +249,13 @@ class UIOverviewServiceMixin:
                 {"rid": metrics_round_id},
             )
         ).scalar_one()
-        final_total_validators = int((outcome_counts or {}).get("validators_count") or total_validators or 0)
-        final_total_miners = int((outcome_counts or {}).get("miners_evaluated") or total_miners_active or 0)
-
         return {
-            "topMinerUid": int(winner["winner_miner_uid"]) if winner and winner["winner_miner_uid"] is not None else None,
-            "topMinerName": winner["name"] if winner else None,
-            "topReward": float(winner["winner_score"] or 0.0) if winner else 0.0,
+            "topMinerUid": int(leader["leader_miner_uid"]) if leader and leader["leader_miner_uid"] is not None else None,
+            "topMinerName": leader["leader_name"] if leader else None,
+            "topReward": float(leader["leader_reward"] or 0.0) if leader else 0.0,
             "totalWebsites": 14,
-            "totalValidators": final_total_validators,
-            "totalMiners": final_total_miners,
+            "totalValidators": int(total_validators or 0),
+            "totalMiners": int(total_miners_active or 0),
             "tasksPerValidator": int(tasks_per_validator or 0),
             "totalTasksPerValidator": int(tasks_per_validator or 0),
             "minerList": [dict(m) for m in miners],
@@ -411,10 +448,23 @@ class UIOverviewServiceMixin:
                 await self.session.execute(
                     text(
                         """
-                    SELECT s.season_number, r.round_number_in_season, r.ended_at,
-                           ro.winner_miner_uid, ro.winner_score
-                    FROM round_outcomes ro
-                    JOIN rounds r ON r.round_id = ro.round_id
+                    SELECT
+                           s.season_number,
+                           r.round_number_in_season,
+                           r.ended_at,
+                           rs.leader_after_miner_uid,
+                           rs.leader_after_reward,
+                           (
+                             SELECT rvm.name
+                             FROM round_validator_miners rvm
+                             WHERE rvm.round_id = rs.round_id
+                               AND rvm.miner_uid = rs.leader_after_miner_uid
+                               AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
+                             ORDER BY rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
+                             LIMIT 1
+                           ) AS leader_name
+                    FROM round_summary rs
+                    JOIN rounds r ON r.round_id = rs.round_id
                     JOIN seasons s ON s.season_id = r.season_id
                     ORDER BY s.season_number DESC, r.round_number_in_season DESC
                     LIMIT :lim
@@ -432,11 +482,11 @@ class UIOverviewServiceMixin:
                 {
                     "round": int(r["round_number_in_season"]),
                     "season": int(r["season_number"]),
-                    "subnet36": float(r["winner_score"] or 0.0),
-                    "post_consensus_reward": float(r["winner_score"] or 0.0),
-                    "reward": float(r["winner_score"] or 0.0),
-                    "winnerUid": int(r["winner_miner_uid"]) if r["winner_miner_uid"] is not None else None,
-                    "winnerName": None,
+                    "subnet36": float(r["leader_after_reward"] or 0.0),
+                    "post_consensus_reward": float(r["leader_after_reward"] or 0.0),
+                    "reward": float(r["leader_after_reward"] or 0.0),
+                    "winnerUid": int(r["leader_after_miner_uid"]) if r["leader_after_miner_uid"] is not None else None,
+                    "winnerName": r.get("leader_name"),
                     "timestamp": (r["ended_at"] or datetime.now(timezone.utc)).isoformat(),
                     "post_consensus_eval_score": None,
                     "post_consensus_eval_time": 0.0,

@@ -238,13 +238,13 @@ async def init_db() -> None:
                 post_consensus_tasks_received INTEGER NULL,
                 post_consensus_tasks_success INTEGER NULL,
                 post_consensus_avg_eval_cost DOUBLE PRECISION NULL,
-                effective_rank INTEGER NULL,
-                effective_reward DOUBLE PRECISION NULL,
-                effective_eval_score DOUBLE PRECISION NULL,
-                effective_eval_time DOUBLE PRECISION NULL,
-                effective_tasks_received INTEGER NULL,
-                effective_tasks_success INTEGER NULL,
-                effective_eval_cost DOUBLE PRECISION NULL,
+                best_local_rank INTEGER NULL,
+                best_local_reward DOUBLE PRECISION NULL,
+                best_local_eval_score DOUBLE PRECISION NULL,
+                best_local_eval_time DOUBLE PRECISION NULL,
+                best_local_tasks_received INTEGER NULL,
+                best_local_tasks_success INTEGER NULL,
+                best_local_eval_cost DOUBLE PRECISION NULL,
                 weight DOUBLE PRECISION NULL,
                 subnet_price DOUBLE PRECISION NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -253,16 +253,23 @@ async def init_db() -> None:
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS round_outcomes (
-                round_outcome_id BIGSERIAL PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS round_summary (
+                round_summary_id BIGSERIAL PRIMARY KEY,
                 round_id BIGINT NOT NULL UNIQUE REFERENCES rounds(round_id) ON DELETE CASCADE,
-                winner_miner_uid INTEGER NULL,
-                winner_score DOUBLE PRECISION NULL,
-                reigning_miner_uid_before_round INTEGER NULL,
-                reigning_score_before_round DOUBLE PRECISION NULL,
-                top_candidate_miner_uid INTEGER NULL,
-                top_candidate_score DOUBLE PRECISION NULL,
+                leader_before_miner_uid INTEGER NULL,
+                leader_before_miner_hotkey VARCHAR(128) NULL,
+                leader_before_github_url TEXT NULL,
+                leader_before_reward DOUBLE PRECISION NULL,
+                candidate_miner_uid INTEGER NULL,
+                candidate_miner_hotkey VARCHAR(128) NULL,
+                candidate_github_url TEXT NULL,
+                candidate_reward DOUBLE PRECISION NULL,
+                leader_after_miner_uid INTEGER NULL,
+                leader_after_miner_hotkey VARCHAR(128) NULL,
+                leader_after_github_url TEXT NULL,
+                leader_after_reward DOUBLE PRECISION NULL,
                 required_improvement_pct DOUBLE PRECISION NULL,
+                required_reward_to_dethrone DOUBLE PRECISION NULL,
                 dethroned BOOLEAN NULL,
                 validators_count INTEGER NULL,
                 miners_evaluated INTEGER NULL,
@@ -271,10 +278,9 @@ async def init_db() -> None:
                 avg_reward DOUBLE PRECISION NULL,
                 avg_eval_score DOUBLE PRECISION NULL,
                 avg_eval_time DOUBLE PRECISION NULL,
-                computed_at TIMESTAMPTZ NULL,
+                avg_eval_cost DOUBLE PRECISION NULL,
                 summary_json JSONB NULL,
                 post_consensus_summary JSONB NULL,
-                source_round_validator_id BIGINT NULL REFERENCES round_validators(round_validator_id) ON DELETE SET NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
@@ -288,9 +294,478 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_round_validator_miners_round_id ON round_validator_miners(round_id)",
             "CREATE INDEX IF NOT EXISTS ix_round_validator_miners_miner_uid ON round_validator_miners(miner_uid)",
             "CREATE INDEX IF NOT EXISTS ix_round_validator_miners_round_validator_id ON round_validator_miners(round_validator_id)",
-            "CREATE INDEX IF NOT EXISTS ix_round_outcomes_winner_miner_uid ON round_outcomes(winner_miner_uid)",
+            "CREATE INDEX IF NOT EXISTS ix_round_summary_leader_after_miner_uid ON round_summary(leader_after_miner_uid)",
         ):
             await conn.execute(text(ddl))
+        await conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_outcomes'
+                    ) THEN
+                        INSERT INTO round_summary (
+                            round_id,
+                            leader_before_miner_uid,
+                            leader_before_reward,
+                            candidate_miner_uid,
+                            candidate_reward,
+                            leader_after_miner_uid,
+                            leader_after_reward,
+                            required_improvement_pct,
+                            required_reward_to_dethrone,
+                            dethroned,
+                            validators_count,
+                            miners_evaluated,
+                            tasks_evaluated,
+                            tasks_success,
+                            avg_reward,
+                            avg_eval_score,
+                            avg_eval_time,
+                            summary_json,
+                            post_consensus_summary,
+                            created_at,
+                            updated_at
+                        )
+                        SELECT
+                            ro.round_id,
+                            ro.reigning_miner_uid_before_round,
+                            ro.reigning_score_before_round,
+                            ro.top_candidate_miner_uid,
+                            ro.top_candidate_score,
+                            ro.winner_miner_uid,
+                            ro.winner_score,
+                            ro.required_improvement_pct,
+                            CASE
+                                WHEN ro.reigning_score_before_round IS NOT NULL AND ro.required_improvement_pct IS NOT NULL
+                                THEN ro.reigning_score_before_round * (1.0 + ro.required_improvement_pct)
+                                ELSE NULL
+                            END,
+                            ro.dethroned,
+                            ro.validators_count,
+                            ro.miners_evaluated,
+                            ro.tasks_evaluated,
+                            ro.tasks_success,
+                            ro.avg_reward,
+                            ro.avg_eval_score,
+                            ro.avg_eval_time,
+                            ro.summary_json,
+                            ro.post_consensus_summary,
+                            COALESCE(ro.created_at, NOW()),
+                            COALESCE(ro.updated_at, NOW())
+                        FROM round_outcomes ro
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM round_summary rs WHERE rs.round_id = ro.round_id
+                        );
+                    END IF;
+                END $$;
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                DO $$
+                DECLARE
+                    rec RECORD;
+                    current_season_id BIGINT := NULL;
+                    leader_uid INTEGER := NULL;
+                    leader_reward DOUBLE PRECISION := NULL;
+                    required_pct DOUBLE PRECISION := 0.05;
+                    dethroned_flag BOOLEAN := FALSE;
+                    threshold_reward DOUBLE PRECISION := NULL;
+                BEGIN
+                    FOR rec IN
+                        SELECT
+                            r.season_id,
+                            rs.round_id,
+                            COALESCE(r.round_number_in_season, 2147483647) AS round_number_in_season,
+                            rs.candidate_miner_uid,
+                            rs.candidate_reward,
+                            rs.required_improvement_pct
+                        FROM round_summary rs
+                        JOIN rounds r ON r.round_id = rs.round_id
+                        ORDER BY r.season_id, COALESCE(r.round_number_in_season, 2147483647), rs.round_id
+                    LOOP
+                        IF current_season_id IS DISTINCT FROM rec.season_id THEN
+                            current_season_id := rec.season_id;
+                            leader_uid := NULL;
+                            leader_reward := NULL;
+                        END IF;
+
+                        required_pct := COALESCE(rec.required_improvement_pct, 0.05);
+                        dethroned_flag := FALSE;
+                        threshold_reward := NULL;
+
+                        IF rec.candidate_miner_uid IS NOT NULL AND rec.candidate_reward IS NOT NULL THEN
+                            IF leader_uid IS NULL OR leader_reward IS NULL THEN
+                                leader_uid := rec.candidate_miner_uid;
+                                leader_reward := rec.candidate_reward;
+                            ELSIF rec.candidate_miner_uid = leader_uid THEN
+                                leader_reward := GREATEST(leader_reward, rec.candidate_reward);
+                            ELSE
+                                threshold_reward := leader_reward * (1.0 + required_pct);
+                                IF rec.candidate_reward >= threshold_reward THEN
+                                    dethroned_flag := TRUE;
+                                    leader_uid := rec.candidate_miner_uid;
+                                    leader_reward := rec.candidate_reward;
+                                END IF;
+                            END IF;
+                        END IF;
+
+                        UPDATE round_summary
+                        SET
+                            leader_before_miner_uid = (
+                                SELECT prev.leader_after_miner_uid
+                                FROM round_summary prev
+                                JOIN rounds pr ON pr.round_id = prev.round_id
+                                WHERE pr.season_id = rec.season_id
+                                  AND (
+                                    COALESCE(pr.round_number_in_season, 2147483647) < rec.round_number_in_season
+                                    OR (COALESCE(pr.round_number_in_season, 2147483647) = rec.round_number_in_season AND prev.round_id < rec.round_id)
+                                  )
+                                ORDER BY COALESCE(pr.round_number_in_season, 2147483647) DESC, prev.round_id DESC
+                                LIMIT 1
+                            ),
+                            leader_before_reward = (
+                                SELECT prev.leader_after_reward
+                                FROM round_summary prev
+                                JOIN rounds pr ON pr.round_id = prev.round_id
+                                WHERE pr.season_id = rec.season_id
+                                  AND (
+                                    COALESCE(pr.round_number_in_season, 2147483647) < rec.round_number_in_season
+                                    OR (COALESCE(pr.round_number_in_season, 2147483647) = rec.round_number_in_season AND prev.round_id < rec.round_id)
+                                  )
+                                ORDER BY COALESCE(pr.round_number_in_season, 2147483647) DESC, prev.round_id DESC
+                                LIMIT 1
+                            ),
+                            leader_after_miner_uid = leader_uid,
+                            leader_after_reward = leader_reward,
+                            required_improvement_pct = required_pct,
+                            required_reward_to_dethrone = (
+                                SELECT CASE
+                                    WHEN prev.leader_after_reward IS NOT NULL
+                                    THEN prev.leader_after_reward * (1.0 + required_pct)
+                                    ELSE NULL
+                                END
+                                FROM round_summary prev
+                                JOIN rounds pr ON pr.round_id = prev.round_id
+                                WHERE pr.season_id = rec.season_id
+                                  AND (
+                                    COALESCE(pr.round_number_in_season, 2147483647) < rec.round_number_in_season
+                                    OR (COALESCE(pr.round_number_in_season, 2147483647) = rec.round_number_in_season AND prev.round_id < rec.round_id)
+                                  )
+                                ORDER BY COALESCE(pr.round_number_in_season, 2147483647) DESC, prev.round_id DESC
+                                LIMIT 1
+                            ),
+                            dethroned = dethroned_flag,
+                            updated_at = NOW()
+                        WHERE round_id = rec.round_id;
+                    END LOOP;
+                END $$;
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE round_summary rs
+                SET
+                    leader_before_miner_hotkey = (
+                        SELECT rvm.miner_hotkey
+                        FROM round_validator_miners rvm
+                        WHERE rvm.round_id = rs.round_id
+                          AND rvm.miner_uid = rs.leader_before_miner_uid
+                        ORDER BY rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
+                        LIMIT 1
+                    ),
+                    leader_before_github_url = (
+                        SELECT rvm.github_url
+                        FROM round_validator_miners rvm
+                        WHERE rvm.round_id = rs.round_id
+                          AND rvm.miner_uid = rs.leader_before_miner_uid
+                        ORDER BY rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
+                        LIMIT 1
+                    ),
+                    candidate_miner_hotkey = (
+                        SELECT rvm.miner_hotkey
+                        FROM round_validator_miners rvm
+                        WHERE rvm.round_id = rs.round_id
+                          AND rvm.miner_uid = rs.candidate_miner_uid
+                        ORDER BY rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
+                        LIMIT 1
+                    ),
+                    candidate_github_url = (
+                        SELECT rvm.github_url
+                        FROM round_validator_miners rvm
+                        WHERE rvm.round_id = rs.round_id
+                          AND rvm.miner_uid = rs.candidate_miner_uid
+                        ORDER BY rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
+                        LIMIT 1
+                    ),
+                    leader_after_miner_hotkey = (
+                        SELECT rvm.miner_hotkey
+                        FROM round_validator_miners rvm
+                        WHERE rvm.round_id = rs.round_id
+                          AND rvm.miner_uid = rs.leader_after_miner_uid
+                        ORDER BY rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
+                        LIMIT 1
+                    ),
+                    leader_after_github_url = (
+                        SELECT rvm.github_url
+                        FROM round_validator_miners rvm
+                        WHERE rvm.round_id = rs.round_id
+                          AND rvm.miner_uid = rs.leader_after_miner_uid
+                        ORDER BY rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
+                        LIMIT 1
+                    ),
+                    avg_eval_cost = COALESCE(
+                        rs.avg_eval_cost,
+                        (
+                            SELECT AVG(rvm.post_consensus_avg_eval_cost)
+                            FROM round_validator_miners rvm
+                            WHERE rvm.round_id = rs.round_id
+                              AND rvm.post_consensus_avg_eval_cost IS NOT NULL
+                        )
+                    ),
+                    required_reward_to_dethrone = COALESCE(
+                        rs.required_reward_to_dethrone,
+                        CASE
+                            WHEN rs.leader_before_reward IS NOT NULL AND rs.required_improvement_pct IS NOT NULL
+                            THEN rs.leader_before_reward * (1.0 + rs.required_improvement_pct)
+                            ELSE NULL
+                        END
+                    )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE seasons s
+                SET
+                    leader_miner_uid = latest.leader_after_miner_uid,
+                    leader_reward = latest.leader_after_reward,
+                    leader_github_url = latest.leader_after_github_url,
+                    updated_at = NOW()
+                FROM (
+                    SELECT DISTINCT ON (r.season_id)
+                        r.season_id,
+                        rs.leader_after_miner_uid,
+                        rs.leader_after_reward,
+                        rs.leader_after_github_url
+                    FROM round_summary rs
+                    JOIN rounds r ON r.round_id = rs.round_id
+                    ORDER BY r.season_id, COALESCE(r.round_number_in_season, 2147483647) DESC, rs.round_id DESC
+                ) latest
+                WHERE latest.season_id = s.season_id
+                """
+            )
+        )
+        await conn.execute(text("DROP VIEW IF EXISTS round_outcomes CASCADE"))
+        await conn.execute(text("DROP TABLE IF EXISTS round_outcomes CASCADE"))
+        await conn.execute(
+            text(
+                """
+                CREATE VIEW round_outcomes AS
+                SELECT
+                    round_summary_id AS round_outcome_id,
+                    round_id,
+                    leader_after_miner_uid AS winner_miner_uid,
+                    leader_after_reward AS winner_score,
+                    leader_before_miner_uid AS reigning_miner_uid_before_round,
+                    leader_before_reward AS reigning_score_before_round,
+                    candidate_miner_uid AS top_candidate_miner_uid,
+                    candidate_reward AS top_candidate_score,
+                    required_improvement_pct,
+                    dethroned,
+                    validators_count,
+                    miners_evaluated,
+                    tasks_evaluated,
+                    tasks_success,
+                    avg_reward,
+                    avg_eval_score,
+                    avg_eval_time,
+                    NULL::TIMESTAMPTZ AS computed_at,
+                    summary_json,
+                    post_consensus_summary,
+                    NULL::BIGINT AS source_round_validator_id,
+                    created_at,
+                    updated_at
+                FROM round_summary
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'effective_rank'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'best_local_rank'
+                    ) THEN
+                        ALTER TABLE round_validator_miners RENAME COLUMN effective_rank TO best_local_rank;
+                    END IF;
+
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'effective_reward'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'best_local_reward'
+                    ) THEN
+                        ALTER TABLE round_validator_miners RENAME COLUMN effective_reward TO best_local_reward;
+                    END IF;
+
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'effective_eval_score'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'best_local_eval_score'
+                    ) THEN
+                        ALTER TABLE round_validator_miners RENAME COLUMN effective_eval_score TO best_local_eval_score;
+                    END IF;                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'effective_eval_time'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'best_local_eval_time'
+                    ) THEN
+                        ALTER TABLE round_validator_miners RENAME COLUMN effective_eval_time TO best_local_eval_time;
+                    END IF;
+
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'effective_tasks_received'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'best_local_tasks_received'
+                    ) THEN
+                        ALTER TABLE round_validator_miners RENAME COLUMN effective_tasks_received TO best_local_tasks_received;
+                    END IF;
+
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'effective_tasks_success'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'best_local_tasks_success'
+                    ) THEN
+                        ALTER TABLE round_validator_miners RENAME COLUMN effective_tasks_success TO best_local_tasks_success;
+                    END IF;
+
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'effective_eval_cost'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validator_miners'
+                          AND column_name = 'best_local_eval_cost'
+                    ) THEN
+                        ALTER TABLE round_validator_miners RENAME COLUMN effective_eval_cost TO best_local_eval_cost;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                WITH ranked_history AS (
+                    SELECT
+                        current_rvm.id AS target_id,
+                        COALESCE(hist_rvm.local_rank, 9999) AS best_local_rank,
+                        COALESCE(hist_rvm.local_avg_reward, 0) AS best_local_reward,
+                        COALESCE(hist_rvm.local_avg_eval_score, 0) AS best_local_eval_score,
+                        COALESCE(hist_rvm.local_avg_eval_time, 0) AS best_local_eval_time,
+                        COALESCE(hist_rvm.local_tasks_received, 0) AS best_local_tasks_received,
+                        COALESCE(hist_rvm.local_tasks_success, 0) AS best_local_tasks_success,
+                        COALESCE(hist_rvm.local_avg_eval_cost, 0) AS best_local_eval_cost,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY current_rvm.id
+                            ORDER BY
+                                COALESCE(hist_rvm.local_avg_reward, 0) DESC,
+                                COALESCE(hist_rvm.local_rank, 9999) ASC,
+                                rv_hist.round_number_in_season ASC,
+                                hist_rvm.id ASC
+                        ) AS rn
+                    FROM round_validator_miners current_rvm
+                    JOIN round_validators rv_current
+                      ON rv_current.round_validator_id = current_rvm.round_validator_id
+                    JOIN round_validator_miners hist_rvm
+                      ON hist_rvm.miner_uid = current_rvm.miner_uid
+                    JOIN round_validators rv_hist
+                      ON rv_hist.round_validator_id = hist_rvm.round_validator_id
+                    WHERE rv_hist.validator_uid = rv_current.validator_uid
+                      AND rv_hist.season_number = rv_current.season_number
+                      AND rv_hist.round_number_in_season <= rv_current.round_number_in_season
+                )
+                UPDATE round_validator_miners rvm
+                SET
+                    best_local_rank = rh.best_local_rank,
+                    best_local_reward = rh.best_local_reward,
+                    best_local_eval_score = rh.best_local_eval_score,
+                    best_local_eval_time = rh.best_local_eval_time,
+                    best_local_tasks_received = rh.best_local_tasks_received,
+                    best_local_tasks_success = rh.best_local_tasks_success,
+                    best_local_eval_cost = rh.best_local_eval_cost,
+                    updated_at = NOW()
+                FROM ranked_history rh
+                WHERE rvm.id = rh.target_id
+                  AND rh.rn = 1
+                """
+            )
+        )
         await conn.execute(text("ALTER TABLE rounds ADD COLUMN IF NOT EXISTS planned_start_block BIGINT NULL"))
         await conn.execute(text("ALTER TABLE rounds ADD COLUMN IF NOT EXISTS planned_end_block BIGINT NULL"))
         await conn.execute(text("ALTER TABLE rounds ADD COLUMN IF NOT EXISTS opened_by_validator_uid INTEGER NULL"))
@@ -435,6 +910,8 @@ async def init_db() -> None:
                       winner_score = COALESCE(
                         winner_score,
                         CASE
+                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'reward') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'reward')::DOUBLE PRECISION
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'score') ~ '^-?[0-9]+(\\.[0-9]+)?$'
                           THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'score')::DOUBLE PRECISION
                           ELSE NULL
@@ -451,6 +928,8 @@ async def init_db() -> None:
                       reigning_score_before_round = COALESCE(
                         reigning_score_before_round,
                         CASE
+                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_reward_before_round') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_reward_before_round')::DOUBLE PRECISION
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_score_before_round') ~ '^-?[0-9]+(\\.[0-9]+)?$'
                           THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_score_before_round')::DOUBLE PRECISION
                           ELSE NULL
@@ -467,6 +946,8 @@ async def init_db() -> None:
                       top_candidate_score = COALESCE(
                         top_candidate_score,
                         CASE
+                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_reward') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_reward')::DOUBLE PRECISION
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_score') ~ '^-?[0-9]+(\\.[0-9]+)?$'
                           THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_score')::DOUBLE PRECISION
                           ELSE NULL
@@ -506,6 +987,22 @@ async def init_db() -> None:
             )
         )
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_miner_evaluation_runs_reused_from ON miner_evaluation_runs(reused_from_agent_run_id) WHERE reused_from_agent_run_id IS NOT NULL"))
+        # Runs should represent actual fresh evaluations only.
+        # Clean up historical synthetic reused rows when they carry no artefacts of their own.
+        await conn.execute(
+            text(
+                """
+                DELETE FROM miner_evaluation_runs mer
+                WHERE COALESCE(mer.is_reused, FALSE) = TRUE
+                  AND NOT EXISTS (
+                    SELECT 1 FROM task_solutions ts WHERE ts.agent_run_id = mer.agent_run_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM evaluations e WHERE e.agent_run_id = mer.agent_run_id
+                  )
+                """
+            )
+        )
         await conn.execute(text("ALTER TABLE miner_evaluation_runs ADD COLUMN IF NOT EXISTS zero_reason VARCHAR(128) NULL"))
         await conn.execute(text("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS zero_reason VARCHAR(128) NULL"))
         # Keep compatibility with ORM expecting evaluation_llm_usage.tokens/cost.
@@ -633,7 +1130,44 @@ async def init_db() -> None:
         await conn.execute(
             text(
                 """
-                CREATE TABLE IF NOT EXISTS app_runtime_config (
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'app_runtime_config'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'config_app_runtime'
+                    ) THEN
+                        ALTER TABLE app_runtime_config RENAME TO config_app_runtime;
+                    END IF;
+
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_config'
+                    ) AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'config_season_round'
+                    ) THEN
+                        ALTER TABLE round_config RENAME TO config_season_round;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS config_app_runtime (
                     id SMALLINT PRIMARY KEY DEFAULT 1,
                     main_validator_uid INTEGER NULL,
                     main_validator_hotkey VARCHAR(128) NULL,
@@ -645,26 +1179,61 @@ async def init_db() -> None:
                 """
             )
         )
-        await conn.execute(text("ALTER TABLE app_runtime_config ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"))
-        await conn.execute(text("ALTER TABLE app_runtime_config ADD COLUMN IF NOT EXISTS minimum_validator_version VARCHAR(32)"))
+        await conn.execute(text("ALTER TABLE config_app_runtime ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"))
+        await conn.execute(text("ALTER TABLE config_app_runtime ADD COLUMN IF NOT EXISTS minimum_validator_version VARCHAR(32)"))
+        await conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'app_runtime_config'
+                    ) THEN
+                        INSERT INTO config_app_runtime (
+                            id,
+                            main_validator_uid,
+                            main_validator_hotkey,
+                            minimum_validator_version,
+                            created_at,
+                            updated_at
+                        )
+                        SELECT
+                            id,
+                            main_validator_uid,
+                            main_validator_hotkey,
+                            minimum_validator_version,
+                            COALESCE(created_at, NOW()),
+                            COALESCE(updated_at, NOW())
+                        FROM app_runtime_config
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM config_app_runtime car WHERE car.id = app_runtime_config.id
+                        );
+                    END IF;
+                END $$;
+                """
+            )
+        )
         await conn.execute(
             text(
                 f"""
-                INSERT INTO app_runtime_config (id, main_validator_uid, main_validator_hotkey, minimum_validator_version, created_at, updated_at)
+                INSERT INTO config_app_runtime (id, main_validator_uid, main_validator_hotkey, minimum_validator_version, created_at, updated_at)
                 VALUES (1, {str(int(main_uid)) if main_uid is not None else "NULL"}, {("'" + main_hotkey_sql + "'") if main_hotkey else "NULL"}, NULL, NOW(), NOW())
                 ON CONFLICT (id) DO UPDATE SET
-                    main_validator_uid = EXCLUDED.main_validator_uid,
-                    main_validator_hotkey = EXCLUDED.main_validator_hotkey,
+                    main_validator_uid = COALESCE(EXCLUDED.main_validator_uid, config_app_runtime.main_validator_uid),
+                    main_validator_hotkey = COALESCE(EXCLUDED.main_validator_hotkey, config_app_runtime.main_validator_hotkey),
                     updated_at = NOW()
                 """
             )
         )
 
-        # Round config: single row, only main validator can write. Backend reads from here instead of .env.
+        # Season/round config: single row, only main validator can write.
         await conn.execute(
             text(
                 """
-                CREATE TABLE IF NOT EXISTS round_config (
+                CREATE TABLE IF NOT EXISTS config_season_round (
                     id SMALLINT PRIMARY KEY DEFAULT 1,
                     round_size_epochs DOUBLE PRECISION NOT NULL,
                     season_size_epochs DOUBLE PRECISION NOT NULL,
@@ -677,31 +1246,68 @@ async def init_db() -> None:
                 """
             )
         )
-        await conn.execute(text("ALTER TABLE round_config ADD COLUMN IF NOT EXISTS updated_by_validator_uid INTEGER"))
+        await conn.execute(text("ALTER TABLE config_season_round ADD COLUMN IF NOT EXISTS updated_by_validator_uid INTEGER"))
         await conn.execute(
             text(
                 """
-                CREATE OR REPLACE FUNCTION enforce_round_config_main_validator()
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_config'
+                    ) THEN
+                        INSERT INTO config_season_round (
+                            id,
+                            round_size_epochs,
+                            season_size_epochs,
+                            minimum_start_block,
+                            blocks_per_epoch,
+                            updated_at,
+                            updated_by_validator_uid
+                        )
+                        SELECT
+                            id,
+                            round_size_epochs,
+                            season_size_epochs,
+                            minimum_start_block,
+                            blocks_per_epoch,
+                            COALESCE(updated_at, NOW()),
+                            updated_by_validator_uid
+                        FROM round_config
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM config_season_round csr WHERE csr.id = round_config.id
+                        );
+                    END IF;
+                END $$;
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION enforce_config_season_round_main_validator()
                 RETURNS trigger AS $$
                 DECLARE
                     main_uid INTEGER;
                 BEGIN
                     SELECT main_validator_uid
                     INTO main_uid
-                    FROM app_runtime_config
+                    FROM config_app_runtime
                     WHERE id = 1;
 
                     IF main_uid IS NULL THEN
-                        RAISE EXCEPTION 'round_config write blocked: app_runtime_config.main_validator_uid is NULL';
+                        RAISE EXCEPTION 'config_season_round write blocked: config_app_runtime.main_validator_uid is NULL';
                     END IF;
 
                     IF NEW.updated_by_validator_uid IS NULL THEN
-                        RAISE EXCEPTION 'round_config write blocked: updated_by_validator_uid is required';
+                        RAISE EXCEPTION 'config_season_round write blocked: updated_by_validator_uid is required';
                     END IF;
 
                     IF NEW.updated_by_validator_uid <> main_uid THEN
                         RAISE EXCEPTION
-                            'round_config write blocked: uid % is not main validator uid %',
+                            'config_season_round write blocked: uid % is not main validator uid %',
                             NEW.updated_by_validator_uid,
                             main_uid;
                     END IF;
@@ -714,17 +1320,20 @@ async def init_db() -> None:
                 """
             )
         )
-        await conn.execute(text("DROP TRIGGER IF EXISTS trg_round_config_enforce_main_validator ON round_config"))
+        await conn.execute(text("DROP TRIGGER IF EXISTS trg_round_config_enforce_main_validator ON config_season_round"))
+        await conn.execute(text("DROP TRIGGER IF EXISTS trg_config_season_round_enforce_main_validator ON config_season_round"))
         await conn.execute(
             text(
                 """
-                CREATE TRIGGER trg_round_config_enforce_main_validator
-                BEFORE INSERT OR UPDATE ON round_config
+                CREATE TRIGGER trg_config_season_round_enforce_main_validator
+                BEFORE INSERT OR UPDATE ON config_season_round
                 FOR EACH ROW
-                EXECUTE FUNCTION enforce_round_config_main_validator()
+                EXECUTE FUNCTION enforce_config_season_round_main_validator()
                 """
             )
         )
+        await conn.execute(text("DROP TABLE IF EXISTS app_runtime_config CASCADE"))
+        await conn.execute(text("DROP TABLE IF EXISTS round_config CASCADE"))
 
         await conn.execute(
             text(
@@ -976,7 +1585,6 @@ async def init_db() -> None:
                 """
             )
         )
-
         await conn.execute(
             text(
                 """
@@ -1065,7 +1673,7 @@ async def init_db() -> None:
                 BEGIN
                     SELECT main_validator_uid, main_validator_hotkey
                     INTO cfg_uid, cfg_hotkey
-                    FROM app_runtime_config
+                    FROM config_app_runtime
                     WHERE id = 1;
                     -- INSERT on compatibility view validator_rounds does not expose validator_uid/hotkey.
                     -- Authority is finalized later when validator_round_validators upsert arrives.
@@ -1275,41 +1883,54 @@ async def init_db() -> None:
                             SET is_main_validator = FALSE, updated_at = NOW()
                             WHERE round_id = rid AND round_validator_id <> rvid AND is_main_validator = TRUE;
 
-                            INSERT INTO round_outcomes (
-                                round_id, winner_miner_uid, winner_score,
-                                reigning_miner_uid_before_round, reigning_score_before_round,
-                                top_candidate_miner_uid, top_candidate_score,
-                                required_improvement_pct, dethroned,
-                                source_round_validator_id, summary_json, post_consensus_summary, created_at, updated_at
+                            INSERT INTO round_summary (
+                                round_id,
+                                leader_before_miner_uid,
+                                leader_before_reward,
+                                candidate_miner_uid,
+                                candidate_reward,
+                                leader_after_miner_uid,
+                                leader_after_reward,
+                                required_improvement_pct,
+                                required_reward_to_dethrone,
+                                dethroned,
+                                summary_json,
+                                post_consensus_summary,
+                                created_at,
+                                updated_at
                             )
                             VALUES (
                                 rid,
-                                NEW.winner_uid,
-                                NEW.winner_score,
                                 NEW.reigning_uid_before_round,
                                 NEW.reigning_score_before_round,
                                 NEW.top_candidate_uid,
                                 NEW.top_candidate_score,
+                                NEW.winner_uid,
+                                NEW.winner_score,
                                 COALESCE(NEW.required_improvement_pct, 0.05),
+                                CASE
+                                    WHEN NEW.reigning_score_before_round IS NOT NULL
+                                    THEN NEW.reigning_score_before_round * (1.0 + COALESCE(NEW.required_improvement_pct, 0.05))
+                                    ELSE NULL
+                                END,
                                 NEW.dethroned,
-                                rvid,
                                 NEW.validator_summary,
                                 NEW.validator_summary,
                                 NOW(),
                                 NOW()
                             )
                             ON CONFLICT (round_id) DO UPDATE SET
-                                winner_miner_uid = EXCLUDED.winner_miner_uid,
-                                winner_score = EXCLUDED.winner_score,
-                                reigning_miner_uid_before_round = EXCLUDED.reigning_miner_uid_before_round,
-                                reigning_score_before_round = EXCLUDED.reigning_score_before_round,
-                                top_candidate_miner_uid = EXCLUDED.top_candidate_miner_uid,
-                                top_candidate_score = EXCLUDED.top_candidate_score,
+                                leader_before_miner_uid = EXCLUDED.leader_before_miner_uid,
+                                leader_before_reward = EXCLUDED.leader_before_reward,
+                                candidate_miner_uid = EXCLUDED.candidate_miner_uid,
+                                candidate_reward = EXCLUDED.candidate_reward,
+                                leader_after_miner_uid = EXCLUDED.leader_after_miner_uid,
+                                leader_after_reward = EXCLUDED.leader_after_reward,
                                 required_improvement_pct = EXCLUDED.required_improvement_pct,
+                                required_reward_to_dethrone = EXCLUDED.required_reward_to_dethrone,
                                 dethroned = EXCLUDED.dethroned,
-                                source_round_validator_id = EXCLUDED.source_round_validator_id,
-                                summary_json = COALESCE(EXCLUDED.summary_json, round_outcomes.summary_json),
-                                post_consensus_summary = COALESCE(EXCLUDED.post_consensus_summary, round_outcomes.post_consensus_summary),
+                                summary_json = COALESCE(EXCLUDED.summary_json, round_summary.summary_json),
+                                post_consensus_summary = COALESCE(EXCLUDED.post_consensus_summary, round_summary.post_consensus_summary),
                                 updated_at = NOW();
                         END IF;
 
@@ -1351,7 +1972,7 @@ async def init_db() -> None:
                 BEGIN
                     SELECT main_validator_uid, main_validator_hotkey
                     INTO cfg_uid, cfg_hotkey
-                    FROM app_runtime_config
+                    FROM config_app_runtime
                     WHERE id = 1;
                     is_main := (
                         (cfg_uid IS NULL AND (cfg_hotkey IS NULL OR cfg_hotkey = ''))

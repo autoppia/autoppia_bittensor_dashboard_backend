@@ -132,7 +132,7 @@ async def seed_new_schema() -> tuple[int, int, list[int]]:
                         is_reused, reused_from_agent_run_id, reused_from_round_id,
                         local_rank, local_avg_reward, local_avg_eval_score, local_avg_eval_time, local_tasks_received, local_tasks_success,
                         post_consensus_rank, post_consensus_avg_reward, post_consensus_avg_eval_score, post_consensus_avg_eval_time, post_consensus_tasks_received, post_consensus_tasks_success,
-                        weight, subnet_price, effective_rank, effective_reward, effective_eval_score, effective_eval_time, local_avg_eval_cost, post_consensus_avg_eval_cost, effective_eval_cost
+                        weight, subnet_price, best_local_rank, best_local_reward, best_local_eval_score, best_local_eval_time, local_avg_eval_cost, post_consensus_avg_eval_cost, best_local_eval_cost
                     )
                     VALUES (
                         :rvid, :round_id, :m_uid, :m_hotkey, :m_coldkey, :m_name, :img, :github, false, '1.0.0',

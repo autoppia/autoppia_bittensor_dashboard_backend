@@ -31,15 +31,15 @@ class ValidatorStorageSummaryMixin:
         *,
         summary: Dict[str, Any],
         winner_uid: Optional[int],
-        winner_score: Optional[float],
+        winner_reward: Optional[float],
         reigning_uid_before_round: Optional[int],
-        reigning_score_before_round: Optional[float],
+        reigning_reward_before_round: Optional[float],
         top_candidate_uid: Optional[int],
-        top_candidate_score: Optional[float],
+        top_candidate_reward: Optional[float],
         required_improvement_pct: float,
         dethroned: bool,
         leader_uid_after_round: Optional[int],
-        leader_score_after_round: Optional[float],
+        leader_reward_after_round: Optional[float],
     ) -> Dict[str, Any]:
         payload = dict(summary or {})
         round_summary = payload.get("round_summary") if isinstance(payload.get("round_summary"), dict) else {}
@@ -47,27 +47,36 @@ class ValidatorStorageSummaryMixin:
         winner_obj = round_summary.get("winner") if isinstance(round_summary.get("winner"), dict) else {}
         season_summary = payload.get("season_summary") if isinstance(payload.get("season_summary"), dict) else {}
 
+        winner_obj.pop("score", None)
         winner_obj["miner_uid"] = winner_uid
-        winner_obj["score"] = winner_score
+        winner_obj["reward"] = winner_reward
         round_summary["winner"] = winner_obj
+        round_summary.pop("miner_scores", None)
 
+        decision.pop("reigning_score_before_round", None)
+        decision.pop("top_candidate_score", None)
         decision["reigning_uid_before_round"] = reigning_uid_before_round
-        decision["reigning_score_before_round"] = reigning_score_before_round
+        decision["reigning_reward_before_round"] = reigning_reward_before_round
         decision["top_candidate_uid"] = top_candidate_uid
-        decision["top_candidate_score"] = top_candidate_score
+        decision["top_candidate_reward"] = top_candidate_reward
         decision["required_improvement_pct"] = required_improvement_pct
         decision["dethroned"] = dethroned
         round_summary["decision"] = decision
         payload["round_summary"] = round_summary
 
+        season_summary.pop("winner_before_round_score", None)
+        season_summary.pop("candidate_score", None)
+        season_summary.pop("winner_after_round_score", None)
+        season_summary.pop("current_winner_score", None)
         season_summary["required_improvement_pct"] = required_improvement_pct
         season_summary["winner_before_round_uid"] = reigning_uid_before_round
-        season_summary["winner_before_round_score"] = reigning_score_before_round
+        season_summary["winner_before_round_reward"] = reigning_reward_before_round
         season_summary["candidate_uid"] = top_candidate_uid
-        season_summary["candidate_score"] = top_candidate_score
+        season_summary["candidate_reward"] = top_candidate_reward
         season_summary["winner_after_round_uid"] = leader_uid_after_round
-        season_summary["winner_after_round_score"] = leader_score_after_round
+        season_summary["winner_after_round_reward"] = leader_reward_after_round
         season_summary["current_winner_uid"] = leader_uid_after_round
+        season_summary["current_winner_reward"] = leader_reward_after_round
         season_summary["dethroned"] = dethroned
         if dethroned:
             season_summary["round_result"] = "dethroned"
@@ -85,17 +94,16 @@ class ValidatorStorageSummaryMixin:
                     text(
                         """
                     SELECT
-                      ro.round_id,
-                      ro.winner_miner_uid,
-                      ro.winner_score,
-                      ro.required_improvement_pct,
-                      ro.source_round_validator_id,
-                      ro.summary_json,
-                      ro.post_consensus_summary
-                    FROM round_outcomes ro
-                    JOIN rounds r ON r.round_id = ro.round_id
+                      rs.round_id,
+                      rs.candidate_miner_uid,
+                      rs.candidate_reward,
+                      rs.required_improvement_pct,
+                      rs.summary_json,
+                      rs.post_consensus_summary
+                    FROM round_summary rs
+                    JOIN rounds r ON r.round_id = rs.round_id
                     WHERE r.season_id = :season_id
-                    ORDER BY COALESCE(r.round_number_in_season, 2147483647), ro.round_id
+                    ORDER BY COALESCE(r.round_number_in_season, 2147483647), rs.round_id
                     """
                     ),
                     {"season_id": season_id},
@@ -108,71 +116,74 @@ class ValidatorStorageSummaryMixin:
             return
 
         leader_uid: Optional[int] = None
-        leader_score: Optional[float] = None
+        leader_reward: Optional[float] = None
         default_required_improvement_pct = 0.05
 
         for row in season_rows:
             round_id = int(row["round_id"])
-            winner_uid = int(row["winner_miner_uid"]) if row["winner_miner_uid"] is not None else None
-            winner_score = float(row["winner_score"]) if row["winner_score"] is not None else None
+            winner_uid = int(row["candidate_miner_uid"]) if row["candidate_miner_uid"] is not None else None
+            winner_reward = float(row["candidate_reward"]) if row["candidate_reward"] is not None else None
             required_improvement_pct = float(row["required_improvement_pct"] or default_required_improvement_pct)
 
             reigning_uid_before_round = leader_uid
-            reigning_score_before_round = leader_score
+            reigning_reward_before_round = leader_reward
             top_candidate_uid = winner_uid
-            top_candidate_score = winner_score
+            top_candidate_reward = winner_reward
             dethroned = False
 
-            if winner_uid is not None and winner_score is not None:
-                if leader_uid is None or leader_score is None:
+            if winner_uid is not None and winner_reward is not None:
+                if leader_uid is None or leader_reward is None:
                     leader_uid = winner_uid
-                    leader_score = winner_score
+                    leader_reward = winner_reward
                 elif winner_uid == leader_uid:
-                    leader_score = max(float(leader_score), float(winner_score))
+                    leader_reward = max(float(leader_reward), float(winner_reward))
                 else:
-                    dethrone_threshold = float(leader_score) * (1.0 + required_improvement_pct)
-                    if float(winner_score) >= dethrone_threshold:
+                    dethrone_threshold = float(leader_reward) * (1.0 + required_improvement_pct)
+                    if float(winner_reward) >= dethrone_threshold:
                         dethroned = True
                         leader_uid = winner_uid
-                        leader_score = winner_score
+                        leader_reward = winner_reward
 
             summary_payload = self._apply_leadership_to_summary(
                 summary=self._to_json_dict(row.get("summary_json")),
                 winner_uid=winner_uid,
-                winner_score=winner_score,
+                winner_reward=winner_reward,
                 reigning_uid_before_round=reigning_uid_before_round,
-                reigning_score_before_round=reigning_score_before_round,
+                reigning_reward_before_round=reigning_reward_before_round,
                 top_candidate_uid=top_candidate_uid,
-                top_candidate_score=top_candidate_score,
+                top_candidate_reward=top_candidate_reward,
                 required_improvement_pct=required_improvement_pct,
                 dethroned=dethroned,
                 leader_uid_after_round=leader_uid,
-                leader_score_after_round=leader_score,
+                leader_reward_after_round=leader_reward,
             )
             post_payload = self._apply_leadership_to_summary(
                 summary=self._to_json_dict(row.get("post_consensus_summary")),
                 winner_uid=winner_uid,
-                winner_score=winner_score,
+                winner_reward=winner_reward,
                 reigning_uid_before_round=reigning_uid_before_round,
-                reigning_score_before_round=reigning_score_before_round,
+                reigning_reward_before_round=reigning_reward_before_round,
                 top_candidate_uid=top_candidate_uid,
-                top_candidate_score=top_candidate_score,
+                top_candidate_reward=top_candidate_reward,
                 required_improvement_pct=required_improvement_pct,
                 dethroned=dethroned,
                 leader_uid_after_round=leader_uid,
-                leader_score_after_round=leader_score,
+                leader_reward_after_round=leader_reward,
             )
 
             await self.session.execute(
                 text(
                     """
-                    UPDATE round_outcomes
+                    UPDATE round_summary
                     SET
-                      reigning_miner_uid_before_round = :reigning_uid_before_round,
-                      reigning_score_before_round = :reigning_score_before_round,
-                      top_candidate_miner_uid = :top_candidate_uid,
-                      top_candidate_score = :top_candidate_score,
+                      leader_before_miner_uid = :leader_before_miner_uid,
+                      leader_before_reward = :leader_before_reward,
+                      candidate_miner_uid = :candidate_miner_uid,
+                      candidate_reward = :candidate_reward,
+                      leader_after_miner_uid = :leader_after_miner_uid,
+                      leader_after_reward = :leader_after_reward,
                       required_improvement_pct = :required_improvement_pct,
+                      required_reward_to_dethrone = :required_reward_to_dethrone,
                       dethroned = :dethroned,
                       summary_json = CAST(:summary_json AS JSONB),
                       post_consensus_summary = CAST(:post_consensus_summary AS JSONB),
@@ -182,11 +193,14 @@ class ValidatorStorageSummaryMixin:
                 ),
                 {
                     "round_id": round_id,
-                    "reigning_uid_before_round": reigning_uid_before_round,
-                    "reigning_score_before_round": reigning_score_before_round,
-                    "top_candidate_uid": top_candidate_uid,
-                    "top_candidate_score": top_candidate_score,
+                    "leader_before_miner_uid": reigning_uid_before_round,
+                    "leader_before_reward": reigning_reward_before_round,
+                    "candidate_miner_uid": top_candidate_uid,
+                    "candidate_reward": top_candidate_reward,
+                    "leader_after_miner_uid": leader_uid,
+                    "leader_after_reward": leader_reward,
                     "required_improvement_pct": required_improvement_pct,
+                    "required_reward_to_dethrone": (float(reigning_reward_before_round) * (1.0 + required_improvement_pct)) if reigning_reward_before_round is not None else None,
                     "dethroned": dethroned,
                     "summary_json": json.dumps(summary_payload),
                     "post_consensus_summary": json.dumps(post_payload),
@@ -198,15 +212,12 @@ class ValidatorStorageSummaryMixin:
             leader_repo = await self.session.scalar(
                 text(
                     """
-                    SELECT rvm.github_url
-                    FROM round_outcomes ro
-                    JOIN rounds r ON r.round_id = ro.round_id
-                    JOIN round_validator_miners rvm
-                      ON rvm.round_validator_id = ro.source_round_validator_id
-                     AND rvm.miner_uid = :leader_uid
+                    SELECT rs.leader_after_github_url
+                    FROM round_summary rs
+                    JOIN rounds r ON r.round_id = rs.round_id
                     WHERE r.season_id = :season_id
-                      AND rvm.github_url IS NOT NULL
-                    ORDER BY COALESCE(r.round_number_in_season, 2147483647) DESC, ro.round_id DESC
+                      AND rs.leader_after_github_url IS NOT NULL
+                    ORDER BY COALESCE(r.round_number_in_season, 2147483647) DESC, rs.round_summary_id DESC
                     LIMIT 1
                     """
                 ),
@@ -228,7 +239,7 @@ class ValidatorStorageSummaryMixin:
             {
                 "season_id": season_id,
                 "leader_uid": leader_uid,
-                "leader_score": leader_score,
+                "leader_score": leader_reward,
                 "leader_repo": leader_repo,
             },
         )
@@ -361,6 +372,7 @@ class ValidatorStorageSummaryMixin:
         winner_uid = db_rollup.get("winner", {}).get("miner_uid") if isinstance(db_rollup.get("winner"), dict) else None
         round_summary = enriched_post.get("round_summary") if isinstance(enriched_post.get("round_summary"), dict) else {}
         winner_obj = round_summary.get("winner") if isinstance(round_summary.get("winner"), dict) else {}
+        winner_obj.pop("score", None)
         if winner_uid is not None:
             winner_obj["miner_uid"] = int(winner_uid)
         else:
@@ -368,10 +380,19 @@ class ValidatorStorageSummaryMixin:
             winner_obj.pop("uid", None)
             winner_obj["reason"] = "no_handshake_participants"
         round_summary["winner"] = winner_obj
+        round_summary.pop("miner_scores", None)
         enriched_post["round_summary"] = round_summary
 
         decision_obj = round_summary.get("decision") if isinstance(round_summary.get("decision"), dict) else {}
         season_summary = enriched_post.get("season_summary") if isinstance(enriched_post.get("season_summary"), dict) else {}
+        decision_obj.pop("reigning_score_before_round", None)
+        decision_obj.pop("top_candidate_score", None)
+        decision_obj.pop("required_score_to_dethrone", None)
+        season_summary.pop("winner_before_round_score", None)
+        season_summary.pop("candidate_score", None)
+        season_summary.pop("winner_after_round_score", None)
+        season_summary.pop("current_winner_score", None)
+        season_summary.pop("dethrone_threshold_score", None)
         if winner_uid is not None:
             season_summary["current_winner_uid"] = int(winner_uid)
         else:
@@ -381,39 +402,40 @@ class ValidatorStorageSummaryMixin:
 
         # Human-readable transition block: before -> candidate -> after.
         reigning_uid_before = decision_obj.get("reigning_uid_before_round")
-        reigning_score_before = decision_obj.get("reigning_score_before_round")
+        reigning_reward_before = decision_obj.get("reigning_reward_before_round", decision_obj.get("reigning_score_before_round"))
         top_candidate_uid = decision_obj.get("top_candidate_uid")
-        top_candidate_score = decision_obj.get("top_candidate_score")
+        top_candidate_reward = decision_obj.get("top_candidate_reward", decision_obj.get("top_candidate_score"))
         required_improvement_pct = season_summary.get(
             "required_improvement_pct",
             decision_obj.get("required_improvement_pct"),
         )
         winner_after_uid = winner_obj.get("miner_uid") or winner_obj.get("uid")
-        winner_after_score = winner_obj.get("score")
+        winner_after_reward = winner_obj.get("reward", winner_obj.get("score"))
 
         try:
             req_pct_f = float(required_improvement_pct) if required_improvement_pct is not None else None
         except Exception:
             req_pct_f = None
         try:
-            reigning_score_f = float(reigning_score_before) if reigning_score_before is not None else None
+            reigning_reward_f = float(reigning_reward_before) if reigning_reward_before is not None else None
         except Exception:
-            reigning_score_f = None
+            reigning_reward_f = None
         try:
-            candidate_score_f = float(top_candidate_score) if top_candidate_score is not None else None
+            candidate_reward_f = float(top_candidate_reward) if top_candidate_reward is not None else None
         except Exception:
-            candidate_score_f = None
+            candidate_reward_f = None
 
-        dethrone_threshold = reigning_score_f * (1.0 + req_pct_f) if reigning_score_f is not None and req_pct_f is not None else None
-        candidate_met_threshold = candidate_score_f >= dethrone_threshold if candidate_score_f is not None and dethrone_threshold is not None else None
+        dethrone_threshold = reigning_reward_f * (1.0 + req_pct_f) if reigning_reward_f is not None and req_pct_f is not None else None
+        candidate_met_threshold = candidate_reward_f >= dethrone_threshold if candidate_reward_f is not None and dethrone_threshold is not None else None
 
         season_summary["winner_before_round_uid"] = reigning_uid_before
-        season_summary["winner_before_round_score"] = reigning_score_before
+        season_summary["winner_before_round_reward"] = reigning_reward_before
         season_summary["candidate_uid"] = top_candidate_uid
-        season_summary["candidate_score"] = top_candidate_score
+        season_summary["candidate_reward"] = top_candidate_reward
         season_summary["winner_after_round_uid"] = winner_after_uid
-        season_summary["winner_after_round_score"] = winner_after_score
-        season_summary["dethrone_threshold_score"] = dethrone_threshold
+        season_summary["winner_after_round_reward"] = winner_after_reward
+        season_summary["current_winner_reward"] = winner_after_reward
+        season_summary["dethrone_threshold_reward"] = dethrone_threshold
         season_summary["candidate_met_threshold"] = candidate_met_threshold
         if season_summary.get("dethroned") is True:
             season_summary["round_result"] = "dethroned"
@@ -441,12 +463,12 @@ class ValidatorStorageSummaryMixin:
 
         # Keep round-level consensus decision as first-class columns in validator_rounds.
         winner_obj = round_summary.get("winner") if isinstance(round_summary.get("winner"), dict) else {}
-        round_row.winner_uid = _to_int(winner_obj.get("miner_uid") or winner_obj.get("uid"))
-        round_row.winner_score = _to_float(winner_obj.get("score"))
-        round_row.reigning_uid_before_round = _to_int(decision_obj.get("reigning_uid_before_round"))
-        round_row.reigning_score_before_round = _to_float(decision_obj.get("reigning_score_before_round"))
-        round_row.top_candidate_uid = _to_int(decision_obj.get("top_candidate_uid"))
-        round_row.top_candidate_score = _to_float(decision_obj.get("top_candidate_score"))
+        round_row.leader_after_uid = _to_int(winner_obj.get("miner_uid") or winner_obj.get("uid"))
+        round_row.leader_after_reward = _to_float(winner_obj.get("reward", winner_obj.get("score")))
+        round_row.leader_before_uid = _to_int(decision_obj.get("reigning_uid_before_round"))
+        round_row.leader_before_reward = _to_float(decision_obj.get("reigning_reward_before_round", decision_obj.get("reigning_score_before_round")))
+        round_row.candidate_uid = _to_int(decision_obj.get("top_candidate_uid"))
+        round_row.candidate_reward = _to_float(decision_obj.get("top_candidate_reward", decision_obj.get("top_candidate_score")))
         round_row.required_improvement_pct = _to_float(season_summary.get("required_improvement_pct", decision_obj.get("required_improvement_pct")))
         dethroned_value = season_summary.get("dethroned", decision_obj.get("dethroned"))
         round_row.dethroned = bool(dethroned_value) if dethroned_value is not None else None
@@ -486,8 +508,8 @@ class ValidatorStorageSummaryMixin:
             },
         )
 
-    async def _upsert_round_outcome_from_summary(self, round_row: ValidatorRoundORM) -> None:
-        """Populate round_outcomes with winner + rollups from validator_round_summary_miners."""
+    async def _upsert_round_summary_from_validator_summary(self, round_row: ValidatorRoundORM) -> None:
+        """Populate round_summary with leadership snapshot + rollups from validator_round_summary_miners."""
         stmt_rows = select(ValidatorRoundSummaryORM).where(ValidatorRoundSummaryORM.validator_round_id == round_row.validator_round_id).order_by(ValidatorRoundSummaryORM.miner_uid.asc())
         summary_rows = list(await self.session.scalars(stmt_rows))
         if not summary_rows:
@@ -509,7 +531,6 @@ class ValidatorStorageSummaryMixin:
             return
 
         round_id = int(ctx.round_id)
-        source_round_validator_id = int(ctx.round_validator_id)
         burn_uid = int(settings.BURN_UID)
         handshake_uids = await self._get_handshake_participant_uids(round_row.validator_round_id)
         competitive_rows = [row for row in summary_rows if int(row.miner_uid or -1) != burn_uid and int(row.miner_uid or -1) in handshake_uids]
@@ -554,18 +575,62 @@ class ValidatorStorageSummaryMixin:
         )
         dethroned = bool(round_row.dethroned) if getattr(round_row, "dethroned", None) is not None else bool(season_summary.get("dethroned", decision.get("dethroned", False)))
 
+        async def _lookup_round_miner_snapshot(miner_uid: Optional[int]) -> tuple[Optional[str], Optional[str]]:
+            if miner_uid is None:
+                return None, None
+            snap = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT miner_hotkey, github_url
+                            FROM round_validator_miners
+                            WHERE round_id = :round_id
+                              AND miner_uid = :miner_uid
+                            ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+                            LIMIT 1
+                            """
+                        ),
+                        {"round_id": round_id, "miner_uid": int(miner_uid)},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if not snap:
+                return None, None
+            return snap.get("miner_hotkey"), snap.get("github_url")
+
+        leader_before_uid = int(round_row.leader_before_uid) if getattr(round_row, "leader_before_uid", None) is not None else None
+        candidate_uid = int(round_row.candidate_uid) if getattr(round_row, "candidate_uid", None) is not None else None
+        leader_after_uid = int(winner_row.miner_uid) if winner_row is not None else None
+        leader_before_hotkey, leader_before_github_url = await _lookup_round_miner_snapshot(leader_before_uid)
+        candidate_hotkey, candidate_github_url = await _lookup_round_miner_snapshot(candidate_uid)
+        leader_after_hotkey, leader_after_github_url = await _lookup_round_miner_snapshot(leader_after_uid)
+        avg_eval_costs = [float(row.post_consensus_avg_eval_cost) for row in competitive_rows if getattr(row, "post_consensus_avg_eval_cost", None) is not None]
+        leader_before_reward = float(round_row.leader_before_reward) if getattr(round_row, "leader_before_reward", None) is not None else None
+        candidate_reward = float(round_row.candidate_reward) if getattr(round_row, "candidate_reward", None) is not None else None
+        leader_after_reward = float(getattr(winner_row, "post_consensus_avg_reward", 0.0) or 0.0) if winner_row is not None else None
+
         await self.session.execute(
             text(
                 """
-                INSERT INTO round_outcomes (
+                INSERT INTO round_summary (
                     round_id,
-                    winner_miner_uid,
-                    winner_score,
-                    reigning_miner_uid_before_round,
-                    reigning_score_before_round,
-                    top_candidate_miner_uid,
-                    top_candidate_score,
+                    leader_before_miner_uid,
+                    leader_before_miner_hotkey,
+                    leader_before_github_url,
+                    leader_before_reward,
+                    candidate_miner_uid,
+                    candidate_miner_hotkey,
+                    candidate_github_url,
+                    candidate_reward,
+                    leader_after_miner_uid,
+                    leader_after_miner_hotkey,
+                    leader_after_github_url,
+                    leader_after_reward,
                     required_improvement_pct,
+                    required_reward_to_dethrone,
                     dethroned,
                     validators_count,
                     miners_evaluated,
@@ -574,22 +639,28 @@ class ValidatorStorageSummaryMixin:
                     avg_reward,
                     avg_eval_score,
                     avg_eval_time,
-                    computed_at,
+                    avg_eval_cost,
                     summary_json,
                     post_consensus_summary,
-                    source_round_validator_id,
                     created_at,
                     updated_at
                 )
                 VALUES (
                     :round_id,
-                    :winner_miner_uid,
-                    :winner_score,
-                    :reigning_miner_uid_before_round,
-                    :reigning_score_before_round,
-                    :top_candidate_miner_uid,
-                    :top_candidate_score,
+                    :leader_before_miner_uid,
+                    :leader_before_miner_hotkey,
+                    :leader_before_github_url,
+                    :leader_before_reward,
+                    :candidate_miner_uid,
+                    :candidate_miner_hotkey,
+                    :candidate_github_url,
+                    :candidate_reward,
+                    :leader_after_miner_uid,
+                    :leader_after_miner_hotkey,
+                    :leader_after_github_url,
+                    :leader_after_reward,
                     :required_improvement_pct,
+                    :required_reward_to_dethrone,
                     :dethroned,
                     :validators_count,
                     :miners_evaluated,
@@ -598,21 +669,27 @@ class ValidatorStorageSummaryMixin:
                     :avg_reward,
                     :avg_eval_score,
                     :avg_eval_time,
-                    NOW(),
+                    :avg_eval_cost,
                     CAST(:summary_json AS JSONB),
                     CAST(:post_consensus_summary AS JSONB),
-                    :source_round_validator_id,
                     NOW(),
                     NOW()
                 )
                 ON CONFLICT (round_id) DO UPDATE SET
-                    winner_miner_uid = EXCLUDED.winner_miner_uid,
-                    winner_score = EXCLUDED.winner_score,
-                    reigning_miner_uid_before_round = EXCLUDED.reigning_miner_uid_before_round,
-                    reigning_score_before_round = EXCLUDED.reigning_score_before_round,
-                    top_candidate_miner_uid = EXCLUDED.top_candidate_miner_uid,
-                    top_candidate_score = EXCLUDED.top_candidate_score,
+                    leader_before_miner_uid = EXCLUDED.leader_before_miner_uid,
+                    leader_before_miner_hotkey = EXCLUDED.leader_before_miner_hotkey,
+                    leader_before_github_url = EXCLUDED.leader_before_github_url,
+                    leader_before_reward = EXCLUDED.leader_before_reward,
+                    candidate_miner_uid = EXCLUDED.candidate_miner_uid,
+                    candidate_miner_hotkey = EXCLUDED.candidate_miner_hotkey,
+                    candidate_github_url = EXCLUDED.candidate_github_url,
+                    candidate_reward = EXCLUDED.candidate_reward,
+                    leader_after_miner_uid = EXCLUDED.leader_after_miner_uid,
+                    leader_after_miner_hotkey = EXCLUDED.leader_after_miner_hotkey,
+                    leader_after_github_url = EXCLUDED.leader_after_github_url,
+                    leader_after_reward = EXCLUDED.leader_after_reward,
                     required_improvement_pct = EXCLUDED.required_improvement_pct,
+                    required_reward_to_dethrone = EXCLUDED.required_reward_to_dethrone,
                     dethroned = EXCLUDED.dethroned,
                     validators_count = EXCLUDED.validators_count,
                     miners_evaluated = EXCLUDED.miners_evaluated,
@@ -621,22 +698,28 @@ class ValidatorStorageSummaryMixin:
                     avg_reward = EXCLUDED.avg_reward,
                     avg_eval_score = EXCLUDED.avg_eval_score,
                     avg_eval_time = EXCLUDED.avg_eval_time,
-                    computed_at = NOW(),
-                    summary_json = COALESCE(EXCLUDED.summary_json, round_outcomes.summary_json),
-                    post_consensus_summary = COALESCE(EXCLUDED.post_consensus_summary, round_outcomes.post_consensus_summary),
-                    source_round_validator_id = EXCLUDED.source_round_validator_id,
+                    avg_eval_cost = EXCLUDED.avg_eval_cost,
+                    summary_json = COALESCE(EXCLUDED.summary_json, round_summary.summary_json),
+                    post_consensus_summary = COALESCE(EXCLUDED.post_consensus_summary, round_summary.post_consensus_summary),
                     updated_at = NOW()
                 """
             ),
             {
                 "round_id": round_id,
-                "winner_miner_uid": (int(winner_row.miner_uid) if winner_row is not None else None),
-                "winner_score": (float(getattr(winner_row, "post_consensus_avg_reward", 0.0) or 0.0) if winner_row is not None else None),
-                "reigning_miner_uid_before_round": (int(round_row.reigning_uid_before_round) if getattr(round_row, "reigning_uid_before_round", None) is not None else None),
-                "reigning_score_before_round": (float(round_row.reigning_score_before_round) if getattr(round_row, "reigning_score_before_round", None) is not None else None),
-                "top_candidate_miner_uid": (int(round_row.top_candidate_uid) if getattr(round_row, "top_candidate_uid", None) is not None else None),
-                "top_candidate_score": (float(round_row.top_candidate_score) if getattr(round_row, "top_candidate_score", None) is not None else None),
+                "leader_before_miner_uid": leader_before_uid,
+                "leader_before_miner_hotkey": leader_before_hotkey,
+                "leader_before_github_url": leader_before_github_url,
+                "leader_before_reward": leader_before_reward,
+                "candidate_miner_uid": candidate_uid,
+                "candidate_miner_hotkey": candidate_hotkey,
+                "candidate_github_url": candidate_github_url,
+                "candidate_reward": candidate_reward,
+                "leader_after_miner_uid": leader_after_uid,
+                "leader_after_miner_hotkey": leader_after_hotkey,
+                "leader_after_github_url": leader_after_github_url,
+                "leader_after_reward": leader_after_reward,
                 "required_improvement_pct": required_improvement_pct,
+                "required_reward_to_dethrone": (leader_before_reward * (1.0 + required_improvement_pct)) if leader_before_reward is not None else None,
                 "dethroned": dethroned,
                 "validators_count": validators_count,
                 "miners_evaluated": len(competitive_rows),
@@ -645,9 +728,9 @@ class ValidatorStorageSummaryMixin:
                 "avg_reward": (sum(rewards) / len(rewards)) if rewards else 0.0,
                 "avg_eval_score": (sum(eval_scores) / len(eval_scores)) if eval_scores else 0.0,
                 "avg_eval_time": (sum(eval_times) / len(eval_times)) if eval_times else 0.0,
+                "avg_eval_cost": (sum(avg_eval_costs) / len(avg_eval_costs)) if avg_eval_costs else None,
                 "summary_json": json.dumps(post_summary),
                 "post_consensus_summary": json.dumps(post_summary),
-                "source_round_validator_id": source_round_validator_id,
             },
         )
 
@@ -730,6 +813,8 @@ class ValidatorStorageSummaryMixin:
                 summary_map[miner_uid]["local_avg_eval_time"] = run_metrics.get("local_avg_eval_time") if run_metrics.get("local_avg_eval_time") is not None else miner_data.get("avg_evaluation_time")
                 summary_map[miner_uid]["local_tasks_received"] = run_metrics.get("local_tasks_received") if run_metrics.get("local_tasks_received") is not None else miner_data.get("tasks_attempted")
                 summary_map[miner_uid]["local_tasks_success"] = run_metrics.get("local_tasks_success") if run_metrics.get("local_tasks_success") is not None else miner_data.get("tasks_completed")
+                summary_map[miner_uid]["is_reused"] = bool(miner_data.get("is_reused", False))
+                summary_map[miner_uid]["reused_from_agent_run_id"] = miner_data.get("reused_from_agent_run_id")
 
         # If some local ranks are still missing but local metrics exist, derive from local_avg_reward.
         missing_rank_uids = [uid for uid, data in summary_map.items() if data.get("local_rank") is None and data.get("local_avg_reward") is not None]
@@ -826,6 +911,14 @@ class ValidatorStorageSummaryMixin:
                 new_summary = ValidatorRoundSummaryORM(validator_round_id=validator_round_id, **summary_data)
                 self.session.add(new_summary)
 
+            if "is_reused" in summary_data:
+                await self._set_round_validator_miner_reuse_state(
+                    validator_round_id=validator_round_id,
+                    miner_uid=int(miner_uid),
+                    is_reused=bool(summary_data.get("is_reused", False)),
+                    reused_from_agent_run_id=summary_data.get("reused_from_agent_run_id"),
+                )
+
         # Canonicalize post-consensus metrics across all validators in the same round.
         # Reward/rank/weight come from consensus payloads and may contain tiny per-validator
         # drifts; non-reward metrics must be globally consistent for round-level traceability.
@@ -879,24 +972,62 @@ class ValidatorStorageSummaryMixin:
             {"validator_round_id": validator_round_id},
         )
 
-        # Keep effective_* projection materialized in round_validator_miners.
-        # Effective = post-consensus if present, otherwise local.
+        # Materialize best_local_* as the best LOCAL historical mark achieved by
+        # this validator for each miner up to and including the current round.
         await self.session.execute(
             text(
                 """
+                WITH target_rows AS (
+                    SELECT
+                        rvm.id AS target_id,
+                        rvm.miner_uid,
+                        rv.validator_uid,
+                        rv.season_number,
+                        rv.round_number_in_season
+                    FROM round_validator_miners rvm
+                    JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
+                    WHERE rv.validator_round_id = :validator_round_id
+                ),
+                history_rows AS (
+                    SELECT
+                        tr.target_id,
+                        COALESCE(hist.local_rank, 9999) AS best_local_rank,
+                        COALESCE(hist.local_avg_reward, 0) AS best_local_reward,
+                        COALESCE(hist.local_avg_eval_score, 0) AS best_local_eval_score,
+                        COALESCE(hist.local_avg_eval_time, 0) AS best_local_eval_time,
+                        COALESCE(hist.local_tasks_received, 0) AS best_local_tasks_received,
+                        COALESCE(hist.local_tasks_success, 0) AS best_local_tasks_success,
+                        COALESCE(hist.local_avg_eval_cost, 0) AS best_local_eval_cost,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY tr.target_id
+                            ORDER BY
+                                COALESCE(hist.local_avg_reward, 0) DESC,
+                                COALESCE(hist.local_rank, 9999) ASC,
+                                rvh.round_number_in_season ASC,
+                                hist.id ASC
+                        ) AS rn
+                    FROM target_rows tr
+                    JOIN round_validator_miners hist
+                      ON hist.miner_uid = tr.miner_uid
+                    JOIN round_validators rvh
+                      ON rvh.round_validator_id = hist.round_validator_id
+                    WHERE rvh.validator_uid = tr.validator_uid
+                      AND rvh.season_number = tr.season_number
+                      AND rvh.round_number_in_season <= tr.round_number_in_season
+                )
                 UPDATE round_validator_miners rvm
                 SET
-                    effective_rank = COALESCE(rvm.post_consensus_rank, rvm.local_rank),
-                    effective_reward = COALESCE(rvm.post_consensus_avg_reward, rvm.local_avg_reward),
-                    effective_eval_score = COALESCE(rvm.post_consensus_avg_eval_score, rvm.local_avg_eval_score),
-                    effective_eval_time = COALESCE(rvm.post_consensus_avg_eval_time, rvm.local_avg_eval_time),
-                    effective_tasks_received = COALESCE(rvm.post_consensus_tasks_received, rvm.local_tasks_received),
-                    effective_tasks_success = COALESCE(rvm.post_consensus_tasks_success, rvm.local_tasks_success),
-                    effective_eval_cost = COALESCE(rvm.post_consensus_avg_eval_cost, rvm.local_avg_eval_cost),
+                    best_local_rank = hr.best_local_rank,
+                    best_local_reward = hr.best_local_reward,
+                    best_local_eval_score = hr.best_local_eval_score,
+                    best_local_eval_time = hr.best_local_eval_time,
+                    best_local_tasks_received = hr.best_local_tasks_received,
+                    best_local_tasks_success = hr.best_local_tasks_success,
+                    best_local_eval_cost = hr.best_local_eval_cost,
                     updated_at = NOW()
-                FROM round_validators rv
-                WHERE rv.round_validator_id = rvm.round_validator_id
-                  AND rv.validator_round_id = :validator_round_id
+                FROM history_rows hr
+                WHERE rvm.id = hr.target_id
+                  AND hr.rn = 1
                 """
             ),
             {"validator_round_id": validator_round_id},

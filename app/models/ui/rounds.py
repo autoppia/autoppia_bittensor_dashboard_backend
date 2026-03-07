@@ -75,7 +75,7 @@ class MinerPerformance(BaseModel):
     uid: int
     hotkey: str
     success: bool
-    score: float
+    reward: float
     duration: float
     ranking: int
     tasksCompleted: int
@@ -173,7 +173,7 @@ class TopMiner(BaseModel):
     """Top miner in comparison."""
 
     uid: int
-    score: float
+    reward: float
     ranking: int
 
 

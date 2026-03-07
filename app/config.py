@@ -94,7 +94,7 @@ class Settings(BaseSettings):
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ROUND CONFIGURATION (DB source of truth)
-    # Runtime round timing is read from round_config table.
+    # Runtime round timing is read from config_season_round table.
     # These env values are retained only for compatibility/testing and are not used
     # as runtime fallback for round timing.
     # ═══════════════════════════════════════════════════════════════════════════
