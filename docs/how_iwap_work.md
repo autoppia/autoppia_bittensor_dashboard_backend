@@ -2,9 +2,9 @@
 
 This document explains the data model and runtime flow used by IWAP.
 
-## 1. Runtime authority (`app_runtime_config`)
+## 1. Runtime authority (`config_app_runtime`)
 
-`app_runtime_config` is a singleton table (`id=1`) that defines the official validator authority:
+`config_app_runtime` is a singleton table (`id=1`) that defines the official validator authority:
 
 - `main_validator_uid`
 - `main_validator_hotkey`
@@ -121,7 +121,7 @@ IWAP enforces:
 
 ```sql
 -- main authority config
-SELECT * FROM app_runtime_config WHERE id = 1;
+SELECT * FROM config_app_runtime WHERE id = 1;
 
 -- active season(s)
 SELECT season_id, season_number, status

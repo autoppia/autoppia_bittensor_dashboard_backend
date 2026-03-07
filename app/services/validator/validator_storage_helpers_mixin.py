@@ -97,7 +97,7 @@ class ValidatorStorageHelpersMixin:
                 text(
                     """
                     SELECT main_validator_uid, main_validator_hotkey
-                    FROM app_runtime_config
+                    FROM config_app_runtime
                     WHERE id = 1
                     LIMIT 1
                     """
@@ -127,7 +127,7 @@ class ValidatorStorageHelpersMixin:
                 text(
                     """
                     SELECT minimum_validator_version
-                    FROM app_runtime_config
+                    FROM config_app_runtime
                     WHERE id = 1
                     LIMIT 1
                     """
@@ -174,7 +174,7 @@ class ValidatorStorageHelpersMixin:
         await self.session.execute(
             text(
                 """
-                UPDATE app_runtime_config
+                UPDATE config_app_runtime
                 SET minimum_validator_version = :minimum_validator_version,
                     updated_at = NOW()
                 WHERE id = 1
@@ -966,9 +966,9 @@ class ValidatorStorageHelpersMixin:
 
                 round_blocks = await get_round_blocks_from_latest_round(self.session)
                 if not round_blocks or round_blocks <= 0:
-                    from app.services.round_config_service import get_round_config
+                    from app.services.round_config_service import get_config_season_round
 
-                    round_blocks = get_round_config().round_blocks()
+                    round_blocks = get_config_season_round().round_blocks()
                 if round_blocks > 0:
                     end_block = start_block + round_blocks
             except Exception:
@@ -981,9 +981,9 @@ class ValidatorStorageHelpersMixin:
                 end_block,
             )
             try:
-                from app.services.round_config_service import get_round_config
+                from app.services.round_config_service import get_config_season_round
 
-                round_blocks = int(get_round_config().round_blocks())
+                round_blocks = int(get_config_season_round().round_blocks())
                 end_block = start_block + round_blocks if round_blocks > 0 else start_block
             except Exception:
                 end_block = start_block

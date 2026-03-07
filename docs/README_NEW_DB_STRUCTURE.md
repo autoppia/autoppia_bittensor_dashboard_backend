@@ -51,7 +51,7 @@ Main fields:
 - local metrics: `local_*`
 - post-consensus metrics: `post_consensus_*`
 - effective metrics: `effective_*`
-- cost metrics: `local_avg_eval_cost`, `post_consensus_avg_eval_cost`, `effective_eval_cost`
+- cost metrics: `local_avg_eval_cost`, `post_consensus_avg_eval_cost`, `best_local_eval_cost`
 
 ### 5) `round_outcomes`
 Canonical round decision/outcome (round-level).

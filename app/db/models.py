@@ -75,13 +75,16 @@ class ValidatorRoundORM(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     validator_summary: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     s3_logs_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # Consensus decision snapshot (round-level, queryable source of truth)
-    winner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    winner_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    reigning_uid_before_round: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    reigning_score_before_round: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    top_candidate_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    top_candidate_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Consensus decision snapshot (round-level, queryable source of truth).
+    # Legacy SQL columns still use winner/reigning/candidate *_score names, but
+    # the ORM exposes reward semantics because this layer no longer models
+    # evaluation score here; it models leadership reward.
+    leader_after_uid: Mapped[Optional[int]] = mapped_column("winner_uid", Integer, nullable=True, index=True)
+    leader_after_reward: Mapped[Optional[float]] = mapped_column("winner_score", Float, nullable=True)
+    leader_before_uid: Mapped[Optional[int]] = mapped_column("reigning_uid_before_round", Integer, nullable=True, index=True)
+    leader_before_reward: Mapped[Optional[float]] = mapped_column("reigning_score_before_round", Float, nullable=True)
+    candidate_uid: Mapped[Optional[int]] = mapped_column("top_candidate_uid", Integer, nullable=True, index=True)
+    candidate_reward: Mapped[Optional[float]] = mapped_column("top_candidate_score", Float, nullable=True)
     required_improvement_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     dethroned: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, index=True)
 
@@ -250,7 +253,7 @@ class ValidatorRoundSummaryORM(TimestampMixin, Base):
 
 
 class AgentEvaluationRunORM(TimestampMixin, Base):
-    """Execution record for an agent within a validator_round."""
+    """Execution record for a real agent evaluation within a validator_round."""
 
     __tablename__ = "miner_evaluation_runs"
     __table_args__ = (
@@ -284,6 +287,8 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     # rank and weight removed - obtain via validator_round_summary_miners
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
+    # Legacy compatibility only: new reused participation is recorded in
+    # round_validator_miners, not as synthetic runs in miner_evaluation_runs.
     is_reused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     reused_from_agent_run_id: Mapped[Optional[str]] = mapped_column(
         String(128),

@@ -234,6 +234,54 @@ class ValidatorStorageRoundsMixin:
 
         await self.session.execute(text(sql_base), params)
 
+    async def _set_round_validator_miner_reuse_state(
+        self,
+        *,
+        validator_round_id: str,
+        miner_uid: int,
+        is_reused: bool,
+        reused_from_agent_run_id: Optional[str] = None,
+    ) -> None:
+        reused_from_round_id = None
+        if is_reused and reused_from_agent_run_id:
+            reused_from_round_id = await self.session.scalar(
+                text(
+                    """
+                    SELECT rv_src.round_id
+                    FROM miner_evaluation_runs mer_src
+                    JOIN round_validators rv_src
+                      ON rv_src.validator_round_id = mer_src.validator_round_id
+                    WHERE mer_src.agent_run_id = :source_run_id
+                    LIMIT 1
+                    """
+                ),
+                {"source_run_id": str(reused_from_agent_run_id)},
+            )
+
+        await self.session.execute(
+            text(
+                """
+                UPDATE round_validator_miners rvm
+                SET
+                  is_reused = :is_reused,
+                  reused_from_agent_run_id = :reused_from_agent_run_id,
+                  reused_from_round_id = :reused_from_round_id,
+                  updated_at = NOW()
+                FROM round_validators rv
+                WHERE rv.round_validator_id = rvm.round_validator_id
+                  AND rv.validator_round_id = :validator_round_id
+                  AND rvm.miner_uid = :miner_uid
+                """
+            ),
+            {
+                "validator_round_id": validator_round_id,
+                "miner_uid": int(miner_uid),
+                "is_reused": bool(is_reused),
+                "reused_from_agent_run_id": str(reused_from_agent_run_id) if is_reused and reused_from_agent_run_id else None,
+                "reused_from_round_id": int(reused_from_round_id) if reused_from_round_id is not None else None,
+            },
+        )
+
     async def start_round(
         self,
         *,
@@ -294,7 +342,7 @@ class ValidatorStorageRoundsMixin:
         validator_round_id: str,
         agent_run: AgentEvaluationRun,
         miner_snapshot: ValidatorRoundMiner,
-    ) -> AgentEvaluationRunORM:
+    ) -> Optional[AgentEvaluationRunORM]:
         """Persist the beginning of an agent evaluation run."""
         round_row = await self._ensure_round_exists(validator_round_id)
 
@@ -353,48 +401,35 @@ class ValidatorStorageRoundsMixin:
                 # Canonicalize chain reuse to the original source run id.
                 kwargs["reused_from_agent_run_id"] = resolved_reuse_source.agent_run_id
 
-        row = AgentEvaluationRunORM(**kwargs)
-        self.session.add(row)
-        await self.session.flush()
-
-        # Reused runs: copy result metrics from source at creation time (instant, no evaluation).
-        # Do NOT copy ended_at/elapsed_sec: reused = 0s "evaluation" time (we didn't run anything).
         is_reused = bool(kwargs.get("is_reused"))
         reused_from_id = kwargs.get("reused_from_agent_run_id")
         if is_reused and reused_from_id:
             source = resolved_reuse_source or await self._resolve_reused_source_run(str(reused_from_id))
-            if source:
-                # Always anchor reused runs to the original source run.
-                row.reused_from_agent_run_id = source.agent_run_id
-                for attr in (
-                    "average_score",
-                    "average_execution_time",
-                    "average_reward",
-                    "total_tasks",
-                    "success_tasks",
-                    "failed_tasks",
-                    "zero_reason",
-                ):
-                    val = getattr(source, attr, None)
-                    if val is not None:
-                        setattr(row, attr, val)
-                if getattr(source, "meta", None) is not None and isinstance(source.meta, dict):
-                    row.meta = dict(source.meta)
-                # Reused run is "closed" immediately: no time spent evaluating
-                row.ended_at = row.started_at
-                row.elapsed_sec = 0.0
-                await self.session.flush()
-                logger.debug(
-                    "start_agent_run: copied metrics from source run %s to reused run %s (elapsed_sec=0)",
-                    reused_from_id,
-                    row.agent_run_id,
-                )
+            canonical_source_id = source.agent_run_id if source is not None else str(reused_from_id)
+            await self._set_round_validator_miner_reuse_state(
+                validator_round_id=validator_round_id,
+                miner_uid=int(kwargs.get("miner_uid")),
+                is_reused=True,
+                reused_from_agent_run_id=canonical_source_id,
+            )
+            logger.debug(
+                "start_agent_run: skipped synthetic reused run creation for miner_uid=%s in validator_round_id=%s; source=%s",
+                kwargs.get("miner_uid"),
+                validator_round_id,
+                canonical_source_id,
+            )
+            return None
+
+        row = AgentEvaluationRunORM(**kwargs)
+        self.session.add(row)
+        await self.session.flush()
 
         # Keep round-level miner reuse flags in sync for UI/analytics consistency.
         if row.miner_uid is not None:
-            await self._sync_round_validator_miner_reuse_flags(
+            await self._set_round_validator_miner_reuse_state(
                 validator_round_id=validator_round_id,
                 miner_uid=int(row.miner_uid),
+                is_reused=False,
             )
 
         return row
@@ -523,14 +558,14 @@ class ValidatorStorageRoundsMixin:
             # Main validator can persist round/season config so backend uses it instead of .env
             if authoritative_finish and snapshot is not None:
                 try:
-                    from app.services.round_config_service import upsert_round_config
+                    from app.services.round_config_service import upsert_config_season_round
 
                     rse = round_metadata.get("round_size_epochs")
                     sse = round_metadata.get("season_size_epochs")
                     msb = round_metadata.get("minimum_start_block")
                     bpe = round_metadata.get("blocks_per_epoch", 360)
                     if rse is not None and sse is not None and msb is not None:
-                        await upsert_round_config(
+                        await upsert_config_season_round(
                             self.session,
                             validator_uid=int(snapshot.validator_uid),
                             round_size_epochs=float(rse),
@@ -628,10 +663,11 @@ class ValidatorStorageRoundsMixin:
                 # Try to infer deterministically from round summary fields
                 decision = rs.get("decision") if isinstance(rs.get("decision"), dict) else {}
                 inferred_uid = winner_obj.get("uid") or decision.get("top_candidate_uid") or pre_summary.get("season_summary", {}).get("current_winner_uid")
-                if inferred_uid is None and isinstance(rs.get("miner_scores"), dict) and rs.get("miner_scores"):
+                miner_rewards_map = rs.get("miner_rewards", rs.get("miner_scores", {}))
+                if inferred_uid is None and isinstance(miner_rewards_map, dict) and miner_rewards_map:
                     try:
                         inferred_uid = max(
-                            rs.get("miner_scores").items(),
+                            miner_rewards_map.items(),
                             key=lambda kv: float(kv[1] or 0.0),
                         )[0]
                     except Exception:
@@ -870,7 +906,7 @@ class ValidatorStorageRoundsMixin:
         is_shadow_only_round = canonical_round_id is None
         if is_shadow_only_round:
             logger.info(
-                "finish_round: shadow-only validator_round_id=%s (no canonical round_id yet); skipping round_summary/round_outcomes materialization and keeping validator-local JSON persisted.",
+                "finish_round: shadow-only validator_round_id=%s (no canonical round_id yet); skipping round_summary materialization and keeping validator-local JSON persisted.",
                 validator_round_id,
             )
             return
@@ -893,12 +929,12 @@ class ValidatorStorageRoundsMixin:
             logger.exception("finish_round: failed to sync enriched post-consensus summary into round_validators")
         if authoritative_finish:
             try:
-                await self._upsert_round_outcome_from_summary(round_row)
+                await self._upsert_round_summary_from_validator_summary(round_row)
             except Exception:
-                logger.exception("finish_round: failed to upsert round_outcomes from summary tables")
+                logger.exception("finish_round: failed to upsert round_summary from summary tables")
         else:
             logger.info(
-                "finish_round: skipped round_outcomes upsert for non-authoritative validator_round_id=%s",
+                "finish_round: skipped round_summary upsert for non-authoritative validator_round_id=%s",
                 validator_round_id,
             )
 

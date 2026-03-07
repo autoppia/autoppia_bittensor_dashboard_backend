@@ -151,6 +151,28 @@ async def get_rounds_data(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/seasons/{season_ref}/rank")
+async def get_season_rank(
+    season_ref: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Get season ranking payload for agents UI.
+
+    `season_ref` can be a numeric season or `latest`.
+    Returns available seasons and the ranking for the selected season.
+    """
+    newdb = UIDataService(session)
+    try:
+        data = await newdb.get_agents_season_rank(season_ref)
+        return {"success": True, "data": data}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Error getting season rank data: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/round-details")
 async def get_miner_round_details(
     round: str = Query(..., description="Round identifier in format 'season/round' (e.g., '1/1') or encoded number"),

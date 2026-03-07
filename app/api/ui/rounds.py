@@ -166,28 +166,46 @@ async def get_round_by_season(
     return RoundDetailResponse(success=True, data={"round": detail_data})
 
 
-@router.get("/get-round")
-async def get_round_aggregated(
-    season: int = Query(..., description="Season number (e.g., 1)"),
-    round_in_season: int = Query(..., description="Round number within season (e.g., 1)"),
+@router.get("/{season}/{round}/status")
+async def get_round_status_view(
+    season: int,
+    round: int,
     session: AsyncSession = Depends(get_session),
 ):
-    """
-    Endpoint simplificado que devuelve métricas agregadas (post-consensus) y por validator (local)
-    desde validator_round_summary_miners.
-
-    - aggregated: winner, avg_winner_score, avg_eval_time, miners_evaluated, tasks_evaluated (post-consensus, desde Autoppia UID 83)
-    - validators: lista de validators con sus métricas locales (prefijo local_)
-    """
     service = await _newdb(session)
     try:
-        data = await service.get_round_with_validators(season, round_in_season)
+        data = await service.get_round_status_view(season, round, get_current_block_estimate())
         return {"success": True, "data": data}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.error(f"Error in get_round_aggregated: {exc}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/{season}/{round}/season-summary")
+async def get_round_season_summary_view(
+    season: int,
+    round: int,
+    session: AsyncSession = Depends(get_session),
+):
+    service = await _newdb(session)
+    try:
+        data = await service.get_round_season_summary_view(season, round)
+        return {"success": True, "data": data}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{season}/{round}/validators")
+async def get_round_validators_view(
+    season: int,
+    round: int,
+    session: AsyncSession = Depends(get_session),
+):
+    service = await _newdb(session)
+    try:
+        data = await service.get_round_validators_view(season, round)
+        return {"success": True, "data": data}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{round_id}/basic")
@@ -497,7 +515,7 @@ async def compare_rounds(
                 {
                     "roundId": rid,
                     "statistics": stats,
-                    "topMiners": [{"uid": int(m["uid"]), "score": float(m["score"]), "ranking": int(m["ranking"])} for m in top.get("miners", [])],
+                    "topMiners": [{"uid": int(m["uid"]), "reward": float(m["reward"]), "ranking": int(m["ranking"])} for m in top.get("miners", [])],
                 }
             )
     except ValueError as exc:

@@ -47,23 +47,23 @@ def _tasks_per_season_from_validator_config(config: object) -> int | None:
     return value if value > 0 else None
 
 
-async def _ensure_round_config_cache_loaded(session: AsyncSession) -> None:
+async def _ensure_config_season_round_cache_loaded(session: AsyncSession) -> None:
     """
-    Ensure this worker has round_config in memory.
+    Ensure this worker has config_season_round in memory.
 
     With multiple Uvicorn workers, runtime-config may be written by one worker while
     another still has an empty in-process cache. Load from DB on-demand before using
     round boundary helpers.
     """
-    from app.services.round_config_service import get_round_config, refresh_round_config_cache
+    from app.services.round_config_service import get_config_season_round, refresh_config_season_round_cache
 
     try:
-        get_round_config()
+        get_config_season_round()
         return
     except RuntimeError:
         pass
 
-    await refresh_round_config_cache(session)
+    await refresh_config_season_round_cache(session)
 
 
 async def sync_runtime_config(
@@ -73,7 +73,7 @@ async def sync_runtime_config(
 ):
     """
     Persist runtime round config into DB.
-    Only the configured main validator is allowed to update round_config.
+    Only the configured main validator is allowed to update config_season_round.
     """
     validator_identity = payload.validator_identity
     runtime_cfg = payload.runtime_config
@@ -85,14 +85,14 @@ async def sync_runtime_config(
             detail="Validator header hotkey does not match payload hotkey",
         )
 
-    from app.services.round_config_service import load_round_config_from_db, upsert_round_config
+    from app.services.round_config_service import load_config_season_round_from_db, upsert_config_season_round
 
     # Ensure singleton runtime config row exists even right after truncate/reset.
     if settings.MAIN_VALIDATOR_UID is not None:
         await session.execute(
             text(
                 """
-                INSERT INTO app_runtime_config (
+                INSERT INTO config_app_runtime (
                     id,
                     main_validator_uid,
                     main_validator_hotkey,
@@ -108,7 +108,7 @@ async def sync_runtime_config(
                 )
                 ON CONFLICT (id) DO UPDATE SET
                     main_validator_uid = EXCLUDED.main_validator_uid,
-                    main_validator_hotkey = COALESCE(EXCLUDED.main_validator_hotkey, app_runtime_config.main_validator_hotkey),
+                    main_validator_hotkey = COALESCE(EXCLUDED.main_validator_hotkey, config_app_runtime.main_validator_hotkey),
                     updated_at = NOW()
                 """
             ),
@@ -118,7 +118,7 @@ async def sync_runtime_config(
             },
         )
 
-    updated = await upsert_round_config(
+    updated = await upsert_config_season_round(
         session=session,
         validator_uid=int(validator_identity.uid),
         round_size_epochs=float(runtime_cfg.round_size_epochs),
@@ -132,7 +132,7 @@ async def sync_runtime_config(
             await session.execute(
                 text(
                     """
-                    UPDATE app_runtime_config
+                    UPDATE config_app_runtime
                     SET minimum_validator_version = :minimum_validator_version,
                         updated_at = NOW()
                     WHERE id = 1
@@ -142,7 +142,7 @@ async def sync_runtime_config(
             )
     await session.commit()
 
-    current_cfg = await load_round_config_from_db(session)
+    current_cfg = await load_config_season_round_from_db(session)
     cfg_payload = None
     if current_cfg is not None:
         cfg_payload = {
@@ -157,7 +157,7 @@ async def sync_runtime_config(
             text(
                 """
                 SELECT minimum_validator_version
-                FROM app_runtime_config
+                FROM config_app_runtime
                 WHERE id = 1
                 LIMIT 1
                 """
@@ -171,7 +171,7 @@ async def sync_runtime_config(
     return {
         "message": "Runtime config synced" if updated else "Runtime config ignored (only main validator can update it)",
         "updated": bool(updated),
-        "round_config": cfg_payload,
+        "config_season_round": cfg_payload,
         "minimum_validator_version": current_min_version,
     }
 
@@ -246,13 +246,13 @@ async def start_round(
                 detail="Chain state unavailable",
             )
 
-    # Ensure this worker sees latest round_config before using round boundary helpers.
+    # Ensure this worker sees latest config_season_round before using round boundary helpers.
     try:
-        await _ensure_round_config_cache_loaded(session)
+        await _ensure_config_season_round_cache_loaded(session)
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"round_config unavailable: {exc}",
+            detail=f"config_season_round unavailable: {exc}",
         ) from exc
 
     # Calculate boundaries from start_block (round boundaries are based on start_block)
@@ -263,7 +263,7 @@ async def start_round(
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"round_config unavailable: {exc}",
+            detail=f"config_season_round unavailable: {exc}",
         ) from exc
     calculated_start_block = validator_round.start_block
     calculated_end_block = calculated_start_block + round_blocks
@@ -556,11 +556,11 @@ async def set_tasks(
             )
         else:
             try:
-                await _ensure_round_config_cache_loaded(session)
+                await _ensure_config_season_round_cache_loaded(session)
             except RuntimeError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=f"round_config unavailable: {exc}",
+                    detail=f"config_season_round unavailable: {exc}",
                 ) from exc
 
             current_block = get_current_block()
@@ -586,7 +586,7 @@ async def set_tasks(
             except RuntimeError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=f"round_config unavailable: {exc}",
+                    detail=f"config_season_round unavailable: {exc}",
                 ) from exc
             calculated_start_block = round_row.start_block
             calculated_end_block = calculated_start_block + round_blocks
@@ -739,11 +739,11 @@ async def start_agent_run(
         # Enforce chain-derived round constraints
         # In TESTING mode, allow bypass if chain state is unavailable
         try:
-            await _ensure_round_config_cache_loaded(session)
+            await _ensure_config_season_round_cache_loaded(session)
         except RuntimeError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"round_config unavailable: {exc}",
+                detail=f"config_season_round unavailable: {exc}",
             ) from exc
 
         current_block = get_current_block()

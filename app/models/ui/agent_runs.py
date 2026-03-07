@@ -113,7 +113,6 @@ class AgentRun(BaseModel):
     successfulTasks: int
     failedTasks: int
     score: float
-    ranking: int
     duration: int
     overallReward: float
     averageEvaluationTime: Optional[float] = Field(
@@ -262,7 +261,6 @@ class Summary(BaseModel):
     successfulTasks: int
     failedTasks: int
     duration: int
-    ranking: int
     topPerformingWebsite: TopPerformingWebsite
     topPerformingUseCase: TopPerformingUseCase
     recentActivity: List[RecentActivity]

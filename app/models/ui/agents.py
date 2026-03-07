@@ -139,7 +139,6 @@ class AgentRun(BaseModel):
     completedTasks: int = Field(default=0, description="Number of completed tasks")
     reward: float = Field(default=0.0, description="Run reward")
     duration: int = Field(default=0, description="Run duration in seconds")
-    ranking: Optional[int] = Field(None, description="Run ranking")
     tasks: List[Task] = Field(default_factory=list, description="List of tasks")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Run metadata")
 

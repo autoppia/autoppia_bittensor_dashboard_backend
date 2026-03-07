@@ -113,7 +113,7 @@ psql \
   --set=main_hotkey="${MAIN_VALIDATOR_HOTKEY}" \
   --set=min_validator_version="${MINIMUM_VALIDATOR_VERSION}" \
 <<'SQL'
-INSERT INTO app_runtime_config (
+INSERT INTO config_app_runtime (
   id,
   main_validator_uid,
   main_validator_hotkey,
@@ -131,10 +131,10 @@ VALUES (
 )
 ON CONFLICT (id) DO UPDATE SET
   main_validator_uid = EXCLUDED.main_validator_uid,
-  main_validator_hotkey = COALESCE(EXCLUDED.main_validator_hotkey, app_runtime_config.main_validator_hotkey),
-  minimum_validator_version = COALESCE(EXCLUDED.minimum_validator_version, app_runtime_config.minimum_validator_version),
+  main_validator_hotkey = COALESCE(EXCLUDED.main_validator_hotkey, config_app_runtime.main_validator_hotkey),
+  minimum_validator_version = COALESCE(EXCLUDED.minimum_validator_version, config_app_runtime.minimum_validator_version),
   updated_at = NOW();
 SQL
 
-echo "✅ app_runtime_config bootstrapped (main_uid=${MAIN_VALIDATOR_UID})."
-echo "ℹ️  round_config is intentionally left empty; main validator will sync it via /api/v1/validator-rounds/runtime-config."
+echo "✅ config_app_runtime bootstrapped (main_uid=${MAIN_VALIDATOR_UID})."
+echo "ℹ️  config_season_round is intentionally left empty; main validator will sync it via /api/v1/validator-rounds/runtime-config."
