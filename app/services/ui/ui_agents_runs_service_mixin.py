@@ -12,13 +12,172 @@ from app.services.media_storage import build_public_url
 
 class UIAgentsRunsServiceMixin:
     async def get_agent_detail(self, miner_uid: int, season: Optional[int], round_in_season: Optional[int]) -> Dict[str, Any]:
-        if season is None or round_in_season is None:
-            latest = await self.get_latest_round_top_miner()
-            if latest:
-                season = latest["season"]
-                round_in_season = latest["round"]
+        requested_round_in_season = round_in_season
+        if season is None:
+            season = await self.get_latest_season_number()
+        if season is None:
+            raise ValueError(f"Agent {miner_uid} not found")
+
+        if round_in_season is None:
+            best_round_ref = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                        SELECT
+                          s.season_number,
+                          r.round_number_in_season
+                        FROM round_validator_miners rvm
+                        JOIN rounds r ON r.round_id = rvm.round_id
+                        JOIN seasons s ON s.season_id = r.season_id
+                        WHERE rvm.miner_uid = :miner_uid
+                          AND s.season_number = :season
+                        ORDER BY
+                          COALESCE(rvm.effective_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) DESC,
+                          COALESCE(rvm.effective_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) ASC,
+                          r.round_number_in_season ASC,
+                          r.round_id ASC
+                        LIMIT 1
+                        """
+                        ),
+                        {"miner_uid": miner_uid, "season": season},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if best_round_ref:
+                round_in_season = int(best_round_ref["round_number_in_season"])
         if season is None or round_in_season is None:
             raise ValueError(f"Agent {miner_uid} not found")
+
+        season_round_rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                    WITH ranked_rounds AS (
+                      SELECT
+                        s.season_number,
+                        r.round_number_in_season,
+                        COALESCE(rvm.effective_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) AS reward,
+                        COALESCE(rvm.effective_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) AS rank,
+                        COALESCE(rvm.effective_eval_score, rvm.post_consensus_avg_eval_score, rvm.local_avg_eval_score, 0) AS eval_score,
+                        COALESCE(rvm.effective_eval_time, rvm.post_consensus_avg_eval_time, rvm.local_avg_eval_time, 0) AS eval_time,
+                        COALESCE(rvm.effective_tasks_received, rvm.post_consensus_tasks_received, rvm.local_tasks_received, 0) AS tasks_received,
+                        COALESCE(rvm.effective_tasks_success, rvm.post_consensus_tasks_success, rvm.local_tasks_success, 0) AS tasks_success,
+                        ro.winner_score AS top_reward,
+                        ROW_NUMBER() OVER (
+                          PARTITION BY r.round_id
+                          ORDER BY
+                            COALESCE(rvm.effective_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) DESC,
+                            COALESCE(rvm.effective_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) ASC,
+                            rvm.round_validator_id ASC
+                        ) AS row_num
+                      FROM round_validator_miners rvm
+                      JOIN rounds r ON r.round_id = rvm.round_id
+                      JOIN seasons s ON s.season_id = r.season_id
+                      LEFT JOIN round_outcomes ro ON ro.round_id = r.round_id
+                      WHERE rvm.miner_uid = :miner_uid
+                        AND s.season_number = :season
+                    )
+                    SELECT
+                      season_number,
+                      round_number_in_season,
+                      reward,
+                      rank,
+                      eval_score,
+                      eval_time,
+                      tasks_received,
+                      tasks_success,
+                      top_reward
+                    FROM ranked_rounds
+                    WHERE row_num = 1
+                    ORDER BY round_number_in_season DESC
+                    """
+                    ),
+                    {"miner_uid": miner_uid, "season": season},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        if not season_round_rows:
+            raise ValueError(f"Agent {miner_uid} not found")
+
+        season_rank_row = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                    WITH season_rows AS (
+                      SELECT
+                        rvm.miner_uid AS uid,
+                        COALESCE(rvm.effective_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) AS effective_reward,
+                        COALESCE(rvm.effective_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) AS effective_rank,
+                        r.round_number_in_season AS round_number
+                      FROM round_validator_miners rvm
+                      JOIN rounds r ON r.round_id = rvm.round_id
+                      JOIN seasons s ON s.season_id = r.season_id
+                      WHERE s.season_number = :season
+                        AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
+                        AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
+                        AND COALESCE(
+                          rvm.effective_tasks_received,
+                          rvm.post_consensus_tasks_received,
+                          rvm.local_tasks_received,
+                          0
+                        ) > 0
+                    ),
+                    best_rows AS (
+                      SELECT DISTINCT ON (uid)
+                        uid,
+                        effective_reward,
+                        effective_rank,
+                        round_number
+                      FROM season_rows
+                      ORDER BY uid, effective_reward DESC, effective_rank ASC, round_number ASC
+                    ),
+                    ranked AS (
+                      SELECT
+                        uid,
+                        effective_reward,
+                        round_number,
+                        ROW_NUMBER() OVER (
+                          ORDER BY effective_reward DESC, effective_rank ASC, uid ASC
+                        ) AS season_rank
+                      FROM best_rows
+                    )
+                    SELECT season_rank
+                    FROM ranked
+                    WHERE uid = :miner_uid
+                    LIMIT 1
+                    """
+                    ),
+                    {"miner_uid": miner_uid, "season": season},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        season_rank = int(season_rank_row["season_rank"]) if season_rank_row and season_rank_row.get("season_rank") is not None else None
+
+        best_round_history_row = max(
+            season_round_rows,
+            key=lambda row: (
+                float(row["reward"] or 0.0),
+                -(int(row["rank"]) if row["rank"] is not None else 9999),
+                -(int(row["round_number_in_season"]) if row["round_number_in_season"] is not None else 0),
+            ),
+        )
+        best_rank_history_row = min(
+            season_round_rows,
+            key=lambda row: (
+                int(row["rank"]) if row["rank"] is not None else 9999,
+                -(float(row["reward"] or 0.0)),
+                int(row["round_number_in_season"]) if row["round_number_in_season"] is not None else 9999,
+            ),
+        )
 
         ref = await self._round_ref(season, round_in_season)
         if not ref:
@@ -299,6 +458,27 @@ class UIAgentsRunsServiceMixin:
                 "dethroned": dethroned,
             }
 
+        available_round_rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                    SELECT DISTINCT r.round_number_in_season
+                    FROM round_validator_miners rvm
+                    JOIN rounds r ON r.round_id = rvm.round_id
+                    JOIN seasons s ON s.season_id = r.season_id
+                    WHERE rvm.miner_uid = :miner_uid
+                      AND s.season_number = :season
+                    ORDER BY r.round_number_in_season DESC
+                    """
+                    ),
+                    {"miner_uid": miner_uid, "season": season},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
         return {
             "agent": {
                 "id": f"agent-{miner_uid}",
@@ -317,15 +497,16 @@ class UIAgentsRunsServiceMixin:
                 "successfulRuns": int(success_runs or 0),
                 "currentReward": reward,
                 "currentTopReward": reward,
-                "currentRank": rank,
-                "bestRankEver": rank,
-                "bestRankRoundId": season * 10000 + round_in_season,
+                "currentRank": (season_rank if requested_round_in_season is None else rank),
+                "seasonRank": season_rank,
+                "bestRankEver": (int(best_rank_history_row["rank"]) if best_rank_history_row.get("rank") is not None else rank),
+                "bestRankRoundId": (int(best_rank_history_row["round_number_in_season"]) if best_rank_history_row.get("round_number_in_season") is not None else round_in_season),
                 "roundsParticipated": int(rounds_participated or 0),
                 "roundsWon": int(rounds_won or 0),
                 "alphaWonInPrizes": 0.0,
                 "taoWonInPrizes": 0.0,
-                "bestRoundReward": reward,
-                "bestRoundId": season * 10000 + round_in_season,
+                "bestRoundReward": float(best_round_history_row["reward"] or reward),
+                "bestRoundId": (int(best_round_history_row["round_number_in_season"]) if best_round_history_row.get("round_number_in_season") is not None else round_in_season),
                 "averageResponseTime": round(avg_time, 2),
                 "totalTasks": total_tasks,
                 "completedTasks": success_tasks,
@@ -333,8 +514,20 @@ class UIAgentsRunsServiceMixin:
                 "createdAt": None,
                 "updatedAt": None,
             },
-            "rewardRoundData": [],
-            "availableRounds": [season * 10000 + round_in_season],
+            "rewardRoundData": [
+                {
+                    "round_id": f"{int(row['season_number'])}/{int(row['round_number_in_season'])}",
+                    "round": int(row["round_number_in_season"]),
+                    "reward": float(row["reward"] or 0.0),
+                    "rank": (int(row["rank"]) if row["rank"] is not None and int(row["rank"]) < 9999 else None),
+                    "eval_score": float(row["eval_score"] or 0.0),
+                    "eval_time": float(row["eval_time"] or 0.0),
+                    "timestamp": "",
+                    "topReward": (float(row["top_reward"]) if row.get("top_reward") is not None else None),
+                }
+                for row in season_round_rows
+            ],
+            "availableRounds": [f"{season}/{int(row['round_number_in_season'])}" for row in available_round_rows],
             "performanceByWebsite": performance_by_website,
             "avg_cost_per_task": avg_cost_per_task,
             "is_reused": is_reused,
@@ -369,9 +562,11 @@ class UIAgentsRunsServiceMixin:
     async def get_miner_historical(self, miner_uid: int, season: Optional[int]) -> Dict[str, Any]:
         where = "WHERE miner_uid = :uid"
         params: Dict[str, Any] = {"uid": miner_uid}
+        season_filter_sql = ""
         if season is not None:
             where += " AND round_id IN (SELECT r.round_id FROM rounds r JOIN seasons s ON s.season_id=r.season_id WHERE s.season_number=:season)"
             params["season"] = season
+            season_filter_sql = " AND s.season_number = :season"
         rows = (
             (
                 await self.session.execute(
@@ -518,6 +713,105 @@ class UIAgentsRunsServiceMixin:
             )
         ).scalar_one()
 
+        season_rank_value: Optional[int] = None
+        season_rank_round: Optional[str] = None
+        best_effective_reward: Optional[float] = None
+        best_effective_reward_round: Optional[str] = None
+
+        best_effective_row = (
+            (
+                await self.session.execute(
+                    text(
+                        f"""
+                    SELECT
+                      s.season_number,
+                      r.round_number_in_season,
+                      COALESCE(rvm.effective_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) AS effective_reward,
+                      COALESCE(rvm.effective_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) AS effective_rank
+                    FROM round_validator_miners rvm
+                    JOIN rounds r ON r.round_id = rvm.round_id
+                    JOIN seasons s ON s.season_id = r.season_id
+                    WHERE rvm.miner_uid = :uid
+                    {season_filter_sql}
+                    ORDER BY
+                      COALESCE(rvm.effective_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) DESC,
+                      COALESCE(rvm.effective_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) ASC,
+                      s.season_number ASC,
+                      r.round_number_in_season ASC
+                    LIMIT 1
+                    """
+                    ),
+                    params,
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if best_effective_row:
+            best_effective_reward = float(best_effective_row["effective_reward"] or 0.0)
+            if best_effective_row.get("season_number") is not None and best_effective_row.get("round_number_in_season") is not None:
+                best_effective_reward_round = f"{int(best_effective_row['season_number'])}/{int(best_effective_row['round_number_in_season'])}"
+
+        if season is not None:
+            season_rank_row = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                        WITH season_rows AS (
+                          SELECT
+                            rvm.miner_uid AS uid,
+                            COALESCE(rvm.effective_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) AS effective_reward,
+                            COALESCE(rvm.effective_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) AS effective_rank,
+                            r.round_number_in_season AS round_number
+                          FROM round_validator_miners rvm
+                          JOIN rounds r ON r.round_id = rvm.round_id
+                          JOIN seasons s ON s.season_id = r.season_id
+                          WHERE s.season_number = :season
+                            AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
+                            AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
+                            AND COALESCE(
+                              rvm.effective_tasks_received,
+                              rvm.post_consensus_tasks_received,
+                              rvm.local_tasks_received,
+                              0
+                            ) > 0
+                        ),
+                        best_rows AS (
+                          SELECT DISTINCT ON (uid)
+                            uid,
+                            effective_reward,
+                            effective_rank,
+                            round_number
+                          FROM season_rows
+                          ORDER BY uid, effective_reward DESC, effective_rank ASC, round_number ASC
+                        ),
+                        ranked AS (
+                          SELECT
+                            uid,
+                            round_number,
+                            ROW_NUMBER() OVER (
+                              ORDER BY effective_reward DESC, effective_rank ASC, uid ASC
+                            ) AS season_rank
+                          FROM best_rows
+                        )
+                        SELECT season_rank, round_number
+                        FROM ranked
+                        WHERE uid = :uid
+                        LIMIT 1
+                        """
+                        ),
+                        {"uid": miner_uid, "season": season},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if season_rank_row:
+                season_rank_value = int(season_rank_row["season_rank"]) if season_rank_row.get("season_rank") is not None else None
+                if season_rank_row.get("round_number") is not None:
+                    season_rank_round = f"{season}/{int(season_rank_row['round_number'])}"
+
         best = min([x["post_consensus_rank"] for x in rounds_history if x["post_consensus_rank"] is not None] or [None], default=None)
         best_score = max([x["post_consensus_avg_reward"] for x in rounds_history] or [0.0])
         best_score_round = None
@@ -547,19 +841,186 @@ class UIAgentsRunsServiceMixin:
         if best_round_in_season is not None and (season is None or best_round_season == season):
             try:
                 best_round_detail = await self.get_agent_detail(miner_uid, best_round_season, best_round_in_season)
-                for row in best_round_detail.get("performanceByWebsite") or []:
-                    tasks_received = int(row.get("tasks_received") or row.get("tasks") or 0)
-                    tasks_success = int(row.get("tasks_success") or row.get("successful") or 0)
-                    performance_by_website_best_round.append(
-                        {
-                            "website": row.get("website") or "unknown",
-                            "tasks": tasks_received,
-                            "successful": tasks_success,
-                            "failed": max(tasks_received - tasks_success, 0),
-                            "averageDuration": float(row.get("averageDuration") or 0.0),
-                            "useCases": [],
-                        }
+                best_round_ref = await self._round_ref(best_round_season, best_round_in_season)
+                best_round_id = int(best_round_ref["round_id"]) if best_round_ref and best_round_ref.get("round_id") is not None else None
+                source_agent_run_ids: List[str] = []
+                if best_round_id is not None:
+                    best_round_run_ctx_rows = (
+                        (
+                            await self.session.execute(
+                                text(
+                                    """
+                                SELECT
+                                  mer.agent_run_id,
+                                  mer.reused_from_agent_run_id
+                                FROM miner_evaluation_runs mer
+                                WHERE mer.miner_uid = :uid
+                                  AND mer.round_validator_id IN (
+                                    SELECT rv.round_validator_id
+                                    FROM round_validators rv
+                                    WHERE rv.round_id = :round_id
+                                  )
+                                ORDER BY mer.started_at DESC NULLS LAST, mer.created_at DESC NULLS LAST
+                                """
+                                ),
+                                {"uid": miner_uid, "round_id": best_round_id},
+                            )
+                        )
+                        .mappings()
+                        .all()
                     )
+                    for rc in best_round_run_ctx_rows:
+                        source_agent_run_ids.append(str(rc.get("reused_from_agent_run_id") or rc.get("agent_run_id")))
+                source_agent_run_ids = list(dict.fromkeys([run_id for run_id in source_agent_run_ids if run_id]))
+
+                by_website_with_use_cases: Dict[str, Dict[str, Any]] = {}
+                if source_agent_run_ids:
+                    task_rows = (
+                        (
+                            await self.session.execute(
+                                text(
+                                    """
+                                SELECT
+                                  ts.task_id,
+                                  ts.agent_run_id,
+                                  t.web_project_id,
+                                  t.url AS task_url,
+                                  t.prompt,
+                                  t.use_case,
+                                  e.evaluation_id,
+                                  e.evaluation_score,
+                                  e.evaluation_time,
+                                  e.reward
+                                FROM task_solutions ts
+                                LEFT JOIN tasks t
+                                  ON t.task_id = ts.task_id
+                                LEFT JOIN evaluations e
+                                  ON e.task_solution_id = ts.solution_id
+                                WHERE ts.agent_run_id = ANY(:agent_run_ids)
+                                ORDER BY ts.created_at ASC NULLS LAST, ts.task_id ASC
+                                """
+                                ),
+                                {"agent_run_ids": source_agent_run_ids},
+                            )
+                        )
+                        .mappings()
+                        .all()
+                    )
+
+                    def _historical_website_key(raw_url: Optional[str]) -> str:
+                        if not isinstance(raw_url, str) or not raw_url.strip():
+                            return "unknown"
+                        parsed = urlparse(raw_url)
+                        host = (parsed.hostname or "").strip()
+                        port = parsed.port
+                        if not host:
+                            return "unknown"
+                        if host in ("localhost", "127.0.0.1") and port:
+                            return f"{host}:{port}"
+                        return host
+
+                    for row in task_rows:
+                        website = str(row.get("web_project_id") or "").strip() or _historical_website_key(row.get("task_url"))
+                        if not website:
+                            website = "unknown"
+                        use_case_value = row.get("use_case")
+                        use_case_name = "Unknown use case"
+                        if isinstance(use_case_value, dict):
+                            use_case_name = str(use_case_value.get("name") or use_case_value.get("event") or "Unknown use case")
+                        elif isinstance(use_case_value, str) and use_case_value.strip():
+                            use_case_name = use_case_value.strip()
+
+                        website_entry = by_website_with_use_cases.setdefault(
+                            website,
+                            {
+                                "website": website,
+                                "tasks": 0,
+                                "successful": 0,
+                                "failed": 0,
+                                "averageDuration": 0.0,
+                                "useCases": [],
+                            },
+                        )
+                        use_case_map = website_entry.setdefault("_use_case_map", {})
+                        use_case_entry = use_case_map.setdefault(
+                            use_case_name,
+                            {
+                                "useCase": use_case_name,
+                                "tasks": 0,
+                                "successful": 0,
+                                "failed": 0,
+                                "averageDuration": 0.0,
+                                "taskDetails": [],
+                            },
+                        )
+
+                        score = float(row.get("evaluation_score") or 0.0)
+                        evaluation_time = float(row.get("evaluation_time") or 0.0)
+                        is_success = score >= 1.0
+                        task_status = "successful" if is_success else "failed"
+
+                        website_entry["tasks"] += 1
+                        website_entry["successful"] += 1 if is_success else 0
+                        website_entry["failed"] += 0 if is_success else 1
+                        website_entry["averageDuration"] += evaluation_time
+
+                        use_case_entry["tasks"] += 1
+                        use_case_entry["successful"] += 1 if is_success else 0
+                        use_case_entry["failed"] += 0 if is_success else 1
+                        use_case_entry["averageDuration"] += evaluation_time
+                        use_case_entry["taskDetails"].append(
+                            {
+                                "taskId": row.get("task_id"),
+                                "evaluationId": row.get("evaluation_id"),
+                                "agentRunId": row.get("agent_run_id"),
+                                "prompt": row.get("prompt") or "",
+                                "score": score,
+                                "reward": float(row.get("reward") or 0.0),
+                                "evaluationTime": evaluation_time,
+                                "status": task_status,
+                                "round": f"{best_round_season}/{best_round_in_season}",
+                                "useCase": use_case_name,
+                            }
+                        )
+
+                if by_website_with_use_cases:
+                    for website_entry in by_website_with_use_cases.values():
+                        website_tasks = int(website_entry.get("tasks") or 0)
+                        if website_tasks > 0:
+                            website_entry["averageDuration"] = float(website_entry["averageDuration"] or 0.0) / float(website_tasks)
+                        use_cases = []
+                        for use_case_entry in website_entry.pop("_use_case_map", {}).values():
+                            use_case_tasks = int(use_case_entry.get("tasks") or 0)
+                            if use_case_tasks > 0:
+                                use_case_entry["averageDuration"] = float(use_case_entry["averageDuration"] or 0.0) / float(use_case_tasks)
+                            use_case_entry["taskDetails"] = sorted(
+                                use_case_entry.get("taskDetails") or [],
+                                key=lambda item: (
+                                    str(item.get("evaluationId") or ""),
+                                    str(item.get("taskId") or ""),
+                                ),
+                            )
+                            use_cases.append(use_case_entry)
+                        use_cases.sort(key=lambda item: (-int(item.get("tasks") or 0), str(item.get("useCase") or "")))
+                        website_entry["useCases"] = use_cases
+                    performance_by_website_best_round = sorted(
+                        by_website_with_use_cases.values(),
+                        key=lambda item: (-int(item.get("tasks") or 0), str(item.get("website") or "")),
+                    )
+                else:
+                    for row in best_round_detail.get("performanceByWebsite") or []:
+                        tasks_received = int(row.get("tasks_received") or row.get("tasks") or 0)
+                        tasks_success = int(row.get("tasks_success") or row.get("successful") or 0)
+                        performance_by_website_best_round.append(
+                            {
+                                "website": row.get("website") or "unknown",
+                                "tasks": tasks_received,
+                                "successful": tasks_success,
+                                "failed": max(tasks_received - tasks_success, 0),
+                                "averageDuration": float(row.get("averageDuration") or 0.0),
+                                "useCases": [],
+                            }
+                        )
             except Exception:
                 # Keep endpoint resilient if best-round details are unavailable
                 performance_by_website_best_round = []
@@ -581,10 +1042,10 @@ class UIAgentsRunsServiceMixin:
                 "totalTasksFailed": max(total_tasks - total_success, 0),
                 "overallSuccessRate": (total_success / total_tasks) if total_tasks > 0 else 0.0,
                 "averageDuration": sum(x["post_consensus_avg_eval_time"] for x in rounds_history) / len(rounds_history),
-                "bestReward": best_score,
-                "bestRewardRound": best_score_round,
-                "bestRank": best,
-                "bestRankRound": best_rank_round,
+                "bestReward": (best_effective_reward if best_effective_reward is not None else best_score),
+                "bestRewardRound": best_effective_reward_round or best_score_round,
+                "bestRank": season_rank_value if season_rank_value is not None else best,
+                "bestRankRound": season_rank_round or best_rank_round,
                 "averageReward": sum(x["post_consensus_avg_reward"] for x in rounds_history) / len(rounds_history),
                 "totalAlphaEarned": total_alpha_earned,
                 "totalTaoEarned": total_tao_earned,

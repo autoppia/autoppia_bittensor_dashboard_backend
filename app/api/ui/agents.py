@@ -95,6 +95,7 @@ async def get_latest_round_top_miner(
 
 @router.get("/rounds")
 async def get_rounds_data(
+    season: Optional[int] = Query(None, description="Season number"),
     round_number: Optional[int] = Query(None, description="Round number (compat alias)"),
     round_identifier: Optional[str] = Query(None, description="Round in format 'season/round' (e.g. '83/20')"),
     session: AsyncSession = Depends(get_session),
@@ -118,13 +119,13 @@ async def get_rounds_data(
         # Get all available rounds
         rounds = await newdb.get_available_rounds()
 
-        # Prefer round_identifier (season/round), else round_number (compat alias)
-        target_round = round_identifier if round_identifier else round_number
-        if target_round is None and rounds:
-            # If no round specified, use the first (latest) round
-            target_round = rounds[0]
+        latest_season = await newdb.get_latest_season_number()
 
-        # Get miners for target round if available
+        # Prefer round_identifier (season/round), else season aggregate, else round_number (compat alias)
+        target_round = round_identifier if round_identifier else round_number
+        target_season = season if season is not None else latest_season
+
+        # Get miners for target selection if available
         round_selected = None
         if target_round is not None:
             if isinstance(target_round, str) and "/" in target_round:
@@ -133,6 +134,8 @@ async def get_rounds_data(
             else:
                 # Numeric alias without season is not canonical in the new schema.
                 round_selected = None
+        elif target_season is not None:
+            round_selected = await newdb.get_season_miners(int(target_season))
 
         return {
             "success": True,
