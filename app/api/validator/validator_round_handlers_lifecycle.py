@@ -66,6 +66,51 @@ async def _ensure_config_season_round_cache_loaded(session: AsyncSession) -> Non
     await refresh_config_season_round_cache(session)
 
 
+async def get_runtime_config(
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Return the current runtime config persisted in DB.
+
+    Validators use this as the canonical source of truth for round timing and
+    minimum validator version, instead of relying on local .env timing values.
+    """
+    from app.services.round_config_service import load_config_season_round_from_db
+
+    current_cfg = await load_config_season_round_from_db(session)
+    if current_cfg is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Runtime config not initialized",
+        )
+
+    current_min_version_row = (
+        await session.execute(
+            text(
+                """
+                SELECT minimum_validator_version
+                FROM config_app_runtime
+                WHERE id = 1
+                LIMIT 1
+                """
+            )
+        )
+    ).first()
+    current_min_version = None
+    if current_min_version_row and current_min_version_row[0]:
+        current_min_version = str(current_min_version_row[0]).strip() or None
+
+    return {
+        "config_season_round": {
+            "round_size_epochs": float(current_cfg.round_size_epochs),
+            "season_size_epochs": float(current_cfg.season_size_epochs),
+            "minimum_start_block": int(current_cfg.minimum_start_block),
+            "blocks_per_epoch": int(current_cfg.blocks_per_epoch),
+        },
+        "minimum_validator_version": current_min_version,
+    }
+
+
 async def sync_runtime_config(
     payload: SyncRuntimeConfigRequest,
     request: Request,
