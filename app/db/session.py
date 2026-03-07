@@ -566,8 +566,34 @@ async def init_db() -> None:
                 """
             )
         )
-        await conn.execute(text("DROP VIEW IF EXISTS round_outcomes CASCADE"))
-        await conn.execute(text("DROP TABLE IF EXISTS round_outcomes CASCADE"))
+        await conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM pg_class c
+                        JOIN pg_namespace n ON n.oid = c.relnamespace
+                        WHERE n.nspname = 'public'
+                          AND c.relname = 'round_outcomes'
+                          AND c.relkind IN ('v', 'm')
+                    ) THEN
+                        EXECUTE 'DROP VIEW round_outcomes CASCADE';
+                    ELSIF EXISTS (
+                        SELECT 1
+                        FROM pg_class c
+                        JOIN pg_namespace n ON n.oid = c.relnamespace
+                        WHERE n.nspname = 'public'
+                          AND c.relname = 'round_outcomes'
+                          AND c.relkind IN ('r', 'p')
+                    ) THEN
+                        EXECUTE 'DROP TABLE round_outcomes CASCADE';
+                    END IF;
+                END $$;
+                """
+            )
+        )
         await conn.execute(
             text(
                 """
