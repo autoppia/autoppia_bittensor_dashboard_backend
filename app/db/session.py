@@ -1442,30 +1442,7 @@ async def init_db() -> None:
         await conn.execute(text("DROP TABLE IF EXISTS app_runtime_config CASCADE"))
         await conn.execute(text("DROP TABLE IF EXISTS round_config CASCADE"))
 
-        await conn.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS task_execution_logs_pending (
-                    id BIGSERIAL PRIMARY KEY,
-                    task_id VARCHAR(128) NOT NULL,
-                    agent_run_id VARCHAR(128) NOT NULL,
-                    validator_round_id VARCHAR(128) NOT NULL,
-                    validator_uid INTEGER NULL,
-                    miner_uid INTEGER NULL,
-                    season INTEGER NULL,
-                    round_in_season INTEGER NULL,
-                    payload_ref TEXT NOT NULL,
-                    payload_size BIGINT NOT NULL DEFAULT 0,
-                    last_error TEXT NULL,
-                    retry_count INTEGER NOT NULL DEFAULT 0,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    CONSTRAINT uq_task_execution_logs_pending UNIQUE (task_id, agent_run_id)
-                )
-                """
-            )
-        )
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_task_execution_logs_pending_round ON task_execution_logs_pending(validator_round_id)"))
+        await conn.execute(text("DROP TABLE IF EXISTS task_execution_logs_pending CASCADE"))
 
         # Bridge legacy tables with canonical round_validators table.
         await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS round_validator_id BIGINT"))
