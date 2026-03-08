@@ -550,6 +550,14 @@ class ValidatorStorageSummaryMixin:
         tasks_evaluated = sum(int(row.post_consensus_tasks_received or 0) for row in competitive_rows)
         tasks_success = sum(int(row.post_consensus_tasks_success or 0) for row in competitive_rows)
 
+        # True averages across ALL competitive miners
+        all_eval_scores = [float(row.post_consensus_avg_eval_score) for row in competitive_rows if row.post_consensus_avg_eval_score is not None]
+        all_eval_times = [float(row.post_consensus_avg_eval_time) for row in competitive_rows if row.post_consensus_avg_eval_time is not None and float(row.post_consensus_avg_eval_time) > 0]
+        all_eval_costs = [float(row.post_consensus_avg_eval_cost) for row in competitive_rows if row.post_consensus_avg_eval_cost is not None and float(row.post_consensus_avg_eval_cost) > 0]
+        avg_all_eval_score = (sum(all_eval_scores) / len(all_eval_scores)) if all_eval_scores else 0.0
+        avg_all_eval_time = (sum(all_eval_times) / len(all_eval_times)) if all_eval_times else 0.0
+        avg_all_eval_cost = (sum(all_eval_costs) / len(all_eval_costs)) if all_eval_costs else None
+
         validators_count = int(
             await self.session.scalar(
                 text("SELECT COUNT(*) FROM round_validators WHERE round_id = :round_id"),
@@ -608,39 +616,9 @@ class ValidatorStorageSummaryMixin:
         leader_before_reward = float(round_row.leader_before_reward) if getattr(round_row, "leader_before_reward", None) is not None else None
         candidate_reward = float(round_row.candidate_reward) if getattr(round_row, "candidate_reward", None) is not None else None
         leader_after_reward = float(getattr(winner_row, "post_consensus_avg_reward", 0.0) or 0.0) if winner_row is not None else None
-        leader_eval_score = 0.0
-        leader_eval_time = 0.0
-        leader_eval_cost = None
-        if leader_after_uid is not None:
-            leader_metrics_row = (
-                (
-                    await self.session.execute(
-                        text(
-                            """
-                            SELECT
-                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_score, 0), NULLIF(rvm.local_avg_eval_score, 0), rvm.best_local_eval_score, 0) AS resolved_score,
-                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_time, 0), NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) AS resolved_time,
-                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_cost, 0), rvm.local_avg_eval_cost, rvm.best_local_eval_cost) AS resolved_cost
-                            FROM round_validator_miners rvm
-                            WHERE rvm.round_id = :round_id
-                              AND rvm.miner_uid = :miner_uid
-                            ORDER BY
-                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_score, 0), NULLIF(rvm.local_avg_eval_score, 0), rvm.best_local_eval_score, 0) DESC,
-                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_time, 0), NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) DESC
-                            LIMIT 1
-                            """
-                        ),
-                        {"round_id": round_id, "miner_uid": leader_after_uid},
-                    )
-                )
-                .mappings()
-                .first()
-            )
-            if leader_metrics_row:
-                leader_eval_score = float(leader_metrics_row.get("resolved_score") or 0.0)
-                leader_eval_time = float(leader_metrics_row.get("resolved_time") or 0.0)
-                if leader_metrics_row.get("resolved_cost") is not None:
-                    leader_eval_cost = float(leader_metrics_row["resolved_cost"])
+        leader_eval_score = float(getattr(winner_row, "post_consensus_avg_eval_score", 0.0) or 0.0) if winner_row is not None else 0.0
+        leader_eval_time = float(getattr(winner_row, "post_consensus_avg_eval_time", 0.0) or 0.0) if winner_row is not None else 0.0
+        leader_eval_cost = float(getattr(winner_row, "post_consensus_avg_eval_cost")) if winner_row is not None and getattr(winner_row, "post_consensus_avg_eval_cost", None) is not None else None
 
         await self.session.execute(
             text(
@@ -670,6 +648,9 @@ class ValidatorStorageSummaryMixin:
                     avg_eval_score,
                     avg_eval_time,
                     avg_eval_cost,
+                    leader_after_eval_score,
+                    leader_after_eval_time,
+                    leader_after_eval_cost,
                     summary_json,
                     post_consensus_summary,
                     created_at,
@@ -700,6 +681,9 @@ class ValidatorStorageSummaryMixin:
                     :avg_eval_score,
                     :avg_eval_time,
                     :avg_eval_cost,
+                    :leader_after_eval_score,
+                    :leader_after_eval_time,
+                    :leader_after_eval_cost,
                     CAST(:summary_json AS JSONB),
                     CAST(:post_consensus_summary AS JSONB),
                     NOW(),
@@ -729,6 +713,9 @@ class ValidatorStorageSummaryMixin:
                     avg_eval_score = EXCLUDED.avg_eval_score,
                     avg_eval_time = EXCLUDED.avg_eval_time,
                     avg_eval_cost = EXCLUDED.avg_eval_cost,
+                    leader_after_eval_score = EXCLUDED.leader_after_eval_score,
+                    leader_after_eval_time = EXCLUDED.leader_after_eval_time,
+                    leader_after_eval_cost = EXCLUDED.leader_after_eval_cost,
                     summary_json = COALESCE(EXCLUDED.summary_json, round_summary.summary_json),
                     post_consensus_summary = COALESCE(EXCLUDED.post_consensus_summary, round_summary.post_consensus_summary),
                     updated_at = NOW()
@@ -756,9 +743,12 @@ class ValidatorStorageSummaryMixin:
                 "tasks_evaluated": tasks_evaluated,
                 "tasks_success": tasks_success,
                 "avg_reward": (sum(rewards) / len(rewards)) if rewards else 0.0,
-                "avg_eval_score": leader_eval_score,
-                "avg_eval_time": leader_eval_time,
-                "avg_eval_cost": leader_eval_cost,
+                "avg_eval_score": avg_all_eval_score,
+                "avg_eval_time": avg_all_eval_time,
+                "avg_eval_cost": avg_all_eval_cost,
+                "leader_after_eval_score": leader_eval_score,
+                "leader_after_eval_time": leader_eval_time,
+                "leader_after_eval_cost": leader_eval_cost,
                 "summary_json": json.dumps(post_summary),
                 "post_consensus_summary": json.dumps(post_summary),
             },
@@ -1076,20 +1066,65 @@ class ValidatorStorageSummaryMixin:
                     FROM round_validators rv
                     JOIN target_round tr ON tr.round_id = rv.round_id
                 ),
-                canonical_per_miner AS (
+                effective_per_validator_miner AS (
                     SELECT
                         vrs.miner_uid,
-                        MIN(vrs.post_consensus_rank) FILTER (WHERE vrs.post_consensus_rank IS NOT NULL) AS canonical_rank,
-                        AVG(vrs.post_consensus_avg_reward) FILTER (WHERE vrs.post_consensus_avg_reward IS NOT NULL) AS canonical_reward,
-                        AVG(vrs.weight) FILTER (WHERE vrs.weight IS NOT NULL) AS canonical_weight,
-                        AVG(vrs.local_avg_eval_score) FILTER (WHERE vrs.local_avg_eval_score IS NOT NULL) AS canonical_eval_score,
-                        AVG(vrs.local_avg_eval_time) FILTER (WHERE vrs.local_avg_eval_time IS NOT NULL) AS canonical_eval_time,
-                        AVG(vrs.local_avg_eval_cost) FILTER (WHERE vrs.local_avg_eval_cost IS NOT NULL) AS canonical_eval_cost,
-                        SUM(COALESCE(vrs.local_tasks_received, 0))::INTEGER AS canonical_tasks_received,
-                        SUM(COALESCE(vrs.local_tasks_success, 0))::INTEGER AS canonical_tasks_success
+                        vrs.post_consensus_rank,
+                        vrs.post_consensus_avg_reward,
+                        vrs.weight,
+                        CASE
+                            WHEN COALESCE(vrs.local_tasks_received, 0) > 0 THEN COALESCE(vrs.local_tasks_received, 0)
+                            WHEN COALESCE(vrs.is_reused, FALSE) = TRUE AND COALESCE(vrs.best_local_tasks_received, 0) > 0 THEN COALESCE(vrs.best_local_tasks_received, 0)
+                            ELSE 0
+                        END AS effective_tasks_received,
+                        CASE
+                            WHEN COALESCE(vrs.local_tasks_received, 0) > 0 THEN COALESCE(vrs.local_tasks_success, 0)
+                            WHEN COALESCE(vrs.is_reused, FALSE) = TRUE AND COALESCE(vrs.best_local_tasks_received, 0) > 0 THEN COALESCE(vrs.best_local_tasks_success, 0)
+                            ELSE 0
+                        END AS effective_tasks_success,
+                        CASE
+                            WHEN COALESCE(vrs.local_tasks_received, 0) > 0 THEN vrs.local_avg_eval_time
+                            WHEN COALESCE(vrs.is_reused, FALSE) = TRUE AND COALESCE(vrs.best_local_tasks_received, 0) > 0 THEN vrs.best_local_eval_time
+                            ELSE NULL
+                        END AS effective_eval_time,
+                        CASE
+                            WHEN COALESCE(vrs.local_tasks_received, 0) > 0 THEN vrs.local_avg_eval_cost
+                            WHEN COALESCE(vrs.is_reused, FALSE) = TRUE AND COALESCE(vrs.best_local_tasks_received, 0) > 0 THEN vrs.best_local_eval_cost
+                            ELSE NULL
+                        END AS effective_eval_cost
                     FROM validator_round_summary_miners vrs
                     JOIN target_validator_rounds tvr ON tvr.validator_round_id = vrs.validator_round_id
-                    GROUP BY vrs.miner_uid
+                ),
+                canonical_per_miner AS (
+                    SELECT
+                        epvm.miner_uid,
+                        MIN(epvm.post_consensus_rank) FILTER (WHERE epvm.post_consensus_rank IS NOT NULL) AS canonical_rank,
+                        AVG(epvm.post_consensus_avg_reward) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL) AS canonical_reward,
+                        AVG(epvm.weight) FILTER (WHERE epvm.weight IS NOT NULL) AS canonical_weight,
+                        SUM(COALESCE(epvm.effective_tasks_received, 0))::INTEGER AS canonical_tasks_received,
+                        SUM(COALESCE(epvm.effective_tasks_success, 0))::INTEGER AS canonical_tasks_success,
+                        CASE
+                            WHEN SUM(COALESCE(epvm.effective_tasks_received, 0)) > 0
+                            THEN SUM(COALESCE(epvm.effective_tasks_success, 0))::DOUBLE PRECISION
+                                 / SUM(COALESCE(epvm.effective_tasks_received, 0))::DOUBLE PRECISION
+                            ELSE NULL
+                        END AS canonical_eval_score,
+                        CASE
+                            WHEN SUM(COALESCE(epvm.effective_tasks_received, 0)) > 0
+                            THEN SUM(COALESCE(epvm.effective_eval_time, 0) * COALESCE(epvm.effective_tasks_received, 0))::DOUBLE PRECISION
+                                 / SUM(COALESCE(epvm.effective_tasks_received, 0))::DOUBLE PRECISION
+                            ELSE NULL
+                        END AS canonical_eval_time,
+                        CASE
+                            WHEN SUM(COALESCE(epvm.effective_tasks_received, 0)) FILTER (WHERE epvm.effective_eval_cost IS NOT NULL) > 0
+                            THEN SUM((COALESCE(epvm.effective_eval_cost, 0) * COALESCE(epvm.effective_tasks_received, 0))::DOUBLE PRECISION)
+                                 FILTER (WHERE epvm.effective_eval_cost IS NOT NULL)
+                                 / SUM((COALESCE(epvm.effective_tasks_received, 0))::DOUBLE PRECISION)
+                                   FILTER (WHERE epvm.effective_eval_cost IS NOT NULL)
+                            ELSE NULL
+                        END AS canonical_eval_cost
+                    FROM effective_per_validator_miner epvm
+                    GROUP BY epvm.miner_uid
                 )
                 UPDATE validator_round_summary_miners vrs
                 SET

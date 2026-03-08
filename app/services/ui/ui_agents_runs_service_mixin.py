@@ -29,12 +29,10 @@ class UIAgentsRunsServiceMixin:
                           s.season_number,
                           r.round_number_in_season
                         FROM round_validator_miners rvm
-                        JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
                         JOIN rounds r ON r.round_id = rvm.round_id
                         JOIN seasons s ON s.season_id = r.season_id
                         WHERE rvm.miner_uid = :miner_uid
                           AND s.season_number = :season
-                          AND rv.validator_uid = :main_validator_uid
                         ORDER BY
                           CASE
                             WHEN rvm.post_consensus_avg_reward IS NOT NULL
@@ -53,7 +51,6 @@ class UIAgentsRunsServiceMixin:
                         {
                             "miner_uid": miner_uid,
                             "season": season,
-                            "main_validator_uid": main_validator_uid,
                         },
                     )
                 )
@@ -90,13 +87,11 @@ class UIAgentsRunsServiceMixin:
                             rvm.round_validator_id ASC
                         ) AS row_num
                       FROM round_validator_miners rvm
-                      JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
                       JOIN rounds r ON r.round_id = rvm.round_id
                       JOIN seasons s ON s.season_id = r.season_id
                       LEFT JOIN round_summary rs ON rs.round_id = r.round_id
                       WHERE rvm.miner_uid = :miner_uid
                         AND s.season_number = :season
-                        AND rv.validator_uid = :main_validator_uid
                     )
                     SELECT
                       season_number,
@@ -117,7 +112,6 @@ class UIAgentsRunsServiceMixin:
                     {
                         "miner_uid": miner_uid,
                         "season": season,
-                        "main_validator_uid": main_validator_uid,
                     },
                 )
             )
@@ -139,11 +133,9 @@ class UIAgentsRunsServiceMixin:
                         COALESCE(rvm.post_consensus_rank, 9999) AS best_rank,
                         r.round_number_in_season AS round_number
                       FROM round_validator_miners rvm
-                      JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
                       JOIN rounds r ON r.round_id = rvm.round_id
                       JOIN seasons s ON s.season_id = r.season_id
                       WHERE s.season_number = :season
-                        AND rv.validator_uid = :main_validator_uid
                         AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
                         AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
                         AND (
@@ -179,7 +171,6 @@ class UIAgentsRunsServiceMixin:
                     {
                         "miner_uid": miner_uid,
                         "season": season,
-                        "main_validator_uid": main_validator_uid,
                     },
                 )
             )
@@ -271,20 +262,13 @@ class UIAgentsRunsServiceMixin:
         )
         local_total_tasks = int(sum(int(r["local_tasks_received"] or 0) for r in miner_rows))
         local_success_tasks = int(sum(int(r["local_tasks_success"] or 0) for r in miner_rows))
-        local_avg_time = (sum(float(r["local_avg_eval_time"] or 0.0) for r in miner_rows) / len(miner_rows)) if miner_rows else 0.0
-        fallback_eval_time = float(first["local_avg_eval_time"] or first["best_local_eval_time"] or 0.0) if first is not None else 0.0
-        fallback_eval_cost = (
-            float(first["local_avg_eval_cost"] or first["best_local_eval_cost"])
-            if first is not None and (first.get("local_avg_eval_cost") is not None or first.get("best_local_eval_cost") is not None)
-            else None
-        )
         canonical_total_tasks = int(selected_round_history_row["tasks_received"]) if selected_round_history_row and selected_round_history_row.get("tasks_received") is not None else None
         canonical_success_tasks = int(selected_round_history_row["tasks_success"]) if selected_round_history_row and selected_round_history_row.get("tasks_success") is not None else None
         canonical_avg_time = float(selected_round_history_row["eval_time"]) if selected_round_history_row and selected_round_history_row.get("eval_time") is not None else None
         total_tasks = canonical_total_tasks if canonical_total_tasks is not None else local_total_tasks
         success_tasks = canonical_success_tasks if canonical_success_tasks is not None else local_success_tasks
         failed_tasks = max(total_tasks - success_tasks, 0)
-        avg_time = canonical_avg_time if canonical_avg_time is not None and canonical_avg_time > 0 else (local_avg_time if local_avg_time > 0 else fallback_eval_time)
+        avg_time = canonical_avg_time if canonical_avg_time is not None else 0.0
         canonical_avg_cost = float(selected_round_history_row["eval_cost"]) if selected_round_history_row and selected_round_history_row.get("eval_cost") is not None else None
         reward = (
             float(selected_round_history_row["reward"])
@@ -498,11 +482,8 @@ class UIAgentsRunsServiceMixin:
             performance_by_website.sort(key=lambda x: x["tasks_received"], reverse=True)
             if has_llm_usage and total_tasks_for_cost > 0:
                 avg_cost_per_task = total_llm_cost / float(total_tasks_for_cost)
-        if avg_cost_per_task is None:
-            if canonical_avg_cost is not None and canonical_avg_cost > 0:
-                avg_cost_per_task = canonical_avg_cost
-            elif fallback_eval_cost is not None and fallback_eval_cost > 0:
-                avg_cost_per_task = fallback_eval_cost
+        if avg_cost_per_task is None and canonical_avg_cost is not None and canonical_avg_cost > 0:
+            avg_cost_per_task = canonical_avg_cost
 
         season_leadership_row = (
             (
@@ -559,19 +540,16 @@ class UIAgentsRunsServiceMixin:
                         """
                     SELECT DISTINCT r.round_number_in_season
                     FROM round_validator_miners rvm
-                    JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
                     JOIN rounds r ON r.round_id = rvm.round_id
                     JOIN seasons s ON s.season_id = r.season_id
                     WHERE rvm.miner_uid = :miner_uid
                       AND s.season_number = :season
-                      AND rv.validator_uid = :main_validator_uid
                     ORDER BY r.round_number_in_season DESC
                     """
                     ),
                     {
                         "miner_uid": miner_uid,
                         "season": season,
-                        "main_validator_uid": main_validator_uid,
                     },
                 )
             )
@@ -678,9 +656,7 @@ class UIAgentsRunsServiceMixin:
                            post_consensus_tasks_received, post_consensus_tasks_success,
                            subnet_price, weight
                     FROM round_validator_miners
-                    JOIN round_validators rv ON rv.round_validator_id = round_validator_miners.round_validator_id
                     {where}
-                      AND rv.validator_uid = :main_validator_uid
                     ORDER BY round_id DESC
                     """
                     ),
@@ -858,11 +834,9 @@ class UIAgentsRunsServiceMixin:
                             COALESCE(rvm.post_consensus_rank, 9999) AS best_rank,
                             r.round_number_in_season AS round_number
                           FROM round_validator_miners rvm
-                          JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
                           JOIN rounds r ON r.round_id = rvm.round_id
                           JOIN seasons s ON s.season_id = r.season_id
                           WHERE s.season_number = :season
-                            AND rv.validator_uid = :main_validator_uid
                             AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
                             AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
                             AND (
@@ -897,7 +871,6 @@ class UIAgentsRunsServiceMixin:
                         {
                             "uid": miner_uid,
                             "season": season,
-                            "main_validator_uid": main_validator_uid,
                         },
                     )
                 )

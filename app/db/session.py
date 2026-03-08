@@ -279,6 +279,9 @@ async def init_db() -> None:
                 avg_eval_score DOUBLE PRECISION NULL,
                 avg_eval_time DOUBLE PRECISION NULL,
                 avg_eval_cost DOUBLE PRECISION NULL,
+                leader_after_eval_score DOUBLE PRECISION NULL,
+                leader_after_eval_time DOUBLE PRECISION NULL,
+                leader_after_eval_cost DOUBLE PRECISION NULL,
                 summary_json JSONB NULL,
                 post_consensus_summary JSONB NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -792,6 +795,9 @@ async def init_db() -> None:
                 """
             )
         )
+        await conn.execute(text("ALTER TABLE round_summary ADD COLUMN IF NOT EXISTS leader_after_eval_score DOUBLE PRECISION NULL"))
+        await conn.execute(text("ALTER TABLE round_summary ADD COLUMN IF NOT EXISTS leader_after_eval_time DOUBLE PRECISION NULL"))
+        await conn.execute(text("ALTER TABLE round_summary ADD COLUMN IF NOT EXISTS leader_after_eval_cost DOUBLE PRECISION NULL"))
         await conn.execute(text("ALTER TABLE rounds ADD COLUMN IF NOT EXISTS planned_start_block BIGINT NULL"))
         await conn.execute(text("ALTER TABLE rounds ADD COLUMN IF NOT EXISTS planned_end_block BIGINT NULL"))
         await conn.execute(text("ALTER TABLE rounds ADD COLUMN IF NOT EXISTS opened_by_validator_uid INTEGER NULL"))
