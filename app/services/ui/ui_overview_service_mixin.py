@@ -148,33 +148,6 @@ class UIOverviewServiceMixin:
                 {"season": metrics_season},
             )
         ).scalar_one()
-        total_miners_active = (
-            await self.session.execute(
-                text(
-                    """
-                    WITH season_participants AS (
-                      SELECT DISTINCT ON (rvm.miner_uid)
-                        rvm.miner_uid,
-                        COALESCE(
-                          rvm.best_local_tasks_received,
-                          rvm.post_consensus_tasks_received,
-                          rvm.local_tasks_received,
-                          0
-                        ) AS tasks_received
-                      FROM round_validator_miners rvm
-                      JOIN rounds r ON r.round_id = rvm.round_id
-                      JOIN seasons s ON s.season_id = r.season_id
-                      WHERE s.season_number = :season
-                        AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
-                        AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
-                      ORDER BY rvm.miner_uid, r.round_number_in_season DESC, rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
-                    )
-                    SELECT COUNT(*) FROM season_participants WHERE tasks_received > 0
-                    """
-                ),
-                {"season": metrics_season},
-            )
-        ).scalar_one()
         miners = (
             (
                 await self.session.execute(
@@ -255,7 +228,7 @@ class UIOverviewServiceMixin:
             "topReward": float(leader["leader_reward"] or 0.0) if leader else 0.0,
             "totalWebsites": 14,
             "totalValidators": int(total_validators or 0),
-            "totalMiners": int(total_miners_active or 0),
+            "totalMiners": len(miners),
             "tasksPerValidator": int(tasks_per_validator or 0),
             "totalTasksPerValidator": int(tasks_per_validator or 0),
             "minerList": [dict(m) for m in miners],
