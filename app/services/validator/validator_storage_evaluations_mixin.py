@@ -167,9 +167,6 @@ class ValidatorStorageEvaluationsMixin:
         if agent_run_row.started_at is not None:
             agent_run_row.elapsed_sec = max(0.0, float(now) - float(agent_run_row.started_at))
 
-        # Propagate to any runs that reused from this one (they may have been created when this run was still empty)
-        await self._propagate_source_metrics_to_reused_runs(agent_run_row)
-
     async def upsert_evaluation_bundle(
         self,
         *,
@@ -310,8 +307,6 @@ class ValidatorStorageEvaluationsMixin:
             agent_run_row.ended_at = now
             if agent_run_row.started_at is not None:
                 agent_run_row.elapsed_sec = max(0.0, float(now) - float(agent_run_row.started_at))
-
-            await self._propagate_source_metrics_to_reused_runs(agent_run_row)
 
     async def get_task_solution_row(self, solution_id: str) -> Optional[TaskSolutionORM]:
         stmt = select(TaskSolutionORM).where(TaskSolutionORM.solution_id == solution_id)

@@ -187,94 +187,6 @@ class ValidatorStorageRoundsMixin:
             {"season_number": int(season_number)},
         )
 
-    async def _sync_round_validator_miner_reuse_flags(
-        self,
-        *,
-        validator_round_id: str,
-        miner_uid: Optional[int] = None,
-    ) -> None:
-        """Keep round_validator_miners reuse flags aligned with miner_evaluation_runs."""
-        sql_base = """
-            UPDATE round_validator_miners rvm
-            SET
-                is_reused = COALESCE(mer.is_reused, FALSE),
-                reused_from_agent_run_id = CASE
-                    WHEN COALESCE(mer.is_reused, FALSE) THEN mer.reused_from_agent_run_id
-                    ELSE NULL
-                END,
-                reused_from_round_id = CASE
-                    WHEN COALESCE(mer.is_reused, FALSE) AND mer.reused_from_agent_run_id IS NOT NULL THEN (
-                        SELECT rv_src.round_id
-                        FROM miner_evaluation_runs mer_src
-                        JOIN round_validators rv_src
-                            ON rv_src.validator_round_id = mer_src.validator_round_id
-                        WHERE mer_src.agent_run_id = mer.reused_from_agent_run_id
-                        LIMIT 1
-                    )
-                    ELSE NULL
-                END,
-                updated_at = NOW()
-            FROM round_validators rv, miner_evaluation_runs mer
-            WHERE rv.round_validator_id = rvm.round_validator_id
-              AND rv.validator_round_id = :validator_round_id
-              AND mer.validator_round_id = rv.validator_round_id
-              AND mer.miner_uid = rvm.miner_uid
-        """
-        params: Dict[str, Any] = {"validator_round_id": validator_round_id}
-        if miner_uid is not None:
-            sql_base += "\n  AND rvm.miner_uid = :miner_uid\n"
-            params["miner_uid"] = int(miner_uid)
-
-        await self.session.execute(text(sql_base), params)
-
-    async def _set_round_validator_miner_reuse_state(
-        self,
-        *,
-        validator_round_id: str,
-        miner_uid: int,
-        is_reused: bool,
-        reused_from_agent_run_id: Optional[str] = None,
-    ) -> None:
-        reused_from_round_id = None
-        if is_reused and reused_from_agent_run_id:
-            reused_from_round_id = await self.session.scalar(
-                text(
-                    """
-                    SELECT rv_src.round_id
-                    FROM miner_evaluation_runs mer_src
-                    JOIN round_validators rv_src
-                      ON rv_src.validator_round_id = mer_src.validator_round_id
-                    WHERE mer_src.agent_run_id = :source_run_id
-                    LIMIT 1
-                    """
-                ),
-                {"source_run_id": str(reused_from_agent_run_id)},
-            )
-
-        await self.session.execute(
-            text(
-                """
-                UPDATE round_validator_miners rvm
-                SET
-                  is_reused = :is_reused,
-                  reused_from_agent_run_id = :reused_from_agent_run_id,
-                  reused_from_round_id = :reused_from_round_id,
-                  updated_at = NOW()
-                FROM round_validators rv
-                WHERE rv.round_validator_id = rvm.round_validator_id
-                  AND rv.validator_round_id = :validator_round_id
-                  AND rvm.miner_uid = :miner_uid
-                """
-            ),
-            {
-                "validator_round_id": validator_round_id,
-                "miner_uid": int(miner_uid),
-                "is_reused": bool(is_reused),
-                "reused_from_agent_run_id": str(reused_from_agent_run_id) if is_reused and reused_from_agent_run_id else None,
-                "reused_from_round_id": int(reused_from_round_id) if reused_from_round_id is not None else None,
-            },
-        )
-
     async def start_round(
         self,
         *,
@@ -377,53 +289,9 @@ class ValidatorStorageRoundsMixin:
         await self._upsert_miner_snapshot(round_row, miner_snapshot)
 
         kwargs = self._agent_run_kwargs(agent_run)
-        resolved_reuse_source = None
-        requested_reuse_id = kwargs.get("reused_from_agent_run_id")
-        if kwargs.get("is_reused") and requested_reuse_id:
-            resolved_reuse_source = await self._resolve_reused_source_run(str(requested_reuse_id))
-            if resolved_reuse_source is None:
-                logger.warning(
-                    "start_agent_run: reused_from_agent_run_id=%s not found for validator_round_id=%s miner_uid=%s; downgrading to non-reused run to avoid FK failure.",
-                    requested_reuse_id,
-                    validator_round_id,
-                    kwargs.get("miner_uid"),
-                )
-                kwargs["is_reused"] = False
-                kwargs["reused_from_agent_run_id"] = None
-            else:
-                # Canonicalize chain reuse to the original source run id.
-                kwargs["reused_from_agent_run_id"] = resolved_reuse_source.agent_run_id
-
-        is_reused = bool(kwargs.get("is_reused"))
-        reused_from_id = kwargs.get("reused_from_agent_run_id")
-        if is_reused and reused_from_id:
-            source = resolved_reuse_source or await self._resolve_reused_source_run(str(reused_from_id))
-            canonical_source_id = source.agent_run_id if source is not None else str(reused_from_id)
-            await self._set_round_validator_miner_reuse_state(
-                validator_round_id=validator_round_id,
-                miner_uid=int(kwargs.get("miner_uid")),
-                is_reused=True,
-                reused_from_agent_run_id=canonical_source_id,
-            )
-            logger.debug(
-                "start_agent_run: skipped synthetic reused run creation for miner_uid=%s in validator_round_id=%s; source=%s",
-                kwargs.get("miner_uid"),
-                validator_round_id,
-                canonical_source_id,
-            )
-            return None
-
         row = AgentEvaluationRunORM(**kwargs)
         self.session.add(row)
         await self.session.flush()
-
-        # Keep round-level miner reuse flags in sync for UI/analytics consistency.
-        if row.miner_uid is not None:
-            await self._set_round_validator_miner_reuse_state(
-                validator_round_id=validator_round_id,
-                miner_uid=int(row.miner_uid),
-                is_reused=False,
-            )
 
         return row
 
@@ -691,23 +559,13 @@ class ValidatorStorageRoundsMixin:
         except Exception:
             logger.exception("finish_round: failed to synchronize summaries into round_validators")
 
-        rank_map: Dict[str, Optional[int]] = {}
-        weight_map: Dict[str, Optional[float]] = {}
         zero_reason_map: Dict[str, Optional[str]] = {}
-        is_reused_map: Dict[str, bool] = {}
-        reused_from_map: Dict[str, Optional[str]] = {}
-        agent_runs_by_id: Dict[str, Dict[str, Any]] = {}
         if agent_runs:
             for agent_run_data in agent_runs:
                 agent_run_id = agent_run_data.get("agent_run_id")
                 if not agent_run_id:
                     continue
-                rank_map[agent_run_id] = agent_run_data.get("rank")
-                weight_map[agent_run_id] = agent_run_data.get("weight")
                 zero_reason_map[agent_run_id] = agent_run_data.get("zero_reason")
-                is_reused_map[agent_run_id] = bool(agent_run_data.get("is_reused", False))
-                reused_from_map[agent_run_id] = agent_run_data.get("reused_from_agent_run_id")
-                agent_runs_by_id[agent_run_id] = agent_run_data
 
         stmt_runs = (
             select(AgentEvaluationRunORM)
@@ -726,151 +584,21 @@ class ValidatorStorageRoundsMixin:
         run_rows = list(run_rows_result)
 
         for run_row in run_rows:
-            is_reused = is_reused_map.get(run_row.agent_run_id, getattr(run_row, "is_reused", False))
-            # Do NOT set ended_at/elapsed_sec here: agent runs are per-miner and already closed
-            # - Reused: closed at start_agent_run (ended_at=started_at, elapsed_sec=0)
-            # - Evaluated: closed in add_evaluation when we received the last evaluation
-
-            if not is_reused:
-                metrics = self._compute_agent_run_stats(run_row)
-                run_row.total_tasks = metrics["total_tasks"]
-                run_row.success_tasks = metrics["success_tasks"]
-                run_row.failed_tasks = metrics["failed_tasks"]
-                run_row.average_score = metrics["average_score"]
-                run_row.average_execution_time = metrics["average_execution_time"]
-                run_row.average_reward = metrics["average_reward"]
-            else:
-                # Reused runs: source run is truth. Never overwrite with payload 0/0/0 — rounds are sequential, source always has metrics.
-                payload_data = agent_runs_by_id.get(run_row.agent_run_id) or {}
-                source_id = reused_from_map.get(run_row.agent_run_id) or getattr(run_row, "reused_from_agent_run_id", None)
-                source_run = await self._resolve_reused_source_run(source_id) if source_id else None
-                if source_run is not None:
-                    run_row.reused_from_agent_run_id = source_run.agent_run_id
-
-                payload_attempted = payload_data.get("tasks_attempted")
-                source_total = (getattr(source_run, "total_tasks", None) or 0) if source_run else 0
-                # Prefer source when payload would zero out (validator sometimes sends 0 for reused runs)
-                use_source_metrics = source_run is not None and source_total > 0 and (payload_attempted is None or int(payload_attempted or 0) == 0)
-
-                if use_source_metrics:
-                    run_row.total_tasks = int(source_run.total_tasks or 0)
-                    run_row.success_tasks = int(getattr(source_run, "success_tasks", 0) or 0)
-                    run_row.failed_tasks = int(getattr(source_run, "failed_tasks", 0) or 0)
-                    run_row.average_score = source_run.average_score
-                    run_row.average_execution_time = getattr(source_run, "average_execution_time", None)
-                    run_row.average_reward = getattr(source_run, "average_reward", None)
-                    if getattr(source_run, "zero_reason", None):
-                        run_row.zero_reason = source_run.zero_reason
-                else:
-                    if payload_attempted is not None:
-                        run_row.total_tasks = int(payload_attempted)
-                    elif source_run is not None:
-                        run_row.total_tasks = int(source_run.total_tasks or 0)
-                    if payload_data.get("tasks_completed") is not None:
-                        run_row.success_tasks = int(payload_data["tasks_completed"])
-                    elif source_run is not None:
-                        run_row.success_tasks = int(getattr(source_run, "success_tasks", 0) or 0)
-                    if payload_data.get("tasks_failed") is not None:
-                        run_row.failed_tasks = int(payload_data["tasks_failed"])
-                    elif source_run is not None:
-                        run_row.failed_tasks = int(getattr(source_run, "failed_tasks", 0) or 0)
-                    if payload_data.get("avg_reward") is not None:
-                        run_row.average_reward = float(payload_data["avg_reward"])
-                    elif source_run is not None and getattr(source_run, "average_reward", None) is not None:
-                        run_row.average_reward = float(source_run.average_reward)
-                    if payload_data.get("avg_evaluation_time") is not None:
-                        payload_avg_eval_time = float(payload_data["avg_evaluation_time"])
-                        if payload_avg_eval_time > 0.0:
-                            run_row.average_execution_time = payload_avg_eval_time
-                        elif source_run is not None and getattr(source_run, "average_execution_time", None) is not None:
-                            run_row.average_execution_time = float(source_run.average_execution_time)
-                        else:
-                            run_row.average_execution_time = payload_avg_eval_time
-                    elif source_run is not None and getattr(source_run, "average_execution_time", None) is not None:
-                        run_row.average_execution_time = float(source_run.average_execution_time)
-                    total = getattr(run_row, "total_tasks", 0) or 0
-                    success = getattr(run_row, "success_tasks", 0) or 0
-                    run_row.average_score = (success / total) if total else (float(source_run.average_score) if source_run and getattr(source_run, "average_score", None) is not None else 0.0)
+            metrics = self._compute_agent_run_stats(run_row)
+            run_row.total_tasks = metrics["total_tasks"]
+            run_row.success_tasks = metrics["success_tasks"]
+            run_row.failed_tasks = metrics["failed_tasks"]
+            run_row.average_score = metrics["average_score"]
+            run_row.average_execution_time = metrics["average_execution_time"]
+            run_row.average_reward = metrics["average_reward"]
 
             if run_row.agent_run_id in zero_reason_map:
                 run_row.zero_reason = zero_reason_map[run_row.agent_run_id]
-            if run_row.agent_run_id in is_reused_map:
-                run_row.is_reused = is_reused_map[run_row.agent_run_id]
-            if run_row.agent_run_id in reused_from_map:
-                # Do not downgrade an already-resolved root source to an intermediate reused run.
-                if not getattr(run_row, "reused_from_agent_run_id", None):
-                    candidate_id = reused_from_map[run_row.agent_run_id]
-                    if candidate_id:
-                        # Validate FK before assigning: the source run must exist in the DB.
-                        # The validator may reference a run that was purged on restart, or a
-                        # cross-validator run that was never committed to this DB.
-                        candidate_run = await self._get_agent_run_row(str(candidate_id))
-                        if candidate_run is not None:
-                            run_row.reused_from_agent_run_id = candidate_run.agent_run_id
-                        else:
-                            # Source not in DB: try to find the best existing run for this miner.
-                            fallback = await self._find_best_source_run_for_miner(
-                                miner_uid=run_row.miner_uid,
-                                exclude_validator_round_id=validator_round_id,
-                            )
-                            run_row.reused_from_agent_run_id = fallback.agent_run_id if fallback else None
-                            if fallback:
-                                logger.info(
-                                    "finish_round: source run %s not found for miner_uid=%s; using fallback %s",
-                                    candidate_id,
-                                    run_row.miner_uid,
-                                    fallback.agent_run_id,
-                                )
-                            else:
-                                logger.warning(
-                                    "finish_round: source run %s not found and no fallback for miner_uid=%s; setting reused_from=NULL",
-                                    candidate_id,
-                                    run_row.miner_uid,
-                                )
-
-            # If run has effective score 0 and no zero_reason: for reused runs use source run's zero_reason, else derive from evaluations
             if run_row.zero_reason is None and self._run_has_zero_score(run_row):
-                source_id = getattr(run_row, "reused_from_agent_run_id", None)
-                if source_id:
-                    source_run = await self._get_agent_run_row(source_id)
-                    if source_run and getattr(source_run, "zero_reason", None):
-                        run_row.zero_reason = source_run.zero_reason
-                if run_row.zero_reason is None:
-                    run_row.zero_reason = self._derive_run_zero_reason_from_evaluations(run_row)
+                run_row.zero_reason = self._derive_run_zero_reason_from_evaluations(run_row)
 
             # rank and weight removed from agent_evaluation_runs
             # They are now stored in validator_round_summary_miners and updated there
-
-        # Cascade: runs that reuse a run we just updated may have been processed in a
-        # finish_round that ran before this round (e.g. round 5 before round 4). Now that
-        # this run has total_tasks/failed_tasks/average_execution_time, copy them to all
-        # runs that have reused_from_agent_run_id = this run.
-        for run_row in run_rows:
-            source_id = getattr(run_row, "agent_run_id", None)
-            if not source_id:
-                continue
-            has_stats = (getattr(run_row, "total_tasks", None) or 0) > 0 or getattr(run_row, "average_execution_time", None) is not None
-            if not has_stats:
-                continue
-            stmt_reused = select(AgentEvaluationRunORM).where(
-                AgentEvaluationRunORM.reused_from_agent_run_id == source_id,
-            )
-            reused_rows_result = await self.session.scalars(stmt_reused)
-            for reused_row in reused_rows_result:
-                if (getattr(reused_row, "total_tasks", None) or 0) == 0 and getattr(reused_row, "average_execution_time", None) is None:
-                    reused_row.total_tasks = run_row.total_tasks or 0
-                    reused_row.success_tasks = run_row.success_tasks or 0
-                    reused_row.failed_tasks = run_row.failed_tasks or 0
-                    reused_row.average_score = run_row.average_score
-                    reused_row.average_execution_time = run_row.average_execution_time
-                    reused_row.average_reward = run_row.average_reward
-                    if getattr(run_row, "zero_reason", None) and getattr(reused_row, "zero_reason", None) is None:
-                        reused_row.zero_reason = run_row.zero_reason
-                    logger.debug(
-                        "finish_round: cascaded stats from source run %s to reused run %s",
-                        source_id,
-                        reused_row.agent_run_id,
-                    )
 
         canonical_round_id = await self.session.scalar(
             text("SELECT round_id FROM round_validators WHERE validator_round_id = :validator_round_id LIMIT 1"),
@@ -890,10 +618,6 @@ class ValidatorStorageRoundsMixin:
             local_evaluation=local_evaluation,
             post_consensus_evaluation=post_consensus_evaluation,
             subnet_price=alpha_price,
-        )
-        # Ensure summary rows carry reuse provenance from agent runs.
-        await self._sync_round_validator_miner_reuse_flags(
-            validator_round_id=validator_round_id,
         )
         await self._enrich_validator_summary_post_consensus_from_db(round_row)
         try:

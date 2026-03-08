@@ -339,8 +339,6 @@ class UIAgentsRunsServiceMixin:
                         """
                     SELECT
                       mer.agent_run_id,
-                      mer.is_reused,
-                      mer.reused_from_agent_run_id,
                       mer.zero_reason
                     FROM miner_evaluation_runs mer
                     WHERE mer.miner_uid = :uid
@@ -358,35 +356,8 @@ class UIAgentsRunsServiceMixin:
             .all()
         )
         run_ctx = run_ctx_rows[0] if run_ctx_rows else None
-        is_reused = bool(run_ctx["is_reused"]) if run_ctx else False
         run_agent_run_id = run_ctx["agent_run_id"] if run_ctx else None
-        reused_from_agent_run_id = run_ctx["reused_from_agent_run_id"] if run_ctx else None
         zero_reason = run_ctx["zero_reason"] if run_ctx else None
-
-        reused_from_round: Optional[str] = None
-        if reused_from_agent_run_id:
-            source_round = (
-                (
-                    await self.session.execute(
-                        text(
-                            """
-                        SELECT s.season_number, r.round_number_in_season
-                        FROM miner_evaluation_runs mer
-                        JOIN round_validators rv ON rv.round_validator_id = mer.round_validator_id
-                        JOIN rounds r ON r.round_id = rv.round_id
-                        JOIN seasons s ON s.season_id = r.season_id
-                        WHERE mer.agent_run_id = :agent_run_id
-                        LIMIT 1
-                        """
-                        ),
-                        {"agent_run_id": reused_from_agent_run_id},
-                    )
-                )
-                .mappings()
-                .first()
-            )
-            if source_round:
-                reused_from_round = f"{int(source_round['season_number'])}/{int(source_round['round_number_in_season'])}"
 
         performance_by_website: List[Dict[str, Any]] = []
         avg_cost_per_task: Optional[float] = None
@@ -408,9 +379,9 @@ class UIAgentsRunsServiceMixin:
         source_agent_run_ids: List[str] = []
         if run_ctx_rows:
             for rc in run_ctx_rows:
-                source_agent_run_ids.append(str(rc.get("reused_from_agent_run_id") or rc.get("agent_run_id")))
+                source_agent_run_ids.append(str(rc.get("agent_run_id")))
         elif run_agent_run_id:
-            source_agent_run_ids.append(str(reused_from_agent_run_id or run_agent_run_id))
+            source_agent_run_ids.append(str(run_agent_run_id))
 
         if source_agent_run_ids:
             by_website: Dict[str, Dict[str, Any]] = {}
@@ -609,9 +580,6 @@ class UIAgentsRunsServiceMixin:
             "availableRounds": [f"{season}/{int(row['round_number_in_season'])}" for row in available_round_rows],
             "performanceByWebsite": performance_by_website,
             "avg_cost_per_task": avg_cost_per_task,
-            "is_reused": is_reused,
-            "reused_from_agent_run_id": reused_from_agent_run_id,
-            "reused_from_round": reused_from_round,
             "zero_reason": zero_reason,
             "season_leadership": season_leadership,
             "roundMetrics": {
@@ -630,9 +598,6 @@ class UIAgentsRunsServiceMixin:
                 "averageResponseTime": round(avg_time, 2),
                 "performanceByWebsite": performance_by_website,
                 "avgCostPerTask": avg_cost_per_task,
-                "isReused": is_reused,
-                "reusedFromAgentRunId": reused_from_agent_run_id,
-                "reusedFromRound": reused_from_round,
                 "zeroReason": zero_reason,
                 "seasonLeadership": season_leadership,
             },
@@ -921,8 +886,7 @@ class UIAgentsRunsServiceMixin:
                                 text(
                                     """
                                 SELECT
-                                  mer.agent_run_id,
-                                  mer.reused_from_agent_run_id
+                                  mer.agent_run_id
                                 FROM miner_evaluation_runs mer
                                 JOIN round_validators rv ON rv.round_validator_id = mer.round_validator_id
                                 WHERE mer.miner_uid = :uid
@@ -942,7 +906,7 @@ class UIAgentsRunsServiceMixin:
                         .all()
                     )
                     for rc in best_round_run_ctx_rows:
-                        source_agent_run_ids.append(str(rc.get("reused_from_agent_run_id") or rc.get("agent_run_id")))
+                        source_agent_run_ids.append(str(rc.get("agent_run_id")))
                 source_agent_run_ids = list(dict.fromkeys([run_id for run_id in source_agent_run_ids if run_id]))
 
                 by_website_with_use_cases: Dict[str, Dict[str, Any]] = {}
@@ -1141,7 +1105,7 @@ class UIAgentsRunsServiceMixin:
                            mer.started_at, mer.ended_at, mer.elapsed_sec,
                            mer.average_score, mer.average_execution_time, mer.average_reward,
                            mer.total_tasks, mer.success_tasks, mer.failed_tasks,
-                           mer.meta, mer.is_reused, mer.reused_from_agent_run_id, mer.zero_reason
+                           mer.zero_reason
                     FROM miner_evaluation_runs mer
                     WHERE mer.round_validator_id IN (
                       SELECT rv.round_validator_id FROM round_validators rv WHERE rv.round_id = :rid
@@ -1168,7 +1132,7 @@ class UIAgentsRunsServiceMixin:
                            mer.started_at, mer.ended_at, mer.elapsed_sec,
                            mer.average_score, mer.average_execution_time, mer.average_reward,
                            mer.total_tasks, mer.success_tasks, mer.failed_tasks,
-                           mer.meta, mer.is_reused, mer.reused_from_agent_run_id, mer.zero_reason
+                           mer.zero_reason
                     FROM miner_evaluation_runs mer
                     WHERE mer.agent_run_id = :run_id
                     LIMIT 1
@@ -1201,9 +1165,7 @@ class UIAgentsRunsServiceMixin:
             "total_tasks": int(row["total_tasks"] or 0),
             "success_tasks": int(row["success_tasks"] or 0),
             "failed_tasks": int(row["failed_tasks"] or 0),
-            "metadata": row["meta"] or {},
-            "is_reused": bool(row["is_reused"]),
-            "reused_from_agent_run_id": row["reused_from_agent_run_id"],
+            "metadata": {},
             "zero_reason": row["zero_reason"],
             "tasks": [],
             "task_solutions": [],
@@ -1322,7 +1284,6 @@ class UIAgentsRunsServiceMixin:
                       ) run_eval_costs
                     ) run_cost ON TRUE
                     WHERE mer.miner_uid = :uid
-                      AND COALESCE(mer.is_reused, FALSE) = FALSE
                     ORDER BY mer.started_at DESC
                     LIMIT :limit OFFSET :offset
                     """
@@ -1335,7 +1296,7 @@ class UIAgentsRunsServiceMixin:
         )
         total = (
             await self.session.execute(
-                text("SELECT COUNT(*) FROM miner_evaluation_runs WHERE miner_uid=:uid AND COALESCE(is_reused, FALSE) = FALSE"),
+                text("SELECT COUNT(*) FROM miner_evaluation_runs WHERE miner_uid=:uid"),
                 {"uid": uid},
             )
         ).scalar_one()
@@ -1578,7 +1539,6 @@ class UIAgentsRunsServiceMixin:
         # Catalog should only list runs linked to a canonical round row.
         # Shadow/orphan runs (rv.round_id IS NULL) create "Round 0" artifacts in UI.
         where.append("rv.round_id IS NOT NULL")
-        where.append("COALESCE(mer.is_reused, FALSE) = FALSE")
         if not include_unfinished:
             # Hide in-progress rounds by default: they often carry provisional ranks/scores.
             where.append("LOWER(COALESCE(rr.status, '')) IN ('finished', 'completed', 'evaluating_finished')")
@@ -1613,7 +1573,7 @@ class UIAgentsRunsServiceMixin:
                       mer.agent_run_id, mer.miner_uid, mer.miner_hotkey, mer.started_at, mer.ended_at,
                       mer.total_tasks, mer.success_tasks, mer.failed_tasks,
                       mer.average_reward, mer.average_score, mer.average_execution_time, mer.elapsed_sec,
-                      mer.zero_reason, mer.is_reused, mer.reused_from_agent_run_id,
+                      mer.zero_reason,
                       run_cost.avg_cost_per_task,
                       websites.websites_count,
                       rv.validator_uid, rv.name AS validator_name, rv.image_url AS validator_image, rv.round_id,
@@ -1632,7 +1592,7 @@ class UIAgentsRunsServiceMixin:
                         SELECT e.evaluation_id, COALESCE(SUM(lu.cost), 0.0) AS task_cost
                         FROM evaluations e
                         LEFT JOIN evaluation_llm_usage lu ON lu.evaluation_id = e.evaluation_id
-                        WHERE e.agent_run_id = COALESCE(mer.reused_from_agent_run_id, mer.agent_run_id)
+                        WHERE e.agent_run_id = mer.agent_run_id
                         GROUP BY e.evaluation_id
                       ) run_eval_costs
                     ) run_cost ON TRUE
@@ -1694,8 +1654,6 @@ class UIAgentsRunsServiceMixin:
                     "averageEvaluationTime": float(r["average_execution_time"] or 0.0),
                     "websitesCount": int(r["websites_count"] or 0),
                     "zeroReason": r["zero_reason"],
-                    "isReused": bool(r["is_reused"]),
-                    "reusedFromAgentRunId": r["reused_from_agent_run_id"],
                 }
             )
         reverse = str(sort_order).lower() != "asc"
@@ -1729,7 +1687,7 @@ class UIAgentsRunsServiceMixin:
                       mer.agent_run_id, mer.miner_uid, mer.miner_hotkey, mer.started_at, mer.ended_at,
                       mer.total_tasks, mer.success_tasks, mer.failed_tasks,
                       mer.average_reward, mer.average_execution_time, mer.elapsed_sec,
-                      mer.zero_reason, mer.is_reused, mer.reused_from_agent_run_id,
+                      mer.zero_reason,
                       rv.round_validator_id, rv.validator_uid, rv.validator_hotkey,
                       rv.name AS validator_name, rv.image_url AS validator_image, rv.round_id,
                       rv.started_at AS vr_started_at, rv.finished_at AS vr_finished_at,
@@ -1752,40 +1710,7 @@ class UIAgentsRunsServiceMixin:
         )
         if not run:
             raise ValueError("Agent run not found")
-        source_run_id = str(run["reused_from_agent_run_id"] or run["agent_run_id"])
         source_run_info: Optional[Dict[str, Any]] = None
-        if source_run_id != str(run["agent_run_id"]):
-            source_row = (
-                (
-                    await self.session.execute(
-                        text(
-                            """
-                            SELECT
-                              mer.agent_run_id,
-                              mer.round_validator_id,
-                              rr.round_number_in_season,
-                              s.season_number
-                            FROM miner_evaluation_runs mer
-                            LEFT JOIN round_validators rv ON rv.round_validator_id = mer.round_validator_id
-                            LEFT JOIN rounds rr ON rr.round_id = rv.round_id
-                            LEFT JOIN seasons s ON s.season_id = rr.season_id
-                            WHERE mer.agent_run_id = :source_run_id
-                            LIMIT 1
-                            """
-                        ),
-                        {"source_run_id": source_run_id},
-                    )
-                )
-                .mappings()
-                .first()
-            )
-            if source_row:
-                source_run_info = {
-                    "agentRunId": source_row["agent_run_id"],
-                    "validatorRoundId": (str(source_row["round_validator_id"]) if source_row["round_validator_id"] is not None else None),
-                    "roundNumber": (int(source_row["round_number_in_season"]) if source_row["round_number_in_season"] is not None else None),
-                    "seasonNumber": (int(source_row["season_number"]) if source_row["season_number"] is not None else None),
-                }
 
         def _as_epoch(value: Any) -> Optional[int]:
             if value is None:
@@ -1807,11 +1732,11 @@ class UIAgentsRunsServiceMixin:
                            t.web_project_id, t.prompt, t.use_case
                     FROM evaluations e
                     LEFT JOIN tasks t ON t.task_id = e.task_id
-                    WHERE e.agent_run_id = :source_run_id
+                    WHERE e.agent_run_id = :run_id
                     ORDER BY e.created_at ASC NULLS LAST, e.evaluation_id ASC
                     """
                     ),
-                    {"source_run_id": source_run_id},
+                    {"run_id": run_id},
                 )
             )
             .mappings()
@@ -1925,8 +1850,6 @@ class UIAgentsRunsServiceMixin:
             "tasks": [],
             "metadata": {},
             "zeroReason": run["zero_reason"],
-            "isReused": bool(run["is_reused"]),
-            "reusedFromAgentRunId": run["reused_from_agent_run_id"],
         }
         personas = {
             "round": {
@@ -2036,12 +1959,12 @@ class UIAgentsRunsServiceMixin:
                         """
                     SELECT task_id, created_at, payload_ref, payload_size
                     FROM task_execution_logs
-                    WHERE agent_run_id = :source_run_id
+                    WHERE agent_run_id = :run_id
                     ORDER BY created_at ASC
                     LIMIT 1000
                     """
                     ),
-                    {"source_run_id": source_run_id},
+                    {"run_id": run_id},
                 )
             )
             .mappings()

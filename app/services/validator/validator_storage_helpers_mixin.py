@@ -32,7 +32,6 @@ from app.services.validator.validator_storage_common import (
     DuplicateIdentifierError,
     RoundConflictError,
     _action_dump,
-    _agent_run_meta_for_storage,
     _clean_meta_dict,
     _non_empty_dict,
     _optional_dump,
@@ -722,72 +721,17 @@ class ValidatorStorageHelpersMixin:
         return await self.session.scalar(stmt)
 
     async def _resolve_reused_source_run(self, source_run_id: Optional[str]) -> Optional[AgentEvaluationRunORM]:
-        """Follow reused_from chain and return the root source run."""
-        if not source_run_id:
-            return None
-        visited: set[str] = set()
-        current_id: Optional[str] = source_run_id
-        root: Optional[AgentEvaluationRunORM] = None
-        while current_id and current_id not in visited:
-            visited.add(current_id)
-            row = await self._get_agent_run_row(current_id)
-            if row is None:
-                break
-            root = row
-            current_id = getattr(row, "reused_from_agent_run_id", None)
-        return root
+        return None
 
     async def _propagate_source_metrics_to_reused_runs(self, source_run: AgentEvaluationRunORM) -> None:
-        """When a source run gets its metrics (e.g. after evaluations), copy them to any runs that reuse from it.
-        This fixes runs created before the source had data (e.g. round N+1 reused run created before round N evaluations arrived).
-        """
-        total = getattr(source_run, "total_tasks", None) or 0
-        if total <= 0:
-            return
-        stmt = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.reused_from_agent_run_id == source_run.agent_run_id)
-        result = await self.session.scalars(stmt)
-        updated = False
-        for row in result:
-            if (getattr(row, "total_tasks", None) or 0) <= 0:
-                row.total_tasks = int(total)
-                row.success_tasks = int(getattr(source_run, "success_tasks", 0) or 0)
-                row.failed_tasks = int(getattr(source_run, "failed_tasks", 0) or 0)
-                if getattr(source_run, "average_score", None) is not None:
-                    row.average_score = source_run.average_score
-                if getattr(source_run, "average_execution_time", None) is not None:
-                    row.average_execution_time = source_run.average_execution_time
-                if getattr(source_run, "average_reward", None) is not None:
-                    row.average_reward = source_run.average_reward
-                if getattr(source_run, "zero_reason", None):
-                    row.zero_reason = source_run.zero_reason
-                updated = True
-        if updated:
-            await self.session.flush()
+        return None
 
     async def _find_best_source_run_for_miner(
         self,
         miner_uid: Optional[int],
         exclude_validator_round_id: str,
     ) -> Optional[AgentEvaluationRunORM]:
-        """Find the best non-reused agent run for a miner to use as a fallback reuse source.
-
-        Used when the validator's reused_from_agent_run_id references a run that no longer
-        exists in the DB (e.g., purged on validator restart or from a cross-validator session).
-        Returns the run with the most tasks completed, preferring earlier rounds.
-        """
-        if miner_uid is None:
-            return None
-        stmt = (
-            select(AgentEvaluationRunORM)
-            .where(
-                AgentEvaluationRunORM.miner_uid == int(miner_uid),
-                AgentEvaluationRunORM.validator_round_id != exclude_validator_round_id,
-                AgentEvaluationRunORM.total_tasks > 0,
-            )
-            .order_by(AgentEvaluationRunORM.total_tasks.desc())
-            .limit(1)
-        )
-        return await self.session.scalar(stmt)
+        return None
 
     async def _get_task_row(self, task_id: str) -> Optional[TaskORM]:
         stmt = select(TaskORM).where(TaskORM.task_id == task_id)
@@ -1067,9 +1011,6 @@ class ValidatorStorageHelpersMixin:
             "success_tasks": getattr(model, "success_tasks", getattr(model, "completed_tasks", 0)),
             "failed_tasks": model.failed_tasks,
             # rank and weight removed - obtain via validator_round_summary_miners
-            "meta": _agent_run_meta_for_storage(model),
-            "is_reused": getattr(model, "is_reused", False),
-            "reused_from_agent_run_id": getattr(model, "reused_from_agent_run_id", None),
             "zero_reason": getattr(model, "zero_reason", None),
         }
 

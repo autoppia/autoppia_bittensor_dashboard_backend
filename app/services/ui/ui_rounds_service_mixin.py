@@ -810,8 +810,7 @@ class UIRoundsServiceMixin:
                               best_local_reward,
                               best_local_eval_score,
                               best_local_eval_time,
-                              best_local_eval_cost,
-                              is_reused
+                              best_local_eval_cost
                             FROM round_validator_miners
                             WHERE round_validator_id = :rvid
                               AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
@@ -848,7 +847,6 @@ class UIRoundsServiceMixin:
                         "best_local_eval_score": float(item.get("best_local_eval_score") or 0.0),
                         "best_local_eval_time": float(item.get("best_local_eval_time") or 0.0),
                         "best_local_eval_cost": (float(item["best_local_eval_cost"]) if item.get("best_local_eval_cost") is not None else None),
-                        "is_reused": bool(item.get("is_reused")),
                     }
                 )
 
