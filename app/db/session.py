@@ -302,6 +302,7 @@ async def init_db() -> None:
         await conn.execute(text("DROP VIEW IF EXISTS validator_round_summary_miners CASCADE"))
         await conn.execute(text("DROP INDEX IF EXISTS ix_round_summary_miners_local_rank"))
         await conn.execute(text("ALTER TABLE round_validator_miners DROP COLUMN IF EXISTS local_rank"))
+        await conn.execute(text("ALTER TABLE round_summary ADD COLUMN IF NOT EXISTS post_consensus_json JSONB NULL"))
         await conn.execute(
             text(
                 """
