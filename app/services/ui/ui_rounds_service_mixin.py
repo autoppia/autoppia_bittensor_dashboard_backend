@@ -288,7 +288,10 @@ class UIRoundsServiceMixin:
                         AND rv.validator_uid = :main_validator_uid
                         AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
                         AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
-                        AND COALESCE(rvm.post_consensus_tasks_received, 0) > 0
+                        AND (
+                          rvm.post_consensus_avg_reward IS NOT NULL
+                          OR rvm.post_consensus_rank IS NOT NULL
+                        )
                     ),
                     best_rows AS (
                       SELECT DISTINCT ON (uid)
