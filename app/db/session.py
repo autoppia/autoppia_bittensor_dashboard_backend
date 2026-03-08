@@ -279,7 +279,7 @@ async def init_db() -> None:
                 leader_after_eval_score DOUBLE PRECISION NULL,
                 leader_after_eval_time DOUBLE PRECISION NULL,
                 leader_after_eval_cost DOUBLE PRECISION NULL,
-                post_consensus_summary JSONB NULL,
+                post_consensus_json JSONB NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
@@ -328,7 +328,7 @@ async def init_db() -> None:
                             avg_reward,
                             avg_eval_score,
                             avg_eval_time,
-                            post_consensus_summary,
+                            post_consensus_json,
                             created_at,
                             updated_at
                         )
@@ -617,8 +617,8 @@ async def init_db() -> None:
                     avg_eval_score,
                     avg_eval_time,
                     NULL::TIMESTAMPTZ AS computed_at,
-                    post_consensus_summary AS summary_json,
-                    post_consensus_summary,
+                    post_consensus_json AS summary_json,
+                    post_consensus_json AS post_consensus_summary,
                     NULL::BIGINT AS source_round_validator_id,
                     created_at,
                     updated_at
@@ -906,16 +906,50 @@ async def init_db() -> None:
         await conn.execute(
             text(
                 """
-                UPDATE round_validators
-                SET
-                    post_consensus_json = COALESCE(post_consensus_json, post_consensus_summary)
-                WHERE post_consensus_json IS NULL
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_validators'
+                          AND column_name = 'post_consensus_summary'
+                    ) THEN
+                        UPDATE round_validators
+                        SET
+                            post_consensus_json = COALESCE(post_consensus_json, post_consensus_summary)
+                        WHERE post_consensus_json IS NULL;
+                    END IF;
+                END $$;
                 """
             )
         )
         await conn.execute(text("ALTER TABLE round_validators DROP COLUMN IF EXISTS local_summary_json"))
         await conn.execute(text("ALTER TABLE round_validators DROP COLUMN IF EXISTS post_consensus_summary"))
         await conn.execute(text("ALTER TABLE round_summary DROP COLUMN IF EXISTS summary_json"))
+        await conn.execute(text("ALTER TABLE round_summary ADD COLUMN IF NOT EXISTS post_consensus_json JSONB NULL"))
+        await conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_summary'
+                          AND column_name = 'post_consensus_summary'
+                    ) THEN
+                        UPDATE round_summary
+                        SET
+                            post_consensus_json = COALESCE(post_consensus_json, post_consensus_summary)
+                        WHERE post_consensus_json IS NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+        await conn.execute(text("ALTER TABLE round_summary DROP COLUMN IF EXISTS post_consensus_summary"))
 
         validator_rounds_relkind = await conn.scalar(
             text(
@@ -958,6 +992,8 @@ async def init_db() -> None:
                       winner_uid = COALESCE(
                         winner_uid,
                         CASE
+                          WHEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_after_round'->>'uid') ~ '^[0-9]+$'
+                          THEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_after_round'->>'uid')::INTEGER
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'miner_uid') ~ '^[0-9]+$'
                           THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'miner_uid')::INTEGER
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'uid') ~ '^[0-9]+$'
@@ -968,6 +1004,8 @@ async def init_db() -> None:
                       winner_score = COALESCE(
                         winner_score,
                         CASE
+                          WHEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_after_round'->>'reward') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                          THEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_after_round'->>'reward')::DOUBLE PRECISION
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'reward') ~ '^-?[0-9]+(\\.[0-9]+)?$'
                           THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'reward')::DOUBLE PRECISION
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'score') ~ '^-?[0-9]+(\\.[0-9]+)?$'
@@ -978,6 +1016,8 @@ async def init_db() -> None:
                       reigning_uid_before_round = COALESCE(
                         reigning_uid_before_round,
                         CASE
+                          WHEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_before_round'->>'uid') ~ '^[0-9]+$'
+                          THEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_before_round'->>'uid')::INTEGER
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_uid_before_round') ~ '^[0-9]+$'
                           THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_uid_before_round')::INTEGER
                           ELSE NULL
@@ -986,6 +1026,8 @@ async def init_db() -> None:
                       reigning_score_before_round = COALESCE(
                         reigning_score_before_round,
                         CASE
+                          WHEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_before_round'->>'reward') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                          THEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_before_round'->>'reward')::DOUBLE PRECISION
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_reward_before_round') ~ '^-?[0-9]+(\\.[0-9]+)?$'
                           THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_reward_before_round')::DOUBLE PRECISION
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_score_before_round') ~ '^-?[0-9]+(\\.[0-9]+)?$'
@@ -996,6 +1038,8 @@ async def init_db() -> None:
                       top_candidate_uid = COALESCE(
                         top_candidate_uid,
                         CASE
+                          WHEN (validator_summary->'evaluation_post_consensus'->'summary'->'candidate_this_round'->>'uid') ~ '^[0-9]+$'
+                          THEN (validator_summary->'evaluation_post_consensus'->'summary'->'candidate_this_round'->>'uid')::INTEGER
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_uid') ~ '^[0-9]+$'
                           THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_uid')::INTEGER
                           ELSE NULL
@@ -1004,6 +1048,8 @@ async def init_db() -> None:
                       top_candidate_score = COALESCE(
                         top_candidate_score,
                         CASE
+                          WHEN (validator_summary->'evaluation_post_consensus'->'summary'->'candidate_this_round'->>'reward') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                          THEN (validator_summary->'evaluation_post_consensus'->'summary'->'candidate_this_round'->>'reward')::DOUBLE PRECISION
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_reward') ~ '^-?[0-9]+(\\.[0-9]+)?$'
                           THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_reward')::DOUBLE PRECISION
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_score') ~ '^-?[0-9]+(\\.[0-9]+)?$'
@@ -1014,6 +1060,8 @@ async def init_db() -> None:
                       required_improvement_pct = COALESCE(
                         required_improvement_pct,
                         CASE
+                          WHEN (validator_summary->'evaluation_post_consensus'->'summary'->>'percentage_to_dethrone') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                          THEN (validator_summary->'evaluation_post_consensus'->'summary'->>'percentage_to_dethrone')::DOUBLE PRECISION
                           WHEN (validator_summary->'evaluation_post_consensus'->'season_summary'->>'required_improvement_pct') ~ '^-?[0-9]+(\\.[0-9]+)?$'
                           THEN (validator_summary->'evaluation_post_consensus'->'season_summary'->>'required_improvement_pct')::DOUBLE PRECISION
                           WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'required_improvement_pct') ~ '^-?[0-9]+(\\.[0-9]+)?$'
@@ -1024,6 +1072,8 @@ async def init_db() -> None:
                       dethroned = COALESCE(
                         dethroned,
                         CASE
+                          WHEN LOWER(COALESCE(validator_summary->'evaluation_post_consensus'->'summary'->>'dethroned', '')) IN ('true', 'false')
+                          THEN (validator_summary->'evaluation_post_consensus'->'summary'->>'dethroned')::BOOLEAN
                           WHEN LOWER(COALESCE(validator_summary->'evaluation_post_consensus'->'season_summary'->>'dethroned', '')) IN ('true', 'false')
                           THEN (validator_summary->'evaluation_post_consensus'->'season_summary'->>'dethroned')::BOOLEAN
                           WHEN LOWER(COALESCE(validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'dethroned', '')) IN ('true', 'false')
@@ -1951,7 +2001,7 @@ async def init_db() -> None:
                                 required_improvement_pct,
                                 required_reward_to_dethrone,
                                 dethroned,
-                                post_consensus_summary,
+                                post_consensus_json,
                                 created_at,
                                 updated_at
                             )
@@ -1984,7 +2034,7 @@ async def init_db() -> None:
                                 required_improvement_pct = EXCLUDED.required_improvement_pct,
                                 required_reward_to_dethrone = EXCLUDED.required_reward_to_dethrone,
                                 dethroned = EXCLUDED.dethroned,
-                                post_consensus_summary = COALESCE(EXCLUDED.post_consensus_summary, round_summary.post_consensus_summary),
+                                post_consensus_json = COALESCE(EXCLUDED.post_consensus_json, round_summary.post_consensus_json),
                                 updated_at = NOW();
                         END IF;
 

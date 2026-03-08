@@ -632,9 +632,9 @@ class ValidatorStorageRoundsMixin:
             round_with_emission = {"emission": emission_info}
 
         vs = validator_summary or {}
-        # IMPORTANT: keep post-consensus summary canonical and separate from
-        # the local validator snapshot/IPFS payloads.
-        post_summary_payload = post_consensus_evaluation.get("summary") if isinstance(post_consensus_evaluation, dict) else None
+        # IMPORTANT: keep the full post-consensus object canonical and separate
+        # from the local validator snapshot/IPFS payloads.
+        post_summary_payload = post_consensus_evaluation if isinstance(post_consensus_evaluation, dict) else None
 
         merged = {
             "round": round_with_emission or vs.get("round"),
