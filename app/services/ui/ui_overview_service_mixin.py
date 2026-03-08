@@ -166,7 +166,6 @@ class UIOverviewServiceMixin:
                             COALESCE(
                               rvm.best_local_rank,
                               rvm.post_consensus_rank,
-                              rvm.local_rank,
                               9999
                             ) AS best_local_rank,
                             COALESCE(

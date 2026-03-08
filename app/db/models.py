@@ -210,7 +210,6 @@ class ValidatorRoundSummaryORM(TimestampMixin, Base):
         ),
         Index("ix_round_summary_miners_round", "validator_round_id"),
         Index("ix_round_summary_miners_miner", "miner_uid"),
-        Index("ix_round_summary_miners_local_rank", "validator_round_id", "local_rank"),
         Index("ix_round_summary_miners_consensus_rank", "validator_round_id", "post_consensus_rank"),
         # Index for ORDER BY post_consensus_avg_reward DESC queries (top miner)
         Index("ix_round_summary_miners_consensus_reward", "post_consensus_avg_reward"),
@@ -227,7 +226,6 @@ class ValidatorRoundSummaryORM(TimestampMixin, Base):
     miner_hotkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
 
     # Local evaluation (pre-consensus, from this validator)
-    local_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     local_avg_reward: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     local_avg_eval_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     local_avg_eval_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

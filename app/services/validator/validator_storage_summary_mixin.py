@@ -868,17 +868,7 @@ class ValidatorStorageSummaryMixin:
 
         # If no evaluation data provided, create basic summaries from agent_runs
         if not local_evaluation and not post_consensus_evaluation:
-            # When only runs are available, also derive deterministic local ranking.
-            ranked_miners = sorted(
-                run_metrics_map.items(),
-                key=lambda kv: (
-                    -float(kv[1].get("local_avg_reward") or 0.0),
-                    -float(kv[1].get("local_avg_eval_score") or 0.0),
-                    int(kv[0]),
-                ),
-            )
-            for index, (miner_uid, _) in enumerate(ranked_miners, start=1):
-                summary_map.setdefault(miner_uid, {})["local_rank"] = index
+            pass
 
         # Process local_evaluation
         if local_evaluation and isinstance(local_evaluation, dict):
@@ -896,10 +886,6 @@ class ValidatorStorageSummaryMixin:
                 if miner_hotkey is not None:
                     summary_map[miner_uid]["miner_hotkey"] = miner_hotkey
 
-                local_rank = miner_data.get("rank")
-                if local_rank is not None:
-                    summary_map[miner_uid]["local_rank"] = local_rank
-
                 # Local metrics must match persisted local execution (agent runs).
                 # Only fall back to payload when run metrics are not available.
                 summary_map[miner_uid]["local_avg_reward"] = run_metrics.get("local_avg_reward") if run_metrics.get("local_avg_reward") is not None else miner_data.get("avg_reward")
@@ -910,26 +896,6 @@ class ValidatorStorageSummaryMixin:
                 summary_map[miner_uid]["local_tasks_success"] = run_metrics.get("local_tasks_success") if run_metrics.get("local_tasks_success") is not None else miner_data.get("tasks_completed")
                 summary_map[miner_uid]["is_reused"] = bool(miner_data.get("is_reused", False))
                 summary_map[miner_uid]["reused_from_agent_run_id"] = miner_data.get("reused_from_agent_run_id")
-
-        # If some local ranks are still missing but local metrics exist, derive from local_avg_reward.
-        missing_rank_uids = [uid for uid, data in summary_map.items() if data.get("local_rank") is None and data.get("local_avg_reward") is not None]
-        if missing_rank_uids:
-            ranked_miners = sorted(
-                missing_rank_uids,
-                key=lambda uid: (
-                    -float(summary_map[uid].get("local_avg_reward") or 0.0),
-                    -float(summary_map[uid].get("local_avg_eval_score") or 0.0),
-                    int(uid),
-                ),
-            )
-            used_ranks = {int(data["local_rank"]) for data in summary_map.values() if data.get("local_rank") is not None}
-            next_rank = 1
-            for uid in ranked_miners:
-                while next_rank in used_ranks:
-                    next_rank += 1
-                summary_map[uid]["local_rank"] = next_rank
-                used_ranks.add(next_rank)
-                next_rank += 1
 
         # Process post_consensus_evaluation
         if post_consensus_evaluation and isinstance(post_consensus_evaluation, dict):
@@ -1165,28 +1131,66 @@ class ValidatorStorageSummaryMixin:
                     SELECT
                         tr.target_id,
                         COALESCE(hist.local_rank, 9999) AS best_local_rank,
-                        COALESCE(hist.local_avg_reward, 0) AS best_local_reward,
-                        COALESCE(hist.local_avg_eval_score, 0) AS best_local_eval_score,
-                        COALESCE(hist.local_avg_eval_time, 0) AS best_local_eval_time,
-                        COALESCE(hist.local_tasks_received, 0) AS best_local_tasks_received,
-                        COALESCE(hist.local_tasks_success, 0) AS best_local_tasks_success,
-                        COALESCE(hist.local_avg_eval_cost, 0) AS best_local_eval_cost,
+                        COALESCE(hist.average_reward, 0) AS best_local_reward,
+                        COALESCE(hist.average_score, 0) AS best_local_eval_score,
+                        COALESCE(hist.average_execution_time, 0) AS best_local_eval_time,
+                        COALESCE(hist.total_tasks, 0) AS best_local_tasks_received,
+                        COALESCE(hist.success_tasks, 0) AS best_local_tasks_success,
+                        COALESCE(hist.avg_cost_per_task, 0) AS best_local_eval_cost,
                         ROW_NUMBER() OVER (
                             PARTITION BY tr.target_id
                             ORDER BY
-                                COALESCE(hist.local_avg_reward, 0) DESC,
+                                COALESCE(hist.average_reward, 0) DESC,
                                 COALESCE(hist.local_rank, 9999) ASC,
                                 rvh.round_number_in_season ASC,
-                                hist.id ASC
+                                hist.agent_run_id ASC
                         ) AS rn
                     FROM target_rows tr
-                    JOIN round_validator_miners hist
-                      ON hist.miner_uid = tr.miner_uid
                     JOIN round_validators rvh
-                      ON rvh.round_validator_id = hist.round_validator_id
+                      ON rvh.validator_uid = tr.validator_uid
+                     AND rvh.season_number = tr.season_number
+                     AND rvh.round_number_in_season <= tr.round_number_in_season
+                    JOIN (
+                        SELECT
+                            mer.agent_run_id,
+                            mer.round_validator_id,
+                            mer.miner_uid,
+                            mer.average_reward,
+                            mer.average_score,
+                            mer.average_execution_time,
+                            mer.total_tasks,
+                            mer.success_tasks,
+                            COALESCE(run_cost.avg_cost_per_task, 0) AS avg_cost_per_task,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY mer.round_validator_id
+                                ORDER BY
+                                    COALESCE(mer.average_reward, 0) DESC,
+                                    COALESCE(mer.average_score, 0) DESC,
+                                    COALESCE(mer.miner_uid, 2147483647) ASC
+                            ) AS local_rank
+                        FROM miner_evaluation_runs mer
+                        LEFT JOIN (
+                            SELECT
+                                per_eval.agent_run_id,
+                                AVG(per_eval.eval_total_cost) AS avg_cost_per_task
+                            FROM (
+                                SELECT
+                                    e.agent_run_id,
+                                    e.evaluation_id,
+                                    SUM(COALESCE(elu.cost, 0)) AS eval_total_cost
+                                FROM evaluations e
+                                JOIN evaluation_llm_usage elu ON elu.evaluation_id = e.evaluation_id
+                                GROUP BY e.agent_run_id, e.evaluation_id
+                            ) per_eval
+                            GROUP BY per_eval.agent_run_id
+                        ) run_cost
+                          ON run_cost.agent_run_id = mer.agent_run_id
+                        WHERE mer.miner_uid IS NOT NULL
+                          AND COALESCE(mer.total_tasks, 0) > 0
+                    ) hist
+                      ON hist.round_validator_id = rvh.round_validator_id
+                     AND hist.miner_uid = tr.miner_uid
                     WHERE rvh.validator_uid = tr.validator_uid
-                      AND rvh.season_number = tr.season_number
-                      AND rvh.round_number_in_season <= tr.round_number_in_season
                 )
                 UPDATE round_validator_miners rvm
                 SET

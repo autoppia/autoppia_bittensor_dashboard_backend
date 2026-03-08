@@ -224,7 +224,6 @@ async def init_db() -> None:
                 is_reused BOOLEAN NOT NULL DEFAULT FALSE,
                 reused_from_agent_run_id VARCHAR(128) NULL,
                 reused_from_round_id BIGINT NULL REFERENCES rounds(round_id) ON DELETE SET NULL,
-                local_rank INTEGER NULL,
                 local_avg_reward DOUBLE PRECISION NULL,
                 local_avg_eval_score DOUBLE PRECISION NULL,
                 local_avg_eval_time DOUBLE PRECISION NULL,
@@ -300,6 +299,9 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_round_summary_leader_after_miner_uid ON round_summary(leader_after_miner_uid)",
         ):
             await conn.execute(text(ddl))
+        await conn.execute(text("DROP VIEW IF EXISTS validator_round_summary_miners CASCADE"))
+        await conn.execute(text("DROP INDEX IF EXISTS ix_round_summary_miners_local_rank"))
+        await conn.execute(text("ALTER TABLE round_validator_miners DROP COLUMN IF EXISTS local_rank"))
         await conn.execute(
             text(
                 """
@@ -753,31 +755,69 @@ async def init_db() -> None:
                 WITH ranked_history AS (
                     SELECT
                         current_rvm.id AS target_id,
-                        COALESCE(hist_rvm.local_rank, 9999) AS best_local_rank,
-                        COALESCE(hist_rvm.local_avg_reward, 0) AS best_local_reward,
-                        COALESCE(hist_rvm.local_avg_eval_score, 0) AS best_local_eval_score,
-                        COALESCE(hist_rvm.local_avg_eval_time, 0) AS best_local_eval_time,
-                        COALESCE(hist_rvm.local_tasks_received, 0) AS best_local_tasks_received,
-                        COALESCE(hist_rvm.local_tasks_success, 0) AS best_local_tasks_success,
-                        COALESCE(hist_rvm.local_avg_eval_cost, 0) AS best_local_eval_cost,
+                        COALESCE(hist_runs.local_rank, 9999) AS best_local_rank,
+                        COALESCE(hist_runs.average_reward, 0) AS best_local_reward,
+                        COALESCE(hist_runs.average_score, 0) AS best_local_eval_score,
+                        COALESCE(hist_runs.average_execution_time, 0) AS best_local_eval_time,
+                        COALESCE(hist_runs.total_tasks, 0) AS best_local_tasks_received,
+                        COALESCE(hist_runs.success_tasks, 0) AS best_local_tasks_success,
+                        COALESCE(hist_runs.avg_cost_per_task, 0) AS best_local_eval_cost,
                         ROW_NUMBER() OVER (
                             PARTITION BY current_rvm.id
                             ORDER BY
-                                COALESCE(hist_rvm.local_avg_reward, 0) DESC,
-                                COALESCE(hist_rvm.local_rank, 9999) ASC,
+                                COALESCE(hist_runs.average_reward, 0) DESC,
+                                COALESCE(hist_runs.local_rank, 9999) ASC,
                                 rv_hist.round_number_in_season ASC,
-                                hist_rvm.id ASC
+                                hist_runs.agent_run_id ASC
                         ) AS rn
                     FROM round_validator_miners current_rvm
                     JOIN round_validators rv_current
                       ON rv_current.round_validator_id = current_rvm.round_validator_id
-                    JOIN round_validator_miners hist_rvm
-                      ON hist_rvm.miner_uid = current_rvm.miner_uid
                     JOIN round_validators rv_hist
-                      ON rv_hist.round_validator_id = hist_rvm.round_validator_id
+                      ON rv_hist.validator_uid = rv_current.validator_uid
+                     AND rv_hist.season_number = rv_current.season_number
+                     AND rv_hist.round_number_in_season <= rv_current.round_number_in_season
+                    JOIN (
+                        SELECT
+                            mer.agent_run_id,
+                            mer.round_validator_id,
+                            mer.miner_uid,
+                            mer.average_reward,
+                            mer.average_score,
+                            mer.average_execution_time,
+                            mer.total_tasks,
+                            mer.success_tasks,
+                            COALESCE(run_cost.avg_cost_per_task, 0) AS avg_cost_per_task,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY mer.round_validator_id
+                                ORDER BY
+                                    COALESCE(mer.average_reward, 0) DESC,
+                                    COALESCE(mer.average_score, 0) DESC,
+                                    COALESCE(mer.miner_uid, 2147483647) ASC
+                            ) AS local_rank
+                        FROM miner_evaluation_runs mer
+                        LEFT JOIN (
+                            SELECT
+                                per_eval.agent_run_id,
+                                AVG(per_eval.eval_total_cost) AS avg_cost_per_task
+                            FROM (
+                                SELECT
+                                    e.agent_run_id,
+                                    e.evaluation_id,
+                                    SUM(COALESCE(elu.cost, 0)) AS eval_total_cost
+                                FROM evaluations e
+                                JOIN evaluation_llm_usage elu ON elu.evaluation_id = e.evaluation_id
+                                GROUP BY e.agent_run_id, e.evaluation_id
+                            ) per_eval
+                            GROUP BY per_eval.agent_run_id
+                        ) run_cost
+                          ON run_cost.agent_run_id = mer.agent_run_id
+                        WHERE mer.miner_uid IS NOT NULL
+                          AND COALESCE(mer.total_tasks, 0) > 0
+                    ) hist_runs
+                      ON hist_runs.round_validator_id = rv_hist.round_validator_id
+                     AND hist_runs.miner_uid = current_rvm.miner_uid
                     WHERE rv_hist.validator_uid = rv_current.validator_uid
-                      AND rv_hist.season_number = rv_current.season_number
-                      AND rv_hist.round_number_in_season <= rv_current.round_number_in_season
                 )
                 UPDATE round_validator_miners rvm
                 SET
@@ -1596,7 +1636,6 @@ async def init_db() -> None:
                     rv.validator_round_id::TEXT AS validator_round_id,
                     rvm.miner_uid,
                     rvm.miner_hotkey,
-                    rvm.local_rank,
                     rvm.local_avg_reward,
                     rvm.local_avg_eval_score,
                     rvm.local_avg_eval_time,
@@ -2177,19 +2216,18 @@ async def init_db() -> None:
 
                         INSERT INTO round_validator_miners (
                             round_validator_id, round_id, miner_uid, miner_hotkey,
-                            local_rank, local_avg_reward, local_avg_eval_score, local_avg_eval_time, local_avg_eval_cost, local_tasks_received, local_tasks_success,
+                            local_avg_reward, local_avg_eval_score, local_avg_eval_time, local_avg_eval_cost, local_tasks_received, local_tasks_success,
                             post_consensus_rank, post_consensus_avg_reward, post_consensus_avg_eval_score, post_consensus_avg_eval_time, post_consensus_avg_eval_cost,
                             post_consensus_tasks_received, post_consensus_tasks_success, weight, subnet_price, created_at, updated_at
                         )
                         VALUES (
                             rvid, rid, NEW.miner_uid, NEW.miner_hotkey,
-                            NEW.local_rank, NEW.local_avg_reward, NEW.local_avg_eval_score, NEW.local_avg_eval_time, NEW.local_avg_eval_cost, NEW.local_tasks_received, NEW.local_tasks_success,
+                            NEW.local_avg_reward, NEW.local_avg_eval_score, NEW.local_avg_eval_time, NEW.local_avg_eval_cost, NEW.local_tasks_received, NEW.local_tasks_success,
                             NEW.post_consensus_rank, NEW.post_consensus_avg_reward, NEW.post_consensus_avg_eval_score, NEW.post_consensus_avg_eval_time, NEW.post_consensus_avg_eval_cost,
                             NEW.post_consensus_tasks_received, NEW.post_consensus_tasks_success, NEW.weight, NEW.subnet_price, NOW(), NOW()
                         )
                         ON CONFLICT (round_validator_id, miner_uid) DO UPDATE SET
                             miner_hotkey = COALESCE(EXCLUDED.miner_hotkey, round_validator_miners.miner_hotkey),
-                            local_rank = EXCLUDED.local_rank,
                             local_avg_reward = EXCLUDED.local_avg_reward,
                             local_avg_eval_score = EXCLUDED.local_avg_eval_score,
                             local_avg_eval_time = EXCLUDED.local_avg_eval_time,
