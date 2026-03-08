@@ -278,7 +278,7 @@ class UIAgentsRunsServiceMixin:
         rank = (
             int(selected_round_history_row["rank"])
             if selected_round_history_row and selected_round_history_row.get("rank") is not None and int(selected_round_history_row["rank"]) < 9999
-            else int(first["post_consensus_rank"] or first["best_local_rank"] or first["local_rank"] or 0)
+            else int(first["post_consensus_rank"] or first["best_local_rank"] or 0)
         )
         selected_top_reward = float(selected_round_history_row["top_reward"]) if selected_round_history_row and selected_round_history_row.get("top_reward") is not None else reward
 

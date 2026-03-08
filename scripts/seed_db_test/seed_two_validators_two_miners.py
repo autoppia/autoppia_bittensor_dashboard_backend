@@ -130,14 +130,14 @@ async def seed_new_schema() -> tuple[int, int, list[int]]:
                     INSERT INTO round_validator_miners (
                         round_validator_id, round_id, miner_uid, miner_hotkey, miner_coldkey, name, image_url, github_url, is_sota, version,
                         is_reused, reused_from_agent_run_id, reused_from_round_id,
-                        local_rank, local_avg_reward, local_avg_eval_score, local_avg_eval_time, local_tasks_received, local_tasks_success,
+                        local_avg_reward, local_avg_eval_score, local_avg_eval_time, local_tasks_received, local_tasks_success,
                         post_consensus_rank, post_consensus_avg_reward, post_consensus_avg_eval_score, post_consensus_avg_eval_time, post_consensus_tasks_received, post_consensus_tasks_success,
                         weight, subnet_price, best_local_rank, best_local_reward, best_local_eval_score, best_local_eval_time, local_avg_eval_cost, post_consensus_avg_eval_cost, best_local_eval_cost
                     )
                     VALUES (
                         :rvid, :round_id, :m_uid, :m_hotkey, :m_coldkey, :m_name, :img, :github, false, '1.0.0',
                         :is_reused, :reused_run, :reused_round,
-                        :local_rank, :local_reward, :local_score, :local_time, 3, :local_success,
+                        :local_reward, :local_score, :local_time, 3, :local_success,
                         :post_rank, :post_reward, :post_score, :post_time, 3, :post_success,
                         :weight, 0.00416, :eff_rank, :eff_reward, :eff_score, :eff_time, 0.0012, 0.0012, 0.0012
                     )
@@ -154,7 +154,6 @@ async def seed_new_schema() -> tuple[int, int, list[int]]:
                         "is_reused": is_reused,
                         "reused_run": f"agent_run_{m_uid}_{round_id}_{round_validator_ids[0]}" if is_reused else None,
                         "reused_round": round_id if is_reused else None,
-                        "local_rank": 1 if m_uid == 120 else 2,
                         "local_reward": 0.81 if m_uid == 120 else 0.62,
                         "local_score": 0.8 if m_uid == 120 else 0.6,
                         "local_time": 180.0 if m_uid == 120 else 210.0,
