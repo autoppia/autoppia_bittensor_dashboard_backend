@@ -281,7 +281,6 @@ async def init_db() -> None:
                 leader_after_eval_score DOUBLE PRECISION NULL,
                 leader_after_eval_time DOUBLE PRECISION NULL,
                 leader_after_eval_cost DOUBLE PRECISION NULL,
-                summary_json JSONB NULL,
                 post_consensus_summary JSONB NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -331,7 +330,6 @@ async def init_db() -> None:
                             avg_reward,
                             avg_eval_score,
                             avg_eval_time,
-                            summary_json,
                             post_consensus_summary,
                             created_at,
                             updated_at
@@ -358,8 +356,7 @@ async def init_db() -> None:
                             ro.avg_reward,
                             ro.avg_eval_score,
                             ro.avg_eval_time,
-                            ro.summary_json,
-                            ro.post_consensus_summary,
+                            COALESCE(ro.post_consensus_summary, ro.summary_json),
                             COALESCE(ro.created_at, NOW()),
                             COALESCE(ro.updated_at, NOW())
                         FROM round_outcomes ro
@@ -622,7 +619,7 @@ async def init_db() -> None:
                     avg_eval_score,
                     avg_eval_time,
                     NULL::TIMESTAMPTZ AS computed_at,
-                    summary_json,
+                    post_consensus_summary AS summary_json,
                     post_consensus_summary,
                     NULL::BIGINT AS source_round_validator_id,
                     created_at,
@@ -919,17 +916,7 @@ async def init_db() -> None:
                 """
             )
         )
-        await conn.execute(
-            text(
-                """
-                UPDATE round_outcomes
-                SET
-                    post_consensus_summary = COALESCE(post_consensus_summary, summary_json),
-                    summary_json = COALESCE(summary_json, post_consensus_summary)
-                WHERE post_consensus_summary IS NULL OR summary_json IS NULL
-                """
-            )
-        )
+        await conn.execute(text("ALTER TABLE round_summary DROP COLUMN IF EXISTS summary_json"))
 
         validator_rounds_relkind = await conn.scalar(
             text(
@@ -1967,7 +1954,6 @@ async def init_db() -> None:
                                 required_improvement_pct,
                                 required_reward_to_dethrone,
                                 dethroned,
-                                summary_json,
                                 post_consensus_summary,
                                 created_at,
                                 updated_at
@@ -1988,7 +1974,6 @@ async def init_db() -> None:
                                 END,
                                 NEW.dethroned,
                                 NEW.validator_summary,
-                                NEW.validator_summary,
                                 NOW(),
                                 NOW()
                             )
@@ -2002,7 +1987,6 @@ async def init_db() -> None:
                                 required_improvement_pct = EXCLUDED.required_improvement_pct,
                                 required_reward_to_dethrone = EXCLUDED.required_reward_to_dethrone,
                                 dethroned = EXCLUDED.dethroned,
-                                summary_json = COALESCE(EXCLUDED.summary_json, round_summary.summary_json),
                                 post_consensus_summary = COALESCE(EXCLUDED.post_consensus_summary, round_summary.post_consensus_summary),
                                 updated_at = NOW();
                         END IF;
