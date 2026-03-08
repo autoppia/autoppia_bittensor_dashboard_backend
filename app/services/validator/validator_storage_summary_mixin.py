@@ -425,6 +425,57 @@ class ValidatorStorageSummaryMixin:
         except Exception:
             candidate_reward_f = None
 
+        ranked_competitors: list[tuple[float, float, int, dict[str, Any]]] = []
+        for miner in competitive_miners_payload:
+            if not isinstance(miner, dict):
+                continue
+            try:
+                miner_uid = int(miner.get("miner_uid", miner.get("uid")))
+            except Exception:
+                continue
+            best_run = miner.get("best_run_consensus") if isinstance(miner.get("best_run_consensus"), dict) else miner
+            try:
+                reward = float(best_run.get("reward", miner.get("consensus_reward", 0.0)) or 0.0)
+                score = float(best_run.get("score", miner.get("avg_eval_score", 0.0)) or 0.0)
+            except Exception:
+                continue
+            ranked_competitors.append((reward, score, -miner_uid, miner))
+        ranked_competitors.sort(reverse=True)
+
+        challenger_payload = None
+        if reigning_uid_before is not None:
+            try:
+                reigning_uid_before_i = int(reigning_uid_before)
+            except Exception:
+                reigning_uid_before_i = None
+            for _reward, _score, _neg_uid, miner in ranked_competitors:
+                try:
+                    miner_uid = int(miner.get("miner_uid", miner.get("uid")))
+                except Exception:
+                    continue
+                if reigning_uid_before_i is not None and miner_uid == reigning_uid_before_i:
+                    continue
+                challenger_payload = miner
+                break
+        elif ranked_competitors:
+            challenger_payload = ranked_competitors[0][3]
+
+        if challenger_payload is not None:
+            challenger_best = challenger_payload.get("best_run_consensus") if isinstance(challenger_payload.get("best_run_consensus"), dict) else challenger_payload
+            try:
+                top_candidate_uid = int(challenger_payload.get("miner_uid", challenger_payload.get("uid")))
+            except Exception:
+                top_candidate_uid = top_candidate_uid
+            try:
+                top_candidate_reward = float(challenger_best.get("reward", challenger_payload.get("consensus_reward")))
+                candidate_reward_f = float(top_candidate_reward)
+            except Exception:
+                pass
+        elif reigning_uid_before is not None:
+            top_candidate_uid = None
+            top_candidate_reward = None
+            candidate_reward_f = None
+
         dethrone_threshold = reigning_reward_f * (1.0 + req_pct_f) if reigning_reward_f is not None and req_pct_f is not None else None
         candidate_met_threshold = candidate_reward_f >= dethrone_threshold if candidate_reward_f is not None and dethrone_threshold is not None else None
 
@@ -467,8 +518,8 @@ class ValidatorStorageSummaryMixin:
         round_row.leader_after_reward = _to_float(winner_obj.get("reward", winner_obj.get("score")))
         round_row.leader_before_uid = _to_int(decision_obj.get("reigning_uid_before_round"))
         round_row.leader_before_reward = _to_float(decision_obj.get("reigning_reward_before_round", decision_obj.get("reigning_score_before_round")))
-        round_row.candidate_uid = _to_int(decision_obj.get("top_candidate_uid"))
-        round_row.candidate_reward = _to_float(decision_obj.get("top_candidate_reward", decision_obj.get("top_candidate_score")))
+        round_row.candidate_uid = _to_int(top_candidate_uid)
+        round_row.candidate_reward = _to_float(top_candidate_reward)
         round_row.required_improvement_pct = _to_float(season_summary.get("required_improvement_pct", decision_obj.get("required_improvement_pct")))
         dethroned_value = season_summary.get("dethroned", decision_obj.get("dethroned"))
         round_row.dethroned = bool(dethroned_value) if dethroned_value is not None else None
@@ -608,13 +659,27 @@ class ValidatorStorageSummaryMixin:
             return snap.get("miner_hotkey"), snap.get("github_url")
 
         leader_before_uid = int(round_row.leader_before_uid) if getattr(round_row, "leader_before_uid", None) is not None else None
-        candidate_uid = int(round_row.candidate_uid) if getattr(round_row, "candidate_uid", None) is not None else None
+        candidate_row = None
+        if leader_before_uid is not None:
+            candidate_row = max(
+                (row for row in competitive_rows if int(row.miner_uid or -1) != int(leader_before_uid)),
+                key=lambda row: (
+                    float(row.post_consensus_avg_reward or 0.0),
+                    float(row.post_consensus_avg_eval_score or 0.0),
+                    -int(row.miner_uid or 0),
+                ),
+                default=None,
+            )
+        else:
+            candidate_row = winner_row
+
+        candidate_uid = int(candidate_row.miner_uid) if candidate_row is not None else None
         leader_after_uid = int(winner_row.miner_uid) if winner_row is not None else None
         leader_before_hotkey, leader_before_github_url = await _lookup_round_miner_snapshot(leader_before_uid)
         candidate_hotkey, candidate_github_url = await _lookup_round_miner_snapshot(candidate_uid)
         leader_after_hotkey, leader_after_github_url = await _lookup_round_miner_snapshot(leader_after_uid)
         leader_before_reward = float(round_row.leader_before_reward) if getattr(round_row, "leader_before_reward", None) is not None else None
-        candidate_reward = float(round_row.candidate_reward) if getattr(round_row, "candidate_reward", None) is not None else None
+        candidate_reward = float(getattr(candidate_row, "post_consensus_avg_reward", 0.0) or 0.0) if candidate_row is not None else None
         leader_after_reward = float(getattr(winner_row, "post_consensus_avg_reward", 0.0) or 0.0) if winner_row is not None else None
         leader_eval_score = float(getattr(winner_row, "post_consensus_avg_eval_score", 0.0) or 0.0) if winner_row is not None else 0.0
         leader_eval_time = float(getattr(winner_row, "post_consensus_avg_eval_time", 0.0) or 0.0) if winner_row is not None else 0.0
