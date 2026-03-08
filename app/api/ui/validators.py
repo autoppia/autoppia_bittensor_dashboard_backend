@@ -98,19 +98,7 @@ async def get_validator_details(
         filtered_round_ids = [str(rid) for (rid,) in filtered_round_ids_result.all() if rid]
 
         if filtered_round_ids:
-            reused_source_query = (
-                select(AgentEvaluationRunORM.reused_from_agent_run_id)
-                .where(
-                    and_(
-                        AgentEvaluationRunORM.validator_round_id.in_(filtered_round_ids),
-                        AgentEvaluationRunORM.is_reused.is_(True),
-                        AgentEvaluationRunORM.reused_from_agent_run_id.isnot(None),
-                    )
-                )
-                .distinct()
-            )
-            reused_source_result = await session.execute(reused_source_query)
-            reused_source_run_ids = [str(run_id) for (run_id,) in reused_source_result.all() if run_id]
+            reused_source_run_ids = []
 
     # Get validator information from the most recent validator snapshot
     validator_snapshot_query = (

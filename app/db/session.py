@@ -219,9 +219,6 @@ async def init_db() -> None:
                 github_url TEXT NULL,
                 is_sota BOOLEAN NOT NULL DEFAULT FALSE,
                 version VARCHAR(64) NULL,
-                is_reused BOOLEAN NOT NULL DEFAULT FALSE,
-                reused_from_agent_run_id VARCHAR(128) NULL,
-                reused_from_round_id BIGINT NULL REFERENCES rounds(round_id) ON DELETE SET NULL,
                 local_avg_reward DOUBLE PRECISION NULL,
                 local_avg_eval_score DOUBLE PRECISION NULL,
                 local_avg_eval_time DOUBLE PRECISION NULL,
@@ -1085,32 +1082,14 @@ async def init_db() -> None:
                     """
                 )
             )
-        await conn.execute(text("ALTER TABLE miner_evaluation_runs ADD COLUMN IF NOT EXISTS is_reused BOOLEAN NOT NULL DEFAULT FALSE"))
-        await conn.execute(text("ALTER TABLE miner_evaluation_runs ADD COLUMN IF NOT EXISTS reused_from_agent_run_id VARCHAR(128) NULL"))
         await conn.execute(text("ALTER TABLE miner_evaluation_runs DROP CONSTRAINT IF EXISTS fk_miner_evaluation_runs_reused_from"))
-        await conn.execute(
-            text(
-                "ALTER TABLE miner_evaluation_runs ADD CONSTRAINT fk_miner_evaluation_runs_reused_from "
-                "FOREIGN KEY (reused_from_agent_run_id) REFERENCES miner_evaluation_runs(agent_run_id) ON DELETE SET NULL"
-            )
-        )
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_miner_evaluation_runs_reused_from ON miner_evaluation_runs(reused_from_agent_run_id) WHERE reused_from_agent_run_id IS NOT NULL"))
-        # Runs should represent actual fresh evaluations only.
-        # Clean up historical synthetic reused rows when they carry no artefacts of their own.
-        await conn.execute(
-            text(
-                """
-                DELETE FROM miner_evaluation_runs mer
-                WHERE COALESCE(mer.is_reused, FALSE) = TRUE
-                  AND NOT EXISTS (
-                    SELECT 1 FROM task_solutions ts WHERE ts.agent_run_id = mer.agent_run_id
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1 FROM evaluations e WHERE e.agent_run_id = mer.agent_run_id
-                  )
-                """
-            )
-        )
+        await conn.execute(text("DROP INDEX IF EXISTS idx_miner_evaluation_runs_reused_from"))
+        await conn.execute(text("ALTER TABLE miner_evaluation_runs DROP COLUMN IF EXISTS reused_from_agent_run_id"))
+        await conn.execute(text("ALTER TABLE miner_evaluation_runs DROP COLUMN IF EXISTS is_reused"))
+        await conn.execute(text("ALTER TABLE miner_evaluation_runs DROP COLUMN IF EXISTS meta"))
+        await conn.execute(text("ALTER TABLE round_validator_miners DROP COLUMN IF EXISTS reused_from_round_id"))
+        await conn.execute(text("ALTER TABLE round_validator_miners DROP COLUMN IF EXISTS reused_from_agent_run_id"))
+        await conn.execute(text("ALTER TABLE round_validator_miners DROP COLUMN IF EXISTS is_reused"))
         await conn.execute(text("ALTER TABLE miner_evaluation_runs ADD COLUMN IF NOT EXISTS zero_reason VARCHAR(128) NULL"))
         await conn.execute(text("ALTER TABLE evaluations ADD COLUMN IF NOT EXISTS zero_reason VARCHAR(128) NULL"))
         # Keep compatibility with ORM expecting evaluation_llm_usage.tokens/cost.
@@ -1199,8 +1178,10 @@ async def init_db() -> None:
                 "END IF; END $$"
             )
         )
-        # Rellenar zero_reason en evaluaciones ya guardadas con score 0 y extra_info.timeout = true
+        # Rellenar zero_reason en evaluaciones ya guardadas con score 0.
         await conn.execute(text("UPDATE evaluations SET zero_reason = 'task_timeout' WHERE evaluation_score = 0 AND zero_reason IS NULL AND (extra_info->>'timeout') = 'true'"))
+        await conn.execute(text("UPDATE evaluations SET zero_reason = 'task_failed' WHERE COALESCE(evaluation_score, 0) = 0 AND COALESCE(reward, 0) = 0 AND zero_reason IS NULL"))
+        await conn.execute(text("UPDATE miner_evaluation_runs SET zero_reason = 'task_failed' WHERE COALESCE(average_score, 0) = 0 AND COALESCE(average_reward, 0) = 0 AND zero_reason IS NULL"))
         # Eliminar columna extra_info/meta de validator_rounds (todo está en validator_summary)
         if validator_rounds_is_table:
             await conn.execute(

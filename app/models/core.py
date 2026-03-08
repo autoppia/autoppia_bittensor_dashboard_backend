@@ -284,7 +284,7 @@ class AgentEvaluationRun(BaseModel):
     # rank and weight removed - obtain via validator_round_summary_miners
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Extensible metadata for the run")
 
-    zero_reason: Optional[str] = Field(default=None, description="Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, all_tasks_failed)")
+    zero_reason: Optional[str] = Field(default=None, description="Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, task_failed)")
 
     @model_validator(mode="after")  # type: ignore[misc]
     def _validate_identity(  # type: ignore[override]

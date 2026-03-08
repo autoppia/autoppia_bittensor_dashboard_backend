@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 
 if TYPE_CHECKING:
-    from app.models.core import AgentEvaluationRun
+    pass
 
 
 @dataclass
@@ -23,19 +23,6 @@ class DuplicateIdentifierError(ValueError):
 
 def _non_empty_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return value or {}
-
-
-# Keys in agent_run metadata that are redundant with DB columns (is_reused, reused_from_agent_run_id)
-_AGENT_RUN_META_REDUNDANT_KEYS = frozenset({"handshake_note", "reused_from_round"})
-
-
-def _agent_run_meta_for_storage(model: "AgentEvaluationRun") -> Dict[str, Any]:
-    """Store only useful agent_run metadata; omit handshake_note/reused_from_round (already in is_reused/reused_from_agent_run_id)."""
-    meta = getattr(model, "metadata", None) or {}
-    if not meta:
-        return {}
-    cleaned = {k: v for k, v in meta.items() if k not in _AGENT_RUN_META_REDUNDANT_KEYS}
-    return _non_empty_dict(cleaned)
 
 
 def _clean_meta_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:

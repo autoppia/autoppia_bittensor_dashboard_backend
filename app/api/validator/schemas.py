@@ -106,7 +106,7 @@ class FinishRoundAgentRun(BaseModel):
     tasks_attempted: int | None = None
     tasks_completed: int | None = None
     tasks_failed: int | None = None
-    zero_reason: str | None = None  # Reason for score 0 (e.g. over_cost_limit, deploy_failed, all_tasks_failed)
+    zero_reason: str | None = None  # Reason for score 0 (e.g. over_cost_limit, deploy_failed, task_failed)
 
 
 class RoundMetadata(BaseModel):

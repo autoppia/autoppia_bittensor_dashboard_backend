@@ -856,45 +856,6 @@ class ValidatorStorageSummaryMixin:
         except Exception:
             pass  # Non-critical: cost data stays NULL for this round
 
-        # For reused miners (no evaluations stored), propagate local_avg_eval_cost from the
-        # source agent_run's best historical round_validator_miners cost record.
-        try:
-            reused_cost_result = await self.session.execute(
-                text(
-                    """
-                    SELECT mer.miner_uid,
-                           rvm_src.local_avg_eval_cost AS source_cost
-                    FROM miner_evaluation_runs mer
-                    JOIN miner_evaluation_runs mer_src
-                      ON mer_src.agent_run_id = mer.reused_from_agent_run_id
-                    JOIN round_validators rv_src
-                      ON rv_src.validator_round_id = mer_src.validator_round_id
-                    JOIN round_validator_miners rvm_src
-                      ON rvm_src.round_validator_id = rv_src.round_validator_id
-                      AND rvm_src.miner_uid = mer.miner_uid
-                    WHERE mer.validator_round_id = :validator_round_id
-                      AND mer.is_reused = TRUE
-                      AND mer.reused_from_agent_run_id IS NOT NULL
-                      AND rvm_src.local_avg_eval_cost IS NOT NULL
-                      AND rvm_src.local_avg_eval_cost > 0
-                    ORDER BY rvm_src.local_avg_eval_cost DESC
-                    """
-                ),
-                {"validator_round_id": validator_round_id},
-            )
-            for reused_row in reused_cost_result.mappings():
-                uid = reused_row.get("miner_uid")
-                source_cost = reused_row.get("source_cost")
-                if uid is not None and source_cost is not None:
-                    uid_int = int(uid)
-                    # Only fill in if not already set from direct evaluations
-                    if run_metrics_map.get(uid_int, {}).get("local_avg_eval_cost") is None:
-                        run_metrics_map.setdefault(uid_int, {})["local_avg_eval_cost"] = float(source_cost)
-                    if summary_map.get(uid_int, {}).get("local_avg_eval_cost") is None:
-                        summary_map.setdefault(uid_int, {})["local_avg_eval_cost"] = float(source_cost)
-        except Exception:
-            pass  # Non-critical: cost propagation from reused source stays NULL
-
         # If no evaluation data provided, create basic summaries from agent_runs
         if not local_evaluation and not post_consensus_evaluation:
             pass
@@ -941,9 +902,6 @@ class ValidatorStorageSummaryMixin:
                         run_metrics.get("local_tasks_received") if run_metrics.get("local_tasks_received") is not None else miner_data.get("tasks_attempted")
                     )
                     summary_map[miner_uid]["local_tasks_success"] = run_metrics.get("local_tasks_success") if run_metrics.get("local_tasks_success") is not None else miner_data.get("tasks_completed")
-
-                summary_map[miner_uid]["is_reused"] = bool(miner_data.get("is_reused", False))
-                summary_map[miner_uid]["reused_from_agent_run_id"] = miner_data.get("reused_from_agent_run_id")
 
         # Process post_consensus_evaluation
         if post_consensus_evaluation and isinstance(post_consensus_evaluation, dict):
@@ -1034,14 +992,6 @@ class ValidatorStorageSummaryMixin:
                 new_summary = ValidatorRoundSummaryORM(validator_round_id=validator_round_id, **summary_data)
                 self.session.add(new_summary)
 
-            if "is_reused" in summary_data:
-                await self._set_round_validator_miner_reuse_state(
-                    validator_round_id=validator_round_id,
-                    miner_uid=int(miner_uid),
-                    is_reused=bool(summary_data.get("is_reused", False)),
-                    reused_from_agent_run_id=summary_data.get("reused_from_agent_run_id"),
-                )
-
         # Write local_avg_eval_cost directly to round_validator_miners.
         # The compat trigger that maps validator_round_summary_miners → round_validator_miners
         # predates the cost column and does not propagate it. We use a direct SQL UPDATE.
@@ -1097,26 +1047,10 @@ class ValidatorStorageSummaryMixin:
                         vrs.post_consensus_rank,
                         vrs.post_consensus_avg_reward,
                         vrs.weight,
-                        CASE
-                            WHEN COALESCE(vrs.local_tasks_received, 0) > 0 THEN COALESCE(vrs.local_tasks_received, 0)
-                            WHEN COALESCE(vrs.is_reused, FALSE) = TRUE AND COALESCE(vrs.best_local_tasks_received, 0) > 0 THEN COALESCE(vrs.best_local_tasks_received, 0)
-                            ELSE 0
-                        END AS effective_tasks_received,
-                        CASE
-                            WHEN COALESCE(vrs.local_tasks_received, 0) > 0 THEN COALESCE(vrs.local_tasks_success, 0)
-                            WHEN COALESCE(vrs.is_reused, FALSE) = TRUE AND COALESCE(vrs.best_local_tasks_received, 0) > 0 THEN COALESCE(vrs.best_local_tasks_success, 0)
-                            ELSE 0
-                        END AS effective_tasks_success,
-                        CASE
-                            WHEN COALESCE(vrs.local_tasks_received, 0) > 0 THEN vrs.local_avg_eval_time
-                            WHEN COALESCE(vrs.is_reused, FALSE) = TRUE AND COALESCE(vrs.best_local_tasks_received, 0) > 0 THEN vrs.best_local_eval_time
-                            ELSE NULL
-                        END AS effective_eval_time,
-                        CASE
-                            WHEN COALESCE(vrs.local_tasks_received, 0) > 0 THEN vrs.local_avg_eval_cost
-                            WHEN COALESCE(vrs.is_reused, FALSE) = TRUE AND COALESCE(vrs.best_local_tasks_received, 0) > 0 THEN vrs.best_local_eval_cost
-                            ELSE NULL
-                        END AS effective_eval_cost
+                        COALESCE(vrs.local_tasks_received, 0) AS effective_tasks_received,
+                        COALESCE(vrs.local_tasks_success, 0) AS effective_tasks_success,
+                        vrs.local_avg_eval_time AS effective_eval_time,
+                        vrs.local_avg_eval_cost AS effective_eval_cost
                     FROM validator_round_summary_miners vrs
                     JOIN target_validator_rounds tvr ON tvr.validator_round_id = vrs.validator_round_id
                 ),

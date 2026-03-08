@@ -285,18 +285,7 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     success_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # rank and weight removed - obtain via validator_round_summary_miners
-    meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-
-    # Legacy compatibility only: new reused participation is recorded in
-    # round_validator_miners, not as synthetic runs in miner_evaluation_runs.
-    is_reused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    reused_from_agent_run_id: Mapped[Optional[str]] = mapped_column(
-        String(128),
-        ForeignKey("miner_evaluation_runs.agent_run_id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    # Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, all_tasks_failed)
+    # Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, task_failed)
     zero_reason: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="agent_runs")

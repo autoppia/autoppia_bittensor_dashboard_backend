@@ -129,7 +129,7 @@ class AgentRun(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     zeroReason: Optional[str] = Field(
         default=None,
-        description="Reason for reward 0 when applicable (e.g. over_cost_limit, deploy_failed, all_tasks_failed)",
+        description="Reason for reward 0 when applicable (e.g. over_cost_limit, deploy_failed, task_failed)",
     )
 
 
