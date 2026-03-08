@@ -885,15 +885,34 @@ class ValidatorStorageSummaryMixin:
                 miner_hotkey = miner_data.get("miner_hotkey") or run_metrics.get("miner_hotkey")
                 if miner_hotkey is not None:
                     summary_map[miner_uid]["miner_hotkey"] = miner_hotkey
+                best_run = miner_data.get("best_run")
+                if not isinstance(best_run, dict):
+                    best_run = miner_data.get("current_run")
+                if not isinstance(best_run, dict):
+                    best_run = None
 
-                # Local metrics must match persisted local execution (agent runs).
-                # Only fall back to payload when run metrics are not available.
-                summary_map[miner_uid]["local_avg_reward"] = run_metrics.get("local_avg_reward") if run_metrics.get("local_avg_reward") is not None else miner_data.get("avg_reward")
-                summary_map[miner_uid]["local_avg_eval_score"] = run_metrics.get("local_avg_eval_score") if run_metrics.get("local_avg_eval_score") is not None else miner_data.get("avg_eval_score")
-                summary_map[miner_uid]["local_avg_eval_time"] = run_metrics.get("local_avg_eval_time") if run_metrics.get("local_avg_eval_time") is not None else miner_data.get("avg_evaluation_time")
-                summary_map[miner_uid]["local_avg_eval_cost"] = run_metrics.get("local_avg_eval_cost")  # from llm_usage or reused source
-                summary_map[miner_uid]["local_tasks_received"] = run_metrics.get("local_tasks_received") if run_metrics.get("local_tasks_received") is not None else miner_data.get("tasks_attempted")
-                summary_map[miner_uid]["local_tasks_success"] = run_metrics.get("local_tasks_success") if run_metrics.get("local_tasks_success") is not None else miner_data.get("tasks_completed")
+                if best_run is not None:
+                    summary_map[miner_uid]["local_avg_reward"] = best_run.get("reward")
+                    summary_map[miner_uid]["local_avg_eval_score"] = best_run.get("score")
+                    summary_map[miner_uid]["local_avg_eval_time"] = best_run.get("time")
+                    summary_map[miner_uid]["local_avg_eval_cost"] = best_run.get("cost")
+                    summary_map[miner_uid]["local_tasks_received"] = best_run.get("tasks_received")
+                    summary_map[miner_uid]["local_tasks_success"] = best_run.get("tasks_success")
+                else:
+                    # Legacy fallback for older validators still sending flat local payloads.
+                    summary_map[miner_uid]["local_avg_reward"] = run_metrics.get("local_avg_reward") if run_metrics.get("local_avg_reward") is not None else miner_data.get("avg_reward")
+                    summary_map[miner_uid]["local_avg_eval_score"] = (
+                        run_metrics.get("local_avg_eval_score") if run_metrics.get("local_avg_eval_score") is not None else miner_data.get("avg_eval_score")
+                    )
+                    summary_map[miner_uid]["local_avg_eval_time"] = (
+                        run_metrics.get("local_avg_eval_time") if run_metrics.get("local_avg_eval_time") is not None else miner_data.get("avg_evaluation_time")
+                    )
+                    summary_map[miner_uid]["local_avg_eval_cost"] = run_metrics.get("local_avg_eval_cost")
+                    summary_map[miner_uid]["local_tasks_received"] = (
+                        run_metrics.get("local_tasks_received") if run_metrics.get("local_tasks_received") is not None else miner_data.get("tasks_attempted")
+                    )
+                    summary_map[miner_uid]["local_tasks_success"] = run_metrics.get("local_tasks_success") if run_metrics.get("local_tasks_success") is not None else miner_data.get("tasks_completed")
+
                 summary_map[miner_uid]["is_reused"] = bool(miner_data.get("is_reused", False))
                 summary_map[miner_uid]["reused_from_agent_run_id"] = miner_data.get("reused_from_agent_run_id")
 

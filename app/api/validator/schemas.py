@@ -107,8 +107,6 @@ class FinishRoundAgentRun(BaseModel):
     tasks_completed: int | None = None
     tasks_failed: int | None = None
     zero_reason: str | None = None  # Reason for score 0 (e.g. over_cost_limit, deploy_failed, all_tasks_failed)
-    is_reused: bool = False  # Same (repo, commit) already evaluated this season
-    reused_from_agent_run_id: str | None = None  # Source agent_run_id when is_reused
 
 
 class RoundMetadata(BaseModel):
