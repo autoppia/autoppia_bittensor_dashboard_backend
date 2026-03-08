@@ -104,7 +104,6 @@ async def _repair_season(session: AsyncSession, season_id: int, dry_run: bool) -
                   ro.winner_score,
                   ro.required_improvement_pct,
                   ro.source_round_validator_id,
-                  ro.summary_json,
                   ro.post_consensus_summary
                 FROM round_outcomes ro
                 JOIN rounds r ON r.round_id = ro.round_id
@@ -160,19 +159,6 @@ async def _repair_season(session: AsyncSession, season_id: int, dry_run: bool) -
             updates += 1
             continue
 
-        summary_json = _apply_leadership_to_summary(
-            summary=_to_json_dict(row.get("summary_json")),
-            winner_uid=winner_uid,
-            winner_score=winner_score,
-            reigning_uid_before_round=reigning_uid_before_round,
-            reigning_score_before_round=reigning_score_before_round,
-            top_candidate_uid=top_candidate_uid,
-            top_candidate_score=top_candidate_score,
-            required_improvement_pct=required_improvement_pct,
-            dethroned=dethroned,
-            leader_uid_after_round=leader_uid,
-            leader_score_after_round=leader_score,
-        )
         post_consensus_summary = _apply_leadership_to_summary(
             summary=_to_json_dict(row.get("post_consensus_summary")),
             winner_uid=winner_uid,
@@ -198,7 +184,6 @@ async def _repair_season(session: AsyncSession, season_id: int, dry_run: bool) -
                   top_candidate_score = :top_candidate_score,
                   required_improvement_pct = :required_improvement_pct,
                   dethroned = :dethroned,
-                  summary_json = CAST(:summary_json AS JSONB),
                   post_consensus_summary = CAST(:post_consensus_summary AS JSONB),
                   updated_at = NOW()
                 WHERE round_id = :round_id
@@ -212,7 +197,6 @@ async def _repair_season(session: AsyncSession, season_id: int, dry_run: bool) -
                 "top_candidate_score": top_candidate_score,
                 "required_improvement_pct": required_improvement_pct,
                 "dethroned": dethroned,
-                "summary_json": json.dumps(summary_json),
                 "post_consensus_summary": json.dumps(post_consensus_summary),
             },
         )

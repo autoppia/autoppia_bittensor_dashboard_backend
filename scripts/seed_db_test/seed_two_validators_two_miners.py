@@ -268,7 +268,7 @@ async def seed_new_schema() -> tuple[int, int, list[int]]:
                 round_id, winner_miner_uid, winner_score, reigning_miner_uid_before_round, reigning_score_before_round,
                 top_candidate_miner_uid, top_candidate_score, required_improvement_pct, dethroned,
                 validators_count, miners_evaluated, tasks_evaluated, tasks_success, avg_reward, avg_eval_score, avg_eval_time,
-                computed_at, summary_json, source_round_validator_id, created_at, updated_at
+                computed_at, post_consensus_summary, source_round_validator_id, created_at, updated_at
             )
             VALUES (:round_id, 120, 0.81, 120, 0.79, 121, 0.62, 0.05, false, 2, 2, 6, 4, 0.715, 0.7, 200.0, :now, '{}'::jsonb, :source_rv_id, :now, :now)
             """,
