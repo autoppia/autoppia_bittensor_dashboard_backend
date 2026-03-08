@@ -617,8 +617,7 @@ async def init_db() -> None:
                     avg_eval_score,
                     avg_eval_time,
                     NULL::TIMESTAMPTZ AS computed_at,
-                    post_consensus_json AS summary_json,
-                    post_consensus_json AS post_consensus_summary,
+                    post_consensus_json,
                     NULL::BIGINT AS source_round_validator_id,
                     created_at,
                     updated_at
@@ -994,10 +993,6 @@ async def init_db() -> None:
                         CASE
                           WHEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_after_round'->>'uid') ~ '^[0-9]+$'
                           THEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_after_round'->>'uid')::INTEGER
-                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'miner_uid') ~ '^[0-9]+$'
-                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'miner_uid')::INTEGER
-                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'uid') ~ '^[0-9]+$'
-                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'uid')::INTEGER
                           ELSE NULL
                         END
                       ),
@@ -1006,10 +1001,6 @@ async def init_db() -> None:
                         CASE
                           WHEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_after_round'->>'reward') ~ '^-?[0-9]+(\\.[0-9]+)?$'
                           THEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_after_round'->>'reward')::DOUBLE PRECISION
-                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'reward') ~ '^-?[0-9]+(\\.[0-9]+)?$'
-                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'reward')::DOUBLE PRECISION
-                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'score') ~ '^-?[0-9]+(\\.[0-9]+)?$'
-                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'winner'->>'score')::DOUBLE PRECISION
                           ELSE NULL
                         END
                       ),
@@ -1018,8 +1009,6 @@ async def init_db() -> None:
                         CASE
                           WHEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_before_round'->>'uid') ~ '^[0-9]+$'
                           THEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_before_round'->>'uid')::INTEGER
-                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_uid_before_round') ~ '^[0-9]+$'
-                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_uid_before_round')::INTEGER
                           ELSE NULL
                         END
                       ),
@@ -1028,10 +1017,6 @@ async def init_db() -> None:
                         CASE
                           WHEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_before_round'->>'reward') ~ '^-?[0-9]+(\\.[0-9]+)?$'
                           THEN (validator_summary->'evaluation_post_consensus'->'summary'->'leader_before_round'->>'reward')::DOUBLE PRECISION
-                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_reward_before_round') ~ '^-?[0-9]+(\\.[0-9]+)?$'
-                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_reward_before_round')::DOUBLE PRECISION
-                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_score_before_round') ~ '^-?[0-9]+(\\.[0-9]+)?$'
-                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'reigning_score_before_round')::DOUBLE PRECISION
                           ELSE NULL
                         END
                       ),
@@ -1040,8 +1025,6 @@ async def init_db() -> None:
                         CASE
                           WHEN (validator_summary->'evaluation_post_consensus'->'summary'->'candidate_this_round'->>'uid') ~ '^[0-9]+$'
                           THEN (validator_summary->'evaluation_post_consensus'->'summary'->'candidate_this_round'->>'uid')::INTEGER
-                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_uid') ~ '^[0-9]+$'
-                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_uid')::INTEGER
                           ELSE NULL
                         END
                       ),
@@ -1050,10 +1033,6 @@ async def init_db() -> None:
                         CASE
                           WHEN (validator_summary->'evaluation_post_consensus'->'summary'->'candidate_this_round'->>'reward') ~ '^-?[0-9]+(\\.[0-9]+)?$'
                           THEN (validator_summary->'evaluation_post_consensus'->'summary'->'candidate_this_round'->>'reward')::DOUBLE PRECISION
-                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_reward') ~ '^-?[0-9]+(\\.[0-9]+)?$'
-                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_reward')::DOUBLE PRECISION
-                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_score') ~ '^-?[0-9]+(\\.[0-9]+)?$'
-                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'top_candidate_score')::DOUBLE PRECISION
                           ELSE NULL
                         END
                       ),
@@ -1062,10 +1041,6 @@ async def init_db() -> None:
                         CASE
                           WHEN (validator_summary->'evaluation_post_consensus'->'summary'->>'percentage_to_dethrone') ~ '^-?[0-9]+(\\.[0-9]+)?$'
                           THEN (validator_summary->'evaluation_post_consensus'->'summary'->>'percentage_to_dethrone')::DOUBLE PRECISION
-                          WHEN (validator_summary->'evaluation_post_consensus'->'season_summary'->>'required_improvement_pct') ~ '^-?[0-9]+(\\.[0-9]+)?$'
-                          THEN (validator_summary->'evaluation_post_consensus'->'season_summary'->>'required_improvement_pct')::DOUBLE PRECISION
-                          WHEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'required_improvement_pct') ~ '^-?[0-9]+(\\.[0-9]+)?$'
-                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'required_improvement_pct')::DOUBLE PRECISION
                           ELSE NULL
                         END
                       ),
@@ -1074,10 +1049,6 @@ async def init_db() -> None:
                         CASE
                           WHEN LOWER(COALESCE(validator_summary->'evaluation_post_consensus'->'summary'->>'dethroned', '')) IN ('true', 'false')
                           THEN (validator_summary->'evaluation_post_consensus'->'summary'->>'dethroned')::BOOLEAN
-                          WHEN LOWER(COALESCE(validator_summary->'evaluation_post_consensus'->'season_summary'->>'dethroned', '')) IN ('true', 'false')
-                          THEN (validator_summary->'evaluation_post_consensus'->'season_summary'->>'dethroned')::BOOLEAN
-                          WHEN LOWER(COALESCE(validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'dethroned', '')) IN ('true', 'false')
-                          THEN (validator_summary->'evaluation_post_consensus'->'round_summary'->'decision'->>'dethroned')::BOOLEAN
                           ELSE NULL
                         END
                       )

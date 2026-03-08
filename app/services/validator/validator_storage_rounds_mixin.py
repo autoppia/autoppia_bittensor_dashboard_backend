@@ -648,11 +648,11 @@ class ValidatorStorageRoundsMixin:
             "reason": authority_conflict_reason,
         }
 
-        post_summary = merged.get("evaluation_post_consensus")
-        if isinstance(post_summary, dict):
+        post_consensus_json = merged.get("evaluation_post_consensus")
+        if isinstance(post_consensus_json, dict):
             # Remove noisy internal key from post-consensus summary shown in UI payloads.
-            post_summary.pop("schema_version", None)
-            merged["evaluation_post_consensus"] = post_summary
+            post_consensus_json.pop("schema_version", None)
+            merged["evaluation_post_consensus"] = post_consensus_json
 
         resolved_s3_logs_url = (s3_logs_url or "").strip() or None
         if resolved_s3_logs_url is None:
@@ -669,7 +669,7 @@ class ValidatorStorageRoundsMixin:
         # Keep canonical round_validators table aligned with finish payloads.
         # round_validators stores only the canonical post-consensus JSON now.
         try:
-            post_summary_json = merged.get("evaluation_post_consensus")
+            post_consensus_json = merged.get("evaluation_post_consensus")
             await self.session.execute(
                 text(
                     """
@@ -687,7 +687,7 @@ class ValidatorStorageRoundsMixin:
                 ),
                 {
                     "validator_round_id": validator_round_id,
-                    "post_consensus_json": json.dumps(post_summary_json) if post_summary_json is not None else None,
+                    "post_consensus_json": json.dumps(post_consensus_json) if post_consensus_json is not None else None,
                     "ipfs_uploaded": json.dumps(merged.get("ipfs_uploaded")) if merged.get("ipfs_uploaded") is not None else None,
                     "ipfs_downloaded": json.dumps(merged.get("ipfs_downloaded")) if merged.get("ipfs_downloaded") is not None else None,
                     "s3_logs_url": resolved_s3_logs_url,
