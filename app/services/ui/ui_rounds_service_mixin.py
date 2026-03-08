@@ -708,28 +708,37 @@ class UIRoundsServiceMixin:
         if leader_after is not None:
             leader_after["reward"] = float(row.get("leader_after_reward") or 0.0)
 
-        # Resolve avg_eval_time and avg_eval_cost for the leader.
+        # Resolve leader-specific score/time/cost. round_summary currently stores
+        # round-level aggregates, but the UI needs the leader snapshot.
+        avg_eval_score = float(row.get("avg_eval_score") or 0.0)
         # round_summary.avg_eval_time may be 0 when post_consensus_avg_eval_time was not
         # populated; in that case fall back to the leader's best_local_eval_time from
         # round_validator_miners (which is always filled from the actual agent run).
         avg_eval_time = float(row.get("avg_eval_time") or 0.0)
         avg_eval_cost = float(row["avg_eval_cost"]) if row.get("avg_eval_cost") is not None else None
 
-        if (avg_eval_time == 0.0 or avg_eval_cost is None) and leader_after_uid is not None:
+        if (avg_eval_score == 0.0 or avg_eval_time == 0.0 or avg_eval_cost is None) and leader_after_uid is not None:
             leader_time_row = (
                 (
                     await self.session.execute(
                         text(
                             """
                             SELECT
-                                COALESCE(NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) AS resolved_time,
-                                COALESCE(rvm.local_avg_eval_cost, rvm.best_local_eval_cost)               AS resolved_cost
+                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_score, 0), NULLIF(rvm.local_avg_eval_score, 0), rvm.best_local_eval_score, 0) AS resolved_score,
+                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_time, 0), NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) AS resolved_time,
+                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_cost, 0), rvm.local_avg_eval_cost, rvm.best_local_eval_cost) AS resolved_cost
                             FROM round_validator_miners rvm
                             JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
                             WHERE rvm.round_id = :rid
                               AND rvm.miner_uid = :uid
-                              AND COALESCE(NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) > 0
-                            ORDER BY COALESCE(NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) DESC
+                              AND (
+                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_score, 0), NULLIF(rvm.local_avg_eval_score, 0), rvm.best_local_eval_score, 0) > 0
+                                OR COALESCE(NULLIF(rvm.post_consensus_avg_eval_time, 0), NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) > 0
+                                OR COALESCE(NULLIF(rvm.post_consensus_avg_eval_cost, 0), rvm.local_avg_eval_cost, rvm.best_local_eval_cost) IS NOT NULL
+                              )
+                            ORDER BY
+                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_score, 0), NULLIF(rvm.local_avg_eval_score, 0), rvm.best_local_eval_score, 0) DESC,
+                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_time, 0), NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) DESC
                             LIMIT 1
                             """
                         ),
@@ -740,6 +749,8 @@ class UIRoundsServiceMixin:
                 .first()
             )
             if leader_time_row:
+                if avg_eval_score == 0.0 and leader_time_row.get("resolved_score"):
+                    avg_eval_score = float(leader_time_row["resolved_score"])
                 if avg_eval_time == 0.0 and leader_time_row.get("resolved_time"):
                     avg_eval_time = float(leader_time_row["resolved_time"])
                 if avg_eval_cost is None and leader_time_row.get("resolved_cost") is not None:
@@ -763,7 +774,7 @@ class UIRoundsServiceMixin:
                 "tasks_evaluated": int(row.get("tasks_evaluated") or 0),
                 "tasks_success": int(row.get("tasks_success") or 0),
                 "avg_reward": float(row.get("avg_reward") or 0.0),
-                "avg_eval_score": float(row.get("avg_eval_score") or 0.0),
+                "avg_eval_score": avg_eval_score,
                 "avg_eval_time": avg_eval_time,
                 "avg_eval_cost": avg_eval_cost,
                 "raw_summary": row.get("summary_json"),

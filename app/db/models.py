@@ -231,6 +231,7 @@ class ValidatorRoundSummaryORM(TimestampMixin, Base):
     local_avg_reward: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     local_avg_eval_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     local_avg_eval_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    local_avg_eval_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     local_tasks_received: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     local_tasks_success: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
@@ -239,6 +240,7 @@ class ValidatorRoundSummaryORM(TimestampMixin, Base):
     post_consensus_avg_reward: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     post_consensus_avg_eval_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     post_consensus_avg_eval_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    post_consensus_avg_eval_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     post_consensus_tasks_received: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     post_consensus_tasks_success: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

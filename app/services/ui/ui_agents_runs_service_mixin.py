@@ -272,13 +272,19 @@ class UIAgentsRunsServiceMixin:
         local_total_tasks = int(sum(int(r["local_tasks_received"] or 0) for r in miner_rows))
         local_success_tasks = int(sum(int(r["local_tasks_success"] or 0) for r in miner_rows))
         local_avg_time = (sum(float(r["local_avg_eval_time"] or 0.0) for r in miner_rows) / len(miner_rows)) if miner_rows else 0.0
+        fallback_eval_time = float(first["local_avg_eval_time"] or first["best_local_eval_time"] or 0.0) if first is not None else 0.0
+        fallback_eval_cost = (
+            float(first["local_avg_eval_cost"] or first["best_local_eval_cost"])
+            if first is not None and (first.get("local_avg_eval_cost") is not None or first.get("best_local_eval_cost") is not None)
+            else None
+        )
         canonical_total_tasks = int(selected_round_history_row["tasks_received"]) if selected_round_history_row and selected_round_history_row.get("tasks_received") is not None else None
         canonical_success_tasks = int(selected_round_history_row["tasks_success"]) if selected_round_history_row and selected_round_history_row.get("tasks_success") is not None else None
         canonical_avg_time = float(selected_round_history_row["eval_time"]) if selected_round_history_row and selected_round_history_row.get("eval_time") is not None else None
         total_tasks = canonical_total_tasks if canonical_total_tasks is not None else local_total_tasks
         success_tasks = canonical_success_tasks if canonical_success_tasks is not None else local_success_tasks
         failed_tasks = max(total_tasks - success_tasks, 0)
-        avg_time = canonical_avg_time if canonical_avg_time is not None else local_avg_time
+        avg_time = canonical_avg_time if canonical_avg_time is not None and canonical_avg_time > 0 else (local_avg_time if local_avg_time > 0 else fallback_eval_time)
         canonical_avg_cost = float(selected_round_history_row["eval_cost"]) if selected_round_history_row and selected_round_history_row.get("eval_cost") is not None else None
         reward = (
             float(selected_round_history_row["reward"])
@@ -492,8 +498,11 @@ class UIAgentsRunsServiceMixin:
             performance_by_website.sort(key=lambda x: x["tasks_received"], reverse=True)
             if has_llm_usage and total_tasks_for_cost > 0:
                 avg_cost_per_task = total_llm_cost / float(total_tasks_for_cost)
-        if avg_cost_per_task is None and canonical_avg_cost is not None:
-            avg_cost_per_task = canonical_avg_cost
+        if avg_cost_per_task is None:
+            if canonical_avg_cost is not None and canonical_avg_cost > 0:
+                avg_cost_per_task = canonical_avg_cost
+            elif fallback_eval_cost is not None and fallback_eval_cost > 0:
+                avg_cost_per_task = fallback_eval_cost
 
         season_leadership_row = (
             (
