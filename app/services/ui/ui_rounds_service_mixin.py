@@ -277,8 +277,8 @@ class UIRoundsServiceMixin:
                         rvm.miner_uid AS uid,
                         COALESCE(NULLIF(TRIM(COALESCE(rvm.name, '')), ''), 'miner ' || rvm.miner_uid::text) AS name,
                         rvm.image_url AS image,
-                        COALESCE(rvm.post_consensus_avg_reward, rvm.best_local_reward, rvm.local_avg_reward, 0) AS best_local_reward,
-                        COALESCE(rvm.post_consensus_rank, rvm.best_local_rank, rvm.local_rank, 9999) AS best_local_rank,
+                        COALESCE(rvm.post_consensus_avg_reward, 0) AS best_reward,
+                        COALESCE(rvm.post_consensus_rank, 9999) AS best_rank,
                         r.round_number_in_season AS round_number
                       FROM round_validator_miners rvm
                       JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
@@ -288,33 +288,28 @@ class UIRoundsServiceMixin:
                         AND rv.validator_uid = :main_validator_uid
                         AND NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
                         AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
-                        AND COALESCE(
-                          rvm.best_local_tasks_received,
-                          rvm.post_consensus_tasks_received,
-                          rvm.local_tasks_received,
-                          0
-                        ) > 0
+                        AND COALESCE(rvm.post_consensus_tasks_received, 0) > 0
                     ),
                     best_rows AS (
                       SELECT DISTINCT ON (uid)
                         uid,
                         name,
                         image,
-                        best_local_reward,
-                        best_local_rank,
+                        best_reward,
+                        best_rank,
                         round_number
                       FROM season_rows
-                      ORDER BY uid, best_local_reward DESC, best_local_rank ASC, round_number ASC
+                      ORDER BY uid, best_reward DESC, best_rank ASC, round_number ASC
                     ),
                     ranked AS (
                       SELECT
                         uid,
                         name,
                         image,
-                        best_local_reward,
+                        best_reward,
                         round_number,
                         ROW_NUMBER() OVER (
-                          ORDER BY best_local_reward DESC, best_local_rank ASC, uid ASC
+                          ORDER BY best_reward DESC, best_rank ASC, uid ASC
                         ) AS season_rank
                       FROM best_rows
                     )
@@ -322,7 +317,7 @@ class UIRoundsServiceMixin:
                       uid,
                       name,
                       image,
-                      best_local_reward,
+                      best_reward,
                       round_number,
                       season_rank
                     FROM ranked
@@ -341,9 +336,9 @@ class UIRoundsServiceMixin:
                 "uid": int(r["uid"]),
                 "name": r["name"],
                 "image": r["image"] or f"/miners/{int(r['uid']) % 100}.svg",
-                "post_consensus_avg_reward": float(r["best_local_reward"] or 0.0),
-                "best_reward_in_season": float(r["best_local_reward"] or 0.0),
-                "best_local_round_reward": float(r["best_local_reward"] or 0.0),
+                "post_consensus_avg_reward": float(r["best_reward"] or 0.0),
+                "best_reward_in_season": float(r["best_reward"] or 0.0),
+                "best_local_round_reward": float(r["best_reward"] or 0.0),
                 "best_round_in_season": int(r["round_number"]) if r["round_number"] is not None else None,
                 "post_consensus_rank": int(r["season_rank"] or 9999),
                 "is_reigning_leader": (season_row is not None and season_row["leader_miner_uid"] is not None and int(season_row["leader_miner_uid"]) == int(r["uid"])),
@@ -710,6 +705,43 @@ class UIRoundsServiceMixin:
         if leader_after is not None:
             leader_after["reward"] = float(row.get("leader_after_reward") or 0.0)
 
+        # Resolve avg_eval_time and avg_eval_cost for the leader.
+        # round_summary.avg_eval_time may be 0 when post_consensus_avg_eval_time was not
+        # populated; in that case fall back to the leader's best_local_eval_time from
+        # round_validator_miners (which is always filled from the actual agent run).
+        avg_eval_time = float(row.get("avg_eval_time") or 0.0)
+        avg_eval_cost = float(row["avg_eval_cost"]) if row.get("avg_eval_cost") is not None else None
+
+        if (avg_eval_time == 0.0 or avg_eval_cost is None) and leader_after_uid is not None:
+            leader_time_row = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT
+                                COALESCE(NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) AS resolved_time,
+                                COALESCE(rvm.local_avg_eval_cost, rvm.best_local_eval_cost)               AS resolved_cost
+                            FROM round_validator_miners rvm
+                            JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
+                            WHERE rvm.round_id = :rid
+                              AND rvm.miner_uid = :uid
+                              AND COALESCE(NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) > 0
+                            ORDER BY COALESCE(NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) DESC
+                            LIMIT 1
+                            """
+                        ),
+                        {"rid": round_id, "uid": leader_after_uid},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if leader_time_row:
+                if avg_eval_time == 0.0 and leader_time_row.get("resolved_time"):
+                    avg_eval_time = float(leader_time_row["resolved_time"])
+                if avg_eval_cost is None and leader_time_row.get("resolved_cost") is not None:
+                    avg_eval_cost = float(leader_time_row["resolved_cost"])
+
         return {
             "round_id": round_id,
             "round_key": f"{season}/{round_in_season}",
@@ -729,8 +761,8 @@ class UIRoundsServiceMixin:
                 "tasks_success": int(row.get("tasks_success") or 0),
                 "avg_reward": float(row.get("avg_reward") or 0.0),
                 "avg_eval_score": float(row.get("avg_eval_score") or 0.0),
-                "avg_eval_time": float(row.get("avg_eval_time") or 0.0),
-                "avg_eval_cost": (float(row["avg_eval_cost"]) if row.get("avg_eval_cost") is not None else None),
+                "avg_eval_time": avg_eval_time,
+                "avg_eval_cost": avg_eval_cost,
                 "raw_summary": row.get("summary_json"),
                 "post_consensus_summary": row.get("post_consensus_summary"),
             },
