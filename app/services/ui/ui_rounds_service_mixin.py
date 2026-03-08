@@ -766,7 +766,6 @@ class UIRoundsServiceMixin:
                           finished_at,
                           ipfs_uploaded,
                           ipfs_downloaded,
-                          local_summary_json,
                           post_consensus_json
                         FROM round_validators
                         WHERE round_id = :rid
