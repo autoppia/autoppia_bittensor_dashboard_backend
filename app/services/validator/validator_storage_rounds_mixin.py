@@ -853,7 +853,34 @@ class ValidatorStorageRoundsMixin:
             if run_row.agent_run_id in reused_from_map:
                 # Do not downgrade an already-resolved root source to an intermediate reused run.
                 if not getattr(run_row, "reused_from_agent_run_id", None):
-                    run_row.reused_from_agent_run_id = reused_from_map[run_row.agent_run_id]
+                    candidate_id = reused_from_map[run_row.agent_run_id]
+                    if candidate_id:
+                        # Validate FK before assigning: the source run must exist in the DB.
+                        # The validator may reference a run that was purged on restart, or a
+                        # cross-validator run that was never committed to this DB.
+                        candidate_run = await self._get_agent_run_row(str(candidate_id))
+                        if candidate_run is not None:
+                            run_row.reused_from_agent_run_id = candidate_run.agent_run_id
+                        else:
+                            # Source not in DB: try to find the best existing run for this miner.
+                            fallback = await self._find_best_source_run_for_miner(
+                                miner_uid=run_row.miner_uid,
+                                exclude_validator_round_id=validator_round_id,
+                            )
+                            run_row.reused_from_agent_run_id = fallback.agent_run_id if fallback else None
+                            if fallback:
+                                logger.info(
+                                    "finish_round: source run %s not found for miner_uid=%s; using fallback %s",
+                                    candidate_id,
+                                    run_row.miner_uid,
+                                    fallback.agent_run_id,
+                                )
+                            else:
+                                logger.warning(
+                                    "finish_round: source run %s not found and no fallback for miner_uid=%s; setting reused_from=NULL",
+                                    candidate_id,
+                                    run_row.miner_uid,
+                                )
 
             # If run has effective score 0 and no zero_reason: for reused runs use source run's zero_reason, else derive from evaluations
             if run_row.zero_reason is None and self._run_has_zero_score(run_row):

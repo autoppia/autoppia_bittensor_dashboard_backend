@@ -764,6 +764,31 @@ class ValidatorStorageHelpersMixin:
         if updated:
             await self.session.flush()
 
+    async def _find_best_source_run_for_miner(
+        self,
+        miner_uid: Optional[int],
+        exclude_validator_round_id: str,
+    ) -> Optional[AgentEvaluationRunORM]:
+        """Find the best non-reused agent run for a miner to use as a fallback reuse source.
+
+        Used when the validator's reused_from_agent_run_id references a run that no longer
+        exists in the DB (e.g., purged on validator restart or from a cross-validator session).
+        Returns the run with the most tasks completed, preferring earlier rounds.
+        """
+        if miner_uid is None:
+            return None
+        stmt = (
+            select(AgentEvaluationRunORM)
+            .where(
+                AgentEvaluationRunORM.miner_uid == int(miner_uid),
+                AgentEvaluationRunORM.validator_round_id != exclude_validator_round_id,
+                AgentEvaluationRunORM.total_tasks > 0,
+            )
+            .order_by(AgentEvaluationRunORM.total_tasks.desc())
+            .limit(1)
+        )
+        return await self.session.scalar(stmt)
+
     async def _get_task_row(self, task_id: str) -> Optional[TaskORM]:
         stmt = select(TaskORM).where(TaskORM.task_id == task_id)
         return await self.session.scalar(stmt)

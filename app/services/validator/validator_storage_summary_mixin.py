@@ -769,8 +769,82 @@ class ValidatorStorageSummaryMixin:
                 "local_avg_eval_time": run_row.average_execution_time,
                 "local_tasks_received": run_row.total_tasks,
                 "local_tasks_success": run_row.success_tasks,
+                "local_avg_eval_cost": None,  # populated below from llm_usage or reused source
             }
             summary_map.setdefault(miner_uid, {}).update(run_metrics_map[miner_uid])
+
+        # Compute local_avg_eval_cost from evaluation_llm_usage for miners with stored evaluations.
+        try:
+            cost_result = await self.session.execute(
+                text(
+                    """
+                    SELECT e.miner_uid,
+                           AVG(agg.eval_total_cost) AS avg_cost
+                    FROM (
+                        SELECT elu.evaluation_id,
+                               SUM(COALESCE(elu.cost, 0)) AS eval_total_cost
+                        FROM evaluation_llm_usage elu
+                        GROUP BY elu.evaluation_id
+                    ) agg
+                    JOIN evaluations e ON e.evaluation_id = agg.evaluation_id
+                    WHERE e.validator_round_id = :validator_round_id
+                      AND e.miner_uid IS NOT NULL
+                      AND agg.eval_total_cost > 0
+                    GROUP BY e.miner_uid
+                    """
+                ),
+                {"validator_round_id": validator_round_id},
+            )
+            for cost_row in cost_result.mappings():
+                uid = cost_row.get("miner_uid")
+                avg_cost = cost_row.get("avg_cost")
+                if uid is not None and avg_cost is not None:
+                    uid_int = int(uid)
+                    if uid_int in run_metrics_map:
+                        run_metrics_map[uid_int]["local_avg_eval_cost"] = float(avg_cost)
+                    if uid_int in summary_map:
+                        summary_map[uid_int]["local_avg_eval_cost"] = float(avg_cost)
+        except Exception:
+            pass  # Non-critical: cost data stays NULL for this round
+
+        # For reused miners (no evaluations stored), propagate local_avg_eval_cost from the
+        # source agent_run's best historical round_validator_miners cost record.
+        try:
+            reused_cost_result = await self.session.execute(
+                text(
+                    """
+                    SELECT mer.miner_uid,
+                           rvm_src.local_avg_eval_cost AS source_cost
+                    FROM miner_evaluation_runs mer
+                    JOIN miner_evaluation_runs mer_src
+                      ON mer_src.agent_run_id = mer.reused_from_agent_run_id
+                    JOIN round_validators rv_src
+                      ON rv_src.validator_round_id = mer_src.validator_round_id
+                    JOIN round_validator_miners rvm_src
+                      ON rvm_src.round_validator_id = rv_src.round_validator_id
+                      AND rvm_src.miner_uid = mer.miner_uid
+                    WHERE mer.validator_round_id = :validator_round_id
+                      AND mer.is_reused = TRUE
+                      AND mer.reused_from_agent_run_id IS NOT NULL
+                      AND rvm_src.local_avg_eval_cost IS NOT NULL
+                      AND rvm_src.local_avg_eval_cost > 0
+                    ORDER BY rvm_src.local_avg_eval_cost DESC
+                    """
+                ),
+                {"validator_round_id": validator_round_id},
+            )
+            for reused_row in reused_cost_result.mappings():
+                uid = reused_row.get("miner_uid")
+                source_cost = reused_row.get("source_cost")
+                if uid is not None and source_cost is not None:
+                    uid_int = int(uid)
+                    # Only fill in if not already set from direct evaluations
+                    if run_metrics_map.get(uid_int, {}).get("local_avg_eval_cost") is None:
+                        run_metrics_map.setdefault(uid_int, {})["local_avg_eval_cost"] = float(source_cost)
+                    if summary_map.get(uid_int, {}).get("local_avg_eval_cost") is None:
+                        summary_map.setdefault(uid_int, {})["local_avg_eval_cost"] = float(source_cost)
+        except Exception:
+            pass  # Non-critical: cost propagation from reused source stays NULL
 
         # If no evaluation data provided, create basic summaries from agent_runs
         if not local_evaluation and not post_consensus_evaluation:
