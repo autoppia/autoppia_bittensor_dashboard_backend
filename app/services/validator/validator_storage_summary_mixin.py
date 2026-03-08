@@ -885,6 +885,7 @@ class ValidatorStorageSummaryMixin:
                 summary_map[miner_uid]["local_avg_reward"] = run_metrics.get("local_avg_reward") if run_metrics.get("local_avg_reward") is not None else miner_data.get("avg_reward")
                 summary_map[miner_uid]["local_avg_eval_score"] = run_metrics.get("local_avg_eval_score") if run_metrics.get("local_avg_eval_score") is not None else miner_data.get("avg_eval_score")
                 summary_map[miner_uid]["local_avg_eval_time"] = run_metrics.get("local_avg_eval_time") if run_metrics.get("local_avg_eval_time") is not None else miner_data.get("avg_evaluation_time")
+                summary_map[miner_uid]["local_avg_eval_cost"] = run_metrics.get("local_avg_eval_cost")  # from llm_usage or reused source
                 summary_map[miner_uid]["local_tasks_received"] = run_metrics.get("local_tasks_received") if run_metrics.get("local_tasks_received") is not None else miner_data.get("tasks_attempted")
                 summary_map[miner_uid]["local_tasks_success"] = run_metrics.get("local_tasks_success") if run_metrics.get("local_tasks_success") is not None else miner_data.get("tasks_completed")
                 summary_map[miner_uid]["is_reused"] = bool(miner_data.get("is_reused", False))
@@ -929,6 +930,7 @@ class ValidatorStorageSummaryMixin:
                 summary_map[miner_uid]["post_consensus_avg_reward"] = miner_data.get("consensus_reward")
                 summary_map[miner_uid]["post_consensus_avg_eval_score"] = miner_data.get("avg_eval_score")
                 summary_map[miner_uid]["post_consensus_avg_eval_time"] = miner_data.get("avg_eval_time")
+                summary_map[miner_uid]["post_consensus_avg_eval_cost"] = miner_data.get("avg_cost")
                 summary_map[miner_uid]["post_consensus_tasks_received"] = miner_data.get("tasks_sent")
                 summary_map[miner_uid]["post_consensus_tasks_success"] = miner_data.get("tasks_success")
                 summary_map[miner_uid]["weight"] = miner_data.get("weight")
@@ -955,6 +957,8 @@ class ValidatorStorageSummaryMixin:
                     data["post_consensus_tasks_success"] = int(data.get("local_tasks_success") or 0)
                 if float(data.get("post_consensus_avg_eval_time") or 0.0) <= 0.0:
                     data["post_consensus_avg_eval_time"] = data.get("local_avg_eval_time")
+                if float(data.get("post_consensus_avg_eval_cost") or 0.0) <= 0.0:
+                    data["post_consensus_avg_eval_cost"] = data.get("local_avg_eval_cost")
                 if float(data.get("post_consensus_avg_eval_score") or 0.0) <= 0.0:
                     data["post_consensus_avg_eval_score"] = data.get("local_avg_eval_score")
                 if float(data.get("post_consensus_avg_reward") or 0.0) <= 0.0:
@@ -993,6 +997,34 @@ class ValidatorStorageSummaryMixin:
                     reused_from_agent_run_id=summary_data.get("reused_from_agent_run_id"),
                 )
 
+        # Write local_avg_eval_cost directly to round_validator_miners.
+        # The compat trigger that maps validator_round_summary_miners → round_validator_miners
+        # predates the cost column and does not propagate it. We use a direct SQL UPDATE.
+        cost_by_miner = {int(uid): data["local_avg_eval_cost"] for uid, data in summary_map.items() if data.get("local_avg_eval_cost") is not None and float(data["local_avg_eval_cost"] or 0) > 0}
+        if cost_by_miner:
+            try:
+                for uid_int, cost_val in cost_by_miner.items():
+                    await self.session.execute(
+                        text(
+                            """
+                            UPDATE round_validator_miners rvm
+                            SET local_avg_eval_cost = :cost, updated_at = NOW()
+                            FROM round_validators rv
+                            WHERE rv.round_validator_id = rvm.round_validator_id
+                              AND rv.validator_round_id = :validator_round_id
+                              AND rvm.miner_uid = :miner_uid
+                              AND (rvm.local_avg_eval_cost IS NULL OR rvm.local_avg_eval_cost = 0)
+                            """
+                        ),
+                        {
+                            "validator_round_id": validator_round_id,
+                            "miner_uid": uid_int,
+                            "cost": float(cost_val),
+                        },
+                    )
+            except Exception:
+                pass  # Non-critical: cost write failure should not block round finalization
+
         # Canonicalize post-consensus metrics across all validators in the same round.
         # Reward/rank/weight come from consensus payloads and may contain tiny per-validator
         # drifts; non-reward metrics must be globally consistent for round-level traceability.
@@ -1022,6 +1054,7 @@ class ValidatorStorageSummaryMixin:
                         AVG(vrs.weight) FILTER (WHERE vrs.weight IS NOT NULL) AS canonical_weight,
                         AVG(vrs.local_avg_eval_score) FILTER (WHERE vrs.local_avg_eval_score IS NOT NULL) AS canonical_eval_score,
                         AVG(vrs.local_avg_eval_time) FILTER (WHERE vrs.local_avg_eval_time IS NOT NULL) AS canonical_eval_time,
+                        AVG(vrs.local_avg_eval_cost) FILTER (WHERE vrs.local_avg_eval_cost IS NOT NULL) AS canonical_eval_cost,
                         SUM(COALESCE(vrs.local_tasks_received, 0))::INTEGER AS canonical_tasks_received,
                         SUM(COALESCE(vrs.local_tasks_success, 0))::INTEGER AS canonical_tasks_success
                     FROM validator_round_summary_miners vrs
@@ -1034,6 +1067,7 @@ class ValidatorStorageSummaryMixin:
                     post_consensus_avg_reward = COALESCE(cpm.canonical_reward, vrs.post_consensus_avg_reward),
                     post_consensus_avg_eval_score = COALESCE(cpm.canonical_eval_score, vrs.post_consensus_avg_eval_score),
                     post_consensus_avg_eval_time = COALESCE(cpm.canonical_eval_time, vrs.post_consensus_avg_eval_time),
+                    post_consensus_avg_eval_cost = COALESCE(cpm.canonical_eval_cost, vrs.post_consensus_avg_eval_cost),
                     post_consensus_tasks_received = COALESCE(cpm.canonical_tasks_received, vrs.post_consensus_tasks_received),
                     post_consensus_tasks_success = COALESCE(cpm.canonical_tasks_success, vrs.post_consensus_tasks_success),
                     weight = COALESCE(cpm.canonical_weight, vrs.weight),
