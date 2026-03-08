@@ -934,8 +934,6 @@ async def finish_round(
                         "tasks_completed": ar.tasks_completed,
                         "tasks_failed": ar.tasks_failed,
                         "zero_reason": ar.zero_reason,
-                        "is_reused": ar.is_reused,
-                        "reused_from_agent_run_id": ar.reused_from_agent_run_id,
                     }
                     for ar in payload.agent_runs
                 ]

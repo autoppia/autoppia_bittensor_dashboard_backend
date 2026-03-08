@@ -284,8 +284,6 @@ class AgentEvaluationRun(BaseModel):
     # rank and weight removed - obtain via validator_round_summary_miners
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Extensible metadata for the run")
 
-    is_reused: bool = Field(default=False, description="True when this run reuses results from a previous run (same code)")
-    reused_from_agent_run_id: Optional[str] = Field(default=None, description="Agent run id that was evaluated; evaluations come from that run")
     zero_reason: Optional[str] = Field(default=None, description="Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, all_tasks_failed)")
 
     @model_validator(mode="after")  # type: ignore[misc]
