@@ -27,11 +27,16 @@ class ValidatorStorageSummaryMixin:
         return {}
 
     @staticmethod
+    def _summary_block(payload: Any) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+        summary = payload.get("summary")
+        return dict(summary) if isinstance(summary, dict) else {}
+
+    @staticmethod
     def _apply_leadership_to_summary(
         *,
         summary: Dict[str, Any],
-        winner_uid: Optional[int],
-        winner_reward: Optional[float],
         reigning_uid_before_round: Optional[int],
         reigning_reward_before_round: Optional[float],
         top_candidate_uid: Optional[int],
@@ -40,51 +45,58 @@ class ValidatorStorageSummaryMixin:
         dethroned: bool,
         leader_uid_after_round: Optional[int],
         leader_reward_after_round: Optional[float],
+        top_candidate_score: Optional[float] = None,
+        top_candidate_time: Optional[float] = None,
+        top_candidate_cost: Optional[float] = None,
+        leader_after_score: Optional[float] = None,
+        leader_after_time: Optional[float] = None,
+        leader_after_cost: Optional[float] = None,
+        leader_after_weight: Optional[float] = None,
     ) -> Dict[str, Any]:
         payload = dict(summary or {})
-        round_summary = payload.get("round_summary") if isinstance(payload.get("round_summary"), dict) else {}
-        decision = round_summary.get("decision") if isinstance(round_summary.get("decision"), dict) else {}
-        winner_obj = round_summary.get("winner") if isinstance(round_summary.get("winner"), dict) else {}
-        season_summary = payload.get("season_summary") if isinstance(payload.get("season_summary"), dict) else {}
+        summary_block = dict(payload.get("summary") or {})
+        leader_before = dict(summary_block.get("leader_before_round") or {})
+        candidate = dict(summary_block.get("candidate_this_round") or {})
+        leader_after = dict(summary_block.get("leader_after_round") or {})
 
-        winner_obj.pop("score", None)
-        winner_obj["miner_uid"] = winner_uid
-        winner_obj["reward"] = winner_reward
-        round_summary["winner"] = winner_obj
-        round_summary.pop("miner_scores", None)
-
-        decision.pop("reigning_score_before_round", None)
-        decision.pop("top_candidate_score", None)
-        decision["reigning_uid_before_round"] = reigning_uid_before_round
-        decision["reigning_reward_before_round"] = reigning_reward_before_round
-        decision["top_candidate_uid"] = top_candidate_uid
-        decision["top_candidate_reward"] = top_candidate_reward
-        decision["required_improvement_pct"] = required_improvement_pct
-        decision["dethroned"] = dethroned
-        round_summary["decision"] = decision
-        payload["round_summary"] = round_summary
-
-        season_summary.pop("winner_before_round_score", None)
-        season_summary.pop("candidate_score", None)
-        season_summary.pop("winner_after_round_score", None)
-        season_summary.pop("current_winner_score", None)
-        season_summary["required_improvement_pct"] = required_improvement_pct
-        season_summary["winner_before_round_uid"] = reigning_uid_before_round
-        season_summary["winner_before_round_reward"] = reigning_reward_before_round
-        season_summary["candidate_uid"] = top_candidate_uid
-        season_summary["candidate_reward"] = top_candidate_reward
-        season_summary["winner_after_round_uid"] = leader_uid_after_round
-        season_summary["winner_after_round_reward"] = leader_reward_after_round
-        season_summary["current_winner_uid"] = leader_uid_after_round
-        season_summary["current_winner_reward"] = leader_reward_after_round
-        season_summary["dethroned"] = dethroned
-        if dethroned:
-            season_summary["round_result"] = "dethroned"
-        elif leader_uid_after_round is not None:
-            season_summary["round_result"] = "retained"
+        if reigning_uid_before_round is None:
+            leader_before = None
         else:
-            season_summary["round_result"] = "no_winner"
-        payload["season_summary"] = season_summary
+            leader_before["uid"] = int(reigning_uid_before_round)
+            leader_before["reward"] = float(reigning_reward_before_round or 0.0)
+
+        if top_candidate_uid is None:
+            candidate = None
+        else:
+            candidate["uid"] = int(top_candidate_uid)
+            candidate["reward"] = float(top_candidate_reward or 0.0)
+            if top_candidate_score is not None:
+                candidate["score"] = float(top_candidate_score)
+            if top_candidate_time is not None:
+                candidate["time"] = float(top_candidate_time)
+            if top_candidate_cost is not None:
+                candidate["cost"] = float(top_candidate_cost)
+
+        if leader_uid_after_round is None:
+            leader_after = None
+        else:
+            leader_after["uid"] = int(leader_uid_after_round)
+            leader_after["reward"] = float(leader_reward_after_round or 0.0)
+            if leader_after_score is not None:
+                leader_after["score"] = float(leader_after_score)
+            if leader_after_time is not None:
+                leader_after["time"] = float(leader_after_time)
+            if leader_after_cost is not None:
+                leader_after["cost"] = float(leader_after_cost)
+            if leader_after_weight is not None:
+                leader_after["weight"] = float(leader_after_weight)
+
+        summary_block["percentage_to_dethrone"] = float(required_improvement_pct)
+        summary_block["dethroned"] = bool(dethroned)
+        summary_block["leader_before_round"] = leader_before
+        summary_block["candidate_this_round"] = candidate
+        summary_block["leader_after_round"] = leader_after
+        payload["summary"] = summary_block
         return payload
 
     async def _recompute_and_persist_season_leadership(self, season_id: int) -> None:
@@ -98,7 +110,7 @@ class ValidatorStorageSummaryMixin:
                       rs.candidate_miner_uid,
                       rs.candidate_reward,
                       rs.required_improvement_pct,
-                      rs.post_consensus_summary
+                      rs.post_consensus_json
                     FROM round_summary rs
                     JOIN rounds r ON r.round_id = rs.round_id
                     WHERE r.season_id = :season_id
@@ -144,9 +156,7 @@ class ValidatorStorageSummaryMixin:
                         leader_reward = winner_reward
 
             post_payload = self._apply_leadership_to_summary(
-                summary=self._to_json_dict(row.get("post_consensus_summary")),
-                winner_uid=winner_uid,
-                winner_reward=winner_reward,
+                summary=self._to_json_dict(row.get("post_consensus_json")),
                 reigning_uid_before_round=reigning_uid_before_round,
                 reigning_reward_before_round=reigning_reward_before_round,
                 top_candidate_uid=top_candidate_uid,
@@ -171,7 +181,7 @@ class ValidatorStorageSummaryMixin:
                       required_improvement_pct = :required_improvement_pct,
                       required_reward_to_dethrone = :required_reward_to_dethrone,
                       dethroned = :dethroned,
-                      post_consensus_summary = CAST(:post_consensus_summary AS JSONB),
+                      post_consensus_json = CAST(:post_consensus_json AS JSONB),
                       updated_at = NOW()
                     WHERE round_id = :round_id
                     """
@@ -187,7 +197,7 @@ class ValidatorStorageSummaryMixin:
                     "required_improvement_pct": required_improvement_pct,
                     "required_reward_to_dethrone": (float(reigning_reward_before_round) * (1.0 + required_improvement_pct)) if reigning_reward_before_round is not None else None,
                     "dethroned": dethroned,
-                    "post_consensus_summary": json.dumps(post_payload),
+                    "post_consensus_json": json.dumps(post_payload),
                 },
             )
 
@@ -349,136 +359,53 @@ class ValidatorStorageSummaryMixin:
         else:
             enriched_post = {"raw": current_post}
 
-        # Keep business-facing summary focused on active handshake participants.
-        enriched_post["miners"] = competitive_miners_payload
-        # Avoid noisy internal fields in post-consensus payload.
+        existing_miners_by_uid: Dict[int, Dict[str, Any]] = {}
+        for miner_payload in enriched_post.get("miners", []) if isinstance(enriched_post.get("miners"), list) else []:
+            if not isinstance(miner_payload, dict):
+                continue
+            try:
+                miner_uid = int(miner_payload.get("uid", miner_payload.get("miner_uid")))
+            except Exception:
+                continue
+            existing_miners_by_uid[miner_uid] = dict(miner_payload)
+
+        normalized_miners_payload: List[Dict[str, Any]] = []
+        for row in summary_rows:
+            miner_uid = int(row.miner_uid)
+            base_payload = dict(existing_miners_by_uid.get(miner_uid, {}))
+            best_run = dict(base_payload.get("best_run_consensus") or {})
+            current_run = base_payload.get("current_run_consensus")
+
+            best_run["reward"] = float(row.post_consensus_avg_reward or 0.0)
+            if row.post_consensus_avg_eval_score is not None:
+                best_run["score"] = float(row.post_consensus_avg_eval_score)
+            if row.post_consensus_avg_eval_time is not None:
+                best_run["time"] = float(row.post_consensus_avg_eval_time)
+            if row.post_consensus_avg_eval_cost is not None:
+                best_run["cost"] = float(row.post_consensus_avg_eval_cost)
+            best_run["tasks_received"] = int(row.post_consensus_tasks_received or 0)
+            best_run["tasks_success"] = int(row.post_consensus_tasks_success or 0)
+            if row.post_consensus_rank is not None:
+                best_run["rank"] = int(row.post_consensus_rank)
+            if row.weight is not None:
+                best_run["weight"] = float(row.weight)
+
+            normalized_payload = dict(base_payload)
+            normalized_payload["uid"] = miner_uid
+            normalized_payload["hotkey"] = base_payload.get("hotkey") or base_payload.get("miner_hotkey") or row.miner_hotkey
+            normalized_payload["best_run_consensus"] = best_run
+            normalized_payload["current_run_consensus"] = current_run if isinstance(current_run, dict) else None
+            normalized_payload.pop("miner_uid", None)
+            normalized_payload.pop("miner_hotkey", None)
+
+            normalized_miners_payload.append(normalized_payload)
+
+        enriched_post["miners"] = normalized_miners_payload
+        enriched_post["validators_participated"] = validators_count
+        enriched_post["miners_evaluated"] = db_rollup["miners_evaluated"]
+        enriched_post["tasks_evaluated"] = db_rollup["tasks_evaluated"]
+        enriched_post["tasks_success"] = db_rollup["tasks_success"]
         enriched_post.pop("schema_version", None)
-        winner_uid = db_rollup.get("winner", {}).get("miner_uid") if isinstance(db_rollup.get("winner"), dict) else None
-        round_summary = enriched_post.get("round_summary") if isinstance(enriched_post.get("round_summary"), dict) else {}
-        winner_obj = round_summary.get("winner") if isinstance(round_summary.get("winner"), dict) else {}
-        winner_obj.pop("score", None)
-        if winner_uid is not None:
-            winner_obj["miner_uid"] = int(winner_uid)
-        else:
-            winner_obj.pop("miner_uid", None)
-            winner_obj.pop("uid", None)
-            winner_obj["reason"] = "no_handshake_participants"
-        round_summary["winner"] = winner_obj
-        round_summary.pop("miner_scores", None)
-        enriched_post["round_summary"] = round_summary
-
-        decision_obj = round_summary.get("decision") if isinstance(round_summary.get("decision"), dict) else {}
-        season_summary = enriched_post.get("season_summary") if isinstance(enriched_post.get("season_summary"), dict) else {}
-        decision_obj.pop("reigning_score_before_round", None)
-        decision_obj.pop("top_candidate_score", None)
-        decision_obj.pop("required_score_to_dethrone", None)
-        season_summary.pop("winner_before_round_score", None)
-        season_summary.pop("candidate_score", None)
-        season_summary.pop("winner_after_round_score", None)
-        season_summary.pop("current_winner_score", None)
-        season_summary.pop("dethrone_threshold_score", None)
-        if winner_uid is not None:
-            season_summary["current_winner_uid"] = int(winner_uid)
-        else:
-            season_summary.pop("current_winner_uid", None)
-        if "dethroned" not in season_summary:
-            season_summary["dethroned"] = bool(decision_obj.get("dethroned", False))
-
-        # Human-readable transition block: before -> candidate -> after.
-        reigning_uid_before = decision_obj.get("reigning_uid_before_round")
-        reigning_reward_before = decision_obj.get("reigning_reward_before_round", decision_obj.get("reigning_score_before_round"))
-        top_candidate_uid = decision_obj.get("top_candidate_uid")
-        top_candidate_reward = decision_obj.get("top_candidate_reward", decision_obj.get("top_candidate_score"))
-        required_improvement_pct = season_summary.get(
-            "required_improvement_pct",
-            decision_obj.get("required_improvement_pct"),
-        )
-        winner_after_uid = winner_obj.get("miner_uid") or winner_obj.get("uid")
-        winner_after_reward = winner_obj.get("reward", winner_obj.get("score"))
-
-        try:
-            req_pct_f = float(required_improvement_pct) if required_improvement_pct is not None else None
-        except Exception:
-            req_pct_f = None
-        try:
-            reigning_reward_f = float(reigning_reward_before) if reigning_reward_before is not None else None
-        except Exception:
-            reigning_reward_f = None
-        try:
-            candidate_reward_f = float(top_candidate_reward) if top_candidate_reward is not None else None
-        except Exception:
-            candidate_reward_f = None
-
-        ranked_competitors: list[tuple[float, float, int, dict[str, Any]]] = []
-        for miner in competitive_miners_payload:
-            if not isinstance(miner, dict):
-                continue
-            try:
-                miner_uid = int(miner.get("miner_uid", miner.get("uid")))
-            except Exception:
-                continue
-            best_run = miner.get("best_run_consensus") if isinstance(miner.get("best_run_consensus"), dict) else miner
-            try:
-                reward = float(best_run.get("reward", miner.get("consensus_reward", 0.0)) or 0.0)
-                score = float(best_run.get("score", miner.get("avg_eval_score", 0.0)) or 0.0)
-            except Exception:
-                continue
-            ranked_competitors.append((reward, score, -miner_uid, miner))
-        ranked_competitors.sort(reverse=True)
-
-        challenger_payload = None
-        if reigning_uid_before is not None:
-            try:
-                reigning_uid_before_i = int(reigning_uid_before)
-            except Exception:
-                reigning_uid_before_i = None
-            for _reward, _score, _neg_uid, miner in ranked_competitors:
-                try:
-                    miner_uid = int(miner.get("miner_uid", miner.get("uid")))
-                except Exception:
-                    continue
-                if reigning_uid_before_i is not None and miner_uid == reigning_uid_before_i:
-                    continue
-                challenger_payload = miner
-                break
-        elif ranked_competitors:
-            challenger_payload = ranked_competitors[0][3]
-
-        if challenger_payload is not None:
-            challenger_best = challenger_payload.get("best_run_consensus") if isinstance(challenger_payload.get("best_run_consensus"), dict) else challenger_payload
-            try:
-                top_candidate_uid = int(challenger_payload.get("miner_uid", challenger_payload.get("uid")))
-            except Exception:
-                top_candidate_uid = top_candidate_uid
-            try:
-                top_candidate_reward = float(challenger_best.get("reward", challenger_payload.get("consensus_reward")))
-                candidate_reward_f = float(top_candidate_reward)
-            except Exception:
-                pass
-        elif reigning_uid_before is not None:
-            top_candidate_uid = None
-            top_candidate_reward = None
-            candidate_reward_f = None
-
-        dethrone_threshold = reigning_reward_f * (1.0 + req_pct_f) if reigning_reward_f is not None and req_pct_f is not None else None
-        candidate_met_threshold = candidate_reward_f >= dethrone_threshold if candidate_reward_f is not None and dethrone_threshold is not None else None
-
-        season_summary["winner_before_round_uid"] = reigning_uid_before
-        season_summary["winner_before_round_reward"] = reigning_reward_before
-        season_summary["candidate_uid"] = top_candidate_uid
-        season_summary["candidate_reward"] = top_candidate_reward
-        season_summary["winner_after_round_uid"] = winner_after_uid
-        season_summary["winner_after_round_reward"] = winner_after_reward
-        season_summary["current_winner_reward"] = winner_after_reward
-        season_summary["dethrone_threshold_reward"] = dethrone_threshold
-        season_summary["candidate_met_threshold"] = candidate_met_threshold
-        if season_summary.get("dethroned") is True:
-            season_summary["round_result"] = "dethroned"
-        elif winner_after_uid is not None:
-            season_summary["round_result"] = "retained"
-        else:
-            season_summary["round_result"] = "no_winner"
-        enriched_post["season_summary"] = season_summary
 
         def _to_int(value: Any) -> Optional[int]:
             try:
@@ -496,26 +423,71 @@ class ValidatorStorageSummaryMixin:
             except Exception:
                 return None
 
-        # Keep round-level consensus decision as first-class columns in validator_rounds.
-        winner_obj = round_summary.get("winner") if isinstance(round_summary.get("winner"), dict) else {}
-        round_row.leader_after_uid = _to_int(winner_obj.get("miner_uid") or winner_obj.get("uid"))
-        round_row.leader_after_reward = _to_float(winner_obj.get("reward", winner_obj.get("score")))
-        round_row.leader_before_uid = _to_int(decision_obj.get("reigning_uid_before_round"))
-        round_row.leader_before_reward = _to_float(decision_obj.get("reigning_reward_before_round", decision_obj.get("reigning_score_before_round")))
-        round_row.candidate_uid = _to_int(top_candidate_uid)
-        round_row.candidate_reward = _to_float(top_candidate_reward)
-        round_row.required_improvement_pct = _to_float(season_summary.get("required_improvement_pct", decision_obj.get("required_improvement_pct")))
-        dethroned_value = season_summary.get("dethroned", decision_obj.get("dethroned"))
-        round_row.dethroned = bool(dethroned_value) if dethroned_value is not None else None
+        summary_block = self._summary_block(enriched_post)
+        leader_before_payload = summary_block.get("leader_before_round") if isinstance(summary_block.get("leader_before_round"), dict) else {}
+        leader_before_uid = _to_int(leader_before_payload.get("uid"))
+        leader_before_reward = _to_float(leader_before_payload.get("reward"))
+        required_improvement_pct = _to_float(summary_block.get("percentage_to_dethrone")) or 0.05
+        winner_uid = _to_int(winner.get("miner_uid")) if isinstance(winner, dict) else None
+        winner_row = next((row for row in summary_rows if int(row.miner_uid or -1) == int(winner_uid)), None) if winner_uid is not None else None
 
-        # Convenience top-level aliases to avoid ambiguity in consumers.
-        # Always overwrite these rollups with DB-derived business metrics.
-        enriched_post["validators_count"] = db_rollup["validators_count"]
-        enriched_post["miners_evaluated"] = db_rollup["miners_evaluated"]
-        enriched_post["tasks_evaluated"] = db_rollup["tasks_evaluated"]
-        enriched_post["tasks_success"] = db_rollup["tasks_success"]
-        # winner is already represented in round_summary; avoid duplicated winner blocks here.
-        enriched_post.pop("winner", None)
+        candidate_row = None
+        if leader_before_uid is not None:
+            candidate_row = max(
+                (row for row in summary_rows if int(row.miner_uid or -1) != burn_uid and int(row.miner_uid or -1) in handshake_uids and int(row.miner_uid or -1) != leader_before_uid),
+                key=lambda row: (
+                    float(row.post_consensus_avg_reward or 0.0),
+                    float(row.post_consensus_avg_eval_score or 0.0),
+                    -int(row.miner_uid or 0),
+                ),
+                default=None,
+            )
+        else:
+            candidate_row = winner_row
+
+        candidate_uid = int(candidate_row.miner_uid) if candidate_row is not None else None
+        candidate_reward = float(candidate_row.post_consensus_avg_reward or 0.0) if candidate_row is not None else None
+        candidate_score = float(candidate_row.post_consensus_avg_eval_score or 0.0) if candidate_row is not None and candidate_row.post_consensus_avg_eval_score is not None else None
+        candidate_time = float(candidate_row.post_consensus_avg_eval_time or 0.0) if candidate_row is not None and candidate_row.post_consensus_avg_eval_time is not None else None
+        candidate_cost = float(candidate_row.post_consensus_avg_eval_cost) if candidate_row is not None and candidate_row.post_consensus_avg_eval_cost is not None else None
+
+        leader_after_uid = int(winner_row.miner_uid) if winner_row is not None else None
+        leader_after_reward = float(winner_row.post_consensus_avg_reward or 0.0) if winner_row is not None else None
+        leader_after_score = float(winner_row.post_consensus_avg_eval_score or 0.0) if winner_row is not None and winner_row.post_consensus_avg_eval_score is not None else None
+        leader_after_time = float(winner_row.post_consensus_avg_eval_time or 0.0) if winner_row is not None and winner_row.post_consensus_avg_eval_time is not None else None
+        leader_after_cost = float(winner_row.post_consensus_avg_eval_cost) if winner_row is not None and winner_row.post_consensus_avg_eval_cost is not None else None
+        leader_after_weight = float(winner_row.weight or 0.0) if winner_row is not None and winner_row.weight is not None else None
+
+        dethroned_value = bool(summary_block.get("dethroned", False))
+
+        enriched_post = self._apply_leadership_to_summary(
+            summary=enriched_post,
+            reigning_uid_before_round=leader_before_uid,
+            reigning_reward_before_round=leader_before_reward,
+            top_candidate_uid=candidate_uid,
+            top_candidate_reward=candidate_reward,
+            required_improvement_pct=required_improvement_pct,
+            dethroned=dethroned_value,
+            leader_uid_after_round=leader_after_uid,
+            leader_reward_after_round=leader_after_reward,
+            top_candidate_score=candidate_score,
+            top_candidate_time=candidate_time,
+            top_candidate_cost=candidate_cost,
+            leader_after_score=leader_after_score,
+            leader_after_time=leader_after_time,
+            leader_after_cost=leader_after_cost,
+            leader_after_weight=leader_after_weight,
+        )
+
+        # Keep round-level consensus decision as first-class columns in validator_rounds.
+        round_row.leader_before_uid = leader_before_uid
+        round_row.leader_before_reward = leader_before_reward
+        round_row.candidate_uid = candidate_uid
+        round_row.candidate_reward = candidate_reward
+        round_row.leader_after_uid = leader_after_uid
+        round_row.leader_after_reward = leader_after_reward
+        round_row.required_improvement_pct = required_improvement_pct
+        round_row.dethroned = dethroned_value
 
         validator_summary["evaluation_post_consensus"] = enriched_post
         round_row.validator_summary = validator_summary
@@ -604,16 +576,12 @@ class ValidatorStorageSummaryMixin:
         post_summary = validator_summary.get("evaluation_post_consensus")
         if not isinstance(post_summary, dict):
             post_summary = {}
-        round_summary = post_summary.get("round_summary") if isinstance(post_summary.get("round_summary"), dict) else {}
-        decision = round_summary.get("decision") if isinstance(round_summary.get("decision"), dict) else {}
-        season_summary = post_summary.get("season_summary") if isinstance(post_summary.get("season_summary"), dict) else {}
+        summary_block = self._summary_block(post_summary)
 
         required_improvement_pct = (
-            float(round_row.required_improvement_pct)
-            if getattr(round_row, "required_improvement_pct", None) is not None
-            else float(season_summary.get("required_improvement_pct", decision.get("required_improvement_pct", 0.05)) or 0.05)
+            float(round_row.required_improvement_pct) if getattr(round_row, "required_improvement_pct", None) is not None else float(summary_block.get("percentage_to_dethrone", 0.05) or 0.05)
         )
-        dethroned = bool(round_row.dethroned) if getattr(round_row, "dethroned", None) is not None else bool(season_summary.get("dethroned", decision.get("dethroned", False)))
+        dethroned = bool(round_row.dethroned) if getattr(round_row, "dethroned", None) is not None else bool(summary_block.get("dethroned", False))
 
         async def _lookup_round_miner_snapshot(miner_uid: Optional[int]) -> tuple[Optional[str], Optional[str]]:
             if miner_uid is None:
@@ -699,7 +667,7 @@ class ValidatorStorageSummaryMixin:
                     leader_after_eval_score,
                     leader_after_eval_time,
                     leader_after_eval_cost,
-                    post_consensus_summary,
+                    post_consensus_json,
                     created_at,
                     updated_at
                 )
@@ -731,7 +699,7 @@ class ValidatorStorageSummaryMixin:
                     :leader_after_eval_score,
                     :leader_after_eval_time,
                     :leader_after_eval_cost,
-                    CAST(:post_consensus_summary AS JSONB),
+                    CAST(:post_consensus_json AS JSONB),
                     NOW(),
                     NOW()
                 )
@@ -762,7 +730,7 @@ class ValidatorStorageSummaryMixin:
                     leader_after_eval_score = EXCLUDED.leader_after_eval_score,
                     leader_after_eval_time = EXCLUDED.leader_after_eval_time,
                     leader_after_eval_cost = EXCLUDED.leader_after_eval_cost,
-                    post_consensus_summary = COALESCE(EXCLUDED.post_consensus_summary, round_summary.post_consensus_summary),
+                    post_consensus_json = COALESCE(EXCLUDED.post_consensus_json, round_summary.post_consensus_json),
                     updated_at = NOW()
                 """
             ),
@@ -794,7 +762,7 @@ class ValidatorStorageSummaryMixin:
                 "leader_after_eval_score": leader_eval_score,
                 "leader_after_eval_time": leader_eval_time,
                 "leader_after_eval_cost": leader_eval_cost,
-                "post_consensus_summary": json.dumps(post_summary),
+                "post_consensus_json": json.dumps(post_summary),
             },
         )
 
