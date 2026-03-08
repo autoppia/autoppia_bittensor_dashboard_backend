@@ -358,7 +358,7 @@ async def init_db() -> None:
                             ro.avg_reward,
                             ro.avg_eval_score,
                             ro.avg_eval_time,
-                            COALESCE(ro.post_consensus_summary, ro.summary_json),
+                            NULL::jsonb,
                             COALESCE(ro.created_at, NOW()),
                             COALESCE(ro.updated_at, NOW())
                         FROM round_outcomes ro
