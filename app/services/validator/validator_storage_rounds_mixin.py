@@ -134,45 +134,42 @@ class ValidatorStorageRoundsMixin:
         self,
         *,
         season_number: int,
-        round_number_in_season: int,
+        round_number_in_season: int = 0,  # kept for call-site compatibility, not used in queries
     ) -> None:
         """
         Link shadow round_validators rows (round_id IS NULL) to canonical round_id
         once the canonical round exists.
+
+        Processes ALL pending shadow rows for the season (not just the current round)
+        so that rounds where the main validator was temporarily down get retroactively
+        linked when the next round starts.
         """
+        # Link shadow rows for the current round (primary case).
         await self.session.execute(
             text(
                 """
-                WITH canonical AS (
-                    SELECT r.round_id, r.start_block, r.end_block, r.start_epoch, r.end_epoch
-                    FROM rounds r
-                    JOIN seasons s ON s.season_id = r.season_id
-                    WHERE s.season_number = :season_number
-                      AND r.round_number_in_season = :round_number_in_season
-                    LIMIT 1
-                )
                 UPDATE round_validators rv
                 SET
-                    round_id = c.round_id,
+                    round_id = r.round_id,
                     pending_round_link = FALSE,
-                    start_block = COALESCE(rv.start_block, c.start_block),
-                    end_block = COALESCE(rv.end_block, c.end_block),
-                    start_epoch = COALESCE(rv.start_epoch, c.start_epoch),
-                    end_epoch = COALESCE(rv.end_epoch, c.end_epoch),
+                    start_block = COALESCE(rv.start_block, r.start_block),
+                    end_block = COALESCE(rv.end_block, r.end_block),
+                    start_epoch = COALESCE(rv.start_epoch, r.start_epoch),
+                    end_epoch = COALESCE(rv.end_epoch, r.end_epoch),
                     updated_at = NOW()
-                FROM canonical c
+                FROM rounds r
+                JOIN seasons s ON s.season_id = r.season_id
                 WHERE rv.round_id IS NULL
                   AND COALESCE(rv.pending_round_link, FALSE) = TRUE
                   AND rv.season_number = :season_number
-                  AND rv.round_number_in_season = :round_number_in_season
+                  AND s.season_number = :season_number
+                  AND r.round_number_in_season = rv.round_number_in_season
                 """
             ),
-            {
-                "season_number": int(season_number),
-                "round_number_in_season": int(round_number_in_season),
-            },
+            {"season_number": int(season_number)},
         )
-        # Backfill per-miner rows that were persisted before canonical linking.
+        # Backfill per-miner rows that were persisted before canonical linking,
+        # covering all rounds in the season that were just linked or previously missed.
         await self.session.execute(
             text(
                 """
@@ -185,13 +182,9 @@ class ValidatorStorageRoundsMixin:
                   AND rv.round_id IS NOT NULL
                   AND rvm.round_id IS NULL
                   AND rv.season_number = :season_number
-                  AND rv.round_number_in_season = :round_number_in_season
                 """
             ),
-            {
-                "season_number": int(season_number),
-                "round_number_in_season": int(round_number_in_season),
-            },
+            {"season_number": int(season_number)},
         )
 
     async def _sync_round_validator_miner_reuse_flags(
