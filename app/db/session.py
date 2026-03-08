@@ -253,6 +253,9 @@ async def init_db() -> None:
             CREATE TABLE IF NOT EXISTS round_summary (
                 round_summary_id BIGSERIAL PRIMARY KEY,
                 round_id BIGINT NOT NULL UNIQUE REFERENCES rounds(round_id) ON DELETE CASCADE,
+                source_round_validator_id BIGINT NULL REFERENCES round_validators(round_validator_id) ON DELETE SET NULL,
+                source_validator_uid INTEGER NULL,
+                source_is_main_validator BOOLEAN NOT NULL DEFAULT FALSE,
                 leader_before_miner_uid INTEGER NULL,
                 leader_before_miner_hotkey VARCHAR(128) NULL,
                 leader_before_github_url TEXT NULL,
@@ -927,6 +930,31 @@ async def init_db() -> None:
         await conn.execute(text("ALTER TABLE round_validators DROP COLUMN IF EXISTS post_consensus_summary"))
         await conn.execute(text("ALTER TABLE round_summary DROP COLUMN IF EXISTS summary_json"))
         await conn.execute(text("ALTER TABLE round_summary ADD COLUMN IF NOT EXISTS post_consensus_json JSONB NULL"))
+        await conn.execute(text("ALTER TABLE round_summary ADD COLUMN IF NOT EXISTS source_round_validator_id BIGINT NULL"))
+        await conn.execute(text("ALTER TABLE round_summary ADD COLUMN IF NOT EXISTS source_validator_uid INTEGER NULL"))
+        await conn.execute(text("ALTER TABLE round_summary ADD COLUMN IF NOT EXISTS source_is_main_validator BOOLEAN NOT NULL DEFAULT FALSE"))
+        await conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'round_summary'
+                          AND constraint_name = 'round_summary_source_round_validator_id_fkey'
+                    ) THEN
+                        ALTER TABLE round_summary
+                        ADD CONSTRAINT round_summary_source_round_validator_id_fkey
+                        FOREIGN KEY (source_round_validator_id)
+                        REFERENCES round_validators(round_validator_id)
+                        ON DELETE SET NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
         await conn.execute(
             text(
                 """

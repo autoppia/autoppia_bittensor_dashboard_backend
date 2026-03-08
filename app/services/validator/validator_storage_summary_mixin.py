@@ -524,7 +524,7 @@ class ValidatorStorageSummaryMixin:
         row_ctx = await self.session.execute(
             text(
                 """
-                SELECT rv.round_id, rv.round_validator_id
+                SELECT rv.round_id, rv.round_validator_id, rv.validator_uid, COALESCE(rv.is_main_validator, FALSE) AS is_main_validator
                 FROM round_validators rv
                 WHERE rv.validator_round_id = :validator_round_id
                 LIMIT 1
@@ -537,6 +537,9 @@ class ValidatorStorageSummaryMixin:
             return
 
         round_id = int(ctx.round_id)
+        source_round_validator_id = int(ctx.round_validator_id)
+        source_validator_uid = int(ctx.validator_uid) if ctx.validator_uid is not None else None
+        source_is_main_validator = bool(ctx.is_main_validator)
         burn_uid = int(settings.BURN_UID)
         handshake_uids = await self._get_handshake_participant_uids(round_row.validator_round_id)
         competitive_rows = [row for row in summary_rows if int(row.miner_uid or -1) != burn_uid and int(row.miner_uid or -1) in handshake_uids]
@@ -641,6 +644,9 @@ class ValidatorStorageSummaryMixin:
                 """
                 INSERT INTO round_summary (
                     round_id,
+                    source_round_validator_id,
+                    source_validator_uid,
+                    source_is_main_validator,
                     leader_before_miner_uid,
                     leader_before_miner_hotkey,
                     leader_before_github_url,
@@ -673,6 +679,9 @@ class ValidatorStorageSummaryMixin:
                 )
                 VALUES (
                     :round_id,
+                    :source_round_validator_id,
+                    :source_validator_uid,
+                    :source_is_main_validator,
                     :leader_before_miner_uid,
                     :leader_before_miner_hotkey,
                     :leader_before_github_url,
@@ -704,6 +713,9 @@ class ValidatorStorageSummaryMixin:
                     NOW()
                 )
                 ON CONFLICT (round_id) DO UPDATE SET
+                    source_round_validator_id = EXCLUDED.source_round_validator_id,
+                    source_validator_uid = EXCLUDED.source_validator_uid,
+                    source_is_main_validator = EXCLUDED.source_is_main_validator,
                     leader_before_miner_uid = EXCLUDED.leader_before_miner_uid,
                     leader_before_miner_hotkey = EXCLUDED.leader_before_miner_hotkey,
                     leader_before_github_url = EXCLUDED.leader_before_github_url,
@@ -732,10 +744,15 @@ class ValidatorStorageSummaryMixin:
                     leader_after_eval_cost = EXCLUDED.leader_after_eval_cost,
                     post_consensus_json = COALESCE(EXCLUDED.post_consensus_json, round_summary.post_consensus_json),
                     updated_at = NOW()
+                WHERE NOT COALESCE(round_summary.source_is_main_validator, FALSE)
+                   OR COALESCE(EXCLUDED.source_is_main_validator, FALSE)
                 """
             ),
             {
                 "round_id": round_id,
+                "source_round_validator_id": source_round_validator_id,
+                "source_validator_uid": source_validator_uid,
+                "source_is_main_validator": source_is_main_validator,
                 "leader_before_miner_uid": leader_before_uid,
                 "leader_before_miner_hotkey": leader_before_hotkey,
                 "leader_before_github_url": leader_before_github_url,
