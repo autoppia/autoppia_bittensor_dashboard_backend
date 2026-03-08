@@ -642,7 +642,6 @@ class ValidatorStorageRoundsMixin:
             "round": round_with_emission or vs.get("round"),
             "ipfs_uploaded": ipfs_uploaded or vs.get("ipfs_uploaded"),
             "ipfs_downloaded": ipfs_downloaded or vs.get("ipfs_downloaded"),
-            "evaluation_pre_consensus": local_summary_payload if local_summary_payload is not None else vs.get("evaluation_pre_consensus"),
             "evaluation_post_consensus": post_summary_payload if post_summary_payload is not None else vs.get("evaluation_post_consensus"),
             "handshake_results": vs.get("handshake_results"),
         }
@@ -650,47 +649,6 @@ class ValidatorStorageRoundsMixin:
             "authoritative": authoritative_finish,
             "reason": authority_conflict_reason,
         }
-
-        # Normalize consensus summaries for stable UI/API shape
-        pre_summary = merged.get("evaluation_pre_consensus")
-        if isinstance(pre_summary, dict):
-            # Remove noisy internal key from pre-consensus summary.
-            pre_summary.pop("schema_version", None)
-            rs = pre_summary.get("round_summary") if isinstance(pre_summary.get("round_summary"), dict) else {}
-            winner_obj = rs.get("winner") if isinstance(rs.get("winner"), dict) else {}
-            miner_uid = winner_obj.get("miner_uid")
-            if miner_uid is None:
-                # Try to infer deterministically from round summary fields
-                decision = rs.get("decision") if isinstance(rs.get("decision"), dict) else {}
-                inferred_uid = winner_obj.get("uid") or decision.get("top_candidate_uid") or pre_summary.get("season_summary", {}).get("current_winner_uid")
-                miner_rewards_map = rs.get("miner_rewards", rs.get("miner_scores", {}))
-                if inferred_uid is None and isinstance(miner_rewards_map, dict) and miner_rewards_map:
-                    try:
-                        inferred_uid = max(
-                            miner_rewards_map.items(),
-                            key=lambda kv: float(kv[1] or 0.0),
-                        )[0]
-                    except Exception:
-                        inferred_uid = None
-                if inferred_uid is not None:
-                    try:
-                        winner_obj["miner_uid"] = int(inferred_uid)
-                    except Exception:
-                        pass
-                    rs["winner"] = winner_obj
-                    pre_summary["round_summary"] = rs
-            # Ensure season_summary carries explicit current winner uid
-            season_summary = pre_summary.get("season_summary") if isinstance(pre_summary.get("season_summary"), dict) else {}
-            season_current_uid = season_summary.get("current_winner_uid")
-            if season_current_uid is None:
-                inferred_season_uid = winner_obj.get("miner_uid") or winner_obj.get("uid")
-                if inferred_season_uid is not None:
-                    try:
-                        season_summary["current_winner_uid"] = int(inferred_season_uid)
-                    except Exception:
-                        pass
-            pre_summary["season_summary"] = season_summary
-            merged["evaluation_pre_consensus"] = pre_summary
 
         post_summary = merged.get("evaluation_post_consensus")
         if isinstance(post_summary, dict):
@@ -711,8 +669,10 @@ class ValidatorStorageRoundsMixin:
 
         round_row.ended_at = ended_at
         # Keep canonical round_validators table aligned with finish payloads.
+        # local_summary_json remains internal/debug only; it is not exposed as a
+        # public "pre-consensus" concept anymore.
         try:
-            local_summary_json = merged.get("evaluation_pre_consensus")
+            local_summary_json = local_summary_payload if isinstance(local_summary_payload, dict) else None
             post_summary_json = merged.get("evaluation_post_consensus")
             await self.session.execute(
                 text(

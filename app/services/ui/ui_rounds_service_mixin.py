@@ -882,7 +882,6 @@ class UIRoundsServiceMixin:
                         "downloaded": validator.get("ipfs_downloaded"),
                     },
                     "consensus": {
-                        "pre_consensus": validator.get("local_summary_json"),
                         "post_consensus": validator.get("post_consensus_json"),
                     },
                 }
