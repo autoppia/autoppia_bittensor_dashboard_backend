@@ -922,23 +922,34 @@ class ValidatorStorageSummaryMixin:
             for miner_data in post_consensus_miners:
                 if not isinstance(miner_data, dict):
                     continue
-                miner_uid = miner_data.get("miner_uid")
+                miner_uid = miner_data.get("miner_uid", miner_data.get("uid"))
                 if miner_uid is None:
                     continue
 
                 summary_map.setdefault(miner_uid, {})["miner_uid"] = int(miner_uid)
                 # Update miner_hotkey if not already set or if post_consensus has it
                 if "miner_hotkey" not in summary_map[miner_uid] or summary_map[miner_uid]["miner_hotkey"] is None:
-                    summary_map[miner_uid]["miner_hotkey"] = miner_data.get("miner_hotkey")
+                    summary_map[miner_uid]["miner_hotkey"] = miner_data.get("miner_hotkey", miner_data.get("hotkey"))
 
-                summary_map[miner_uid]["post_consensus_rank"] = miner_data.get("rank")
-                summary_map[miner_uid]["post_consensus_avg_reward"] = miner_data.get("consensus_reward")
-                summary_map[miner_uid]["post_consensus_avg_eval_score"] = miner_data.get("avg_eval_score")
-                summary_map[miner_uid]["post_consensus_avg_eval_time"] = miner_data.get("avg_eval_time")
-                summary_map[miner_uid]["post_consensus_avg_eval_cost"] = miner_data.get("avg_cost")
-                summary_map[miner_uid]["post_consensus_tasks_received"] = miner_data.get("tasks_sent")
-                summary_map[miner_uid]["post_consensus_tasks_success"] = miner_data.get("tasks_success")
-                summary_map[miner_uid]["weight"] = miner_data.get("weight")
+                best_run_consensus = miner_data.get("best_run_consensus") if isinstance(miner_data.get("best_run_consensus"), dict) else None
+                if best_run_consensus is not None:
+                    summary_map[miner_uid]["post_consensus_rank"] = best_run_consensus.get("rank")
+                    summary_map[miner_uid]["post_consensus_avg_reward"] = best_run_consensus.get("reward")
+                    summary_map[miner_uid]["post_consensus_avg_eval_score"] = best_run_consensus.get("score")
+                    summary_map[miner_uid]["post_consensus_avg_eval_time"] = best_run_consensus.get("time")
+                    summary_map[miner_uid]["post_consensus_avg_eval_cost"] = best_run_consensus.get("cost")
+                    summary_map[miner_uid]["post_consensus_tasks_received"] = best_run_consensus.get("tasks_received")
+                    summary_map[miner_uid]["post_consensus_tasks_success"] = best_run_consensus.get("tasks_success")
+                    summary_map[miner_uid]["weight"] = best_run_consensus.get("weight")
+                else:
+                    summary_map[miner_uid]["post_consensus_rank"] = miner_data.get("rank")
+                    summary_map[miner_uid]["post_consensus_avg_reward"] = miner_data.get("consensus_reward")
+                    summary_map[miner_uid]["post_consensus_avg_eval_score"] = miner_data.get("avg_eval_score")
+                    summary_map[miner_uid]["post_consensus_avg_eval_time"] = miner_data.get("avg_eval_time")
+                    summary_map[miner_uid]["post_consensus_avg_eval_cost"] = miner_data.get("avg_cost")
+                    summary_map[miner_uid]["post_consensus_tasks_received"] = miner_data.get("tasks_sent")
+                    summary_map[miner_uid]["post_consensus_tasks_success"] = miner_data.get("tasks_success")
+                    summary_map[miner_uid]["weight"] = miner_data.get("weight")
                 # Add subnet_price to all miners in this round
                 if subnet_price is not None:
                     summary_map[miner_uid]["subnet_price"] = float(subnet_price)
