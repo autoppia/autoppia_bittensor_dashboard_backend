@@ -632,10 +632,8 @@ class ValidatorStorageRoundsMixin:
             round_with_emission = {"emission": emission_info}
 
         vs = validator_summary or {}
-        # IMPORTANT: keep local and post-consensus summaries fully separated.
-        # Local comes strictly from local_evaluation payload; post comes strictly
-        # from post_consensus_evaluation payload. Do not cross-populate.
-        local_summary_payload = local_evaluation.get("summary") if isinstance(local_evaluation, dict) else None
+        # IMPORTANT: keep post-consensus summary canonical and separate from
+        # the local validator snapshot/IPFS payloads.
         post_summary_payload = post_consensus_evaluation.get("summary") if isinstance(post_consensus_evaluation, dict) else None
 
         merged = {
@@ -669,19 +667,15 @@ class ValidatorStorageRoundsMixin:
 
         round_row.ended_at = ended_at
         # Keep canonical round_validators table aligned with finish payloads.
-        # local_summary_json remains internal/debug only; it is not exposed as a
-        # public "pre-consensus" concept anymore.
+        # round_validators stores only the canonical post-consensus JSON now.
         try:
-            local_summary_json = local_summary_payload if isinstance(local_summary_payload, dict) else None
             post_summary_json = merged.get("evaluation_post_consensus")
             await self.session.execute(
                 text(
                     """
                     UPDATE round_validators
                     SET
-                        local_summary_json = COALESCE(CAST(:local_summary_json AS JSONB), local_summary_json),
                         post_consensus_json = COALESCE(CAST(:post_consensus_json AS JSONB), post_consensus_json),
-                        post_consensus_summary = COALESCE(CAST(:post_consensus_json AS JSONB), post_consensus_summary),
                         ipfs_uploaded = COALESCE(CAST(:ipfs_uploaded AS JSONB), ipfs_uploaded),
                         ipfs_downloaded = COALESCE(CAST(:ipfs_downloaded AS JSONB), ipfs_downloaded),
                         s3_logs_url = COALESCE(:s3_logs_url, s3_logs_url),
@@ -693,7 +687,6 @@ class ValidatorStorageRoundsMixin:
                 ),
                 {
                     "validator_round_id": validator_round_id,
-                    "local_summary_json": json.dumps(local_summary_json) if local_summary_json is not None else None,
                     "post_consensus_json": json.dumps(post_summary_json) if post_summary_json is not None else None,
                     "ipfs_uploaded": json.dumps(merged.get("ipfs_uploaded")) if merged.get("ipfs_uploaded") is not None else None,
                     "ipfs_downloaded": json.dumps(merged.get("ipfs_downloaded")) if merged.get("ipfs_downloaded") is not None else None,

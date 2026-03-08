@@ -81,11 +81,11 @@ async def seed_new_schema() -> tuple[int, int, list[int]]:
                     """
                     INSERT INTO round_validators (
                         round_id, validator_uid, validator_hotkey, validator_coldkey, name, image_url, version, stake, vtrust,
-                        started_at, finished_at, config, local_summary_json, post_consensus_summary, ipfs_uploaded, ipfs_downloaded, is_main_validator
+                        started_at, finished_at, config, post_consensus_json, ipfs_uploaded, ipfs_downloaded, is_main_validator
                     )
                     VALUES (
                         :round_id, :uid, :hotkey, :coldkey, :name, '/validators/Other.png', '1.0.0', 1000, 0.95,
-                        :now, :now, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, :is_main
+                        :now, :now, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, :is_main
                     )
                     RETURNING round_validator_id
                     """,

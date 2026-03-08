@@ -532,7 +532,6 @@ class ValidatorStorageSummaryMixin:
                 UPDATE round_validators
                 SET
                     post_consensus_json = CAST(:post_consensus_json AS JSONB),
-                    post_consensus_summary = CAST(:post_consensus_json AS JSONB),
                     updated_at = NOW()
                 WHERE validator_round_id = :validator_round_id
                 """

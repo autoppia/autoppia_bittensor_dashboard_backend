@@ -195,9 +195,7 @@ async def init_db() -> None:
                 started_at TIMESTAMPTZ NULL,
                 finished_at TIMESTAMPTZ NULL,
                 config JSONB NULL,
-                local_summary_json JSONB NULL,
                 post_consensus_json JSONB NULL,
-                post_consensus_summary JSONB NULL,
                 ipfs_uploaded JSONB NULL,
                 ipfs_downloaded JSONB NULL,
                 s3_logs_url TEXT NULL,
@@ -904,18 +902,19 @@ async def init_db() -> None:
                 """
             )
         )
-        # Keep equivalent JSON fields aligned (legacy/new readers use different keys).
+        # Keep canonical validator JSON in a single field.
         await conn.execute(
             text(
                 """
                 UPDATE round_validators
                 SET
-                    post_consensus_json = COALESCE(post_consensus_json, post_consensus_summary),
-                    post_consensus_summary = COALESCE(post_consensus_summary, post_consensus_json)
-                WHERE post_consensus_json IS NULL OR post_consensus_summary IS NULL
+                    post_consensus_json = COALESCE(post_consensus_json, post_consensus_summary)
+                WHERE post_consensus_json IS NULL
                 """
             )
         )
+        await conn.execute(text("ALTER TABLE round_validators DROP COLUMN IF EXISTS local_summary_json"))
+        await conn.execute(text("ALTER TABLE round_validators DROP COLUMN IF EXISTS post_consensus_summary"))
         await conn.execute(text("ALTER TABLE round_summary DROP COLUMN IF EXISTS summary_json"))
 
         validator_rounds_relkind = await conn.scalar(
@@ -1543,7 +1542,7 @@ async def init_db() -> None:
                     COALESCE(EXTRACT(EPOCH FROM r.ended_at)::DOUBLE PRECISION, EXTRACT(EPOCH FROM rv.finished_at)::DOUBLE PRECISION) AS ended_at,
                     COALESCE(t.tasks_count, 0) AS n_tasks,
                     COALESCE(r.status, 'active')::VARCHAR(32) AS status,
-                    rv.post_consensus_summary AS validator_summary,
+                    rv.post_consensus_json AS validator_summary,
                     rv.s3_logs_url AS s3_logs_url,
                     ro.winner_miner_uid AS winner_uid,
                     ro.winner_score,
@@ -1848,13 +1847,13 @@ async def init_db() -> None:
                                 round_id, season_number, round_number_in_season,
                                 start_block, end_block, start_epoch, end_epoch,
                                 validator_uid, validator_hotkey, validator_round_id,
-                                started_at, finished_at, post_consensus_summary, post_consensus_json, s3_logs_url, is_main_validator, created_at, updated_at
+                                started_at, finished_at, post_consensus_json, s3_logs_url, is_main_validator, created_at, updated_at
                             )
                             VALUES (
                                 rid, NEW.season_number, NEW.round_number_in_season,
                                 NEW.start_block, NEW.end_block, NEW.start_epoch, NEW.end_epoch,
                                 0, NULL, NEW.validator_round_id,
-                                ts, te, NEW.validator_summary, NEW.validator_summary, NEW.s3_logs_url, FALSE, NOW(), NOW()
+                                ts, te, NEW.validator_summary, NEW.s3_logs_url, FALSE, NOW(), NOW()
                             )
                             RETURNING round_validator_id INTO rvid;
                         ELSE
@@ -1870,7 +1869,6 @@ async def init_db() -> None:
                                 pending_round_link = CASE WHEN rid IS NULL THEN TRUE ELSE FALSE END,
                                 started_at = COALESCE(ts, started_at),
                                 finished_at = COALESCE(te, finished_at),
-                                post_consensus_summary = COALESCE(NEW.validator_summary, post_consensus_summary),
                                 post_consensus_json = COALESCE(NEW.validator_summary, post_consensus_json),
                                 s3_logs_url = COALESCE(NEW.s3_logs_url, s3_logs_url),
                                 updated_at = NOW()
@@ -1931,7 +1929,6 @@ async def init_db() -> None:
                             end_epoch = COALESCE(NEW.end_epoch, end_epoch),
                             pending_round_link = CASE WHEN rid IS NULL THEN TRUE ELSE FALSE END,
                             finished_at = COALESCE(te, finished_at),
-                            post_consensus_summary = COALESCE(NEW.validator_summary, post_consensus_summary),
                             post_consensus_json = COALESCE(NEW.validator_summary, post_consensus_json),
                             s3_logs_url = COALESCE(NEW.s3_logs_url, s3_logs_url),
                             is_main_validator = COALESCE(is_main, is_main_validator),
