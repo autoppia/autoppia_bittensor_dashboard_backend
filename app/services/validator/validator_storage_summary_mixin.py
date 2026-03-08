@@ -98,7 +98,6 @@ class ValidatorStorageSummaryMixin:
                       rs.candidate_miner_uid,
                       rs.candidate_reward,
                       rs.required_improvement_pct,
-                      rs.summary_json,
                       rs.post_consensus_summary
                     FROM round_summary rs
                     JOIN rounds r ON r.round_id = rs.round_id
@@ -144,19 +143,6 @@ class ValidatorStorageSummaryMixin:
                         leader_uid = winner_uid
                         leader_reward = winner_reward
 
-            summary_payload = self._apply_leadership_to_summary(
-                summary=self._to_json_dict(row.get("summary_json")),
-                winner_uid=winner_uid,
-                winner_reward=winner_reward,
-                reigning_uid_before_round=reigning_uid_before_round,
-                reigning_reward_before_round=reigning_reward_before_round,
-                top_candidate_uid=top_candidate_uid,
-                top_candidate_reward=top_candidate_reward,
-                required_improvement_pct=required_improvement_pct,
-                dethroned=dethroned,
-                leader_uid_after_round=leader_uid,
-                leader_reward_after_round=leader_reward,
-            )
             post_payload = self._apply_leadership_to_summary(
                 summary=self._to_json_dict(row.get("post_consensus_summary")),
                 winner_uid=winner_uid,
@@ -185,7 +171,6 @@ class ValidatorStorageSummaryMixin:
                       required_improvement_pct = :required_improvement_pct,
                       required_reward_to_dethrone = :required_reward_to_dethrone,
                       dethroned = :dethroned,
-                      summary_json = CAST(:summary_json AS JSONB),
                       post_consensus_summary = CAST(:post_consensus_summary AS JSONB),
                       updated_at = NOW()
                     WHERE round_id = :round_id
@@ -202,7 +187,6 @@ class ValidatorStorageSummaryMixin:
                     "required_improvement_pct": required_improvement_pct,
                     "required_reward_to_dethrone": (float(reigning_reward_before_round) * (1.0 + required_improvement_pct)) if reigning_reward_before_round is not None else None,
                     "dethroned": dethroned,
-                    "summary_json": json.dumps(summary_payload),
                     "post_consensus_summary": json.dumps(post_payload),
                 },
             )
@@ -716,7 +700,6 @@ class ValidatorStorageSummaryMixin:
                     leader_after_eval_score,
                     leader_after_eval_time,
                     leader_after_eval_cost,
-                    summary_json,
                     post_consensus_summary,
                     created_at,
                     updated_at
@@ -749,7 +732,6 @@ class ValidatorStorageSummaryMixin:
                     :leader_after_eval_score,
                     :leader_after_eval_time,
                     :leader_after_eval_cost,
-                    CAST(:summary_json AS JSONB),
                     CAST(:post_consensus_summary AS JSONB),
                     NOW(),
                     NOW()
@@ -781,7 +763,6 @@ class ValidatorStorageSummaryMixin:
                     leader_after_eval_score = EXCLUDED.leader_after_eval_score,
                     leader_after_eval_time = EXCLUDED.leader_after_eval_time,
                     leader_after_eval_cost = EXCLUDED.leader_after_eval_cost,
-                    summary_json = COALESCE(EXCLUDED.summary_json, round_summary.summary_json),
                     post_consensus_summary = COALESCE(EXCLUDED.post_consensus_summary, round_summary.post_consensus_summary),
                     updated_at = NOW()
                 """
@@ -814,7 +795,6 @@ class ValidatorStorageSummaryMixin:
                 "leader_after_eval_score": leader_eval_score,
                 "leader_after_eval_time": leader_eval_time,
                 "leader_after_eval_cost": leader_eval_cost,
-                "summary_json": json.dumps(post_summary),
                 "post_consensus_summary": json.dumps(post_summary),
             },
         )

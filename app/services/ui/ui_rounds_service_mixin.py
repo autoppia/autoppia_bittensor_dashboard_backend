@@ -656,7 +656,6 @@ class UIRoundsServiceMixin:
                           leader_after_eval_score,
                           leader_after_eval_time,
                           leader_after_eval_cost,
-                          summary_json,
                           post_consensus_summary
                         FROM round_summary
                         WHERE round_id = :rid
@@ -742,7 +741,7 @@ class UIRoundsServiceMixin:
                 "leader_after_eval_score": leader_after_eval_score,
                 "leader_after_eval_time": leader_after_eval_time,
                 "leader_after_eval_cost": leader_after_eval_cost,
-                "raw_summary": row.get("summary_json"),
+                "raw_summary": row.get("post_consensus_summary"),
                 "post_consensus_summary": row.get("post_consensus_summary"),
             },
         }
