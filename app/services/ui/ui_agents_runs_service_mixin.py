@@ -36,8 +36,8 @@ class UIAgentsRunsServiceMixin:
                           AND s.season_number = :season
                           AND rv.validator_uid = :main_validator_uid
                         ORDER BY
-                          COALESCE(rvm.best_local_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) DESC,
-                          COALESCE(rvm.best_local_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) ASC,
+                          COALESCE(rvm.post_consensus_avg_reward, rvm.best_local_reward, rvm.local_avg_reward, 0) DESC,
+                          COALESCE(rvm.post_consensus_rank, rvm.best_local_rank, rvm.local_rank, 9999) ASC,
                           r.round_number_in_season ASC,
                           r.round_id ASC
                         LIMIT 1
@@ -67,18 +67,18 @@ class UIAgentsRunsServiceMixin:
                       SELECT
                         s.season_number,
                         r.round_number_in_season,
-                        COALESCE(rvm.best_local_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) AS reward,
-                        COALESCE(rvm.best_local_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) AS rank,
-                        COALESCE(rvm.best_local_eval_score, rvm.post_consensus_avg_eval_score, rvm.local_avg_eval_score, 0) AS eval_score,
-                        COALESCE(rvm.best_local_eval_time, rvm.post_consensus_avg_eval_time, rvm.local_avg_eval_time, 0) AS eval_time,
-                        COALESCE(rvm.best_local_tasks_received, rvm.post_consensus_tasks_received, rvm.local_tasks_received, 0) AS tasks_received,
-                        COALESCE(rvm.best_local_tasks_success, rvm.post_consensus_tasks_success, rvm.local_tasks_success, 0) AS tasks_success,
+                        COALESCE(rvm.post_consensus_avg_reward, rvm.best_local_reward, rvm.local_avg_reward, 0) AS reward,
+                        COALESCE(rvm.post_consensus_rank, rvm.best_local_rank, rvm.local_rank, 9999) AS rank,
+                        COALESCE(rvm.post_consensus_avg_eval_score, rvm.best_local_eval_score, rvm.local_avg_eval_score, 0) AS eval_score,
+                        COALESCE(rvm.post_consensus_avg_eval_time, rvm.best_local_eval_time, rvm.local_avg_eval_time, 0) AS eval_time,
+                        COALESCE(rvm.post_consensus_tasks_received, rvm.best_local_tasks_received, rvm.local_tasks_received, 0) AS tasks_received,
+                        COALESCE(rvm.post_consensus_tasks_success, rvm.best_local_tasks_success, rvm.local_tasks_success, 0) AS tasks_success,
                         rs.leader_after_reward AS top_reward,
                         ROW_NUMBER() OVER (
                           PARTITION BY r.round_id
                           ORDER BY
-                            COALESCE(rvm.best_local_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) DESC,
-                            COALESCE(rvm.best_local_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) ASC,
+                            COALESCE(rvm.post_consensus_avg_reward, rvm.best_local_reward, rvm.local_avg_reward, 0) DESC,
+                            COALESCE(rvm.post_consensus_rank, rvm.best_local_rank, rvm.local_rank, 9999) ASC,
                             rvm.round_validator_id ASC
                         ) AS row_num
                       FROM round_validator_miners rvm
@@ -126,8 +126,8 @@ class UIAgentsRunsServiceMixin:
                     WITH season_rows AS (
                       SELECT
                         rvm.miner_uid AS uid,
-                        COALESCE(rvm.best_local_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) AS best_local_reward,
-                        COALESCE(rvm.best_local_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) AS best_local_rank,
+                        COALESCE(rvm.post_consensus_avg_reward, rvm.best_local_reward, rvm.local_avg_reward, 0) AS best_local_reward,
+                        COALESCE(rvm.post_consensus_rank, rvm.best_local_rank, rvm.local_rank, 9999) AS best_local_rank,
                         r.round_number_in_season AS round_number
                       FROM round_validator_miners rvm
                       JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
@@ -262,8 +262,13 @@ class UIAgentsRunsServiceMixin:
         success_tasks = int(sum(int(r["local_tasks_success"] or 0) for r in miner_rows))
         failed_tasks = max(total_tasks - success_tasks, 0)
         avg_time = (sum(float(r["local_avg_eval_time"] or 0.0) for r in miner_rows) / len(miner_rows)) if miner_rows else 0.0
-        reward = float(first["best_local_reward"] or first["post_consensus_avg_reward"] or first["local_avg_reward"] or 0.0)
-        rank = int(first["best_local_rank"] or first["post_consensus_rank"] or first["local_rank"] or 0)
+        reward = float(first["post_consensus_avg_reward"] or first["best_local_reward"] or first["local_avg_reward"] or 0.0)
+        rank = int(first["post_consensus_rank"] or first["best_local_rank"] or first["local_rank"] or 0)
+        selected_round_history_row = next(
+            (row for row in season_round_rows if int(row["round_number_in_season"]) == int(round_in_season)),
+            None,
+        )
+        selected_top_reward = float(selected_round_history_row["top_reward"]) if selected_round_history_row and selected_round_history_row.get("top_reward") is not None else reward
 
         runs_count = (
             await self.session.execute(
@@ -558,7 +563,7 @@ class UIAgentsRunsServiceMixin:
                 "totalRuns": int(runs_count or 0),
                 "successfulRuns": int(success_runs or 0),
                 "currentReward": reward,
-                "currentTopReward": reward,
+                "currentTopReward": selected_top_reward,
                 "currentRank": (season_rank if requested_round_in_season is None else rank),
                 "seasonRank": season_rank,
                 "bestRankEver": (int(best_rank_history_row["rank"]) if best_rank_history_row.get("rank") is not None else rank),
@@ -600,7 +605,7 @@ class UIAgentsRunsServiceMixin:
             "roundMetrics": {
                 "roundId": season * 10000 + round_in_season,
                 "reward": reward,
-                "topReward": reward,
+                "topReward": selected_top_reward,
                 "rank": rank,
                 "totalRuns": len(miner_rows),
                 "totalValidators": len(validators),
@@ -819,8 +824,8 @@ class UIAgentsRunsServiceMixin:
                     SELECT
                       s.season_number,
                       r.round_number_in_season,
-                      COALESCE(rvm.best_local_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) AS best_local_reward,
-                      COALESCE(rvm.best_local_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) AS best_local_rank
+                      COALESCE(rvm.post_consensus_avg_reward, rvm.best_local_reward, rvm.local_avg_reward, 0) AS best_local_reward,
+                      COALESCE(rvm.post_consensus_rank, rvm.best_local_rank, rvm.local_rank, 9999) AS best_local_rank
                     FROM round_validator_miners rvm
                     JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
                     JOIN rounds r ON r.round_id = rvm.round_id
@@ -829,8 +834,8 @@ class UIAgentsRunsServiceMixin:
                       AND rv.validator_uid = :main_validator_uid
                     {season_filter_sql}
                     ORDER BY
-                      COALESCE(rvm.best_local_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) DESC,
-                      COALESCE(rvm.best_local_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) ASC,
+                      COALESCE(rvm.post_consensus_avg_reward, rvm.best_local_reward, rvm.local_avg_reward, 0) DESC,
+                      COALESCE(rvm.post_consensus_rank, rvm.best_local_rank, rvm.local_rank, 9999) ASC,
                       s.season_number ASC,
                       r.round_number_in_season ASC
                     LIMIT 1
@@ -856,8 +861,8 @@ class UIAgentsRunsServiceMixin:
                         WITH season_rows AS (
                           SELECT
                             rvm.miner_uid AS uid,
-                            COALESCE(rvm.best_local_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) AS best_local_reward,
-                            COALESCE(rvm.best_local_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) AS best_local_rank,
+                            COALESCE(rvm.post_consensus_avg_reward, rvm.best_local_reward, rvm.local_avg_reward, 0) AS best_local_reward,
+                            COALESCE(rvm.post_consensus_rank, rvm.best_local_rank, rvm.local_rank, 9999) AS best_local_rank,
                             r.round_number_in_season AS round_number
                           FROM round_validator_miners rvm
                           JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id

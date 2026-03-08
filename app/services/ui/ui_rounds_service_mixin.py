@@ -277,8 +277,8 @@ class UIRoundsServiceMixin:
                         rvm.miner_uid AS uid,
                         COALESCE(NULLIF(TRIM(COALESCE(rvm.name, '')), ''), 'miner ' || rvm.miner_uid::text) AS name,
                         rvm.image_url AS image,
-                        COALESCE(rvm.best_local_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) AS best_local_reward,
-                        COALESCE(rvm.best_local_rank, rvm.post_consensus_rank, rvm.local_rank, 9999) AS best_local_rank,
+                        COALESCE(rvm.post_consensus_avg_reward, rvm.best_local_reward, rvm.local_avg_reward, 0) AS best_local_reward,
+                        COALESCE(rvm.post_consensus_rank, rvm.best_local_rank, rvm.local_rank, 9999) AS best_local_rank,
                         r.round_number_in_season AS round_number
                       FROM round_validator_miners rvm
                       JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
