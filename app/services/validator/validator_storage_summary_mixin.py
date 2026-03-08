@@ -547,8 +547,6 @@ class ValidatorStorageSummaryMixin:
             )
 
         rewards = [float(row.post_consensus_avg_reward) for row in competitive_rows if row.post_consensus_avg_reward is not None]
-        eval_scores = [float(row.post_consensus_avg_eval_score) for row in competitive_rows if row.post_consensus_avg_eval_score is not None]
-        eval_times = [float(row.post_consensus_avg_eval_time) for row in competitive_rows if row.post_consensus_avg_eval_time is not None]
         tasks_evaluated = sum(int(row.post_consensus_tasks_received or 0) for row in competitive_rows)
         tasks_success = sum(int(row.post_consensus_tasks_success or 0) for row in competitive_rows)
 
@@ -607,10 +605,42 @@ class ValidatorStorageSummaryMixin:
         leader_before_hotkey, leader_before_github_url = await _lookup_round_miner_snapshot(leader_before_uid)
         candidate_hotkey, candidate_github_url = await _lookup_round_miner_snapshot(candidate_uid)
         leader_after_hotkey, leader_after_github_url = await _lookup_round_miner_snapshot(leader_after_uid)
-        avg_eval_costs = [float(row.post_consensus_avg_eval_cost) for row in competitive_rows if getattr(row, "post_consensus_avg_eval_cost", None) is not None]
         leader_before_reward = float(round_row.leader_before_reward) if getattr(round_row, "leader_before_reward", None) is not None else None
         candidate_reward = float(round_row.candidate_reward) if getattr(round_row, "candidate_reward", None) is not None else None
         leader_after_reward = float(getattr(winner_row, "post_consensus_avg_reward", 0.0) or 0.0) if winner_row is not None else None
+        leader_eval_score = 0.0
+        leader_eval_time = 0.0
+        leader_eval_cost = None
+        if leader_after_uid is not None:
+            leader_metrics_row = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT
+                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_score, 0), NULLIF(rvm.local_avg_eval_score, 0), rvm.best_local_eval_score, 0) AS resolved_score,
+                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_time, 0), NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) AS resolved_time,
+                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_cost, 0), rvm.local_avg_eval_cost, rvm.best_local_eval_cost) AS resolved_cost
+                            FROM round_validator_miners rvm
+                            WHERE rvm.round_id = :round_id
+                              AND rvm.miner_uid = :miner_uid
+                            ORDER BY
+                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_score, 0), NULLIF(rvm.local_avg_eval_score, 0), rvm.best_local_eval_score, 0) DESC,
+                                COALESCE(NULLIF(rvm.post_consensus_avg_eval_time, 0), NULLIF(rvm.local_avg_eval_time, 0), rvm.best_local_eval_time, 0) DESC
+                            LIMIT 1
+                            """
+                        ),
+                        {"round_id": round_id, "miner_uid": leader_after_uid},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if leader_metrics_row:
+                leader_eval_score = float(leader_metrics_row.get("resolved_score") or 0.0)
+                leader_eval_time = float(leader_metrics_row.get("resolved_time") or 0.0)
+                if leader_metrics_row.get("resolved_cost") is not None:
+                    leader_eval_cost = float(leader_metrics_row["resolved_cost"])
 
         await self.session.execute(
             text(
@@ -726,9 +756,9 @@ class ValidatorStorageSummaryMixin:
                 "tasks_evaluated": tasks_evaluated,
                 "tasks_success": tasks_success,
                 "avg_reward": (sum(rewards) / len(rewards)) if rewards else 0.0,
-                "avg_eval_score": (sum(eval_scores) / len(eval_scores)) if eval_scores else 0.0,
-                "avg_eval_time": (sum(eval_times) / len(eval_times)) if eval_times else 0.0,
-                "avg_eval_cost": (sum(avg_eval_costs) / len(avg_eval_costs)) if avg_eval_costs else None,
+                "avg_eval_score": leader_eval_score,
+                "avg_eval_time": leader_eval_time,
+                "avg_eval_cost": leader_eval_cost,
                 "summary_json": json.dumps(post_summary),
                 "post_consensus_summary": json.dumps(post_summary),
             },
