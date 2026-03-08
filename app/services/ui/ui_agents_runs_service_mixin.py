@@ -78,6 +78,7 @@ class UIAgentsRunsServiceMixin:
                         COALESCE(rvm.post_consensus_rank, 9999) AS rank,
                         COALESCE(rvm.post_consensus_avg_eval_score, 0) AS eval_score,
                         COALESCE(rvm.post_consensus_avg_eval_time, 0) AS eval_time,
+                        rvm.post_consensus_avg_eval_cost AS eval_cost,
                         COALESCE(rvm.post_consensus_tasks_received, 0) AS tasks_received,
                         COALESCE(rvm.post_consensus_tasks_success, 0) AS tasks_success,
                         rs.leader_after_reward AS top_reward,
@@ -104,6 +105,7 @@ class UIAgentsRunsServiceMixin:
                       rank,
                       eval_score,
                       eval_time,
+                      eval_cost,
                       tasks_received,
                       tasks_success,
                       top_reward
@@ -277,6 +279,7 @@ class UIAgentsRunsServiceMixin:
         success_tasks = canonical_success_tasks if canonical_success_tasks is not None else local_success_tasks
         failed_tasks = max(total_tasks - success_tasks, 0)
         avg_time = canonical_avg_time if canonical_avg_time is not None else local_avg_time
+        canonical_avg_cost = float(selected_round_history_row["eval_cost"]) if selected_round_history_row and selected_round_history_row.get("eval_cost") is not None else None
         reward = (
             float(selected_round_history_row["reward"])
             if selected_round_history_row and selected_round_history_row.get("reward") is not None
@@ -489,6 +492,8 @@ class UIAgentsRunsServiceMixin:
             performance_by_website.sort(key=lambda x: x["tasks_received"], reverse=True)
             if has_llm_usage and total_tasks_for_cost > 0:
                 avg_cost_per_task = total_llm_cost / float(total_tasks_for_cost)
+        if avg_cost_per_task is None and canonical_avg_cost is not None:
+            avg_cost_per_task = canonical_avg_cost
 
         season_leadership_row = (
             (
@@ -608,6 +613,7 @@ class UIAgentsRunsServiceMixin:
                     "rank": (int(row["rank"]) if row["rank"] is not None and int(row["rank"]) < 9999 else None),
                     "eval_score": float(row["eval_score"] or 0.0),
                     "eval_time": float(row["eval_time"] or 0.0),
+                    "eval_cost": (float(row["eval_cost"]) if row.get("eval_cost") is not None else None),
                     "timestamp": "",
                     "topReward": (float(row["top_reward"]) if row.get("top_reward") is not None else None),
                 }

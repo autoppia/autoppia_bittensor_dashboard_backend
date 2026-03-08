@@ -2169,14 +2169,14 @@ async def init_db() -> None:
 
                         INSERT INTO round_validator_miners (
                             round_validator_id, round_id, miner_uid, miner_hotkey,
-                            local_rank, local_avg_reward, local_avg_eval_score, local_avg_eval_time, local_tasks_received, local_tasks_success,
-                            post_consensus_rank, post_consensus_avg_reward, post_consensus_avg_eval_score, post_consensus_avg_eval_time,
+                            local_rank, local_avg_reward, local_avg_eval_score, local_avg_eval_time, local_avg_eval_cost, local_tasks_received, local_tasks_success,
+                            post_consensus_rank, post_consensus_avg_reward, post_consensus_avg_eval_score, post_consensus_avg_eval_time, post_consensus_avg_eval_cost,
                             post_consensus_tasks_received, post_consensus_tasks_success, weight, subnet_price, created_at, updated_at
                         )
                         VALUES (
                             rvid, rid, NEW.miner_uid, NEW.miner_hotkey,
-                            NEW.local_rank, NEW.local_avg_reward, NEW.local_avg_eval_score, NEW.local_avg_eval_time, NEW.local_tasks_received, NEW.local_tasks_success,
-                            NEW.post_consensus_rank, NEW.post_consensus_avg_reward, NEW.post_consensus_avg_eval_score, NEW.post_consensus_avg_eval_time,
+                            NEW.local_rank, NEW.local_avg_reward, NEW.local_avg_eval_score, NEW.local_avg_eval_time, NEW.local_avg_eval_cost, NEW.local_tasks_received, NEW.local_tasks_success,
+                            NEW.post_consensus_rank, NEW.post_consensus_avg_reward, NEW.post_consensus_avg_eval_score, NEW.post_consensus_avg_eval_time, NEW.post_consensus_avg_eval_cost,
                             NEW.post_consensus_tasks_received, NEW.post_consensus_tasks_success, NEW.weight, NEW.subnet_price, NOW(), NOW()
                         )
                         ON CONFLICT (round_validator_id, miner_uid) DO UPDATE SET
@@ -2185,12 +2185,14 @@ async def init_db() -> None:
                             local_avg_reward = EXCLUDED.local_avg_reward,
                             local_avg_eval_score = EXCLUDED.local_avg_eval_score,
                             local_avg_eval_time = EXCLUDED.local_avg_eval_time,
+                            local_avg_eval_cost = EXCLUDED.local_avg_eval_cost,
                             local_tasks_received = EXCLUDED.local_tasks_received,
                             local_tasks_success = EXCLUDED.local_tasks_success,
                             post_consensus_rank = EXCLUDED.post_consensus_rank,
                             post_consensus_avg_reward = EXCLUDED.post_consensus_avg_reward,
                             post_consensus_avg_eval_score = EXCLUDED.post_consensus_avg_eval_score,
                             post_consensus_avg_eval_time = EXCLUDED.post_consensus_avg_eval_time,
+                            post_consensus_avg_eval_cost = EXCLUDED.post_consensus_avg_eval_cost,
                             post_consensus_tasks_received = EXCLUDED.post_consensus_tasks_received,
                             post_consensus_tasks_success = EXCLUDED.post_consensus_tasks_success,
                             weight = EXCLUDED.weight,
