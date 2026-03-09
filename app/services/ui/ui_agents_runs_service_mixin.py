@@ -383,6 +383,86 @@ class UIAgentsRunsServiceMixin:
         elif run_agent_run_id:
             source_agent_run_ids.append(str(run_agent_run_id))
 
+        if not source_agent_run_ids:
+            target_reward = float(selected_round_history_row["reward"] or 0.0) if selected_round_history_row else reward
+            source_round_rows = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                        WITH source_rounds AS (
+                          SELECT
+                            r.round_id,
+                            r.round_number_in_season,
+                            COALESCE(rvm.post_consensus_avg_reward, 0) AS reward,
+                            ABS(COALESCE(rvm.post_consensus_avg_reward, 0) - :target_reward) AS reward_delta,
+                            COUNT(mer.agent_run_id) AS run_count
+                          FROM round_validator_miners rvm
+                          JOIN round_validators rv
+                            ON rv.round_validator_id = rvm.round_validator_id
+                          JOIN rounds r
+                            ON r.round_id = rvm.round_id
+                          JOIN seasons s
+                            ON s.season_id = r.season_id
+                          LEFT JOIN miner_evaluation_runs mer
+                            ON mer.round_validator_id = rv.round_validator_id
+                           AND mer.miner_uid = rvm.miner_uid
+                          WHERE rvm.miner_uid = :miner_uid
+                            AND rv.validator_uid = :main_validator_uid
+                            AND s.season_number = :season
+                            AND r.round_number_in_season <= :round_in_season
+                          GROUP BY r.round_id, r.round_number_in_season, rvm.post_consensus_avg_reward
+                        )
+                        SELECT round_id
+                        FROM source_rounds
+                        WHERE run_count > 0
+                        ORDER BY reward_delta ASC, round_number_in_season DESC
+                        LIMIT 1
+                        """
+                        ),
+                        {
+                            "miner_uid": miner_uid,
+                            "main_validator_uid": main_validator_uid,
+                            "season": season,
+                            "round_in_season": round_in_season,
+                            "target_reward": target_reward,
+                        },
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            if source_round_rows:
+                source_round_id = int(source_round_rows[0]["round_id"])
+                fallback_run_rows = (
+                    (
+                        await self.session.execute(
+                            text(
+                                """
+                            SELECT mer.agent_run_id
+                            FROM miner_evaluation_runs mer
+                            JOIN round_validators rv
+                              ON rv.round_validator_id = mer.round_validator_id
+                            WHERE mer.miner_uid = :miner_uid
+                              AND rv.validator_uid = :main_validator_uid
+                              AND rv.round_id = :round_id
+                            ORDER BY mer.started_at DESC NULLS LAST, mer.created_at DESC NULLS LAST
+                            """
+                            ),
+                            {
+                                "miner_uid": miner_uid,
+                                "main_validator_uid": main_validator_uid,
+                                "round_id": source_round_id,
+                            },
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+                for rc in fallback_run_rows:
+                    source_agent_run_ids.append(str(rc.get("agent_run_id")))
+                source_agent_run_ids = list(dict.fromkeys([run_id for run_id in source_agent_run_ids if run_id]))
+
         if source_agent_run_ids:
             by_website: Dict[str, Dict[str, Any]] = {}
             total_tasks_for_cost = 0
