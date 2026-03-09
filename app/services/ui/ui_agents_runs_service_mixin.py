@@ -11,6 +11,19 @@ from app.services.media_storage import build_public_url
 
 
 class UIAgentsRunsServiceMixin:
+    @staticmethod
+    def _derive_agent_run_status(*, ended_at: Any, zero_reason: Any, total_tasks: int, successful_tasks: int) -> str:
+        zero_reason_text = str(zero_reason or "").strip().lower()
+        if zero_reason_text == "task_timeout":
+            return "timeout"
+        if zero_reason_text:
+            return "failed"
+        if ended_at is None:
+            return "running"
+        if successful_tasks == 0 and total_tasks > 0:
+            return "failed"
+        return "completed"
+
     async def get_agent_detail(self, miner_uid: int, season: Optional[int], round_in_season: Optional[int]) -> Dict[str, Any]:
         requested_round_in_season = round_in_season
         if season is None:
@@ -1308,8 +1321,9 @@ class UIAgentsRunsServiceMixin:
                     LEFT JOIN round_validators rv ON rv.round_validator_id = mer.round_validator_id
                     LEFT JOIN LATERAL (
                       SELECT COUNT(DISTINCT t.web_project_id) AS websites_count
-                      FROM tasks t
-                      WHERE t.validator_round_id = mer.validator_round_id
+                      FROM evaluations e
+                      JOIN tasks t ON t.task_id = e.task_id
+                      WHERE e.agent_run_id = mer.agent_run_id
                     ) websites ON TRUE
                     LEFT JOIN LATERAL (
                       SELECT AVG(task_cost) AS avg_cost_per_task
@@ -1370,13 +1384,12 @@ class UIAgentsRunsServiceMixin:
                 continue
             total_tasks = int(r["total_tasks"] or 0)
             success_tasks = int(r["success_tasks"] or 0)
-            status = "completed"
-            if r["ended_at"] is None:
-                status = "running"
-            elif r["zero_reason"] == "task_timeout":
-                status = "timeout"
-            elif success_tasks == 0 and total_tasks > 0:
-                status = "failed"
+            status = self._derive_agent_run_status(
+                ended_at=r["ended_at"],
+                zero_reason=r["zero_reason"],
+                total_tasks=total_tasks,
+                successful_tasks=success_tasks,
+            )
             runs.append(
                 {
                     "runId": r["agent_run_id"],
@@ -1636,8 +1649,9 @@ class UIAgentsRunsServiceMixin:
                     ) run_cost ON TRUE
                     LEFT JOIN LATERAL (
                       SELECT COUNT(DISTINCT t.web_project_id) AS websites_count
-                      FROM tasks t
-                      WHERE t.validator_round_id = mer.validator_round_id
+                      FROM evaluations e
+                      JOIN tasks t ON t.task_id = e.task_id
+                      WHERE e.agent_run_id = mer.agent_run_id
                     ) websites ON TRUE
                     WHERE {" AND ".join(where)}
                     """
@@ -1652,13 +1666,12 @@ class UIAgentsRunsServiceMixin:
         for r in rows:
             total_tasks = int(r["total_tasks"] or 0)
             successful = int(r["success_tasks"] or 0)
-            run_status = "completed"
-            if r["ended_at"] is None:
-                run_status = "running"
-            elif str(r["zero_reason"] or "") == "task_timeout":
-                run_status = "timeout"
-            elif successful == 0 and total_tasks > 0:
-                run_status = "failed"
+            run_status = self._derive_agent_run_status(
+                ended_at=r["ended_at"],
+                zero_reason=r["zero_reason"],
+                total_tasks=total_tasks,
+                successful_tasks=successful,
+            )
             if status and run_status != status:
                 continue
             round_encoded = 0
