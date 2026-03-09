@@ -1264,8 +1264,8 @@ class UIRoundsServiceMixin:
                         ),
                         0
                       ) AS total_miners,
-                      COALESCE(AVG(rvm.local_avg_reward), 0) AS avg_reward,
-                      COALESCE(MAX(rvm.local_avg_reward), 0) AS top_score
+                      COALESCE(AVG(COALESCE(rvm.local_avg_reward, rvm.best_local_reward)), 0) AS avg_reward,
+                      COALESCE(MAX(COALESCE(rvm.local_avg_reward, rvm.best_local_reward)), 0) AS top_score
                     FROM round_validators rv
                     LEFT JOIN tasks t ON t.round_validator_id = rv.round_validator_id
                     LEFT JOIN round_validator_miners rvm ON rvm.round_validator_id = rv.round_validator_id
