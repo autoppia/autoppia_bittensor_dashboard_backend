@@ -1172,6 +1172,7 @@ class ValidatorStorageSummaryMixin:
                         vrs.miner_uid,
                         vrs.post_consensus_rank,
                         vrs.post_consensus_avg_reward,
+                        vrs.post_consensus_avg_eval_score,
                         vrs.weight,
                         CASE
                             WHEN COALESCE(vrs.local_tasks_received, 0) > 0 THEN COALESCE(vrs.local_tasks_received, 0)
@@ -1197,15 +1198,15 @@ class ValidatorStorageSummaryMixin:
                         epvm.miner_uid,
                         MIN(epvm.post_consensus_rank) FILTER (WHERE epvm.post_consensus_rank IS NOT NULL) AS canonical_rank,
                         AVG(epvm.post_consensus_avg_reward) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL) AS canonical_reward,
+                        CASE
+                            WHEN SUM(epvm.weight) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.weight IS NOT NULL) > 0
+                            THEN SUM(epvm.post_consensus_avg_eval_score * epvm.weight) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.weight IS NOT NULL)
+                                 / SUM(epvm.weight) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.weight IS NOT NULL)
+                            ELSE AVG(epvm.post_consensus_avg_eval_score) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL)
+                        END AS canonical_eval_score,
                         AVG(epvm.weight) FILTER (WHERE epvm.weight IS NOT NULL) AS canonical_weight,
                         SUM(COALESCE(epvm.effective_tasks_received, 0))::INTEGER AS canonical_tasks_received,
                         SUM(COALESCE(epvm.effective_tasks_success, 0))::INTEGER AS canonical_tasks_success,
-                        CASE
-                            WHEN SUM(COALESCE(epvm.effective_tasks_received, 0)) > 0
-                            THEN SUM(COALESCE(epvm.effective_tasks_success, 0))::DOUBLE PRECISION
-                                 / SUM(COALESCE(epvm.effective_tasks_received, 0))::DOUBLE PRECISION
-                            ELSE NULL
-                        END AS canonical_eval_score,
                         CASE
                             WHEN SUM(COALESCE(epvm.effective_tasks_received, 0)) > 0
                             THEN SUM(COALESCE(epvm.effective_eval_time, 0) * COALESCE(epvm.effective_tasks_received, 0))::DOUBLE PRECISION
