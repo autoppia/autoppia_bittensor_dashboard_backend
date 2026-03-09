@@ -255,27 +255,6 @@ class ValidatorStorageSummaryMixin:
             },
         )
 
-    async def _get_handshake_participant_uids(self, validator_round_id: str) -> set[int]:
-        """Return miner UIDs that participated in handshake with valid required fields.
-
-        Business round metrics (winner/miners_evaluated/rollups) must be based on
-        this set, not on the full metagraph consensus vector.
-        """
-        rows = await self.session.execute(
-            text(
-                """
-                SELECT DISTINCT rvm.miner_uid
-                FROM round_validator_miners rvm
-                JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
-                WHERE rv.validator_round_id = :validator_round_id
-                  AND rvm.name IS NOT NULL
-                  AND rvm.github_url IS NOT NULL
-                """
-            ),
-            {"validator_round_id": validator_round_id},
-        )
-        return {int(r.miner_uid) for r in rows if r.miner_uid is not None}
-
     async def _sync_season_bounds_from_rounds(self, season_id: int) -> None:
         await self.session.execute(
             text(
@@ -324,8 +303,6 @@ class ValidatorStorageSummaryMixin:
             or 0
         )
 
-        handshake_uids = await self._get_handshake_participant_uids(round_row.validator_round_id)
-
         miners_payload: List[Dict[str, Any]] = []
         tasks_evaluated_total = 0
         tasks_success_total = 0
@@ -339,7 +316,6 @@ class ValidatorStorageSummaryMixin:
             post_tasks_received = int(row.post_consensus_tasks_received or 0)
             post_tasks_success = int(row.post_consensus_tasks_success or 0)
             is_burn_row = int(row.miner_uid or -1) == burn_uid
-            is_handshake_participant = int(row.miner_uid or -1) in handshake_uids
             if not is_burn_row:
                 tasks_evaluated_total += post_tasks_received
                 tasks_success_total += post_tasks_success
@@ -361,7 +337,6 @@ class ValidatorStorageSummaryMixin:
                     "post_consensus_tasks_received": row.post_consensus_tasks_received,
                     "post_consensus_tasks_success": row.post_consensus_tasks_success,
                     "weight": row.weight,
-                    "is_handshake_participant": is_handshake_participant,
                 }
             )
 
