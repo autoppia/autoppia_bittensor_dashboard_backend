@@ -968,6 +968,44 @@ async def init_db() -> None:
             )
         )
         await conn.execute(text("ALTER TABLE round_summary DROP COLUMN IF EXISTS post_consensus_summary"))
+        await conn.execute(
+            text(
+                """
+                UPDATE round_validators
+                SET post_consensus_json = CASE
+                    WHEN jsonb_typeof(post_consensus_json->'summary') = 'object' THEN post_consensus_json
+                    WHEN jsonb_typeof(post_consensus_json->'evaluation_post_consensus'->'summary') = 'object'
+                        THEN post_consensus_json->'evaluation_post_consensus'
+                    ELSE post_consensus_json
+                END
+                WHERE post_consensus_json IS NOT NULL
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE round_summary rs
+                SET post_consensus_json = COALESCE(
+                    CASE
+                        WHEN jsonb_typeof(rs.post_consensus_json->'summary') = 'object' THEN rs.post_consensus_json
+                        WHEN jsonb_typeof(rs.post_consensus_json->'evaluation_post_consensus'->'summary') = 'object'
+                            THEN rs.post_consensus_json->'evaluation_post_consensus'
+                        ELSE NULL
+                    END,
+                    CASE
+                        WHEN jsonb_typeof(rv.post_consensus_json->'summary') = 'object' THEN rv.post_consensus_json
+                        WHEN jsonb_typeof(rv.post_consensus_json->'evaluation_post_consensus'->'summary') = 'object'
+                            THEN rv.post_consensus_json->'evaluation_post_consensus'
+                        ELSE rs.post_consensus_json
+                    END
+                )
+                FROM round_validators rv
+                WHERE rv.round_validator_id = rs.source_round_validator_id
+                   OR (rv.round_id = rs.round_id AND COALESCE(rv.is_main_validator, FALSE))
+                """
+            )
+        )
 
         validator_rounds_relkind = await conn.scalar(
             text(
@@ -1854,7 +1892,14 @@ async def init_db() -> None:
                                 rid, NEW.season_number, NEW.round_number_in_season,
                                 NEW.start_block, NEW.end_block, NEW.start_epoch, NEW.end_epoch,
                                 0, NULL, NEW.validator_round_id,
-                                ts, te, NEW.validator_summary, NEW.s3_logs_url, FALSE, NOW(), NOW()
+                                ts, te,
+                                CASE
+                                    WHEN jsonb_typeof(NEW.validator_summary->'summary') = 'object' THEN NEW.validator_summary
+                                    WHEN jsonb_typeof(NEW.validator_summary->'evaluation_post_consensus'->'summary') = 'object'
+                                        THEN NEW.validator_summary->'evaluation_post_consensus'
+                                    ELSE NEW.validator_summary
+                                END,
+                                NEW.s3_logs_url, FALSE, NOW(), NOW()
                             )
                             RETURNING round_validator_id INTO rvid;
                         ELSE
@@ -1870,7 +1915,15 @@ async def init_db() -> None:
                                 pending_round_link = CASE WHEN rid IS NULL THEN TRUE ELSE FALSE END,
                                 started_at = COALESCE(ts, started_at),
                                 finished_at = COALESCE(te, finished_at),
-                                post_consensus_json = COALESCE(NEW.validator_summary, post_consensus_json),
+                                post_consensus_json = COALESCE(
+                                    CASE
+                                        WHEN jsonb_typeof(NEW.validator_summary->'summary') = 'object' THEN NEW.validator_summary
+                                        WHEN jsonb_typeof(NEW.validator_summary->'evaluation_post_consensus'->'summary') = 'object'
+                                            THEN NEW.validator_summary->'evaluation_post_consensus'
+                                        ELSE NEW.validator_summary
+                                    END,
+                                    post_consensus_json
+                                ),
                                 s3_logs_url = COALESCE(NEW.s3_logs_url, s3_logs_url),
                                 updated_at = NOW()
                             WHERE round_validator_id = rvid;
@@ -1930,7 +1983,15 @@ async def init_db() -> None:
                             end_epoch = COALESCE(NEW.end_epoch, end_epoch),
                             pending_round_link = CASE WHEN rid IS NULL THEN TRUE ELSE FALSE END,
                             finished_at = COALESCE(te, finished_at),
-                            post_consensus_json = COALESCE(NEW.validator_summary, post_consensus_json),
+                            post_consensus_json = COALESCE(
+                                CASE
+                                    WHEN jsonb_typeof(NEW.validator_summary->'summary') = 'object' THEN NEW.validator_summary
+                                    WHEN jsonb_typeof(NEW.validator_summary->'evaluation_post_consensus'->'summary') = 'object'
+                                        THEN NEW.validator_summary->'evaluation_post_consensus'
+                                    ELSE NEW.validator_summary
+                                END,
+                                post_consensus_json
+                            ),
                             s3_logs_url = COALESCE(NEW.s3_logs_url, s3_logs_url),
                             is_main_validator = COALESCE(is_main, is_main_validator),
                             updated_at = NOW()
@@ -1971,7 +2032,12 @@ async def init_db() -> None:
                                     ELSE NULL
                                 END,
                                 NEW.dethroned,
-                                NEW.validator_summary,
+                                CASE
+                                    WHEN jsonb_typeof(NEW.validator_summary->'summary') = 'object' THEN NEW.validator_summary
+                                    WHEN jsonb_typeof(NEW.validator_summary->'evaluation_post_consensus'->'summary') = 'object'
+                                        THEN NEW.validator_summary->'evaluation_post_consensus'
+                                    ELSE NEW.validator_summary
+                                END,
                                 NOW(),
                                 NOW()
                             )

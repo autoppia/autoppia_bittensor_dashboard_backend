@@ -494,7 +494,7 @@ class ValidatorStorageRoundsMixin:
         vs = validator_summary or {}
         # IMPORTANT: keep the full post-consensus object canonical and separate
         # from the local validator snapshot/IPFS payloads.
-        post_summary_payload = post_consensus_evaluation if isinstance(post_consensus_evaluation, dict) else None
+        post_summary_payload = self._normalize_post_consensus_payload(post_consensus_evaluation) if isinstance(post_consensus_evaluation, dict) else None
 
         merged = {
             "round": round_with_emission or vs.get("round"),
@@ -508,10 +508,8 @@ class ValidatorStorageRoundsMixin:
             "reason": authority_conflict_reason,
         }
 
-        post_consensus_json = merged.get("evaluation_post_consensus")
-        if isinstance(post_consensus_json, dict):
-            # Remove noisy internal key from post-consensus summary shown in UI payloads.
-            post_consensus_json.pop("schema_version", None)
+        post_consensus_json = self._normalize_post_consensus_payload(merged.get("evaluation_post_consensus"))
+        if isinstance(post_consensus_json, dict) and post_consensus_json:
             merged["evaluation_post_consensus"] = post_consensus_json
 
         resolved_s3_logs_url = (s3_logs_url or "").strip() or None
