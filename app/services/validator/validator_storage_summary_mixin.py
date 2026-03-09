@@ -65,10 +65,10 @@ class ValidatorStorageSummaryMixin:
         dethroned: bool,
         leader_uid_after_round: Optional[int],
         leader_reward_after_round: Optional[float],
-        top_candidate_score: Optional[float] = None,
+        top_candidate_eval_score: Optional[float] = None,
         top_candidate_time: Optional[float] = None,
         top_candidate_cost: Optional[float] = None,
-        leader_after_score: Optional[float] = None,
+        leader_after_eval_score: Optional[float] = None,
         leader_after_time: Optional[float] = None,
         leader_after_cost: Optional[float] = None,
         leader_after_weight: Optional[float] = None,
@@ -90,8 +90,8 @@ class ValidatorStorageSummaryMixin:
         else:
             candidate["uid"] = int(top_candidate_uid)
             candidate["reward"] = float(top_candidate_reward or 0.0)
-            if top_candidate_score is not None:
-                candidate["score"] = float(top_candidate_score)
+            if top_candidate_eval_score is not None:
+                candidate["score"] = float(top_candidate_eval_score)
             if top_candidate_time is not None:
                 candidate["time"] = float(top_candidate_time)
             if top_candidate_cost is not None:
@@ -102,8 +102,8 @@ class ValidatorStorageSummaryMixin:
         else:
             leader_after["uid"] = int(leader_uid_after_round)
             leader_after["reward"] = float(leader_reward_after_round or 0.0)
-            if leader_after_score is not None:
-                leader_after["score"] = float(leader_after_score)
+            if leader_after_eval_score is not None:
+                leader_after["score"] = float(leader_after_eval_score)
             if leader_after_time is not None:
                 leader_after["time"] = float(leader_after_time)
             if leader_after_cost is not None:
@@ -188,10 +188,10 @@ class ValidatorStorageSummaryMixin:
                 dethroned=dethroned,
                 leader_uid_after_round=leader_uid,
                 leader_reward_after_round=leader_reward,
-                top_candidate_score=float(candidate.get("score")) if candidate.get("score") is not None else None,
+                top_candidate_eval_score=float(candidate.get("score")) if candidate.get("score") is not None else None,
                 top_candidate_time=float(candidate.get("time")) if candidate.get("time") is not None else None,
                 top_candidate_cost=float(candidate.get("cost")) if candidate.get("cost") is not None else None,
-                leader_after_score=leader_score,
+                leader_after_eval_score=leader_score,
                 leader_after_time=leader_time,
                 leader_after_cost=leader_cost,
                 leader_after_weight=float(leader_after.get("weight")) if leader_after.get("weight") is not None else None,
@@ -491,13 +491,13 @@ class ValidatorStorageSummaryMixin:
 
         candidate_uid = int(candidate_row.miner_uid) if candidate_row is not None else None
         candidate_reward = float(candidate_row.post_consensus_avg_reward or 0.0) if candidate_row is not None else None
-        candidate_score = float(candidate_row.post_consensus_avg_eval_score or 0.0) if candidate_row is not None and candidate_row.post_consensus_avg_eval_score is not None else None
+        candidate_eval_score = float(candidate_row.post_consensus_avg_eval_score or 0.0) if candidate_row is not None and candidate_row.post_consensus_avg_eval_score is not None else None
         candidate_time = float(candidate_row.post_consensus_avg_eval_time or 0.0) if candidate_row is not None and candidate_row.post_consensus_avg_eval_time is not None else None
         candidate_cost = float(candidate_row.post_consensus_avg_eval_cost) if candidate_row is not None and candidate_row.post_consensus_avg_eval_cost is not None else None
 
         leader_after_uid = int(winner_row.miner_uid) if winner_row is not None else _to_int(summary_leader_after.get("uid"))
         leader_after_reward = float(winner_row.post_consensus_avg_reward or 0.0) if winner_row is not None else _to_float(summary_leader_after.get("reward"))
-        leader_after_score = (
+        leader_after_eval_score = (
             float(winner_row.post_consensus_avg_eval_score or 0.0) if winner_row is not None and winner_row.post_consensus_avg_eval_score is not None else _to_float(summary_leader_after.get("score"))
         )
         leader_after_time = (
@@ -520,10 +520,10 @@ class ValidatorStorageSummaryMixin:
             dethroned=dethroned_value,
             leader_uid_after_round=leader_after_uid,
             leader_reward_after_round=leader_after_reward,
-            top_candidate_score=candidate_score,
+            top_candidate_eval_score=candidate_eval_score,
             top_candidate_time=candidate_time,
             top_candidate_cost=candidate_cost,
-            leader_after_score=leader_after_score,
+            leader_after_eval_score=leader_after_eval_score,
             leader_after_time=leader_after_time,
             leader_after_cost=leader_after_cost,
             leader_after_weight=leader_after_weight,
@@ -625,6 +625,30 @@ class ValidatorStorageSummaryMixin:
             )
 
         competitive_rows = [row for row in payload_miners if int(row["uid"]) != burn_uid]
+
+        # Fallback for reused rounds: if the post_consensus payload had no miners
+        # (e.g. because round_validators.post_consensus_json is NULL and
+        # validator_summary.evaluation_post_consensus was not yet enriched),
+        # rebuild the competitive list directly from the already-populated
+        # validator_round_summary_miners rows (round_validator_miners).
+        if not competitive_rows:
+            for sr in summary_rows:
+                if sr.miner_uid is None or int(sr.miner_uid) == burn_uid:
+                    continue
+                competitive_rows.append(
+                    {
+                        "uid": int(sr.miner_uid),
+                        "reward": float(sr.post_consensus_avg_reward or 0.0),
+                        "score": float(sr.post_consensus_avg_eval_score or 0.0),
+                        "time": float(sr.post_consensus_avg_eval_time or 0.0),
+                        "cost": float(sr.post_consensus_avg_eval_cost) if sr.post_consensus_avg_eval_cost is not None else None,
+                        "tasks_received": int(sr.post_consensus_tasks_received or 0),
+                        "tasks_success": int(sr.post_consensus_tasks_success or 0),
+                        "rank": int(sr.post_consensus_rank) if sr.post_consensus_rank is not None else None,
+                        "weight": float(sr.weight) if sr.weight is not None else None,
+                    }
+                )
+
         winner_row = next((row for row in competitive_rows if row.get("rank") == 1), None)
         if winner_row is None:
             winner_row = max(
@@ -1238,19 +1262,19 @@ class ValidatorStorageSummaryMixin:
                     SELECT
                         tr.target_id,
                         COALESCE(hist.local_rank, 9999) AS best_local_rank,
-                        COALESCE(hist.average_reward, 0) AS best_local_reward,
-                        COALESCE(hist.average_score, 0) AS best_local_eval_score,
-                        COALESCE(hist.average_execution_time, 0) AS best_local_eval_time,
-                        COALESCE(hist.total_tasks, 0) AS best_local_tasks_received,
-                        COALESCE(hist.success_tasks, 0) AS best_local_tasks_success,
-                        COALESCE(hist.avg_cost_per_task, 0) AS best_local_eval_cost,
+                        COALESCE(hist.local_avg_reward, 0) AS best_local_reward,
+                        COALESCE(hist.local_avg_eval_score, 0) AS best_local_eval_score,
+                        COALESCE(hist.local_avg_eval_time, 0) AS best_local_eval_time,
+                        COALESCE(hist.local_tasks_received, 0) AS best_local_tasks_received,
+                        COALESCE(hist.local_tasks_success, 0) AS best_local_tasks_success,
+                        COALESCE(hist.local_avg_eval_cost, 0) AS best_local_eval_cost,
                         ROW_NUMBER() OVER (
                             PARTITION BY tr.target_id
                             ORDER BY
-                                COALESCE(hist.average_reward, 0) DESC,
+                                COALESCE(hist.local_avg_reward, 0) DESC,
                                 COALESCE(hist.local_rank, 9999) ASC,
                                 rvh.round_number_in_season ASC,
-                                hist.agent_run_id ASC
+                                hist.id ASC
                         ) AS rn
                     FROM target_rows tr
                     JOIN round_validators rvh
@@ -1259,41 +1283,24 @@ class ValidatorStorageSummaryMixin:
                      AND rvh.round_number_in_season <= tr.round_number_in_season
                     JOIN (
                         SELECT
-                            mer.agent_run_id,
-                            mer.round_validator_id,
-                            mer.miner_uid,
-                            mer.average_reward,
-                            mer.average_score,
-                            mer.average_execution_time,
-                            mer.total_tasks,
-                            mer.success_tasks,
-                            COALESCE(run_cost.avg_cost_per_task, 0) AS avg_cost_per_task,
+                            rvm.id,
+                            rvm.round_validator_id,
+                            rvm.miner_uid,
+                            rvm.local_avg_reward,
+                            rvm.local_avg_eval_score,
+                            rvm.local_avg_eval_time,
+                            rvm.local_avg_eval_cost,
+                            rvm.local_tasks_received,
+                            rvm.local_tasks_success,
                             ROW_NUMBER() OVER (
-                                PARTITION BY mer.round_validator_id
+                                PARTITION BY rvm.round_validator_id
                                 ORDER BY
-                                    COALESCE(mer.average_reward, 0) DESC,
-                                    COALESCE(mer.average_score, 0) DESC,
-                                    COALESCE(mer.miner_uid, 2147483647) ASC
+                                    COALESCE(rvm.local_avg_reward, 0) DESC,
+                                    COALESCE(rvm.local_avg_eval_score, 0) DESC,
+                                    COALESCE(rvm.miner_uid, 2147483647) ASC
                             ) AS local_rank
-                        FROM miner_evaluation_runs mer
-                        LEFT JOIN (
-                            SELECT
-                                per_eval.agent_run_id,
-                                AVG(per_eval.eval_total_cost) AS avg_cost_per_task
-                            FROM (
-                                SELECT
-                                    e.agent_run_id,
-                                    e.evaluation_id,
-                                    SUM(COALESCE(elu.cost, 0)) AS eval_total_cost
-                                FROM evaluations e
-                                JOIN evaluation_llm_usage elu ON elu.evaluation_id = e.evaluation_id
-                                GROUP BY e.agent_run_id, e.evaluation_id
-                            ) per_eval
-                            GROUP BY per_eval.agent_run_id
-                        ) run_cost
-                          ON run_cost.agent_run_id = mer.agent_run_id
-                        WHERE mer.miner_uid IS NOT NULL
-                          AND COALESCE(mer.total_tasks, 0) > 0
+                        FROM round_validator_miners rvm
+                        WHERE COALESCE(rvm.local_tasks_received, 0) > 0
                     ) hist
                       ON hist.round_validator_id = rvh.round_validator_id
                      AND hist.miner_uid = tr.miner_uid
@@ -1312,6 +1319,58 @@ class ValidatorStorageSummaryMixin:
                 FROM history_rows hr
                 WHERE rvm.id = hr.target_id
                   AND hr.rn = 1
+                """
+            ),
+            {"validator_round_id": validator_round_id},
+        )
+
+        # Backfill miner identity for reused rounds from the latest known identity
+        # of the same validator/miner within the season.
+        await self.session.execute(
+            text(
+                """
+                WITH target_rows AS (
+                    SELECT
+                        rvm.id AS target_id,
+                        rvm.miner_uid,
+                        rv.validator_uid,
+                        rv.season_number,
+                        rv.round_number_in_season
+                    FROM round_validator_miners rvm
+                    JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
+                    WHERE rv.validator_round_id = :validator_round_id
+                ),
+                identity_rows AS (
+                    SELECT
+                        tr.target_id,
+                        hist.name,
+                        hist.github_url,
+                        hist.image_url,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY tr.target_id
+                            ORDER BY rvh.round_number_in_season DESC, hist.updated_at DESC NULLS LAST, hist.id DESC
+                        ) AS rn
+                    FROM target_rows tr
+                    JOIN round_validators rvh
+                      ON rvh.validator_uid = tr.validator_uid
+                     AND rvh.season_number = tr.season_number
+                     AND rvh.round_number_in_season <= tr.round_number_in_season
+                    JOIN round_validator_miners hist
+                      ON hist.round_validator_id = rvh.round_validator_id
+                     AND hist.miner_uid = tr.miner_uid
+                    WHERE hist.name IS NOT NULL
+                       OR hist.github_url IS NOT NULL
+                       OR hist.image_url IS NOT NULL
+                )
+                UPDATE round_validator_miners rvm
+                SET
+                    name = COALESCE(rvm.name, ir.name),
+                    github_url = COALESCE(rvm.github_url, ir.github_url),
+                    image_url = COALESCE(rvm.image_url, ir.image_url),
+                    updated_at = NOW()
+                FROM identity_rows ir
+                WHERE rvm.id = ir.target_id
+                  AND ir.rn = 1
                 """
             ),
             {"validator_round_id": validator_round_id},
