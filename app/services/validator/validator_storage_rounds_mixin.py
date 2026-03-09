@@ -310,7 +310,6 @@ class ValidatorStorageRoundsMixin:
         ipfs_downloaded: Optional[Dict[str, Any]] = None,
         s3_logs_url: Optional[str] = None,
         validator_state: Optional[Dict[str, Any]] = None,
-        validator_iwap_prev_round_json: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Mark a validator round as completed."""
         round_row = await self._ensure_round_exists(validator_round_id)
@@ -541,7 +540,6 @@ class ValidatorStorageRoundsMixin:
                         ipfs_downloaded = COALESCE(CAST(:ipfs_downloaded AS JSONB), ipfs_downloaded),
                         s3_logs_url = COALESCE(:s3_logs_url, s3_logs_url),
                         validator_state = COALESCE(CAST(:validator_state AS JSONB), validator_state),
-                        validator_iwap_prev_round_json = COALESCE(CAST(:validator_iwap_prev_round_json AS JSONB), validator_iwap_prev_round_json),
                         updated_at = NOW()
                     WHERE validator_round_id = :validator_round_id
                     """
@@ -553,7 +551,6 @@ class ValidatorStorageRoundsMixin:
                     "ipfs_downloaded": json.dumps(merged.get("ipfs_downloaded")) if merged.get("ipfs_downloaded") is not None else None,
                     "s3_logs_url": resolved_s3_logs_url,
                     "validator_state": json.dumps(validator_state) if validator_state is not None else None,
-                    "validator_iwap_prev_round_json": json.dumps(validator_iwap_prev_round_json) if validator_iwap_prev_round_json is not None else None,
                 },
             )
         except Exception:
