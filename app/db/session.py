@@ -200,7 +200,6 @@ async def init_db() -> None:
                 ipfs_downloaded JSONB NULL,
                 s3_logs_url TEXT NULL,
                 validator_state JSONB NULL,
-                validator_iwap_prev_round_json JSONB NULL,
                 is_main_validator BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -1452,7 +1451,6 @@ async def init_db() -> None:
 
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS validator_round_id VARCHAR(128)"))
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS validator_state JSONB"))
-        await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS validator_iwap_prev_round_json JSONB"))
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS s3_logs_url TEXT"))
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS season_number INTEGER"))
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS round_number_in_season INTEGER"))
@@ -1461,6 +1459,7 @@ async def init_db() -> None:
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS start_epoch INTEGER"))
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS end_epoch INTEGER"))
         await conn.execute(text("ALTER TABLE round_validators ADD COLUMN IF NOT EXISTS pending_round_link BOOLEAN NOT NULL DEFAULT FALSE"))
+        await conn.execute(text("ALTER TABLE round_validators DROP COLUMN IF EXISTS validator_iwap_prev_round_json"))
         await conn.execute(text("ALTER TABLE round_validators ALTER COLUMN round_id DROP NOT NULL"))
         await conn.execute(text("ALTER TABLE round_validator_miners ALTER COLUMN round_id DROP NOT NULL"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_round_validators_season_round ON round_validators(season_number, round_number_in_season)"))
