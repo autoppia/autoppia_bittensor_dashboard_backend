@@ -960,6 +960,35 @@ class UIAgentsRunsServiceMixin:
                         source_agent_run_ids.append(str(rc.get("agent_run_id")))
                 source_agent_run_ids = list(dict.fromkeys([run_id for run_id in source_agent_run_ids if run_id]))
 
+                # The best round may be a "reused" round with no actual miner_evaluation_runs.
+                # Fall back to any run for this agent within the season so we can still
+                # build the performanceByWebsite breakdown.
+                if not source_agent_run_ids:
+                    fallback_rows = (
+                        (
+                            await self.session.execute(
+                                text(
+                                    """
+                                SELECT mer.agent_run_id
+                                FROM miner_evaluation_runs mer
+                                JOIN round_validators rv ON rv.round_validator_id = mer.round_validator_id
+                                JOIN rounds r ON r.round_id = rv.round_id
+                                JOIN seasons s ON s.season_id = r.season_id
+                                WHERE mer.miner_uid = :uid
+                                  AND s.season_number = :season_number
+                                ORDER BY r.round_number_in_season DESC, mer.started_at DESC NULLS LAST
+                                """
+                                ),
+                                {"uid": miner_uid, "season_number": best_round_season},
+                            )
+                        )
+                        .mappings()
+                        .all()
+                    )
+                    for rc in fallback_rows:
+                        source_agent_run_ids.append(str(rc.get("agent_run_id")))
+                    source_agent_run_ids = list(dict.fromkeys([r for r in source_agent_run_ids if r]))
+
                 by_website_with_use_cases: Dict[str, Dict[str, Any]] = {}
                 if source_agent_run_ids:
                     task_rows = (
