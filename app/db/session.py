@@ -2442,6 +2442,77 @@ async def init_db() -> None:
                 """
             )
         )
+        # Backfill post_consensus_avg_eval_score: recompute as stake-weighted average
+        # per (round_id, miner_uid) so the consensus card shows the correct aggregated
+        # score instead of a simple average. Idempotent; safe to re-run.
+        await conn.execute(
+            text(
+                """
+                WITH canonical AS (
+                    SELECT
+                        rv.round_id,
+                        rvm.miner_uid,
+                        CASE
+                            WHEN SUM(rvm.weight) FILTER (WHERE rvm.post_consensus_avg_eval_score IS NOT NULL AND rvm.weight IS NOT NULL) > 0
+                            THEN SUM(rvm.post_consensus_avg_eval_score * rvm.weight) FILTER (WHERE rvm.post_consensus_avg_eval_score IS NOT NULL AND rvm.weight IS NOT NULL)
+                                 / SUM(rvm.weight) FILTER (WHERE rvm.post_consensus_avg_eval_score IS NOT NULL AND rvm.weight IS NOT NULL)
+                            ELSE AVG(rvm.post_consensus_avg_eval_score) FILTER (WHERE rvm.post_consensus_avg_eval_score IS NOT NULL)
+                        END AS canonical_eval_score
+                    FROM round_validator_miners rvm
+                    JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
+                    GROUP BY rv.round_id, rvm.miner_uid
+                )
+                UPDATE round_validator_miners
+                SET
+                    post_consensus_avg_eval_score = c.canonical_eval_score,
+                    updated_at = NOW()
+                FROM canonical c
+                JOIN round_validators rv ON rv.round_id = c.round_id
+                WHERE round_validator_miners.round_validator_id = rv.round_validator_id
+                  AND round_validator_miners.miner_uid = c.miner_uid
+                  AND c.canonical_eval_score IS NOT NULL
+                  AND (round_validator_miners.post_consensus_avg_eval_score IS DISTINCT FROM c.canonical_eval_score)
+                """
+            )
+        )
+        # Backfill round_summary.avg_reward and avg_eval_score as stake-weighted
+        # averages from round_validator_miners so the "Validator consensus" card
+        # shows the same weighting as consensus reward (no longer simple average).
+        await conn.execute(
+            text(
+                """
+                WITH stake_weighted AS (
+                    SELECT
+                        rv.round_id,
+                        CASE
+                            WHEN SUM(rvm.weight) FILTER (WHERE rvm.post_consensus_avg_reward IS NOT NULL AND rvm.weight IS NOT NULL) > 0
+                            THEN SUM(rvm.post_consensus_avg_reward * rvm.weight) FILTER (WHERE rvm.post_consensus_avg_reward IS NOT NULL AND rvm.weight IS NOT NULL)
+                                 / SUM(rvm.weight) FILTER (WHERE rvm.post_consensus_avg_reward IS NOT NULL AND rvm.weight IS NOT NULL)
+                            ELSE NULL
+                        END AS avg_reward,
+                        CASE
+                            WHEN SUM(rvm.weight) FILTER (WHERE rvm.post_consensus_avg_eval_score IS NOT NULL AND rvm.weight IS NOT NULL) > 0
+                            THEN SUM(rvm.post_consensus_avg_eval_score * rvm.weight) FILTER (WHERE rvm.post_consensus_avg_eval_score IS NOT NULL AND rvm.weight IS NOT NULL)
+                                 / SUM(rvm.weight) FILTER (WHERE rvm.post_consensus_avg_eval_score IS NOT NULL AND rvm.weight IS NOT NULL)
+                            ELSE NULL
+                        END AS avg_eval_score
+                    FROM round_validator_miners rvm
+                    JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
+                    WHERE rvm.post_consensus_avg_reward IS NOT NULL
+                       OR rvm.post_consensus_avg_eval_score IS NOT NULL
+                    GROUP BY rv.round_id
+                )
+                UPDATE round_summary rs
+                SET
+                    avg_reward = COALESCE(sw.avg_reward, rs.avg_reward),
+                    avg_eval_score = COALESCE(sw.avg_eval_score, rs.avg_eval_score),
+                    updated_at = NOW()
+                FROM stake_weighted sw
+                WHERE rs.round_id = sw.round_id
+                  AND (sw.avg_reward IS NOT NULL OR sw.avg_eval_score IS NOT NULL)
+                """
+            )
+        )
         # Mirror the same nullification into validator_round_summary_miners so
         # the ORM-level cache is also clean (the trigger will not fire on a
         # direct SQL update, so we update both tables explicitly).

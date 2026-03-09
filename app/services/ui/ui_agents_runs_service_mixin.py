@@ -1675,8 +1675,10 @@ class UIAgentsRunsServiceMixin:
             if status and run_status != status:
                 continue
             round_encoded = 0
-            if r["season_number"] is not None and r["round_number_in_season"] is not None:
-                round_encoded = int(r["season_number"]) * 10000 + int(r["round_number_in_season"])
+            season_num = int(r["season_number"]) if r["season_number"] is not None else None
+            round_in_season = int(r["round_number_in_season"]) if r["round_number_in_season"] is not None else None
+            if season_num is not None and round_in_season is not None:
+                round_encoded = season_num * 10000 + round_in_season
             runs.append(
                 {
                     "runId": r["agent_run_id"],
@@ -1686,6 +1688,9 @@ class UIAgentsRunsServiceMixin:
                     "agentName": r["miner_name"] or (f"miner {int(r['miner_uid'])}" if r["miner_uid"] is not None else "miner"),
                     "agentImage": r["miner_image"] or (f"/miners/{int(r['miner_uid']) % 100}.svg" if r["miner_uid"] is not None else "/miners/0.svg"),
                     "roundId": round_encoded,
+                    "season": season_num,
+                    "round": round_in_season,
+                    "roundKey": f"{season_num}/{round_in_season}" if season_num is not None and round_in_season is not None else None,
                     "validatorId": f"validator-{int(r['validator_uid'])}" if r["validator_uid"] is not None else "validator-0",
                     "validatorName": r["validator_name"] or "Validator",
                     "validatorImage": r["validator_image"] or "/validators/Other.png",
@@ -1698,10 +1703,7 @@ class UIAgentsRunsServiceMixin:
                     "failedTasks": int(r["failed_tasks"] or 0),
                     "averageReward": float(r["average_reward"] or 0.0),
                     "averageScore": float(r["average_score"] or 0.0),
-                    "reward": float(r["average_reward"] or 0.0),
-                    "overallReward": float(r["average_reward"] or 0.0),
-                    "avgCostPerTask": (float(r["avg_cost_per_task"]) if r["avg_cost_per_task"] is not None else None),
-                    "successRate": (successful / total_tasks) if total_tasks > 0 else 0.0,
+                    "averageCost": (float(r["avg_cost_per_task"]) if r["avg_cost_per_task"] is not None else None),
                     "averageEvaluationTime": float(r["average_execution_time"] or 0.0),
                     "websitesCount": int(r["websites_count"] or 0),
                     "zeroReason": r["zero_reason"],
@@ -1710,8 +1712,8 @@ class UIAgentsRunsServiceMixin:
         reverse = str(sort_order).lower() != "asc"
         key_map = {
             "startTime": lambda x: x["startTime"],
-            "reward": lambda x: float(x["overallReward"]),
-            "score": lambda x: float(x["overallReward"]),
+            "reward": lambda x: float(x.get("averageReward") or 0.0),
+            "score": lambda x: float(x.get("averageReward") or 0.0),
             "duration": lambda x: float(x.get("averageEvaluationTime") or 0.0),
             "ranking": lambda x: int(x.get("ranking") or 9999),
         }
