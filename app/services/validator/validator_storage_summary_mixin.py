@@ -584,19 +584,20 @@ class ValidatorStorageSummaryMixin:
         """Populate round_summary with leadership snapshot + rollups from validator_round_summary_miners."""
         stmt_rows = select(ValidatorRoundSummaryORM).where(ValidatorRoundSummaryORM.validator_round_id == round_row.validator_round_id).order_by(ValidatorRoundSummaryORM.miner_uid.asc())
         summary_rows = list(await self.session.scalars(stmt_rows))
-        if not summary_rows:
-            return
 
         row_ctx = await self.session.execute(
             text(
                 """
                 SELECT
                     rv.round_id,
+                    r.season_id,
+                    r.round_number_in_season,
                     rv.round_validator_id,
                     rv.validator_uid,
                     COALESCE(rv.is_main_validator, FALSE) AS is_main_validator,
                     rv.post_consensus_json
                 FROM round_validators rv
+                JOIN rounds r ON r.round_id = rv.round_id
                 WHERE rv.validator_round_id = :validator_round_id
                 LIMIT 1
                 """
@@ -608,6 +609,8 @@ class ValidatorStorageSummaryMixin:
             return
 
         round_id = int(ctx.round_id)
+        season_id = int(ctx.season_id) if ctx.season_id is not None else None
+        round_number_in_season = int(ctx.round_number_in_season) if ctx.round_number_in_season is not None else None
         source_round_validator_id = int(ctx.round_validator_id)
         source_validator_uid = int(ctx.validator_uid) if ctx.validator_uid is not None else None
         source_is_main_validator = bool(ctx.is_main_validator)
@@ -664,6 +667,8 @@ class ValidatorStorageSummaryMixin:
                         "weight": float(sr.weight) if sr.weight is not None else None,
                     }
                 )
+        if not competitive_rows:
+            return
 
         winner_row = next((row for row in competitive_rows if row.get("rank") == 1), None)
         if winner_row is None:
@@ -736,6 +741,41 @@ class ValidatorStorageSummaryMixin:
         leader_before_uid = int(round_row.leader_before_uid) if getattr(round_row, "leader_before_uid", None) is not None else None
         if leader_before_uid is None and leader_before_summary.get("uid") is not None:
             leader_before_uid = int(leader_before_summary.get("uid"))
+        leader_before_reward = float(round_row.leader_before_reward) if getattr(round_row, "leader_before_reward", None) is not None else None
+        if leader_before_reward is None and leader_before_summary.get("reward") is not None:
+            leader_before_reward = float(leader_before_summary.get("reward"))
+        if leader_before_uid is None and season_id is not None and round_number_in_season is not None and round_number_in_season > 1:
+            previous_round = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT
+                                rs.leader_after_miner_uid AS uid,
+                                rs.leader_after_reward AS reward
+                            FROM round_summary rs
+                            JOIN rounds r ON r.round_id = rs.round_id
+                            WHERE r.season_id = :season_id
+                              AND r.round_number_in_season < :round_number_in_season
+                              AND rs.leader_after_miner_uid IS NOT NULL
+                            ORDER BY r.round_number_in_season DESC, rs.round_id DESC
+                            LIMIT 1
+                            """
+                        ),
+                        {
+                            "season_id": season_id,
+                            "round_number_in_season": round_number_in_season,
+                        },
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if previous_round:
+                if previous_round.get("uid") is not None:
+                    leader_before_uid = int(previous_round.get("uid"))
+                if leader_before_reward is None and previous_round.get("reward") is not None:
+                    leader_before_reward = float(previous_round.get("reward"))
         candidate_row = None
         candidate_uid_from_summary = int(candidate_summary.get("uid")) if candidate_summary.get("uid") is not None else None
         if candidate_uid_from_summary is not None:
@@ -760,9 +800,6 @@ class ValidatorStorageSummaryMixin:
         leader_before_hotkey, leader_before_github_url = await _lookup_round_miner_snapshot(leader_before_uid)
         candidate_hotkey, candidate_github_url = await _lookup_round_miner_snapshot(candidate_uid)
         leader_after_hotkey, leader_after_github_url = await _lookup_round_miner_snapshot(leader_after_uid)
-        leader_before_reward = float(round_row.leader_before_reward) if getattr(round_row, "leader_before_reward", None) is not None else None
-        if leader_before_reward is None and leader_before_summary.get("reward") is not None:
-            leader_before_reward = float(leader_before_summary.get("reward"))
         candidate_reward = (
             float(candidate_row.get("reward", 0.0) or 0.0) if candidate_row is not None else (float(candidate_summary.get("reward")) if candidate_summary.get("reward") is not None else None)
         )
