@@ -810,11 +810,14 @@ class UIRoundsServiceMixin:
                               best_local_reward,
                               best_local_eval_score,
                               best_local_eval_time,
-                              best_local_eval_cost
+                              best_local_eval_cost,
+                              post_consensus_tasks_received
                             FROM round_validator_miners
                             WHERE round_validator_id = :rvid
-                              AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
-                              AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
+                              AND (
+                                COALESCE(post_consensus_tasks_received, 0) > 0
+                                OR NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
+                              )
                             ORDER BY
                               best_local_reward DESC NULLS LAST,
                               best_local_rank ASC NULLS LAST,
@@ -1170,13 +1173,12 @@ class UIRoundsServiceMixin:
                         """
                     WITH ranked AS (
                       SELECT DISTINCT ON (miner_uid)
-                        miner_uid, name, miner_hotkey, is_sota,
+                        miner_uid, name, github_url, miner_hotkey, is_sota,
                         post_consensus_rank, post_consensus_avg_reward, post_consensus_avg_eval_time,
                         post_consensus_tasks_received, post_consensus_tasks_success
                       FROM round_validator_miners
                       WHERE round_id = :rid
-                        AND NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
-                        AND NULLIF(TRIM(COALESCE(github_url, '')), '') IS NOT NULL
+                        AND COALESCE(post_consensus_tasks_received, 0) > 0
                       ORDER BY miner_uid, post_consensus_rank ASC NULLS LAST, post_consensus_avg_reward DESC NULLS LAST
                     )
                     SELECT * FROM ranked
@@ -1195,7 +1197,7 @@ class UIRoundsServiceMixin:
             reward = float(r["post_consensus_avg_reward"] or 0.0)
             item = {
                 "uid": int(r["miner_uid"]),
-                "name": r["name"] or f"miner {int(r['miner_uid'])}",
+                "name": (r["name"] or "").strip() or f"Miner {int(r['miner_uid'])}",
                 "hotkey": r["miner_hotkey"],
                 "success": tasks_ok > 0,
                 "reward": reward,
