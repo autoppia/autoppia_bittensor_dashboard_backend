@@ -656,6 +656,12 @@ class UIRoundsServiceMixin:
                           leader_after_eval_score,
                           leader_after_eval_time,
                           leader_after_eval_cost,
+                          (post_consensus_json->'summary'->'leader_before_round'->>'score')::DOUBLE PRECISION AS leader_before_eval_score,
+                          (post_consensus_json->'summary'->'leader_before_round'->>'time')::DOUBLE PRECISION  AS leader_before_eval_time,
+                          (post_consensus_json->'summary'->'leader_before_round'->>'cost')::DOUBLE PRECISION  AS leader_before_eval_cost,
+                          (post_consensus_json->'summary'->'leader_after_round'->>'score')::DOUBLE PRECISION  AS leader_after_eval_score_json,
+                          (post_consensus_json->'summary'->'leader_after_round'->>'time')::DOUBLE PRECISION   AS leader_after_eval_time_json,
+                          (post_consensus_json->'summary'->'leader_after_round'->>'cost')::DOUBLE PRECISION   AS leader_after_eval_cost_json,
                           post_consensus_json
                         FROM round_summary
                         WHERE round_id = :rid
@@ -705,10 +711,28 @@ class UIRoundsServiceMixin:
 
         if leader_before is not None:
             leader_before["reward"] = float(row.get("leader_before_reward") or 0.0)
+            _lb_score = row.get("leader_before_eval_score")
+            _lb_time = row.get("leader_before_eval_time")
+            _lb_cost = row.get("leader_before_eval_cost")
+            if _lb_score is not None:
+                leader_before["score"] = float(_lb_score)
+            if _lb_time is not None:
+                leader_before["time"] = float(_lb_time)
+            if _lb_cost is not None:
+                leader_before["cost"] = float(_lb_cost)
         if candidate is not None:
             candidate["reward"] = float(row.get("candidate_reward") or 0.0)
         if leader_after is not None:
             leader_after["reward"] = float(row.get("leader_after_reward") or 0.0)
+            _la_score = row.get("leader_after_eval_score") or row.get("leader_after_eval_score_json")
+            _la_time = row.get("leader_after_eval_time") or row.get("leader_after_eval_time_json")
+            _la_cost = row.get("leader_after_eval_cost") or row.get("leader_after_eval_cost_json")
+            if _la_score is not None:
+                leader_after["score"] = float(_la_score)
+            if _la_time is not None:
+                leader_after["time"] = float(_la_time)
+            if _la_cost is not None:
+                leader_after["cost"] = float(_la_cost)
 
         avg_eval_score = float(row.get("avg_eval_score") or 0.0)
         avg_eval_time = float(row.get("avg_eval_time") or 0.0)
