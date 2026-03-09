@@ -58,6 +58,67 @@ class UIRoundsServiceMixin:
         ).scalar_one_or_none()
         return int(value or 0)
 
+    @staticmethod
+    def _coerce_int(value: Any) -> Optional[int]:
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _coerce_float(value: Any) -> Optional[float]:
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _post_consensus_summary(post_consensus_json: Any) -> Dict[str, Any]:
+        if not isinstance(post_consensus_json, dict):
+            return {}
+        summary = post_consensus_json.get("summary")
+        return summary if isinstance(summary, dict) else {}
+
+    @staticmethod
+    def _post_consensus_miners(post_consensus_json: Any) -> List[Dict[str, Any]]:
+        if not isinstance(post_consensus_json, dict):
+            return []
+        miners = post_consensus_json.get("miners")
+        return [miner for miner in miners if isinstance(miner, dict)] if isinstance(miners, list) else []
+
+    @classmethod
+    def _miner_identity_from_post_consensus(cls, miner: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Optional[float]]:
+        best_run = miner.get("best_run_consensus")
+        current_run = miner.get("current_run_consensus")
+        best_run = best_run if isinstance(best_run, dict) else {}
+        current_run = current_run if isinstance(current_run, dict) else {}
+        hotkey = miner.get("hotkey")
+        github_url = miner.get("github_url") or best_run.get("github_url") or current_run.get("github_url")
+        reward = cls._coerce_float(best_run.get("reward"))
+        return hotkey, github_url, reward
+
+    @classmethod
+    def _pick_candidate_from_post_consensus(cls, post_consensus_json: Any, leader_before_uid: Optional[int]) -> Tuple[Optional[int], Optional[str], Optional[str], Optional[float]]:
+        miners = cls._post_consensus_miners(post_consensus_json)
+        ranked: List[Tuple[float, float, int, Dict[str, Any]]] = []
+        for miner in miners:
+            uid = cls._coerce_int(miner.get("uid"))
+            if uid is None or uid == leader_before_uid:
+                continue
+            best_run = miner.get("best_run_consensus")
+            best_run = best_run if isinstance(best_run, dict) else {}
+            reward = cls._coerce_float(best_run.get("reward"))
+            if reward is None:
+                continue
+            score = cls._coerce_float(best_run.get("score")) or 0.0
+            ranked.append((reward, score, uid, miner))
+        if not ranked:
+            return None, None, None, None
+        ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
+        _, _, uid, miner = ranked[0]
+        hotkey, github_url, reward = cls._miner_identity_from_post_consensus(miner)
+        return uid, hotkey, github_url, reward
+
     async def _resolve_miner_identity(
         self,
         *,
@@ -685,32 +746,73 @@ class UIRoundsServiceMixin:
             }
 
         row = dict(row)
+        post_consensus_json = row.get("post_consensus_json")
+        summary = self._post_consensus_summary(post_consensus_json)
 
-        leader_before_uid = int(row["leader_before_miner_uid"]) if row["leader_before_miner_uid"] is not None else None
-        candidate_uid = int(row["candidate_miner_uid"]) if row["candidate_miner_uid"] is not None else None
-        leader_after_uid = int(row["leader_after_miner_uid"]) if row["leader_after_miner_uid"] is not None else None
+        leader_before_uid = self._coerce_int(row.get("leader_before_miner_uid"))
+        candidate_uid = self._coerce_int(row.get("candidate_miner_uid"))
+        leader_after_uid = self._coerce_int(row.get("leader_after_miner_uid"))
+
+        leader_before_hotkey = row.get("leader_before_miner_hotkey")
+        leader_before_github_url = row.get("leader_before_github_url")
+        leader_before_reward = self._coerce_float(row.get("leader_before_reward"))
+        candidate_hotkey = row.get("candidate_miner_hotkey")
+        candidate_github_url = row.get("candidate_github_url")
+        candidate_reward = self._coerce_float(row.get("candidate_reward"))
+        leader_after_hotkey = row.get("leader_after_miner_hotkey")
+        leader_after_github_url = row.get("leader_after_github_url")
+        leader_after_reward = self._coerce_float(row.get("leader_after_reward"))
+
+        summary_leader_before = summary.get("leader_before_round")
+        if leader_before_uid is None and isinstance(summary_leader_before, dict):
+            leader_before_uid = self._coerce_int(summary_leader_before.get("uid"))
+            leader_before_hotkey = leader_before_hotkey or summary_leader_before.get("hotkey")
+            leader_before_github_url = leader_before_github_url or summary_leader_before.get("github_url")
+            leader_before_reward = leader_before_reward if leader_before_reward is not None else self._coerce_float(summary_leader_before.get("reward"))
+
+        summary_candidate = summary.get("candidate_this_round")
+        if candidate_uid is None and isinstance(summary_candidate, dict):
+            candidate_uid = self._coerce_int(summary_candidate.get("uid"))
+            candidate_hotkey = candidate_hotkey or summary_candidate.get("hotkey")
+            candidate_github_url = candidate_github_url or summary_candidate.get("github_url")
+            candidate_reward = candidate_reward if candidate_reward is not None else self._coerce_float(summary_candidate.get("reward"))
+
+        summary_leader_after = summary.get("leader_after_round")
+        if leader_after_uid is None and isinstance(summary_leader_after, dict):
+            leader_after_uid = self._coerce_int(summary_leader_after.get("uid"))
+            leader_after_hotkey = leader_after_hotkey or summary_leader_after.get("hotkey")
+            leader_after_github_url = leader_after_github_url or summary_leader_after.get("github_url")
+            leader_after_reward = leader_after_reward if leader_after_reward is not None else self._coerce_float(summary_leader_after.get("reward"))
+
+        if candidate_uid is None:
+            (
+                candidate_uid,
+                candidate_hotkey,
+                candidate_github_url,
+                candidate_reward,
+            ) = self._pick_candidate_from_post_consensus(post_consensus_json, leader_before_uid)
 
         leader_before = await self._resolve_miner_identity(
             miner_uid=leader_before_uid,
             round_id=round_id,
-            hotkey=row.get("leader_before_miner_hotkey"),
-            github_url=row.get("leader_before_github_url"),
+            hotkey=leader_before_hotkey,
+            github_url=leader_before_github_url,
         )
         candidate = await self._resolve_miner_identity(
             miner_uid=candidate_uid,
             round_id=round_id,
-            hotkey=row.get("candidate_miner_hotkey"),
-            github_url=row.get("candidate_github_url"),
+            hotkey=candidate_hotkey,
+            github_url=candidate_github_url,
         )
         leader_after = await self._resolve_miner_identity(
             miner_uid=leader_after_uid,
             round_id=round_id,
-            hotkey=row.get("leader_after_miner_hotkey"),
-            github_url=row.get("leader_after_github_url"),
+            hotkey=leader_after_hotkey,
+            github_url=leader_after_github_url,
         )
 
         if leader_before is not None:
-            leader_before["reward"] = float(row.get("leader_before_reward") or 0.0)
+            leader_before["reward"] = float(leader_before_reward or 0.0)
             _lb_score = row.get("leader_before_eval_score")
             _lb_time = row.get("leader_before_eval_time")
             _lb_cost = row.get("leader_before_eval_cost")
@@ -721,9 +823,18 @@ class UIRoundsServiceMixin:
             if _lb_cost is not None:
                 leader_before["cost"] = float(_lb_cost)
         if candidate is not None:
-            candidate["reward"] = float(row.get("candidate_reward") or 0.0)
+            candidate["reward"] = float(candidate_reward or 0.0)
+            _cand_score = self._coerce_float((summary_candidate or {}).get("score")) if isinstance(summary_candidate, dict) else None
+            _cand_time = self._coerce_float((summary_candidate or {}).get("time")) if isinstance(summary_candidate, dict) else None
+            _cand_cost = self._coerce_float((summary_candidate or {}).get("cost")) if isinstance(summary_candidate, dict) else None
+            if _cand_score is not None:
+                candidate["score"] = _cand_score
+            if _cand_time is not None:
+                candidate["time"] = _cand_time
+            if _cand_cost is not None:
+                candidate["cost"] = _cand_cost
         if leader_after is not None:
-            leader_after["reward"] = float(row.get("leader_after_reward") or 0.0)
+            leader_after["reward"] = float(leader_after_reward or 0.0)
             _la_score = row.get("leader_after_eval_score") or row.get("leader_after_eval_score_json")
             _la_time = row.get("leader_after_eval_time") or row.get("leader_after_eval_time_json")
             _la_cost = row.get("leader_after_eval_cost") or row.get("leader_after_eval_cost_json")
