@@ -73,6 +73,20 @@ async def list_round_ids(
     }
 
 
+@router.get("/seasons")
+async def list_round_seasons(
+    session: AsyncSession = Depends(get_session),
+):
+    service = await _newdb(session)
+    seasons = await service.get_available_seasons()
+    return {
+        "success": True,
+        "data": {
+            "seasons": seasons,
+        },
+    }
+
+
 @router.get("/")
 @cache("rounds_list", ttl=600)  # Cache 10 minutes - pre-warmed by background worker
 async def list_rounds(
