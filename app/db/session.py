@@ -2409,6 +2409,69 @@ async def init_db() -> None:
                 """
             )
         )
+        # Null out local_avg_* fields for round_validator_miners rows that were
+        # created by old code incorrectly copying best_run metrics into local fields
+        # for reused rounds (rounds where no miner_evaluation_runs exist for that
+        # validator_round_id + miner_uid).  Reused rounds have no local evaluation
+        # so these fields must be NULL.  Safe to re-run: only touches rows where at
+        # least one local field is non-NULL and no matching evaluation run exists.
+        await conn.execute(
+            text(
+                """
+                UPDATE round_validator_miners rvm
+                SET
+                    local_avg_reward     = NULL,
+                    local_avg_eval_score = NULL,
+                    local_avg_eval_time  = NULL,
+                    local_avg_eval_cost  = NULL,
+                    local_tasks_received = NULL,
+                    local_tasks_success  = NULL,
+                    updated_at           = NOW()
+                FROM round_validators rv
+                WHERE rv.round_validator_id = rvm.round_validator_id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM miner_evaluation_runs mer
+                      WHERE mer.validator_round_id = rv.validator_round_id
+                        AND mer.miner_uid = rvm.miner_uid
+                  )
+                  AND (
+                      rvm.local_avg_reward IS NOT NULL
+                      OR rvm.local_avg_eval_score IS NOT NULL
+                      OR rvm.local_tasks_received IS NOT NULL
+                  )
+                """
+            )
+        )
+        # Mirror the same nullification into validator_round_summary_miners so
+        # the ORM-level cache is also clean (the trigger will not fire on a
+        # direct SQL update, so we update both tables explicitly).
+        await conn.execute(
+            text(
+                """
+                UPDATE validator_round_summary_miners vrs
+                SET
+                    local_avg_reward     = NULL,
+                    local_avg_eval_score = NULL,
+                    local_avg_eval_time  = NULL,
+                    local_avg_eval_cost  = NULL,
+                    local_tasks_received = NULL,
+                    local_tasks_success  = NULL,
+                    updated_at           = NOW()
+                FROM round_validators rv
+                WHERE rv.validator_round_id = vrs.validator_round_id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM miner_evaluation_runs mer
+                      WHERE mer.validator_round_id = rv.validator_round_id
+                        AND mer.miner_uid = vrs.miner_uid
+                  )
+                  AND (
+                      vrs.local_avg_reward IS NOT NULL
+                      OR vrs.local_avg_eval_score IS NOT NULL
+                      OR vrs.local_tasks_received IS NOT NULL
+                  )
+                """
+            )
+        )
         await conn.execute(
             text(
                 """
