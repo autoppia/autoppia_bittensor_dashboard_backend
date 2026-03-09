@@ -370,110 +370,6 @@ async def init_db() -> None:
         await conn.execute(
             text(
                 """
-                DO $$
-                DECLARE
-                    rec RECORD;
-                    current_season_id BIGINT := NULL;
-                    leader_uid INTEGER := NULL;
-                    leader_reward DOUBLE PRECISION := NULL;
-                    required_pct DOUBLE PRECISION := 0.05;
-                    dethroned_flag BOOLEAN := FALSE;
-                    threshold_reward DOUBLE PRECISION := NULL;
-                BEGIN
-                    FOR rec IN
-                        SELECT
-                            r.season_id,
-                            rs.round_id,
-                            COALESCE(r.round_number_in_season, 2147483647) AS round_number_in_season,
-                            rs.candidate_miner_uid,
-                            rs.candidate_reward,
-                            rs.required_improvement_pct
-                        FROM round_summary rs
-                        JOIN rounds r ON r.round_id = rs.round_id
-                        ORDER BY r.season_id, COALESCE(r.round_number_in_season, 2147483647), rs.round_id
-                    LOOP
-                        IF current_season_id IS DISTINCT FROM rec.season_id THEN
-                            current_season_id := rec.season_id;
-                            leader_uid := NULL;
-                            leader_reward := NULL;
-                        END IF;
-
-                        required_pct := COALESCE(rec.required_improvement_pct, 0.05);
-                        dethroned_flag := FALSE;
-                        threshold_reward := NULL;
-
-                        IF rec.candidate_miner_uid IS NOT NULL AND rec.candidate_reward IS NOT NULL THEN
-                            IF leader_uid IS NULL OR leader_reward IS NULL THEN
-                                leader_uid := rec.candidate_miner_uid;
-                                leader_reward := rec.candidate_reward;
-                            ELSIF rec.candidate_miner_uid = leader_uid THEN
-                                leader_reward := GREATEST(leader_reward, rec.candidate_reward);
-                            ELSE
-                                threshold_reward := leader_reward * (1.0 + required_pct);
-                                IF rec.candidate_reward >= threshold_reward THEN
-                                    dethroned_flag := TRUE;
-                                    leader_uid := rec.candidate_miner_uid;
-                                    leader_reward := rec.candidate_reward;
-                                END IF;
-                            END IF;
-                        END IF;
-
-                        UPDATE round_summary
-                        SET
-                            leader_before_miner_uid = (
-                                SELECT prev.leader_after_miner_uid
-                                FROM round_summary prev
-                                JOIN rounds pr ON pr.round_id = prev.round_id
-                                WHERE pr.season_id = rec.season_id
-                                  AND (
-                                    COALESCE(pr.round_number_in_season, 2147483647) < rec.round_number_in_season
-                                    OR (COALESCE(pr.round_number_in_season, 2147483647) = rec.round_number_in_season AND prev.round_id < rec.round_id)
-                                  )
-                                ORDER BY COALESCE(pr.round_number_in_season, 2147483647) DESC, prev.round_id DESC
-                                LIMIT 1
-                            ),
-                            leader_before_reward = (
-                                SELECT prev.leader_after_reward
-                                FROM round_summary prev
-                                JOIN rounds pr ON pr.round_id = prev.round_id
-                                WHERE pr.season_id = rec.season_id
-                                  AND (
-                                    COALESCE(pr.round_number_in_season, 2147483647) < rec.round_number_in_season
-                                    OR (COALESCE(pr.round_number_in_season, 2147483647) = rec.round_number_in_season AND prev.round_id < rec.round_id)
-                                  )
-                                ORDER BY COALESCE(pr.round_number_in_season, 2147483647) DESC, prev.round_id DESC
-                                LIMIT 1
-                            ),
-                            leader_after_miner_uid = leader_uid,
-                            leader_after_reward = leader_reward,
-                            required_improvement_pct = required_pct,
-                            required_reward_to_dethrone = (
-                                SELECT CASE
-                                    WHEN prev.leader_after_reward IS NOT NULL
-                                    THEN prev.leader_after_reward * (1.0 + required_pct)
-                                    ELSE NULL
-                                END
-                                FROM round_summary prev
-                                JOIN rounds pr ON pr.round_id = prev.round_id
-                                WHERE pr.season_id = rec.season_id
-                                  AND (
-                                    COALESCE(pr.round_number_in_season, 2147483647) < rec.round_number_in_season
-                                    OR (COALESCE(pr.round_number_in_season, 2147483647) = rec.round_number_in_season AND prev.round_id < rec.round_id)
-                                  )
-                                ORDER BY COALESCE(pr.round_number_in_season, 2147483647) DESC, prev.round_id DESC
-                                LIMIT 1
-                            ),
-                            dethroned = dethroned_flag,
-                            updated_at = NOW()
-                        WHERE round_id = rec.round_id;
-                    END LOOP;
-                END $$;
-                """
-            )
-        )
-        await conn.execute(
-            text(
-                """
                 UPDATE round_summary rs
                 SET
                     leader_before_miner_hotkey = (
@@ -564,6 +460,104 @@ async def init_db() -> None:
                     ORDER BY r.season_id, COALESCE(r.round_number_in_season, 2147483647) DESC, rs.round_id DESC
                 ) latest
                 WHERE latest.season_id = s.season_id
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE round_summary rs
+                SET
+                    leader_before_miner_uid = NULLIF(rs.post_consensus_json->'summary'->'leader_before_round'->>'uid', '')::INTEGER,
+                    leader_before_reward = NULLIF(rs.post_consensus_json->'summary'->'leader_before_round'->>'reward', '')::DOUBLE PRECISION,
+                    candidate_miner_uid = NULLIF(rs.post_consensus_json->'summary'->'candidate_this_round'->>'uid', '')::INTEGER,
+                    candidate_reward = NULLIF(rs.post_consensus_json->'summary'->'candidate_this_round'->>'reward', '')::DOUBLE PRECISION,
+                    leader_after_miner_uid = NULLIF(rs.post_consensus_json->'summary'->'leader_after_round'->>'uid', '')::INTEGER,
+                    leader_after_reward = NULLIF(rs.post_consensus_json->'summary'->'leader_after_round'->>'reward', '')::DOUBLE PRECISION,
+                    required_improvement_pct = COALESCE(NULLIF(rs.post_consensus_json->'summary'->>'percentage_to_dethrone', '')::DOUBLE PRECISION, rs.required_improvement_pct, 0.05),
+                    dethroned = COALESCE(NULLIF(rs.post_consensus_json->'summary'->>'dethroned', '')::BOOLEAN, rs.dethroned, FALSE),
+                    updated_at = NOW()
+                WHERE rs.post_consensus_json IS NOT NULL
+                  AND rs.post_consensus_json ? 'summary'
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                WITH miner_rows AS (
+                    SELECT
+                        rs.round_id,
+                        miner_entry,
+                        miner_entry->'best_run_consensus' AS best_run
+                    FROM round_summary rs
+                    CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rs.post_consensus_json->'miners', '[]'::jsonb)) AS miner_entry
+                    WHERE rs.post_consensus_json IS NOT NULL
+                ),
+                aggregate_rows AS (
+                    SELECT
+                        round_id,
+                        COUNT(*) FILTER (WHERE best_run IS NOT NULL) AS miners_evaluated,
+                        COALESCE(SUM(COALESCE(NULLIF(best_run->>'tasks_received', '')::INTEGER, 0)), 0) AS tasks_evaluated,
+                        COALESCE(SUM(COALESCE(NULLIF(best_run->>'tasks_success', '')::INTEGER, 0)), 0) AS tasks_success,
+                        COALESCE(AVG(NULLIF(best_run->>'reward', '')::DOUBLE PRECISION), 0) AS avg_reward,
+                        COALESCE(AVG(NULLIF(best_run->>'score', '')::DOUBLE PRECISION), 0) AS avg_eval_score,
+                        COALESCE(AVG(NULLIF(best_run->>'time', '')::DOUBLE PRECISION) FILTER (WHERE NULLIF(best_run->>'time', '')::DOUBLE PRECISION > 0), 0) AS avg_eval_time,
+                        AVG(NULLIF(best_run->>'cost', '')::DOUBLE PRECISION) FILTER (WHERE NULLIF(best_run->>'cost', '')::DOUBLE PRECISION > 0) AS avg_eval_cost
+                    FROM miner_rows
+                    GROUP BY round_id
+                ),
+                leader_rows AS (
+                    SELECT
+                        mr.round_id,
+                        NULLIF(mr.best_run->>'score', '')::DOUBLE PRECISION AS leader_after_eval_score,
+                        NULLIF(mr.best_run->>'time', '')::DOUBLE PRECISION AS leader_after_eval_time,
+                        NULLIF(mr.best_run->>'cost', '')::DOUBLE PRECISION AS leader_after_eval_cost
+                    FROM miner_rows mr
+                    JOIN round_summary rs ON rs.round_id = mr.round_id
+                    WHERE NULLIF(mr.miner_entry->>'uid', '')::INTEGER = rs.leader_after_miner_uid
+                )
+                UPDATE round_summary rs
+                SET
+                    miners_evaluated = COALESCE(agg.miners_evaluated, rs.miners_evaluated, 0),
+                    tasks_evaluated = COALESCE(agg.tasks_evaluated, rs.tasks_evaluated, 0),
+                    tasks_success = COALESCE(agg.tasks_success, rs.tasks_success, 0),
+                    avg_reward = COALESCE(agg.avg_reward, rs.avg_reward, 0),
+                    avg_eval_score = COALESCE(agg.avg_eval_score, rs.avg_eval_score, 0),
+                    avg_eval_time = COALESCE(agg.avg_eval_time, rs.avg_eval_time, 0),
+                    avg_eval_cost = COALESCE(agg.avg_eval_cost, rs.avg_eval_cost),
+                    leader_after_eval_score = COALESCE(lr.leader_after_eval_score, rs.leader_after_eval_score),
+                    leader_after_eval_time = COALESCE(lr.leader_after_eval_time, rs.leader_after_eval_time),
+                    leader_after_eval_cost = COALESCE(lr.leader_after_eval_cost, rs.leader_after_eval_cost),
+                    updated_at = NOW()
+                FROM aggregate_rows agg
+                LEFT JOIN leader_rows lr ON lr.round_id = agg.round_id
+                WHERE rs.round_id = agg.round_id
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                WITH bounds AS (
+                    SELECT
+                        season_id,
+                        MIN(start_block) AS min_start_block,
+                        MAX(end_block) AS max_end_block,
+                        BOOL_OR(LOWER(COALESCE(status, '')) = 'active') AS has_active_round,
+                        MAX(ended_at) AS max_ended_at
+                    FROM rounds
+                    GROUP BY season_id
+                )
+                UPDATE seasons s
+                SET
+                    start_block = COALESCE(bounds.min_start_block, s.start_block),
+                    end_block = COALESCE(bounds.max_end_block, s.end_block),
+                    end_at = CASE WHEN bounds.has_active_round THEN NULL ELSE COALESCE(bounds.max_ended_at, s.end_at) END,
+                    status = CASE WHEN bounds.has_active_round THEN 'active' ELSE 'finished' END,
+                    updated_at = NOW()
+                FROM bounds
+                WHERE bounds.season_id = s.season_id
                 """
             )
         )

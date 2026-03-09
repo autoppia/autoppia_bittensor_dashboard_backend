@@ -34,6 +34,13 @@ class ValidatorStorageSummaryMixin:
         return dict(summary) if isinstance(summary, dict) else {}
 
     @staticmethod
+    def _summary_snapshot(summary: Dict[str, Any], key: str) -> Dict[str, Any]:
+        if not isinstance(summary, dict):
+            return {}
+        value = summary.get(key)
+        return dict(value) if isinstance(value, dict) else {}
+
+    @staticmethod
     def _apply_leadership_to_summary(
         *,
         summary: Dict[str, Any],
@@ -128,35 +135,38 @@ class ValidatorStorageSummaryMixin:
 
         leader_uid: Optional[int] = None
         leader_reward: Optional[float] = None
+        leader_score: Optional[float] = None
+        leader_time: Optional[float] = None
+        leader_cost: Optional[float] = None
         default_required_improvement_pct = 0.05
 
         for row in season_rows:
             round_id = int(row["round_id"])
-            winner_uid = int(row["candidate_miner_uid"]) if row["candidate_miner_uid"] is not None else None
-            winner_reward = float(row["candidate_reward"]) if row["candidate_reward"] is not None else None
-            required_improvement_pct = float(row["required_improvement_pct"] or default_required_improvement_pct)
+            post_payload = self._to_json_dict(row.get("post_consensus_json"))
+            summary_block = self._summary_block(post_payload)
+            required_improvement_pct = float(summary_block.get("percentage_to_dethrone") or row["required_improvement_pct"] or default_required_improvement_pct)
+            leader_before = self._summary_snapshot(summary_block, "leader_before_round")
+            candidate = self._summary_snapshot(summary_block, "candidate_this_round")
+            leader_after = self._summary_snapshot(summary_block, "leader_after_round")
 
-            reigning_uid_before_round = leader_uid
-            reigning_reward_before_round = leader_reward
-            top_candidate_uid = winner_uid
-            top_candidate_reward = winner_reward
-            dethroned = False
+            reigning_uid_before_round = int(leader_before.get("uid")) if leader_before.get("uid") is not None else leader_uid
+            reigning_reward_before_round = float(leader_before.get("reward")) if leader_before.get("reward") is not None else leader_reward
+            top_candidate_uid = int(candidate.get("uid")) if candidate.get("uid") is not None else None
+            top_candidate_reward = float(candidate.get("reward")) if candidate.get("reward") is not None else None
+            dethroned = bool(summary_block.get("dethroned", False))
 
-            if winner_uid is not None and winner_reward is not None:
-                if leader_uid is None or leader_reward is None:
-                    leader_uid = winner_uid
-                    leader_reward = winner_reward
-                elif winner_uid == leader_uid:
-                    leader_reward = max(float(leader_reward), float(winner_reward))
-                else:
-                    dethrone_threshold = float(leader_reward) * (1.0 + required_improvement_pct)
-                    if float(winner_reward) >= dethrone_threshold:
-                        dethroned = True
-                        leader_uid = winner_uid
-                        leader_reward = winner_reward
+            if leader_after:
+                leader_uid = int(leader_after.get("uid")) if leader_after.get("uid") is not None else leader_uid
+                leader_reward = float(leader_after.get("reward")) if leader_after.get("reward") is not None else leader_reward
+                leader_score = float(leader_after.get("score")) if leader_after.get("score") is not None else leader_score
+                leader_time = float(leader_after.get("time")) if leader_after.get("time") is not None else leader_time
+                leader_cost = float(leader_after.get("cost")) if leader_after.get("cost") is not None else leader_cost
+            else:
+                leader_uid = reigning_uid_before_round
+                leader_reward = reigning_reward_before_round
 
             post_payload = self._apply_leadership_to_summary(
-                summary=self._to_json_dict(row.get("post_consensus_json")),
+                summary=post_payload,
                 reigning_uid_before_round=reigning_uid_before_round,
                 reigning_reward_before_round=reigning_reward_before_round,
                 top_candidate_uid=top_candidate_uid,
@@ -165,6 +175,13 @@ class ValidatorStorageSummaryMixin:
                 dethroned=dethroned,
                 leader_uid_after_round=leader_uid,
                 leader_reward_after_round=leader_reward,
+                top_candidate_score=float(candidate.get("score")) if candidate.get("score") is not None else None,
+                top_candidate_time=float(candidate.get("time")) if candidate.get("time") is not None else None,
+                top_candidate_cost=float(candidate.get("cost")) if candidate.get("cost") is not None else None,
+                leader_after_score=leader_score,
+                leader_after_time=leader_time,
+                leader_after_cost=leader_cost,
+                leader_after_weight=float(leader_after.get("weight")) if leader_after.get("weight") is not None else None,
             )
 
             await self.session.execute(
@@ -259,6 +276,38 @@ class ValidatorStorageSummaryMixin:
         )
         return {int(r.miner_uid) for r in rows if r.miner_uid is not None}
 
+    async def _sync_season_bounds_from_rounds(self, season_id: int) -> None:
+        await self.session.execute(
+            text(
+                """
+                WITH bounds AS (
+                    SELECT
+                        MIN(start_block) AS min_start_block,
+                        MAX(end_block) AS max_end_block,
+                        MAX(planned_start_block) AS max_planned_start_block,
+                        MAX(planned_end_block) AS max_planned_end_block,
+                        BOOL_OR(LOWER(COALESCE(status, '')) = 'active') AS has_active_round,
+                        MAX(ended_at) AS max_ended_at
+                    FROM rounds
+                    WHERE season_id = :season_id
+                )
+                UPDATE seasons s
+                SET
+                    start_block = COALESCE(bounds.min_start_block, s.start_block),
+                    end_block = COALESCE(bounds.max_end_block, bounds.max_planned_end_block, s.end_block),
+                    end_at = CASE
+                        WHEN bounds.has_active_round THEN NULL
+                        ELSE COALESCE(bounds.max_ended_at, s.end_at)
+                    END,
+                    status = CASE WHEN bounds.has_active_round THEN 'active' ELSE 'finished' END,
+                    updated_at = NOW()
+                FROM bounds
+                WHERE s.season_id = :season_id
+                """
+            ),
+            {"season_id": season_id},
+        )
+
     async def _enrich_validator_summary_post_consensus_from_db(self, round_row: ValidatorRoundORM) -> None:
         """Enrich validator_summary.evaluation_post_consensus with DB-derived metrics.
 
@@ -291,7 +340,7 @@ class ValidatorStorageSummaryMixin:
             post_tasks_success = int(row.post_consensus_tasks_success or 0)
             is_burn_row = int(row.miner_uid or -1) == burn_uid
             is_handshake_participant = int(row.miner_uid or -1) in handshake_uids
-            if not is_burn_row and is_handshake_participant:
+            if not is_burn_row:
                 tasks_evaluated_total += post_tasks_received
                 tasks_success_total += post_tasks_success
                 if row.post_consensus_avg_reward is not None:
@@ -316,7 +365,7 @@ class ValidatorStorageSummaryMixin:
                 }
             )
 
-        competitive_miners_payload = [m for m in miners_payload if int(m.get("miner_uid") or -1) != burn_uid and bool(m.get("is_handshake_participant"))]
+        competitive_miners_payload = [m for m in miners_payload if int(m.get("miner_uid") or -1) != burn_uid]
         winner = next((m for m in competitive_miners_payload if m.get("post_consensus_rank") == 1), None)
         if winner is None:
             winner = max(
@@ -428,13 +477,20 @@ class ValidatorStorageSummaryMixin:
         leader_before_uid = _to_int(leader_before_payload.get("uid"))
         leader_before_reward = _to_float(leader_before_payload.get("reward"))
         required_improvement_pct = _to_float(summary_block.get("percentage_to_dethrone")) or 0.05
-        winner_uid = _to_int(winner.get("miner_uid")) if isinstance(winner, dict) else None
+        summary_leader_after = self._summary_snapshot(summary_block, "leader_after_round")
+        summary_candidate = self._summary_snapshot(summary_block, "candidate_this_round")
+        winner_uid = _to_int(summary_leader_after.get("uid"))
+        if winner_uid is None and isinstance(winner, dict):
+            winner_uid = _to_int(winner.get("miner_uid"))
         winner_row = next((row for row in summary_rows if int(row.miner_uid or -1) == int(winner_uid)), None) if winner_uid is not None else None
 
         candidate_row = None
-        if leader_before_uid is not None:
+        candidate_uid_from_summary = _to_int(summary_candidate.get("uid"))
+        if candidate_uid_from_summary is not None:
+            candidate_row = next((row for row in summary_rows if int(row.miner_uid or -1) == candidate_uid_from_summary), None)
+        elif leader_before_uid is not None:
             candidate_row = max(
-                (row for row in summary_rows if int(row.miner_uid or -1) != burn_uid and int(row.miner_uid or -1) in handshake_uids and int(row.miner_uid or -1) != leader_before_uid),
+                (row for row in summary_rows if int(row.miner_uid or -1) != burn_uid and int(row.miner_uid or -1) != leader_before_uid),
                 key=lambda row: (
                     float(row.post_consensus_avg_reward or 0.0),
                     float(row.post_consensus_avg_eval_score or 0.0),
@@ -451,12 +507,18 @@ class ValidatorStorageSummaryMixin:
         candidate_time = float(candidate_row.post_consensus_avg_eval_time or 0.0) if candidate_row is not None and candidate_row.post_consensus_avg_eval_time is not None else None
         candidate_cost = float(candidate_row.post_consensus_avg_eval_cost) if candidate_row is not None and candidate_row.post_consensus_avg_eval_cost is not None else None
 
-        leader_after_uid = int(winner_row.miner_uid) if winner_row is not None else None
-        leader_after_reward = float(winner_row.post_consensus_avg_reward or 0.0) if winner_row is not None else None
-        leader_after_score = float(winner_row.post_consensus_avg_eval_score or 0.0) if winner_row is not None and winner_row.post_consensus_avg_eval_score is not None else None
-        leader_after_time = float(winner_row.post_consensus_avg_eval_time or 0.0) if winner_row is not None and winner_row.post_consensus_avg_eval_time is not None else None
-        leader_after_cost = float(winner_row.post_consensus_avg_eval_cost) if winner_row is not None and winner_row.post_consensus_avg_eval_cost is not None else None
-        leader_after_weight = float(winner_row.weight or 0.0) if winner_row is not None and winner_row.weight is not None else None
+        leader_after_uid = int(winner_row.miner_uid) if winner_row is not None else _to_int(summary_leader_after.get("uid"))
+        leader_after_reward = float(winner_row.post_consensus_avg_reward or 0.0) if winner_row is not None else _to_float(summary_leader_after.get("reward"))
+        leader_after_score = (
+            float(winner_row.post_consensus_avg_eval_score or 0.0) if winner_row is not None and winner_row.post_consensus_avg_eval_score is not None else _to_float(summary_leader_after.get("score"))
+        )
+        leader_after_time = (
+            float(winner_row.post_consensus_avg_eval_time or 0.0) if winner_row is not None and winner_row.post_consensus_avg_eval_time is not None else _to_float(summary_leader_after.get("time"))
+        )
+        leader_after_cost = (
+            float(winner_row.post_consensus_avg_eval_cost) if winner_row is not None and winner_row.post_consensus_avg_eval_cost is not None else _to_float(summary_leader_after.get("cost"))
+        )
+        leader_after_weight = float(winner_row.weight or 0.0) if winner_row is not None and winner_row.weight is not None else _to_float(summary_leader_after.get("weight"))
 
         dethroned_value = bool(summary_block.get("dethroned", False))
 
@@ -541,8 +603,7 @@ class ValidatorStorageSummaryMixin:
         source_validator_uid = int(ctx.validator_uid) if ctx.validator_uid is not None else None
         source_is_main_validator = bool(ctx.is_main_validator)
         burn_uid = int(settings.BURN_UID)
-        handshake_uids = await self._get_handshake_participant_uids(round_row.validator_round_id)
-        competitive_rows = [row for row in summary_rows if int(row.miner_uid or -1) != burn_uid and int(row.miner_uid or -1) in handshake_uids]
+        competitive_rows = [row for row in summary_rows if int(row.miner_uid or -1) != burn_uid]
         winner_row = next((row for row in competitive_rows if int(row.post_consensus_rank or 0) == 1), None)
         if winner_row is None:
             winner_row = max(
@@ -580,6 +641,9 @@ class ValidatorStorageSummaryMixin:
         if not isinstance(post_summary, dict):
             post_summary = {}
         summary_block = self._summary_block(post_summary)
+        leader_before_summary = self._summary_snapshot(summary_block, "leader_before_round")
+        candidate_summary = self._summary_snapshot(summary_block, "candidate_this_round")
+        leader_after_summary = self._summary_snapshot(summary_block, "leader_after_round")
 
         required_improvement_pct = (
             float(round_row.required_improvement_pct) if getattr(round_row, "required_improvement_pct", None) is not None else float(summary_block.get("percentage_to_dethrone", 0.05) or 0.05)
@@ -613,8 +677,13 @@ class ValidatorStorageSummaryMixin:
             return snap.get("miner_hotkey"), snap.get("github_url")
 
         leader_before_uid = int(round_row.leader_before_uid) if getattr(round_row, "leader_before_uid", None) is not None else None
+        if leader_before_uid is None and leader_before_summary.get("uid") is not None:
+            leader_before_uid = int(leader_before_summary.get("uid"))
         candidate_row = None
-        if leader_before_uid is not None:
+        candidate_uid_from_summary = int(candidate_summary.get("uid")) if candidate_summary.get("uid") is not None else None
+        if candidate_uid_from_summary is not None:
+            candidate_row = next((row for row in competitive_rows if int(row.miner_uid or -1) == candidate_uid_from_summary), None)
+        elif leader_before_uid is not None:
             candidate_row = max(
                 (row for row in competitive_rows if int(row.miner_uid or -1) != int(leader_before_uid)),
                 key=lambda row: (
@@ -628,16 +697,40 @@ class ValidatorStorageSummaryMixin:
             candidate_row = winner_row
 
         candidate_uid = int(candidate_row.miner_uid) if candidate_row is not None else None
-        leader_after_uid = int(winner_row.miner_uid) if winner_row is not None else None
+        leader_after_uid = int(leader_after_summary.get("uid")) if leader_after_summary.get("uid") is not None else None
+        if leader_after_uid is None and winner_row is not None:
+            leader_after_uid = int(winner_row.miner_uid)
         leader_before_hotkey, leader_before_github_url = await _lookup_round_miner_snapshot(leader_before_uid)
         candidate_hotkey, candidate_github_url = await _lookup_round_miner_snapshot(candidate_uid)
         leader_after_hotkey, leader_after_github_url = await _lookup_round_miner_snapshot(leader_after_uid)
         leader_before_reward = float(round_row.leader_before_reward) if getattr(round_row, "leader_before_reward", None) is not None else None
-        candidate_reward = float(getattr(candidate_row, "post_consensus_avg_reward", 0.0) or 0.0) if candidate_row is not None else None
-        leader_after_reward = float(getattr(winner_row, "post_consensus_avg_reward", 0.0) or 0.0) if winner_row is not None else None
-        leader_eval_score = float(getattr(winner_row, "post_consensus_avg_eval_score", 0.0) or 0.0) if winner_row is not None else 0.0
-        leader_eval_time = float(getattr(winner_row, "post_consensus_avg_eval_time", 0.0) or 0.0) if winner_row is not None else 0.0
-        leader_eval_cost = float(getattr(winner_row, "post_consensus_avg_eval_cost")) if winner_row is not None and getattr(winner_row, "post_consensus_avg_eval_cost", None) is not None else None
+        if leader_before_reward is None and leader_before_summary.get("reward") is not None:
+            leader_before_reward = float(leader_before_summary.get("reward"))
+        candidate_reward = (
+            float(getattr(candidate_row, "post_consensus_avg_reward", 0.0) or 0.0)
+            if candidate_row is not None
+            else (float(candidate_summary.get("reward")) if candidate_summary.get("reward") is not None else None)
+        )
+        leader_after_row = (
+            next(
+                (row for row in competitive_rows if int(row.miner_uid or -1) == int(leader_after_uid)),
+                None,
+            )
+            if leader_after_uid is not None
+            else None
+        )
+        leader_after_reward = (
+            float(getattr(leader_after_row, "post_consensus_avg_reward", 0.0) or 0.0)
+            if leader_after_row is not None
+            else (float(leader_after_summary.get("reward")) if leader_after_summary.get("reward") is not None else None)
+        )
+        leader_eval_score = float(getattr(leader_after_row, "post_consensus_avg_eval_score", 0.0) or 0.0) if leader_after_row is not None else float(leader_after_summary.get("score") or 0.0)
+        leader_eval_time = float(getattr(leader_after_row, "post_consensus_avg_eval_time", 0.0) or 0.0) if leader_after_row is not None else float(leader_after_summary.get("time") or 0.0)
+        leader_eval_cost = (
+            float(getattr(leader_after_row, "post_consensus_avg_eval_cost"))
+            if leader_after_row is not None and getattr(leader_after_row, "post_consensus_avg_eval_cost", None) is not None
+            else (float(leader_after_summary.get("cost")) if leader_after_summary.get("cost") is not None else None)
+        )
 
         await self.session.execute(
             text(
@@ -786,6 +879,7 @@ class ValidatorStorageSummaryMixin:
         season_id = await self.session.scalar(text("SELECT season_id FROM rounds WHERE round_id = :round_id LIMIT 1"), {"round_id": round_id})
         if season_id is not None:
             await self._recompute_and_persist_season_leadership(int(season_id))
+            await self._sync_season_bounds_from_rounds(int(season_id))
 
     async def _populate_round_summary(
         self,
@@ -875,33 +969,26 @@ class ValidatorStorageSummaryMixin:
                 miner_hotkey = miner_data.get("miner_hotkey") or run_metrics.get("miner_hotkey")
                 if miner_hotkey is not None:
                     summary_map[miner_uid]["miner_hotkey"] = miner_hotkey
-                best_run = miner_data.get("best_run")
-                if not isinstance(best_run, dict):
-                    best_run = miner_data.get("current_run")
-                if not isinstance(best_run, dict):
-                    best_run = None
+                current_run = miner_data.get("current_run")
+                if not isinstance(current_run, dict):
+                    current_run = None
 
-                if best_run is not None:
-                    summary_map[miner_uid]["local_avg_reward"] = best_run.get("reward")
-                    summary_map[miner_uid]["local_avg_eval_score"] = best_run.get("score")
-                    summary_map[miner_uid]["local_avg_eval_time"] = best_run.get("time")
-                    summary_map[miner_uid]["local_avg_eval_cost"] = best_run.get("cost")
-                    summary_map[miner_uid]["local_tasks_received"] = best_run.get("tasks_received")
-                    summary_map[miner_uid]["local_tasks_success"] = best_run.get("tasks_success")
+                if current_run is not None:
+                    summary_map[miner_uid]["local_avg_reward"] = current_run.get("reward")
+                    summary_map[miner_uid]["local_avg_eval_score"] = current_run.get("score")
+                    summary_map[miner_uid]["local_avg_eval_time"] = current_run.get("time")
+                    summary_map[miner_uid]["local_avg_eval_cost"] = current_run.get("cost")
+                    summary_map[miner_uid]["local_tasks_received"] = current_run.get("tasks_received")
+                    summary_map[miner_uid]["local_tasks_success"] = current_run.get("tasks_success")
                 else:
-                    # Legacy fallback for older validators still sending flat local payloads.
-                    summary_map[miner_uid]["local_avg_reward"] = run_metrics.get("local_avg_reward") if run_metrics.get("local_avg_reward") is not None else miner_data.get("avg_reward")
-                    summary_map[miner_uid]["local_avg_eval_score"] = (
-                        run_metrics.get("local_avg_eval_score") if run_metrics.get("local_avg_eval_score") is not None else miner_data.get("avg_eval_score")
-                    )
-                    summary_map[miner_uid]["local_avg_eval_time"] = (
-                        run_metrics.get("local_avg_eval_time") if run_metrics.get("local_avg_eval_time") is not None else miner_data.get("avg_evaluation_time")
-                    )
-                    summary_map[miner_uid]["local_avg_eval_cost"] = run_metrics.get("local_avg_eval_cost")
-                    summary_map[miner_uid]["local_tasks_received"] = (
-                        run_metrics.get("local_tasks_received") if run_metrics.get("local_tasks_received") is not None else miner_data.get("tasks_attempted")
-                    )
-                    summary_map[miner_uid]["local_tasks_success"] = run_metrics.get("local_tasks_success") if run_metrics.get("local_tasks_success") is not None else miner_data.get("tasks_completed")
+                    # No current_run means no local execution happened in this round.
+                    # Keep the round-local fields empty instead of leaking best historical values.
+                    summary_map[miner_uid].setdefault("local_avg_reward", run_metrics.get("local_avg_reward"))
+                    summary_map[miner_uid].setdefault("local_avg_eval_score", run_metrics.get("local_avg_eval_score"))
+                    summary_map[miner_uid].setdefault("local_avg_eval_time", run_metrics.get("local_avg_eval_time"))
+                    summary_map[miner_uid].setdefault("local_avg_eval_cost", run_metrics.get("local_avg_eval_cost"))
+                    summary_map[miner_uid].setdefault("local_tasks_received", run_metrics.get("local_tasks_received"))
+                    summary_map[miner_uid].setdefault("local_tasks_success", run_metrics.get("local_tasks_success"))
 
         # Process post_consensus_evaluation
         if post_consensus_evaluation and isinstance(post_consensus_evaluation, dict):
