@@ -80,33 +80,98 @@ class UIAgentsRunsServiceMixin:
                 await self.session.execute(
                     text(
                         """
-                    WITH ranked_rounds AS (
+                    WITH per_round AS (
                       SELECT
+                        r.round_id,
                         s.season_number,
                         r.round_number_in_season,
-                        COALESCE(rvm.post_consensus_avg_reward, 0) AS reward,
-                        COALESCE(rvm.post_consensus_rank, 9999) AS rank,
-                        COALESCE(rvm.post_consensus_avg_eval_score, 0) AS eval_score,
-                        COALESCE(rvm.post_consensus_avg_eval_time, 0) AS eval_time,
-                        rvm.post_consensus_avg_eval_cost AS eval_cost,
-                        COALESCE(rvm.post_consensus_tasks_received, 0) AS tasks_received,
-                        COALESCE(rvm.post_consensus_tasks_success, 0) AS tasks_success,
-                        rs.leader_after_reward AS top_reward,
-                        ROW_NUMBER() OVER (
-                          PARTITION BY r.round_id
-                          ORDER BY
-                            COALESCE(rvm.post_consensus_avg_reward, 0) DESC,
-                            COALESCE(rvm.post_consensus_rank, 9999) ASC,
-                            rvm.round_validator_id ASC
-                        ) AS row_num
+                        MIN(COALESCE(rvm.post_consensus_rank, 9999)) AS rank,
+                        SUM(COALESCE(rvm.post_consensus_tasks_received, 0)) AS tasks_received,
+                        SUM(COALESCE(rvm.post_consensus_tasks_success, 0)) AS tasks_success,
+                        CASE
+                          WHEN SUM(
+                            CASE
+                              WHEN rvm.post_consensus_avg_reward IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                              THEN COALESCE(rv.stake, 0)
+                              ELSE 0
+                            END
+                          ) > 0
+                          THEN SUM(COALESCE(rvm.post_consensus_avg_reward, 0) * COALESCE(rv.stake, 0))
+                               / SUM(
+                                 CASE
+                                   WHEN rvm.post_consensus_avg_reward IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                                   THEN COALESCE(rv.stake, 0)
+                                   ELSE 0
+                                 END
+                               )
+                          ELSE 0
+                        END AS reward,
+                        CASE
+                          WHEN SUM(
+                            CASE
+                              WHEN rvm.post_consensus_avg_eval_score IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                              THEN COALESCE(rv.stake, 0)
+                              ELSE 0
+                            END
+                          ) > 0
+                          THEN SUM(COALESCE(rvm.post_consensus_avg_eval_score, 0) * COALESCE(rv.stake, 0))
+                               / SUM(
+                                 CASE
+                                   WHEN rvm.post_consensus_avg_eval_score IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                                   THEN COALESCE(rv.stake, 0)
+                                   ELSE 0
+                                 END
+                               )
+                          ELSE 0
+                        END AS eval_score,
+                        CASE
+                          WHEN SUM(
+                            CASE
+                              WHEN rvm.post_consensus_avg_eval_time IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                              THEN COALESCE(rv.stake, 0)
+                              ELSE 0
+                            END
+                          ) > 0
+                          THEN SUM(COALESCE(rvm.post_consensus_avg_eval_time, 0) * COALESCE(rv.stake, 0))
+                               / SUM(
+                                 CASE
+                                   WHEN rvm.post_consensus_avg_eval_time IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                                   THEN COALESCE(rv.stake, 0)
+                                   ELSE 0
+                                 END
+                               )
+                          ELSE 0
+                        END AS eval_time,
+                        CASE
+                          WHEN SUM(
+                            CASE
+                              WHEN rvm.post_consensus_avg_eval_cost IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                              THEN COALESCE(rv.stake, 0)
+                              ELSE 0
+                            END
+                          ) > 0
+                          THEN SUM(COALESCE(rvm.post_consensus_avg_eval_cost, 0) * COALESCE(rv.stake, 0))
+                               / SUM(
+                                 CASE
+                                   WHEN rvm.post_consensus_avg_eval_cost IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                                   THEN COALESCE(rv.stake, 0)
+                                   ELSE 0
+                                 END
+                               )
+                          ELSE NULL
+                        END AS eval_cost,
+                        MAX(rs.leader_after_reward) AS top_reward
                       FROM round_validator_miners rvm
+                      JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
                       JOIN rounds r ON r.round_id = rvm.round_id
                       JOIN seasons s ON s.season_id = r.season_id
                       LEFT JOIN round_summary rs ON rs.round_id = r.round_id
                       WHERE rvm.miner_uid = :miner_uid
                         AND s.season_number = :season
+                      GROUP BY r.round_id, s.season_number, r.round_number_in_season
                     )
                     SELECT
+                      round_id,
                       season_number,
                       round_number_in_season,
                       reward,
@@ -117,8 +182,7 @@ class UIAgentsRunsServiceMixin:
                       tasks_received,
                       tasks_success,
                       top_reward
-                    FROM ranked_rounds
-                    WHERE row_num = 1
+                    FROM per_round
                     ORDER BY round_number_in_season DESC
                     """
                     ),
@@ -389,10 +453,37 @@ class UIAgentsRunsServiceMixin:
             return host
 
         source_agent_run_ids: List[str] = []
-        if run_ctx_rows:
+        selected_round_ref = await self._round_ref(season, round_in_season)
+        selected_round_id = int(selected_round_ref["round_id"]) if selected_round_ref and selected_round_ref.get("round_id") is not None else None
+        if selected_round_id is not None:
+            selected_round_run_rows = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                        SELECT mer.agent_run_id
+                        FROM miner_evaluation_runs mer
+                        JOIN round_validators rv ON rv.round_validator_id = mer.round_validator_id
+                        WHERE mer.miner_uid = :uid
+                          AND rv.round_id = :round_id
+                        ORDER BY rv.validator_uid ASC, mer.started_at DESC NULLS LAST, mer.created_at DESC NULLS LAST
+                        """
+                        ),
+                        {
+                            "uid": miner_uid,
+                            "round_id": selected_round_id,
+                        },
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            for rc in selected_round_run_rows:
+                source_agent_run_ids.append(str(rc.get("agent_run_id")))
+        if not source_agent_run_ids and run_ctx_rows:
             for rc in run_ctx_rows:
                 source_agent_run_ids.append(str(rc.get("agent_run_id")))
-        elif run_agent_run_id:
+        elif not source_agent_run_ids and run_agent_run_id:
             source_agent_run_ids.append(str(run_agent_run_id))
 
         if not source_agent_run_ids:
@@ -420,7 +511,6 @@ class UIAgentsRunsServiceMixin:
                             ON mer.round_validator_id = rv.round_validator_id
                            AND mer.miner_uid = rvm.miner_uid
                           WHERE rvm.miner_uid = :miner_uid
-                            AND rv.validator_uid = :main_validator_uid
                             AND s.season_number = :season
                             AND r.round_number_in_season <= :round_in_season
                           GROUP BY r.round_id, r.round_number_in_season, rvm.post_consensus_avg_reward
@@ -434,7 +524,6 @@ class UIAgentsRunsServiceMixin:
                         ),
                         {
                             "miner_uid": miner_uid,
-                            "main_validator_uid": main_validator_uid,
                             "season": season,
                             "round_in_season": round_in_season,
                             "target_reward": target_reward,
@@ -456,14 +545,12 @@ class UIAgentsRunsServiceMixin:
                             JOIN round_validators rv
                               ON rv.round_validator_id = mer.round_validator_id
                             WHERE mer.miner_uid = :miner_uid
-                              AND rv.validator_uid = :main_validator_uid
                               AND rv.round_id = :round_id
                             ORDER BY mer.started_at DESC NULLS LAST, mer.created_at DESC NULLS LAST
                             """
                             ),
                             {
                                 "miner_uid": miner_uid,
-                                "main_validator_uid": main_validator_uid,
                                 "round_id": source_round_id,
                             },
                         )
@@ -477,9 +564,6 @@ class UIAgentsRunsServiceMixin:
 
         if source_agent_run_ids:
             by_website: Dict[str, Dict[str, Any]] = {}
-            total_tasks_for_cost = 0
-            total_llm_cost = 0.0
-            has_llm_usage = False
             for source_agent_run_id in source_agent_run_ids:
                 task_rows = (
                     (
@@ -533,19 +617,13 @@ class UIAgentsRunsServiceMixin:
                     score = float(row.get("evaluation_score") or 0.0)
                     if score > 0:
                         item["tasks_success"] += 1
-                    total_tasks_for_cost += 1
-                    total_llm_cost += float(row.get("llm_cost") or 0.0)
-                    if int(row.get("llm_usage_count") or 0) > 0:
-                        has_llm_usage = True
             for entry in by_website.values():
                 tasks_received = int(entry["tasks_received"] or 0)
                 tasks_success = int(entry["tasks_success"] or 0)
                 entry["success_rate"] = (tasks_success / tasks_received) if tasks_received > 0 else 0.0
                 performance_by_website.append(entry)
             performance_by_website.sort(key=lambda x: x["tasks_received"], reverse=True)
-            if has_llm_usage and total_tasks_for_cost > 0:
-                avg_cost_per_task = total_llm_cost / float(total_tasks_for_cost)
-        if avg_cost_per_task is None and canonical_avg_cost is not None and canonical_avg_cost > 0:
+        if canonical_avg_cost is not None and canonical_avg_cost > 0:
             avg_cost_per_task = canonical_avg_cost
 
         season_leadership_row = (
@@ -1666,8 +1744,12 @@ class UIAgentsRunsServiceMixin:
             validators_out: List[Dict[str, Any]] = []
             weighted_reward_sum = 0.0
             weighted_score_sum = 0.0
+            weighted_time_sum = 0.0
+            weighted_cost_sum = 0.0
             stake_sum_reward = 0.0
             stake_sum_score = 0.0
+            stake_sum_time = 0.0
+            stake_sum_cost = 0.0
             post_consensus_rank: Optional[int] = None
             post_consensus_time: Optional[float] = None
             post_consensus_tasks_received = 0
@@ -1678,24 +1760,32 @@ class UIAgentsRunsServiceMixin:
                 stake = float(vr["stake"] or 0.0)
                 run_rew = vr["run_reward"]
                 run_score = vr["run_score"]
+                run_time = vr["run_time"]
+                run_cost = vr["run_avg_cost"]
 
-                # Stake-weighted reward and score from actual per-validator run values
+                # Stake-weighted consensus metrics from actual per-validator run values
                 if run_rew is not None and stake > 0:
                     weighted_reward_sum += float(run_rew) * stake
                     stake_sum_reward += stake
                 if run_score is not None and stake > 0:
                     weighted_score_sum += float(run_score) * stake
                     stake_sum_score += stake
+                if run_time is not None and stake > 0:
+                    weighted_time_sum += float(run_time) * stake
+                    stake_sum_time += stake
+                if run_cost is not None and stake > 0:
+                    weighted_cost_sum += float(run_cost) * stake
+                    stake_sum_cost += stake
 
-                # Take the best (lowest) rank for fallback display
+                # Tasks are absolute counts — sum across all validators, not averaged.
+                post_consensus_tasks_received += int(vr["post_consensus_tasks_received"] or 0)
+                post_consensus_tasks_success += int(vr["post_consensus_tasks_success"] or 0)
+
+                # Only need rank for the consensus rank display
                 rk = vr["post_consensus_rank"]
                 if rk is not None:
                     if post_consensus_rank is None or int(rk) < post_consensus_rank:
                         post_consensus_rank = int(rk)
-                        post_consensus_time = float(vr["post_consensus_avg_eval_time"] or 0.0)
-                        post_consensus_tasks_received = int(vr["post_consensus_tasks_received"] or 0)
-                        post_consensus_tasks_success = int(vr["post_consensus_tasks_success"] or 0)
-                        post_consensus_avg_cost = float(vr["post_consensus_avg_eval_cost"]) if vr["post_consensus_avg_eval_cost"] is not None else None
 
                 run_total = int(vr["run_total_tasks"] or 0)
                 run_success = int(vr["run_success_tasks"] or 0)
@@ -1738,6 +1828,8 @@ class UIAgentsRunsServiceMixin:
 
             consensus_reward = weighted_reward_sum / stake_sum_reward if stake_sum_reward > 0 else None
             consensus_score = weighted_score_sum / stake_sum_score if stake_sum_score > 0 else None
+            post_consensus_time = weighted_time_sum / stake_sum_time if stake_sum_time > 0 else None
+            post_consensus_avg_cost = weighted_cost_sum / stake_sum_cost if stake_sum_cost > 0 else None
             post_consensus_available = post_consensus_rank is not None or consensus_reward is not None
 
             rounds_out.append(
