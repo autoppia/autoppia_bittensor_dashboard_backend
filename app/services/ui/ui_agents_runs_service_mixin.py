@@ -267,7 +267,6 @@ class UIAgentsRunsServiceMixin:
         canonical_avg_time = float(selected_round_history_row["eval_time"]) if selected_round_history_row and selected_round_history_row.get("eval_time") is not None else None
         total_tasks = canonical_total_tasks if canonical_total_tasks is not None else local_total_tasks
         success_tasks = canonical_success_tasks if canonical_success_tasks is not None else local_success_tasks
-        failed_tasks = max(total_tasks - success_tasks, 0)
         avg_time = canonical_avg_time if canonical_avg_time is not None else 0.0
         canonical_avg_cost = float(selected_round_history_row["eval_cost"]) if selected_round_history_row and selected_round_history_row.get("eval_cost") is not None else None
         reward = (
@@ -584,42 +583,17 @@ class UIAgentsRunsServiceMixin:
                 "dethroned": dethroned,
             }
 
-        available_round_rows = (
-            (
-                await self.session.execute(
-                    text(
-                        """
-                    SELECT DISTINCT r.round_number_in_season
-                    FROM round_validator_miners rvm
-                    JOIN rounds r ON r.round_id = rvm.round_id
-                    JOIN seasons s ON s.season_id = r.season_id
-                    WHERE rvm.miner_uid = :miner_uid
-                      AND s.season_number = :season
-                    ORDER BY r.round_number_in_season DESC
-                    """
-                    ),
-                    {
-                        "miner_uid": miner_uid,
-                        "season": season,
-                    },
-                )
-            )
-            .mappings()
-            .all()
-        )
-
         best_round_number = int(best_round_history_row["round_number_in_season"]) if best_round_history_row.get("round_number_in_season") is not None else round_in_season
         best_round_matches_selected = requested_round_in_season is None or int(round_in_season) == int(best_round_number)
         best_round_payload = (
             {
-                "round_id": f"{season}/{best_round_number}",
                 "round": int(best_round_number),
                 "post_consensus_avg_reward": reward,
                 "post_consensus_avg_eval_time": avg_time,
                 "tasks_received": total_tasks,
                 "tasks_success": success_tasks,
                 "validators_count": len(validators),
-                "avg_cost_per_task": avg_cost_per_task,
+                "post_consensus_avg_cost": avg_cost_per_task,
                 "performanceByWebsite": performance_by_website,
                 "websites_count": len(performance_by_website),
                 "season_leadership": season_leadership,
@@ -664,44 +638,7 @@ class UIAgentsRunsServiceMixin:
                 "updatedAt": None,
             },
             "bestRound": best_round_payload,
-            "rewardRoundData": [
-                {
-                    "round_id": f"{int(row['season_number'])}/{int(row['round_number_in_season'])}",
-                    "round": int(row["round_number_in_season"]),
-                    "reward": float(row["reward"] or 0.0),
-                    "rank": (int(row["rank"]) if row["rank"] is not None and int(row["rank"]) < 9999 else None),
-                    "eval_score": float(row["eval_score"] or 0.0),
-                    "eval_time": float(row["eval_time"] or 0.0),
-                    "eval_cost": (float(row["eval_cost"]) if row.get("eval_cost") is not None else None),
-                    "timestamp": "",
-                    "topReward": (float(row["top_reward"]) if row.get("top_reward") is not None else None),
-                }
-                for row in season_round_rows
-            ],
-            "availableRounds": [f"{season}/{int(row['round_number_in_season'])}" for row in available_round_rows],
-            "performanceByWebsite": performance_by_website,
-            "avg_cost_per_task": avg_cost_per_task,
             "zero_reason": zero_reason,
-            "season_leadership": season_leadership,
-            "roundMetrics": {
-                "roundId": season * 10000 + round_in_season,
-                "reward": reward,
-                "topReward": selected_top_reward,
-                "rank": rank,
-                "totalRuns": len(miner_rows),
-                "totalValidators": len(validators),
-                "validatorUids": [v["uid"] for v in validators if v["uid"] is not None],
-                "validators": validators,
-                "totalTasks": total_tasks,
-                "completedTasks": success_tasks,
-                "failedTasks": failed_tasks,
-                "successRate": (success_tasks / total_tasks) if total_tasks > 0 else 0.0,
-                "averageResponseTime": round(avg_time, 2),
-                "performanceByWebsite": performance_by_website,
-                "avgCostPerTask": avg_cost_per_task,
-                "zeroReason": zero_reason,
-                "seasonLeadership": season_leadership,
-            },
         }
 
     async def get_miner_historical(self, miner_uid: int, season: Optional[int]) -> Dict[str, Any]:
