@@ -46,6 +46,22 @@ class ValidatorStorageSummaryMixin:
             return dict(payload)
         return {}
 
+    @classmethod
+    def _normalize_post_consensus_payload(cls, raw: Any) -> Dict[str, Any]:
+        payload = cls._to_json_dict(raw)
+        if not payload:
+            return {}
+
+        nested = payload.get("evaluation_post_consensus")
+        if isinstance(nested, dict):
+            nested_payload = dict(nested)
+            nested_summary = cls._summary_block(nested_payload)
+            if isinstance(nested_payload.get("miners"), list) or nested_summary:
+                payload = nested_payload
+
+        payload.pop("schema_version", None)
+        return payload
+
     @staticmethod
     def _summary_snapshot(summary: Dict[str, Any], key: str) -> Dict[str, Any]:
         if not isinstance(summary, dict):
@@ -388,13 +404,13 @@ class ValidatorStorageSummaryMixin:
         }
 
         validator_summary = dict(round_row.validator_summary or {})
-        current_post = validator_summary.get("evaluation_post_consensus")
-        if isinstance(current_post, dict):
+        current_post = self._normalize_post_consensus_payload(validator_summary.get("evaluation_post_consensus"))
+        if current_post:
             enriched_post = dict(current_post)
-        elif current_post is None:
+        elif validator_summary.get("evaluation_post_consensus") is None:
             enriched_post = {}
         else:
-            enriched_post = {"raw": current_post}
+            enriched_post = {"raw": validator_summary.get("evaluation_post_consensus")}
 
         existing_miners_by_uid: Dict[int, Dict[str, Any]] = {}
         for miner_payload in enriched_post.get("miners", []) if isinstance(enriched_post.get("miners"), list) else []:
@@ -545,8 +561,8 @@ class ValidatorStorageSummaryMixin:
     async def _sync_round_validators_post_consensus_json(self, round_row: ValidatorRoundORM) -> None:
         """Mirror enriched post-consensus summary into round_validators JSON columns."""
         validator_summary = dict(getattr(round_row, "validator_summary", {}) or {})
-        post_summary = validator_summary.get("evaluation_post_consensus")
-        if not isinstance(post_summary, dict):
+        post_summary = self._normalize_post_consensus_payload(validator_summary.get("evaluation_post_consensus"))
+        if not isinstance(post_summary, dict) or not post_summary:
             return
         await self.session.execute(
             text(
@@ -596,10 +612,10 @@ class ValidatorStorageSummaryMixin:
         source_validator_uid = int(ctx.validator_uid) if ctx.validator_uid is not None else None
         source_is_main_validator = bool(ctx.is_main_validator)
         burn_uid = int(settings.BURN_UID)
-        post_payload = self._to_json_dict(ctx.post_consensus_json)
+        post_payload = self._normalize_post_consensus_payload(ctx.post_consensus_json)
         if not post_payload:
             validator_summary = dict(getattr(round_row, "validator_summary", {}) or {})
-            post_payload = self._to_json_dict(validator_summary.get("evaluation_post_consensus"))
+            post_payload = self._normalize_post_consensus_payload(validator_summary.get("evaluation_post_consensus"))
 
         payload_miners: List[Dict[str, Any]] = []
         for miner_data in post_payload.get("miners", []) if isinstance(post_payload.get("miners"), list) else []:
