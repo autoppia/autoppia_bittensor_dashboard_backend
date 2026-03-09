@@ -608,6 +608,26 @@ class UIAgentsRunsServiceMixin:
             .all()
         )
 
+        best_round_number = int(best_round_history_row["round_number_in_season"]) if best_round_history_row.get("round_number_in_season") is not None else round_in_season
+        best_round_matches_selected = requested_round_in_season is None or int(round_in_season) == int(best_round_number)
+        best_round_payload = (
+            {
+                "round_id": f"{season}/{best_round_number}",
+                "round": int(best_round_number),
+                "post_consensus_avg_reward": reward,
+                "post_consensus_avg_eval_time": avg_time,
+                "tasks_received": total_tasks,
+                "tasks_success": success_tasks,
+                "validators_count": len(validators),
+                "avg_cost_per_task": avg_cost_per_task,
+                "performanceByWebsite": performance_by_website,
+                "websites_count": len(performance_by_website),
+                "season_leadership": season_leadership,
+            }
+            if best_round_matches_selected
+            else None
+        )
+
         return {
             "agent": {
                 "id": f"agent-{miner_uid}",
@@ -643,6 +663,7 @@ class UIAgentsRunsServiceMixin:
                 "createdAt": None,
                 "updatedAt": None,
             },
+            "bestRound": best_round_payload,
             "rewardRoundData": [
                 {
                     "round_id": f"{int(row['season_number'])}/{int(row['round_number_in_season'])}",
