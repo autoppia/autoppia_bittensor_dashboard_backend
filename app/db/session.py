@@ -2348,6 +2348,67 @@ async def init_db() -> None:
                 """
             )
         )
+        # Backfill round_summary rollup metrics for rounds where miners_evaluated=0
+        # but round_validator_miners has valid post-consensus data (reused rounds).
+        await conn.execute(
+            text(
+                """
+                WITH burn_uid AS (
+                    SELECT 5 AS uid
+                ),
+                authoritative_rv AS (
+                    SELECT DISTINCT ON (rv.round_id)
+                        rv.round_id,
+                        rv.round_validator_id,
+                        rv.validator_uid
+                    FROM round_validators rv
+                    WHERE COALESCE(rv.is_main_validator, FALSE) = TRUE
+                    ORDER BY rv.round_id, rv.round_validator_id
+                ),
+                rollup AS (
+                    SELECT
+                        arv.round_id,
+                        COUNT(rvm.miner_uid) FILTER (WHERE rvm.miner_uid != bu.uid)                            AS miners_evaluated,
+                        COALESCE(SUM(rvm.post_consensus_tasks_received) FILTER (WHERE rvm.miner_uid != bu.uid), 0) AS tasks_evaluated,
+                        COALESCE(SUM(rvm.post_consensus_tasks_success) FILTER (WHERE rvm.miner_uid != bu.uid), 0)  AS tasks_success,
+                        CASE
+                            WHEN COUNT(rvm.miner_uid) FILTER (WHERE rvm.miner_uid != bu.uid) > 0
+                            THEN AVG(rvm.post_consensus_avg_reward) FILTER (WHERE rvm.miner_uid != bu.uid)
+                            ELSE 0
+                        END AS avg_reward,
+                        CASE
+                            WHEN COUNT(rvm.miner_uid) FILTER (WHERE rvm.miner_uid != bu.uid) > 0
+                            THEN AVG(rvm.post_consensus_avg_eval_score) FILTER (WHERE rvm.miner_uid != bu.uid)
+                            ELSE 0
+                        END AS avg_eval_score,
+                        CASE
+                            WHEN COUNT(rvm.miner_uid) FILTER (WHERE rvm.miner_uid != bu.uid AND COALESCE(rvm.post_consensus_avg_eval_time, 0) > 0) > 0
+                            THEN AVG(rvm.post_consensus_avg_eval_time) FILTER (WHERE rvm.miner_uid != bu.uid AND COALESCE(rvm.post_consensus_avg_eval_time, 0) > 0)
+                            ELSE 0
+                        END AS avg_eval_time
+                    FROM authoritative_rv arv
+                    JOIN round_validator_miners rvm ON rvm.round_validator_id = arv.round_validator_id
+                    CROSS JOIN burn_uid bu
+                    WHERE COALESCE(rvm.post_consensus_tasks_received, 0) > 0
+                       OR COALESCE(rvm.post_consensus_avg_reward, 0) > 0
+                    GROUP BY arv.round_id
+                )
+                UPDATE round_summary rs
+                SET
+                    miners_evaluated = rollup.miners_evaluated,
+                    tasks_evaluated  = rollup.tasks_evaluated,
+                    tasks_success    = rollup.tasks_success,
+                    avg_reward       = rollup.avg_reward,
+                    avg_eval_score   = rollup.avg_eval_score,
+                    avg_eval_time    = rollup.avg_eval_time,
+                    updated_at       = NOW()
+                FROM rollup
+                WHERE rs.round_id = rollup.round_id
+                  AND rs.miners_evaluated = 0
+                  AND rollup.miners_evaluated > 0
+                """
+            )
+        )
         await conn.execute(
             text(
                 """
