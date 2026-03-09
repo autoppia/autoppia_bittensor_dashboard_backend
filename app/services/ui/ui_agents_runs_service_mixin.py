@@ -1493,6 +1493,253 @@ class UIAgentsRunsServiceMixin:
         activities = sorted(activities, key=lambda x: x["timestamp"], reverse=True)
         return {"activities": activities, "total": len(activities)}
 
+    async def get_agent_runs_by_round(self, agent_id: str, season: Optional[int]) -> Dict[str, Any]:
+        """
+        Return all rounds where the agent participated, grouped by round.
+        Each round contains:
+        - consensus: stake-weighted aggregate (reward, score, time, tasks, rank)
+        - validators: each validator's individual run metrics for this agent
+        Used exclusively by the "Runs" tab on the agent page.
+        """
+        uid = int(str(agent_id).replace("agent-", ""))
+
+        # Resolve season: default to the latest available season
+        if season is None:
+            season = await self.get_latest_season_number()
+        if season is None:
+            return {"agent_uid": uid, "season": None, "rounds": []}
+
+        # Fetch all round_validator_miners rows for this miner in the requested season,
+        # including the validator stake (weight) for the consensus aggregation.
+        rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                            rv.round_id,
+                            s.season_number,
+                            r.round_number_in_season,
+                            rv.round_validator_id,
+                            rv.validator_uid,
+                            rv.name          AS validator_name,
+                            rv.image_url     AS validator_image,
+                            rv.validator_hotkey,
+                            rv.stake,
+                            rvm.weight,
+                            rvm.post_consensus_rank,
+                            rvm.post_consensus_avg_reward,
+                            rvm.post_consensus_avg_eval_score,
+                            rvm.post_consensus_avg_eval_time,
+                            rvm.post_consensus_avg_eval_cost,
+                            rvm.post_consensus_tasks_received,
+                            rvm.post_consensus_tasks_success,
+                            mer.agent_run_id,
+                            mer.started_at        AS run_started_at,
+                            mer.ended_at          AS run_ended_at,
+                            mer.average_reward    AS run_reward,
+                            mer.average_score     AS run_score,
+                            mer.average_execution_time AS run_time,
+                            mer.total_tasks       AS run_total_tasks,
+                            mer.success_tasks     AS run_success_tasks,
+                            mer.failed_tasks      AS run_failed_tasks,
+                            mer.elapsed_sec       AS run_elapsed_sec,
+                            mer.zero_reason       AS run_zero_reason,
+                            (
+                                SELECT AVG(sub_cost.task_cost)
+                                FROM (
+                                    SELECT e.evaluation_id, COALESCE(SUM(lu.cost), 0.0) AS task_cost
+                                    FROM evaluations e
+                                    LEFT JOIN evaluation_llm_usage lu ON lu.evaluation_id = e.evaluation_id
+                                    WHERE e.agent_run_id = mer.agent_run_id
+                                      AND mer.agent_run_id IS NOT NULL
+                                    GROUP BY e.evaluation_id
+                                ) sub_cost
+                            ) AS run_avg_cost,
+                            (
+                                SELECT COUNT(DISTINCT t.web_project_id)
+                                FROM evaluations e
+                                JOIN tasks t ON t.task_id = e.task_id
+                                WHERE e.agent_run_id = mer.agent_run_id
+                                  AND mer.agent_run_id IS NOT NULL
+                            ) AS run_websites_count,
+                            (
+                                SELECT COUNT(DISTINCT t2.web_project_id)
+                                FROM tasks t2
+                                JOIN round_validators rv2 ON rv2.round_validator_id = t2.round_validator_id
+                                WHERE rv2.round_id::text = rv.round_id::text
+                            ) AS round_websites_count
+                        FROM round_validator_miners rvm
+                        JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
+                        JOIN rounds r ON r.round_id = rv.round_id
+                        JOIN seasons s ON s.season_id = r.season_id
+                        LEFT JOIN LATERAL (
+                            SELECT *
+                            FROM miner_evaluation_runs
+                            WHERE round_validator_id = rvm.round_validator_id
+                              AND miner_uid = rvm.miner_uid
+                            ORDER BY started_at DESC NULLS LAST
+                            LIMIT 1
+                        ) mer ON TRUE
+                        WHERE rvm.miner_uid = :uid
+                          AND s.season_number = :season
+                        ORDER BY r.round_number_in_season DESC, rv.validator_uid ASC
+                        """
+                    ),
+                    {"uid": uid, "season": season},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+        # Group by round_id
+        rounds_map: Dict[int, Dict[str, Any]] = {}
+        for r in rows:
+            rid = int(r["round_id"])
+            if rid not in rounds_map:
+                rounds_map[rid] = {
+                    "round_id": rid,
+                    "round_key": f"{int(r['season_number'])}/{int(r['round_number_in_season'])}",
+                    "round_label": f"Season {int(r['season_number'])} · Round {int(r['round_number_in_season'])}",
+                    "season": int(r["season_number"]),
+                    "round_in_season": int(r["round_number_in_season"]),
+                    "validators_count": 0,
+                    "websites_count": 0,
+                    "_validators_raw": [],
+                }
+            rounds_map[rid]["_validators_raw"].append(dict(r))
+
+        # Compute validators_count from already-fetched rows.
+        # websites_count comes from the round-level subquery (total distinct web_project_ids
+        # across ALL validators in the round, not just the miner's own run).
+        for rid, rd in rounds_map.items():
+            vrows = rd["_validators_raw"]
+            rd["validators_count"] = len({vr["validator_uid"] for vr in vrows})
+            # round_websites_count is the same for all rows in a round; take the first non-null
+            rd["websites_count"] = next((int(vr["round_websites_count"]) for vr in vrows if vr.get("round_websites_count") is not None), 0)
+
+        # Build final output per round — only include rounds where at least one
+        # validator has a real evaluation run. Rounds without runs are "reused"
+        # rounds (same GitHub URL) and should only appear in Historical, not here.
+        rounds_out: List[Dict[str, Any]] = []
+        for rid, rd in sorted(rounds_map.items(), key=lambda x: x[1]["round_in_season"], reverse=True):
+            has_real_run = any(vr.get("agent_run_id") is not None for vr in rd["_validators_raw"])
+            if not has_real_run:
+                continue
+            validator_rows = rd.pop("_validators_raw")
+
+            # Build per-validator entries and collect values for consensus.
+            # We compute stake-weighted averages of the ACTUAL run values (run_reward,
+            # run_score) so both reward and score are consistently weighted by stake.
+            # The stored post_consensus_avg_eval_score is a simple average so we
+            # intentionally ignore it for the consensus display.
+            validators_out: List[Dict[str, Any]] = []
+            weighted_reward_sum = 0.0
+            weighted_score_sum = 0.0
+            stake_sum_reward = 0.0
+            stake_sum_score = 0.0
+            post_consensus_rank: Optional[int] = None
+            post_consensus_time: Optional[float] = None
+            post_consensus_tasks_received = 0
+            post_consensus_tasks_success = 0
+            post_consensus_avg_cost: Optional[float] = None
+
+            for vr in validator_rows:
+                stake = float(vr["stake"] or 0.0)
+                run_rew = vr["run_reward"]
+                run_score = vr["run_score"]
+
+                # Stake-weighted reward and score from actual per-validator run values
+                if run_rew is not None and stake > 0:
+                    weighted_reward_sum += float(run_rew) * stake
+                    stake_sum_reward += stake
+                if run_score is not None and stake > 0:
+                    weighted_score_sum += float(run_score) * stake
+                    stake_sum_score += stake
+
+                # Take the best (lowest) rank for fallback display
+                rk = vr["post_consensus_rank"]
+                if rk is not None:
+                    if post_consensus_rank is None or int(rk) < post_consensus_rank:
+                        post_consensus_rank = int(rk)
+                        post_consensus_time = float(vr["post_consensus_avg_eval_time"] or 0.0)
+                        post_consensus_tasks_received = int(vr["post_consensus_tasks_received"] or 0)
+                        post_consensus_tasks_success = int(vr["post_consensus_tasks_success"] or 0)
+                        post_consensus_avg_cost = float(vr["post_consensus_avg_eval_cost"]) if vr["post_consensus_avg_eval_cost"] is not None else None
+
+                run_total = int(vr["run_total_tasks"] or 0)
+                run_success = int(vr["run_success_tasks"] or 0)
+                run_status = self._derive_agent_run_status(
+                    ended_at=vr["run_ended_at"],
+                    zero_reason=vr["run_zero_reason"],
+                    total_tasks=run_total,
+                    successful_tasks=run_success,
+                )
+
+                validators_out.append(
+                    {
+                        "validator_uid": int(vr["validator_uid"]),
+                        "validator_name": vr["validator_name"] or f"Validator {int(vr['validator_uid'])}",
+                        "validator_hotkey": vr["validator_hotkey"],
+                        "validator_image": vr["validator_image"] or "/validators/Other.png",
+                        "stake": float(vr["stake"] or 0.0),
+                        "weight": float(vr["weight"] or 0.0),
+                        "post_consensus_rank": int(vr["post_consensus_rank"]) if vr["post_consensus_rank"] is not None else None,
+                        "post_consensus_reward": float(vr["post_consensus_avg_reward"] or 0.0) if vr["post_consensus_avg_reward"] is not None else None,
+                        "post_consensus_score": float(vr["post_consensus_avg_eval_score"] or 0.0) if vr["post_consensus_avg_eval_score"] is not None else None,
+                        "post_consensus_time": float(vr["post_consensus_avg_eval_time"] or 0.0) if vr["post_consensus_avg_eval_time"] is not None else None,
+                        "post_consensus_tasks_received": int(vr["post_consensus_tasks_received"] or 0),
+                        "post_consensus_tasks_success": int(vr["post_consensus_tasks_success"] or 0),
+                        "run_id": vr["agent_run_id"],
+                        "run_status": run_status if vr["agent_run_id"] else None,
+                        "run_reward": float(vr["run_reward"] or 0.0) if vr["run_reward"] is not None else None,
+                        "run_score": float(vr["run_score"] or 0.0) if vr["run_score"] is not None else None,
+                        "run_time": float(vr["run_time"] or 0.0) if vr["run_time"] is not None else None,
+                        "run_total_tasks": run_total,
+                        "run_success_tasks": run_success,
+                        "run_failed_tasks": int(vr["run_failed_tasks"] or 0),
+                        "run_elapsed_sec": float(vr["run_elapsed_sec"] or 0.0) if vr["run_elapsed_sec"] is not None else None,
+                        "run_avg_cost": float(vr["run_avg_cost"]) if vr["run_avg_cost"] is not None else None,
+                        "run_websites_count": int(vr["run_websites_count"] or 0),
+                        "run_started_at": datetime.fromtimestamp(float(vr["run_started_at"] or 0.0), tz=timezone.utc).isoformat() if vr["run_started_at"] else None,
+                        "run_ended_at": datetime.fromtimestamp(float(vr["run_ended_at"]), tz=timezone.utc).isoformat() if vr["run_ended_at"] else None,
+                    }
+                )
+
+            consensus_reward = weighted_reward_sum / stake_sum_reward if stake_sum_reward > 0 else None
+            consensus_score = weighted_score_sum / stake_sum_score if stake_sum_score > 0 else None
+            post_consensus_available = post_consensus_rank is not None or consensus_reward is not None
+
+            rounds_out.append(
+                {
+                    "round_id": rd["round_id"],
+                    "round_key": rd["round_key"],
+                    "round_label": rd["round_label"],
+                    "season": rd["season"],
+                    "round_in_season": rd["round_in_season"],
+                    "validators_count": rd["validators_count"],
+                    "websites_count": rd["websites_count"],
+                    "post_consensus_available": post_consensus_available,
+                    "consensus": {
+                        "rank": post_consensus_rank,
+                        "reward": consensus_reward,
+                        "score": consensus_score,
+                        "time": post_consensus_time,
+                        "tasks_received": post_consensus_tasks_received,
+                        "tasks_success": post_consensus_tasks_success,
+                        "avg_cost": post_consensus_avg_cost,
+                    },
+                    "validators": validators_out,
+                }
+            )
+
+        return {
+            "agent_uid": uid,
+            "season": season,
+            "rounds": rounds_out,
+        }
+
     async def list_agents_catalog(
         self,
         page: int,

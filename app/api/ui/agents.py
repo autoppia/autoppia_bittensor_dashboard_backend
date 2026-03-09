@@ -262,6 +262,30 @@ async def get_agent_performance(
     return {"success": True, "data": {"metrics": metrics}}
 
 
+@router.get("/{agent_id}/runs-by-round")
+async def get_agent_runs_by_round(
+    agent_id: str,
+    season: Optional[int] = Query(None, description="Season number. Defaults to latest season."),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Return all rounds where the agent participated (for a given season),
+    grouped by round. Each round includes:
+    - consensus: stake-weighted aggregated metrics
+    - validators[]: each validator's individual run for this agent
+    Used by the 'Runs' tab on the agent page.
+    """
+    newdb = UIDataService(session)
+    try:
+        data = await newdb.get_agent_runs_by_round(agent_id=agent_id, season=season)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Error getting agent runs by round: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"success": True, "data": data}
+
+
 @router.get("/{agent_id}/runs")
 async def list_agent_runs(
     agent_id: str,
