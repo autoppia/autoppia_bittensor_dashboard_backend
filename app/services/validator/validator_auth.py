@@ -186,7 +186,7 @@ def get_validator_auth_service() -> ValidatorAuthService:
     return _validator_auth_service
 
 
-async def require_validator_auth(
+def require_validator_auth(
     request: Request,
     service: ValidatorAuthService = Depends(get_validator_auth_service),
 ) -> None:
