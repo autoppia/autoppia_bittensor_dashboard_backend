@@ -9,7 +9,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Cargar .env si existe (evitar word-splitting de export $(...))
-if [ -f .env ]; then
+if [[ -f .env ]]; then
     set -a
     # shellcheck source=/dev/null
     source <(grep -v '^#' .env | grep -v '^[[:space:]]*$')
@@ -31,7 +31,7 @@ REDIS_PASSWORD="${!REDIS_PASSWORD_VAR:-}"
 export REDIS_PASSWORD
 
 echo -e "${GREEN}🔧 Configurando Redis para entorno: ${ENVIRONMENT}${NC}"
-if [ -n "$REDIS_PASSWORD" ]; then
+if [[ -n "$REDIS_PASSWORD" ]]; then
     echo -e "${GREEN}✓${NC} Contraseña de Redis configurada (longitud: ${#REDIS_PASSWORD})"
 else
     echo -e "${YELLOW}⚠️  No hay contraseña configurada para Redis (se usará sin contraseña)${NC}"
