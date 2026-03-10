@@ -502,14 +502,8 @@ class ValidatorStorageRoundsMixin:
 
         # Normalize status to match ValidatorRound literal type
         normalized_status = status.lower()
-        if normalized_status in {"completed", "complete"}:
-            normalized_status = "finished"
-        elif normalized_status not in {
-            "active",
-            "finished",
-            "pending",
-            "evaluating_finished",
-        }:
+        allowed_statuses = {"active", "finished", "pending", "evaluating_finished"}
+        if normalized_status in {"completed", "complete"} or normalized_status not in allowed_statuses:
             normalized_status = "finished"
 
         round_row.status = normalized_status
@@ -746,7 +740,12 @@ class ValidatorStorageRoundsMixin:
                         run_row.average_execution_time = float(source_run.average_execution_time)
                     total = getattr(run_row, "total_tasks", 0) or 0
                     success = getattr(run_row, "success_tasks", 0) or 0
-                    run_row.average_score = (success / total) if total else (float(source_run.average_score) if source_run and getattr(source_run, "average_score", None) is not None else 0.0)
+                    if total:
+                        run_row.average_score = success / total
+                    elif source_run is not None and getattr(source_run, "average_score", None) is not None:
+                        run_row.average_score = float(source_run.average_score)
+                    else:
+                        run_row.average_score = 0.0
 
             if run_row.agent_run_id in zero_reason_map:
                 run_row.zero_reason = zero_reason_map[run_row.agent_run_id]
