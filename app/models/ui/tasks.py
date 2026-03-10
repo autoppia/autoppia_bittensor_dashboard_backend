@@ -10,6 +10,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+# Sonar S1192: shared Field description literals
+DESC_TOTAL_NUMBER_OF_ACTIONS = "Total number of actions"
+DESC_TOTAL_NUMBER_OF_TASKS = "Total number of tasks"
+DESC_NUMBER_OF_FAILED_TASKS = "Number of failed tasks"
+DESC_AVERAGE_DURATION = "Average duration"
+DESC_CURRENT_PAGE = "Current page"
+DESC_ITEMS_PER_PAGE = "Items per page"
+
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
@@ -105,7 +113,7 @@ class TaskMetadata(BaseModel):
 class TaskPerformance(BaseModel):
     """Model for task performance metrics"""
 
-    totalActions: int = Field(..., description="Total number of actions")
+    totalActions: int = Field(..., description=DESC_TOTAL_NUMBER_OF_ACTIONS)
     successfulActions: int = Field(..., description="Number of successful actions")
     failedActions: int = Field(..., description="Number of failed actions")
     averageActionDuration: float = Field(..., description="Average action duration in seconds")
@@ -251,7 +259,7 @@ class TaskDetails(Task):
 class TaskSummary(BaseModel):
     """Model for task summary statistics"""
 
-    totalActions: int = Field(..., description="Total number of actions")
+    totalActions: int = Field(..., description=DESC_TOTAL_NUMBER_OF_ACTIONS)
     successfulActions: int = Field(..., description="Number of successful actions")
     failedActions: int = Field(..., description="Number of failed actions")
     actionTypes: dict[str, int] = Field(..., description="Count of each action type")
@@ -297,20 +305,20 @@ class WebsitePerformance(BaseModel):
     """Model for website performance statistics"""
 
     website: str = Field(..., description="Website name")
-    tasks: int = Field(..., description="Total number of tasks")
+    tasks: int = Field(..., description=DESC_TOTAL_NUMBER_OF_TASKS)
     successful: int = Field(..., description="Number of successful tasks")
-    failed: int = Field(..., description="Number of failed tasks")
-    averageDuration: float = Field(..., description="Average duration")
+    failed: int = Field(..., description=DESC_NUMBER_OF_FAILED_TASKS)
+    averageDuration: float = Field(..., description=DESC_AVERAGE_DURATION)
 
 
 class UseCasePerformance(BaseModel):
     """Model for use case performance statistics"""
 
     useCase: str = Field(..., description="Use case name")
-    tasks: int = Field(..., description="Total number of tasks")
+    tasks: int = Field(..., description=DESC_TOTAL_NUMBER_OF_TASKS)
     successful: int = Field(..., description="Number of successful tasks")
-    failed: int = Field(..., description="Number of failed tasks")
-    averageDuration: float = Field(..., description="Average duration")
+    failed: int = Field(..., description=DESC_NUMBER_OF_FAILED_TASKS)
+    averageDuration: float = Field(..., description=DESC_AVERAGE_DURATION)
 
 
 class RecentActivity(BaseModel):
@@ -324,9 +332,9 @@ class RecentActivity(BaseModel):
 class TaskStatistics(BaseModel):
     """Model for task statistics"""
 
-    totalTasks: int = Field(..., description="Total number of tasks")
+    totalTasks: int = Field(..., description=DESC_TOTAL_NUMBER_OF_TASKS)
     completedTasks: int = Field(..., description="Number of completed tasks")
-    failedTasks: int = Field(..., description="Number of failed tasks")
+    failedTasks: int = Field(..., description=DESC_NUMBER_OF_FAILED_TASKS)
     runningTasks: int = Field(..., description="Number of running tasks")
     averageDuration: float = Field(..., description="Average duration across all tasks")
     successRate: float = Field(..., description="Overall success rate")
@@ -418,10 +426,10 @@ class PerformanceOverTime(BaseModel):
 class TaskAnalytics(BaseModel):
     """Model for task analytics"""
 
-    totalTasks: int = Field(..., description="Total number of tasks")
+    totalTasks: int = Field(..., description=DESC_TOTAL_NUMBER_OF_TASKS)
     completedTasks: int = Field(..., description="Number of completed tasks")
-    failedTasks: int = Field(..., description="Number of failed tasks")
-    averageDuration: float = Field(..., description="Average duration")
+    failedTasks: int = Field(..., description=DESC_NUMBER_OF_FAILED_TASKS)
+    averageDuration: float = Field(..., description=DESC_AVERAGE_DURATION)
     successRate: float = Field(..., description="Success rate")
     performanceByWebsite: list[WebsitePerformance] = Field(..., description="Performance by website")
     performanceByUseCase: list[UseCasePerformance] = Field(..., description="Performance by use case")
@@ -448,9 +456,9 @@ class TaskSearchResponse(BaseModel):
     """Model for task search response"""
 
     tasks: list[Task] = Field(..., description="List of tasks")
-    total: int = Field(..., description="Total number of tasks")
+    total: int = Field(..., description=DESC_TOTAL_NUMBER_OF_TASKS)
     page: int = Field(..., description="Current page")
-    limit: int = Field(..., description="Items per page")
+    limit: int = Field(..., description=DESC_ITEMS_PER_PAGE)
     facets: SearchFacets = Field(..., description="Search facets")
 
 
@@ -458,18 +466,18 @@ class TaskListResponse(BaseModel):
     """Model for task list response"""
 
     tasks: list[Task] = Field(..., description="List of tasks")
-    total: int = Field(..., description="Total number of tasks")
+    total: int = Field(..., description=DESC_TOTAL_NUMBER_OF_TASKS)
     page: int = Field(..., description="Current page")
-    limit: int = Field(..., description="Items per page")
+    limit: int = Field(..., description=DESC_ITEMS_PER_PAGE)
 
 
 class TaskActionsResponse(BaseModel):
     """Model for task actions response"""
 
     actions: list[TaskAction] = Field(..., description="List of actions")
-    total: int = Field(..., description="Total number of actions")
+    total: int = Field(..., description=DESC_TOTAL_NUMBER_OF_ACTIONS)
     page: int = Field(..., description="Current page")
-    limit: int = Field(..., description="Items per page")
+    limit: int = Field(..., description=DESC_ITEMS_PER_PAGE)
 
 
 class TaskLogsResponse(BaseModel):
