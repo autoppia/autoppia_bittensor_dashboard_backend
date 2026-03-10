@@ -17,6 +17,8 @@ import argparse
 import asyncio
 import json
 import sys
+
+import aiofiles
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -113,8 +115,8 @@ async def export_tasks(
         }
 
         filename = out_dir / f"{project_id}_tasks.json"
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
+        async with aiofiles.open(filename, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(payload, indent=2))
         print(f"✅ Wrote {len(project_tasks)} tasks to {filename}")
 
     global_payload = {
@@ -125,8 +127,8 @@ async def export_tasks(
         "tasks": all_tasks,
     }
     global_file = out_dir / "all_tasks.json"
-    with open(global_file, "w", encoding="utf-8") as f:
-        json.dump(global_payload, f, indent=2)
+    async with aiofiles.open(global_file, "w", encoding="utf-8") as f:
+        await f.write(json.dumps(global_payload, indent=2))
     print(f"✅ Wrote {len(all_tasks)} tasks to {global_file}")
 
 
