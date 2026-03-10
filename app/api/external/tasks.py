@@ -8,7 +8,10 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.services.ui.external_tasks_query import get_tasks_with_solutions
+from app.services.ui.external_tasks_query import (
+    get_tasks_with_solutions,
+    TaskSolutionsQueryParams,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,8 +110,7 @@ async def get_tasks_with_solutions_endpoint(
         sort_by, sort_order = "score", "asc"
     # created_at_desc or unknown: keep default
 
-    data = await get_tasks_with_solutions(
-        session=session,
+    query_params = TaskSolutionsQueryParams(
         page=query.page,
         limit=query.limit,
         task_id=query.taskId,
@@ -126,5 +128,6 @@ async def get_tasks_with_solutions_endpoint(
         sort_by=sort_by,
         sort_order=sort_order,
     )
+    data = await get_tasks_with_solutions(session=session, params=query_params)
 
     return {"success": True, "data": data}
