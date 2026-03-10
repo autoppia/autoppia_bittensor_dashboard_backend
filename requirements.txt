@@ -31,3 +31,6 @@ bittensor>=6.9.0,<10.0.0
 
 # Form data support
 python-multipart>=0.0.6
+
+# Async file I/O (e.g. export scripts)
+aiofiles>=24.1.0
