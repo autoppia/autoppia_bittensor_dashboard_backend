@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import Annotated, Any, Dict, Optional
+from typing import Annotated, Any, Dict
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
@@ -40,9 +40,9 @@ DEFAULT_EVALUATIONS_LIMIT = 500000
 class ValidatorDetailsQuery(BaseModel):
     """Query params for GET /{uid}/details (round param exposed as 'round' in API)."""
 
-    round_filter: Optional[str] = None
-    website: Optional[str] = None
-    useCase: Optional[str] = None
+    round_filter: str | None = None
+    website: str | None = None
+    use_case: str | None = None
     limit: int = DEFAULT_EVALUATIONS_LIMIT
 
     model_config = {"extra": "forbid"}
@@ -50,19 +50,19 @@ class ValidatorDetailsQuery(BaseModel):
 
 def get_validator_details_query(
     round_filter: Annotated[
-        Optional[str],
+        str | None,
         Query(None, alias="round", description="Filter by round (format: 'season/round', e.g., '1/1')"),
     ] = None,
     website: Annotated[
-        Optional[str],
+        str | None,
         Query(None, description="Filter evaluations table by website (e.g., 'AutoCinema')"),
     ] = None,
-    useCase: Annotated[
-        Optional[str],
-        Query(None, description="Filter evaluations table by use case (e.g., 'SEARCH_FILM')"),
+    use_case: Annotated[
+        str | None,
+        Query(None, alias="useCase", description="Filter evaluations table by use case (e.g., 'SEARCH_FILM')"),
     ] = None,
     limit: Annotated[
-        Optional[int],
+        int | None,
         Query(
             DEFAULT_EVALUATIONS_LIMIT,
             ge=1,
@@ -74,7 +74,7 @@ def get_validator_details_query(
     return ValidatorDetailsQuery(
         round_filter=round_filter,
         website=website,
-        useCase=useCase,
+        use_case=use_case,
         limit=limit if limit is not None else DEFAULT_EVALUATIONS_LIMIT,
     )
 
@@ -256,8 +256,8 @@ async def get_validator_details(
         base_evaluations_query = base_evaluations_query.where(TaskORM.web_project_id == q.website)
 
     # Filtro de useCase en SQL (JSONB -> 'name')
-    if q.useCase is not None:
-        use_case_normalized = q.useCase.upper().replace(" ", "_")
+    if q.use_case is not None:
+        use_case_normalized = q.use_case.upper().replace(" ", "_")
         base_evaluations_query = base_evaluations_query.where(func.upper(func.replace(TaskORM.use_case["name"].astext, " ", "_")) == use_case_normalized)
 
     # Filtro por round (including reused runs source data when applicable)
