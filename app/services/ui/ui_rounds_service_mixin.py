@@ -520,7 +520,13 @@ class UIRoundsServiceMixin:
                       r.end_block,
                       r.started_at,
                       r.ended_at,
-                      r.status
+                      r.status,
+                      COALESCE((
+                        SELECT COUNT(t.task_id)
+                        FROM round_validators rv
+                        LEFT JOIN tasks t ON t.round_validator_id = rv.round_validator_id
+                        WHERE rv.round_id = r.round_id
+                      ), 0) AS total_tasks
                     FROM rounds r
                     JOIN seasons s ON s.season_id = r.season_id
                     ORDER BY s.season_number DESC, r.round_number_in_season DESC
@@ -534,7 +540,15 @@ class UIRoundsServiceMixin:
             .all()
         )
         total = (await self.session.execute(text("SELECT COUNT(*) FROM rounds"))).scalar_one()
-        return [self._round_row_to_payload(r, is_current=(current_round_id is not None and int(r["round_id"]) == current_round_id)) for r in rows], int(total or 0)
+        entries = [
+            self._round_row_to_payload(
+                r,
+                is_current=(current_round_id is not None and int(r["round_id"]) == current_round_id),
+                total_tasks=int(r.get("total_tasks") or 0),
+            )
+            for r in rows
+        ]
+        return entries, int(total or 0)
 
     async def get_current_round(self) -> Optional[Dict[str, Any]]:
         row = (
@@ -1051,7 +1065,7 @@ class UIRoundsServiceMixin:
             raise ValueError(f"Round {round_id} not found")
         return await self.get_round_detail(int(row["season_number"]), int(row["round_number_in_season"]))
 
-    def _round_row_to_payload(self, row: Any, *, is_current: bool = False, current_block: Optional[int] = None) -> Dict[str, Any]:
+    def _round_row_to_payload(self, row: Any, *, is_current: bool = False, current_block: Optional[int] = None, total_tasks: int = 0) -> Dict[str, Any]:
         season = int(row["season_number"])
         round_in_season = int(row["round_number_in_season"])
         round_id = int(row["round_id"])
@@ -1087,8 +1101,8 @@ class UIRoundsServiceMixin:
             "startTime": row["started_at"].isoformat() if row["started_at"] else None,
             "endTime": row["ended_at"].isoformat() if row["ended_at"] else None,
             "status": status,
-            "totalTasks": 0,
-            "completedTasks": 0,
+            "totalTasks": total_tasks,
+            "completedTasks": total_tasks if status_l in ("finished", "completed", "evaluating_finished") else 0,
             "currentBlock": effective_current_block,
             "blocksRemaining": blocks_remaining,
             "progress": progress,
