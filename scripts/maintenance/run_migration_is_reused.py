@@ -12,6 +12,8 @@ Uso: desde el directorio del backend, con el venv activo y .env con DATABASE_URL
 Requiere: PostgreSQL levantado y credenciales correctas en .env.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import os
@@ -59,10 +61,10 @@ def _load_env_from_pm2_process():
                     k, _, v = part.decode("utf-8", errors="replace").partition("=")
                     if k and v is not None:
                         os.environ.setdefault(k, v)  # no sobrescribir env ya definido (ej. credenciales pasadas por línea de comandos)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             return True
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return False
 
@@ -104,7 +106,7 @@ async def main():
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         err = str(e).strip()
         if "password" in err.lower() or "authentication" in err.lower():
             print("Error: fallo de autenticación con PostgreSQL.")
