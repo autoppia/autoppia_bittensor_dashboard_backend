@@ -24,8 +24,13 @@ from app.services.round_calc import compute_season_number  # noqa: E402
 async def seed_data():
     """Seed Season 1, Round 1 data via endpoints."""
 
-    # Use real database (seed script for local dev only; Sonar: false positive on credential)
-    os.environ["DATABASE_URL"] = "postgresql+asyncpg://autoppia_user:Autoppia2025.Leaderboard@127.0.0.1:5432/autoppia_dev"
+    # Use real database (seed script for local dev). Build URL from env so no credential in code.
+    _pg_user = os.environ.get("POSTGRES_USER", "autoppia_user")
+    _pg_pass = os.environ.get("POSTGRES_PASSWORD_LOCAL") or os.environ.get("POSTGRES_PASSWORD_DEVELOPMENT") or os.environ.get("POSTGRES_PASSWORD", "")
+    _pg_host = os.environ.get("POSTGRES_HOST", "127.0.0.1")
+    _pg_port = os.environ.get("POSTGRES_PORT", "5432")
+    _pg_db = os.environ.get("POSTGRES_DB", "autoppia_dev")
+    os.environ["DATABASE_URL"] = f"postgresql+asyncpg://{_pg_user}:{_pg_pass}@{_pg_host}:{_pg_port}/{_pg_db}"
 
     # Mock current block to be at start of Season 1, Round 1
     start_block = int(settings.DZ_STARTING_BLOCK)  # 4493500
@@ -61,7 +66,7 @@ async def seed_data():
             from app.main import app as app_instance
             from app.services.validator.validator_auth import require_validator_auth
 
-            async def mock_require_validator_auth():
+            def mock_require_validator_auth():
                 return None
 
             app_instance.dependency_overrides[require_validator_auth] = mock_require_validator_auth
