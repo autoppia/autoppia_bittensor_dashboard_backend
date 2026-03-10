@@ -90,17 +90,17 @@ echo ""
 # Continuar con el inicio del backend
 # ============================================================================
 
-# Verificar que el puerto ${PORT} esté libre
-if lsof -ti:${PORT} > /dev/null 2>&1; then
+# Verificar que el puerto esté libre
+if lsof -ti:"${PORT}" > /dev/null 2>&1; then
     echo "⚠️  Puerto ${PORT} está ocupado. Matando proceso..."
-    lsof -ti:${PORT} | xargs kill -9 2>/dev/null || true
+    lsof -ti:"${PORT}" | xargs kill -9 2>/dev/null || true
     sleep 2
 fi
 
 # Verificar que el puerto esté libre ahora
-if lsof -ti:${PORT} > /dev/null 2>&1; then
+if lsof -ti:"${PORT}" > /dev/null 2>&1; then
     echo "❌ Error: No se pudo liberar el puerto ${PORT}"
-    echo "   Ejecuta manualmente: lsof -ti:${PORT} | xargs kill -9"
+    echo "   Ejecuta manualmente: lsof -ti:\"${PORT}\" | xargs kill -9"
     exit 1
 fi
 
@@ -175,4 +175,4 @@ if [ -d "venv" ]; then
 fi
 
 # Levantar uvicorn
-exec python3 -m uvicorn app.main:app --reload --port ${PORT} --host 0.0.0.0
+exec python3 -m uvicorn app.main:app --reload --port "${PORT}" --host 0.0.0.0
