@@ -31,6 +31,21 @@ import os
 import time
 from pathlib import Path
 
+# Default OpenAI model for fine-tuning (used in CLI default, alias mapping, and fallback)
+DEFAULT_FINETUNE_MODEL = "gpt-4.1-mini"
+
+
+def _parse_dotenv_line(line: str) -> tuple[str, str] | None:
+    """Parse a single .env line into (key, value) or None if not a valid KEY=value line."""
+    line = line.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        return None
+    key, val = line.split("=", 1)
+    key, val = key.strip(), val.strip()
+    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+        val = val[1:-1]
+    return (key, val)
+
 
 # Best-effort load environment from .env without requiring python-dotenv
 def _load_env_from_dotenv(dotenv_path: str = ".env") -> None:
@@ -43,19 +58,13 @@ def _load_env_from_dotenv(dotenv_path: str = ".env") -> None:
         pass
     try:
         path = Path(dotenv_path)
-        if path.exists():
-            with path.open("r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    if "=" not in line:
-                        continue
-                    key, val = line.split("=", 1)
-                    key, val = key.strip(), val.strip()
-                    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
-                        val = val[1:-1]
-                    os.environ.setdefault(key, val)
+        if not path.exists():
+            return
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                kv = _parse_dotenv_line(line)
+                if kv:
+                    os.environ.setdefault(kv[0], kv[1])
     except Exception:  # noqa: BLE001
         pass
 
@@ -169,8 +178,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="gpt-4.1-mini",
-        help="Base model to fine‑tune (e.g., gpt-4.1-mini)",
+        default=DEFAULT_FINETUNE_MODEL,
+        help=f"Base model to fine‑tune (e.g., {DEFAULT_FINETUNE_MODEL})",
     )
     parser.add_argument(
         "--suffix",
@@ -221,6 +230,53 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _ensure_dataset_ready(
+    dataset_path: Path,
+    *,
+    generate_if_missing: bool,
+    min_score: float,
+    max_actions: int | None,
+    batch_size: int,
+) -> None:
+    """Generate dataset if missing and path is requested; then require file exists and non-empty."""
+    if not dataset_path.exists() and generate_if_missing:
+        print(f"Dataset {dataset_path} not found. Generating from DB...")
+        ok = asyncio.run(
+            _maybe_generate_dataset(
+                dataset_path,
+                generate_if_missing=True,
+                min_score=min_score,
+                max_actions=max_actions,
+                batch_size=batch_size,
+            )
+        )
+        if not ok:
+            raise SystemExit("Failed to generate dataset or dataset is empty.")
+    if not dataset_path.exists():
+        raise SystemExit(f"Dataset not found: {dataset_path}")
+    n_lines = _count_lines(dataset_path)
+    if n_lines == 0:
+        raise SystemExit(f"Dataset is empty: {dataset_path}")
+    print(f"Dataset ready: {dataset_path} ({n_lines} lines)")
+
+
+def _create_job_with_fallback(client_tuple, file_id: str, model: str, suffix: str | None) -> str:
+    """Create fine-tuning job; on model unavailability fall back to DEFAULT_FINETUNE_MODEL. Returns job_id."""
+    try:
+        job_resp = _create_ft_job(client_tuple, file_id, model, suffix=suffix)
+    except Exception as e:
+        msg = str(e)
+        if "model_not_available" in msg or "not available for fine-tuning" in msg:
+            if model != DEFAULT_FINETUNE_MODEL:
+                print(f"Model '{model}' unavailable. Falling back to '{DEFAULT_FINETUNE_MODEL}'...")
+                job_resp = _create_ft_job(client_tuple, file_id, DEFAULT_FINETUNE_MODEL, suffix=suffix)
+            else:
+                raise
+        else:
+            raise
+    return _job_id_from_resp(job_resp)
+
+
 def _sanitize_model_name(model: str) -> tuple[str, str | None]:
     """Return (chosen_model, note) and map deprecated aliases to supported models.
 
@@ -228,8 +284,8 @@ def _sanitize_model_name(model: str) -> tuple[str, str | None]:
     """
     m = (model or "").strip()
     mapping = {
-        "gpt-4o-mini": "gpt-4.1-mini",
-        "gpt-4o-mini-2024-07-18": "gpt-4.1-mini",
+        "gpt-4o-mini": DEFAULT_FINETUNE_MODEL,
+        "gpt-4o-mini-2024-07-18": DEFAULT_FINETUNE_MODEL,
     }
     if m in mapping:
         new_m = mapping[m]
@@ -238,62 +294,28 @@ def _sanitize_model_name(model: str) -> tuple[str, str | None]:
 
 
 def main() -> None:
-    # Load .env early so OPENAI_API_KEY and DB envs are ready
     _load_env_from_dotenv()
-
     args = parse_args()
     dataset_path = Path(args.input)
 
-    # Generate dataset if missing
-    if not dataset_path.exists() and args.generate_if_missing:
-        print(f"Dataset {dataset_path} not found. Generating from DB...")
-        ok = asyncio.run(
-            _maybe_generate_dataset(
-                dataset_path,
-                generate_if_missing=True,
-                min_score=float(args.min_score),
-                max_actions=int(args.max_actions) if args.max_actions is not None else None,
-                batch_size=int(args.batch_size),
-            )
-        )
-        if not ok:
-            raise SystemExit("Failed to generate dataset or dataset is empty.")
+    _ensure_dataset_ready(
+        dataset_path,
+        generate_if_missing=args.generate_if_missing,
+        min_score=float(args.min_score),
+        max_actions=int(args.max_actions) if args.max_actions is not None else None,
+        batch_size=int(args.batch_size),
+    )
 
-    # Sanity check files
-    if not dataset_path.exists():
-        raise SystemExit(f"Dataset not found: {dataset_path}")
-    n_lines = _count_lines(dataset_path)
-    if n_lines == 0:
-        raise SystemExit(f"Dataset is empty: {dataset_path}")
-    print(f"Dataset ready: {dataset_path} ({n_lines} lines)")
-
-    # Create client and upload file
     client_tuple = _ensure_openai_client()
     print("Uploading dataset to OpenAI...")
     file_id = _upload_file(client_tuple, str(dataset_path))
     print(f"Upload complete. File ID: {file_id}")
 
-    # Create fine-tuning job
-    # Sanitize model name / apply alias mapping
     chosen_model, note = _sanitize_model_name(args.model)
     if note:
         print(note)
     print(f"Starting fine‑tuning job on model {chosen_model}...")
-    # Try to create the job; fallback once to gpt-4.1-mini if necessary
-    try:
-        job_resp = _create_ft_job(client_tuple, file_id, chosen_model, suffix=args.suffix)
-    except Exception as e:
-        msg = str(e)
-        if "model_not_available" in msg or "not available for fine-tuning" in msg:
-            fallback_model = "gpt-4.1-mini"
-            if chosen_model != fallback_model:
-                print(f"Model '{chosen_model}' unavailable. Falling back to '{fallback_model}'...")
-                job_resp = _create_ft_job(client_tuple, file_id, fallback_model, suffix=args.suffix)
-            else:
-                raise
-        else:
-            raise
-    job_id = _job_id_from_resp(job_resp)
+    job_id = _create_job_with_fallback(client_tuple, file_id, chosen_model, args.suffix)
     print(f"Fine‑tuning job created: {job_id}")
 
     if args.wait and job_id:
