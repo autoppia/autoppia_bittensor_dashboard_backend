@@ -7,6 +7,9 @@ Usage:
     python -m app.scripts.backfill_snapshots
 """
 
+from __future__ import annotations
+
+import argparse
 import asyncio
 import logging
 import sys
@@ -19,7 +22,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
-async def backfill_snapshots(max_rounds: int = None):
+async def backfill_snapshots(max_rounds: int | None = None):
     """
     Backfill snapshots for all completed rounds that don't have one yet.
 
@@ -29,7 +32,7 @@ async def backfill_snapshots(max_rounds: int = None):
     logger.warning("⚠️ Skipping snapshot backfill - functionality removed")
 
 
-async def backfill_agent_stats(max_rounds: int = None):
+async def backfill_agent_stats(max_rounds: int | None = None):
     """
     Backfill agent stats for historical rounds.
 
@@ -41,15 +44,13 @@ async def backfill_agent_stats(max_rounds: int = None):
 
 async def main():
     """Main entry point."""
-    import argparse
-
     parser = argparse.ArgumentParser(description="Backfill snapshots and agent stats")
     parser.add_argument("--mode", choices=["snapshots", "stats", "both"], default="both", help="What to backfill: snapshots, stats, or both")
     parser.add_argument("--max-rounds", type=int, default=None, help="Maximum number of rounds to process (default: all)")
 
     args = parser.parse_args()
 
-    logger.info(f"Starting backfill (mode={args.mode}, max_rounds={args.max_rounds})")
+    logger.info("Starting backfill (mode=%s, max_rounds=%s)", args.mode, args.max_rounds)
 
     if args.mode in ["snapshots", "both"]:
         logger.info("\n" + "=" * 60)
