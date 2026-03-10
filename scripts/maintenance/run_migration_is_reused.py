@@ -114,7 +114,7 @@ if __name__ == "__main__":
             print("coincida con la del usuario de la base de datos.")
             print("")
             print("Alternativa: ejecutar el SQL a mano con psql:")
-            print("  PGPASSWORD=tu_password psql -h 127.0.0.1 -U autoppia_user -d autoppia_dev -f scripts/migrations/add_is_reused_to_miner_evaluation_runs.sql")
+            print("  PGPASSWORD=<valor desde .env> psql -h 127.0.0.1 -U autoppia_user -d autoppia_dev -f scripts/migrations/add_is_reused_to_miner_evaluation_runs.sql")
         else:
             print(f"Error: {e}")
         sys.exit(1)
