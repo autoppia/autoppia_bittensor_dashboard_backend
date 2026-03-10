@@ -23,8 +23,7 @@ def _redact_dsn(dsn: str) -> str:
         u = make_url(dsn)
         # Force a visible placeholder so we don't rely on driver hiding behavior
         return str(u.set(password="***"))
-    except Exception:
-        # Best‑effort fallback
+    except Exception:  # noqa: BLE001 - best-effort fallback for malformed DSN
         return dsn.replace("@", "@***:") if "://" in dsn else dsn
 
 
@@ -37,7 +36,7 @@ try:
     url = make_url(database_url)
     driver = url.drivername
 except Exception as e:
-    raise ValueError(f"Invalid DATABASE_URL: {e}") from e
+    raise ValueError("Invalid DATABASE_URL: %s" % (e,)) from e
 
 # Log the configured URL (redacted)
 logger.info("DB init: configured DATABASE_URL=%s", _redact_dsn(settings.DATABASE_URL))
@@ -51,7 +50,7 @@ elif driver in {"postgres"}:
     # Convert generic 'postgres' to 'postgresql+asyncpg'
     database_url = str(url.set(drivername="postgresql+asyncpg"))
 else:
-    raise ValueError(f"Unsupported database driver: {driver}. Only PostgreSQL is supported.")
+    raise ValueError("Unsupported database driver: %s. Only PostgreSQL is supported." % (driver,))
 
 # Log the resolved driver/DSN that will actually be used
 try:
@@ -61,7 +60,7 @@ try:
         resolved.drivername,
         _redact_dsn(database_url),
     )
-except Exception:
+except Exception:  # noqa: BLE001 - non-critical: log resolved DSN only when parseable
     pass
 
 # Create async engine and session factory
@@ -117,7 +116,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
                 "Connection error during session close (concurrent operation): %s",
                 str(e),
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - catch-all at session boundary, then re-raise
             logger.error("Unexpected error during session close: %s", str(e))
             raise
 
@@ -621,7 +620,6 @@ async def init_db() -> None:
         # ------------------------------------------------------------------
         main_uid = settings.MAIN_VALIDATOR_UID
         main_hotkey = (settings.MAIN_VALIDATOR_HOTKEY or "").strip() or None
-        main_hotkey_sql = main_hotkey.replace("'", "''") if main_hotkey else ""
 
         await conn.execute(
             text(
@@ -638,15 +636,16 @@ async def init_db() -> None:
         )
         await conn.execute(
             text(
-                f"""
+                """
                 INSERT INTO app_runtime_config (id, main_validator_uid, main_validator_hotkey, updated_at)
-                VALUES (1, {str(int(main_uid)) if main_uid is not None else "NULL"}, {("'" + main_hotkey_sql + "'") if main_hotkey else "NULL"}, NOW())
+                VALUES (1, :main_uid, :main_hotkey, NOW())
                 ON CONFLICT (id) DO UPDATE SET
                     main_validator_uid = EXCLUDED.main_validator_uid,
                     main_validator_hotkey = EXCLUDED.main_validator_hotkey,
                     updated_at = NOW()
                 """
-            )
+            ),
+            {"main_uid": main_uid, "main_hotkey": main_hotkey},
         )
 
         # Bridge legacy tables with canonical round_validators table.
