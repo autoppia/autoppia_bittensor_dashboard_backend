@@ -11,6 +11,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Load .env early to determine environment mode
 load_dotenv()
 
+# Sonar S1192: shared URL literals
+IWA_PROD_URL = "https://infinitewebarena.autoppia.com"
+IWA_DEV_URL = "https://dev-infinitewebarena.autoppia.com"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ENVIRONMENT MODE (local, development, production)
@@ -91,7 +95,7 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = _env_var("POSTGRES_DB", "autoppia_db")
 
     # Asset handling
-    ASSET_BASE_URL: str = "https://infinitewebarena.autoppia.com"
+    ASSET_BASE_URL: str = IWA_PROD_URL
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ROUND CONFIGURATION (chain-derived, matches subnet validator/config.py)
@@ -215,8 +219,8 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "https://dev-infinitewebarena.autoppia.com",
-        "https://infinitewebarena.autoppia.com",
+        IWA_DEV_URL,
+        IWA_PROD_URL,
         "https://devdeviwa.autoppia.com",  # Frontend development
         "https://dev-api-leaderboard.autoppia.com",  # Dev API frontend
         "https://api-leaderboard.autoppia.com",  # Prod API frontend
@@ -276,27 +280,30 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    def model_post_init(self, __context: Any) -> None:  # type: ignore[override]
-        """Normalize and validate configuration after Pydantic initialization."""
-        # Build DATABASE_URL from components if not explicitly set
+    def _build_database_url(self) -> None:
+        """Build DATABASE_URL from components if not explicitly set."""
         if not self.DATABASE_URL:
             user = quote_plus(self.POSTGRES_USER)
             password = quote_plus(self.POSTGRES_PASSWORD) if self.POSTGRES_PASSWORD else ""
             auth = f"{user}:{password}@" if password else f"{user}@"
             self.DATABASE_URL = f"postgresql+asyncpg://{auth}{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
-        # Normalize asset paths
+    def _normalize_assets_and_s3_prefixes(self) -> None:
+        """Normalize asset base URL and S3 path prefixes."""
         if self.ASSET_BASE_URL:
             self.ASSET_BASE_URL = self.ASSET_BASE_URL.rstrip("/")
-
         if self.AWS_S3_GIF_PREFIX:
             self.AWS_S3_GIF_PREFIX = self.AWS_S3_GIF_PREFIX.strip("/") or "gifs"
         if self.AWS_S3_TASK_LOG_PREFIX:
             self.AWS_S3_TASK_LOG_PREFIX = self.AWS_S3_TASK_LOG_PREFIX.strip("/") or "task-logs"
         if self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX:
-            self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX = self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX.strip("/") or "validator-round-logs"
+            self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX = (
+                self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX.strip("/") or "validator-round-logs"
+            )
 
-        # Normalize log level strings
+    def _normalize_log_levels(self) -> None:
+        """Normalize log level strings to uppercase."""
+
         def _norm(v: Optional[str], default: str) -> str:
             return (v or default).strip().upper()
 
@@ -305,21 +312,21 @@ class Settings(BaseSettings):
         self.BITTENSOR_LOG_LEVEL = _norm(self.BITTENSOR_LOG_LEVEL, "WARNING")
         self.UVICORN_LOG_LEVEL = _norm(self.UVICORN_LOG_LEVEL, "WARNING")
 
-        # Normalize chain cache settings (ensure sensible positive integers)
+    def _normalize_chain_cache_settings(self) -> None:
+        """Ensure chain block cache TTL and block time are sensible positive integers."""
         try:
             ttl = int(self.CHAIN_BLOCK_CACHE_TTL_SECONDS)
         except (TypeError, ValueError):
             ttl = 900
         self.CHAIN_BLOCK_CACHE_TTL_SECONDS = max(0, ttl)
-
         try:
             blk = int(self.CHAIN_BLOCK_TIME_SECONDS)
         except (TypeError, ValueError):
             blk = 12
         self.CHAIN_BLOCK_TIME_SECONDS = max(1, blk)
 
-        # Map alias env vars (BITTENSOR_*, legacy typo) to internal SUBTENSOR_NETWORK
-        # Only use aliases if SUBTENSOR_NETWORK is not set
+    def _resolve_subtensor_network_aliases(self) -> None:
+        """Map BITTENSOR_* / ITTENSOR_* env vars to SUBTENSOR_NETWORK when not set."""
         if not self.SUBTENSOR_NETWORK:
             aliases = [
                 (self.BITTENSOR_NETWORK or "").strip(),
@@ -331,18 +338,27 @@ class Settings(BaseSettings):
                     self.SUBTENSOR_NETWORK = candidate
                     break
 
-        # Ensure required CORS origins if no regex is provided
+    def _ensure_cors_required_origins(self) -> None:
+        """Add required CORS origins when no regex is provided."""
         if not self.CORS_ALLOW_ORIGIN_REGEX:
             required_origins = {
-                "https://dev-infinitewebarena.autoppia.com",
-                "https://infinitewebarena.autoppia.com",
+                IWA_DEV_URL,
+                IWA_PROD_URL,
                 "https://devdeviwa.autoppia.com",  # IWA Frontend
             }
-            # Avoid duplicates and preserve values from env
             existing = set(self.CORS_ORIGINS or [])
             missing = required_origins.difference(existing)
             if missing:
                 self.CORS_ORIGINS.extend(sorted(missing))
+
+    def model_post_init(self, __context: Any) -> None:  # type: ignore[override]
+        """Normalize and validate configuration after Pydantic initialization."""
+        self._build_database_url()
+        self._normalize_assets_and_s3_prefixes()
+        self._normalize_log_levels()
+        self._normalize_chain_cache_settings()
+        self._resolve_subtensor_network_aliases()
+        self._ensure_cors_required_origins()
 
     @property
     def TESTING(self) -> bool:
