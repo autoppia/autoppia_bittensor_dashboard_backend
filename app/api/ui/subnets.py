@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -12,6 +15,53 @@ from app.services.subnet_timeline import (
 )
 
 router = APIRouter(prefix="/api/v1/subnets", tags=["subnets"])
+
+
+# ---------------------------------------------------------------------------
+# Query model (Sonar: reduce endpoint params)
+# ---------------------------------------------------------------------------
+
+
+class SubnetTimelineQuery(BaseModel):
+    """Query params for GET /{subnet_id}/timeline."""
+
+    rounds: int | None = None
+    end_round: int | None = None
+    seconds_back: int | None = None
+    miners: int | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+def get_subnet_timeline_query(
+    rounds: Annotated[
+        int | None,
+        Query(None, ge=1, le=MAX_ROUND_COUNT, description="Number of rounds to return (defaults to last 90 rounds)"),
+    ] = None,
+    end_round: Annotated[
+        int | None,
+        Query(None, ge=1, description="Ending round number (defaults to most recent inferred round)"),
+    ] = None,
+    seconds_back: Annotated[
+        int | None,
+        Query(None, ge=1, description="Alternative to 'rounds'; converts seconds to round count"),
+    ] = None,
+    miners: Annotated[
+        int | None,
+        Query(None, ge=1, le=MAX_ROSTER_SIZE, description="Roster size to return (defaults to 8)"),
+    ] = None,
+) -> SubnetTimelineQuery:
+    return SubnetTimelineQuery(
+        rounds=rounds,
+        end_round=end_round,
+        seconds_back=seconds_back,
+        miners=miners,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helper (Sonar: shared logic, not a FastAPI Depends)
+# ---------------------------------------------------------------------------
 
 
 async def _timeline_response(
@@ -36,42 +86,26 @@ async def _timeline_response(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+
 @router.get(
     "/{subnet_id}/timeline",
     response_model=SubnetTimelineResponse,
     summary="Get timeline animation data for a subnet",
 )
 async def get_subnet_timeline(
-    subnet_id: str = Path(..., description="Subnet identifier"),
-    rounds: int | None = Query(
-        None,
-        ge=1,
-        le=MAX_ROUND_COUNT,
-        description="Number of rounds to return (defaults to last 90 rounds)",
-    ),
-    end_round: int | None = Query(
-        None,
-        ge=1,
-        description="Ending round number (defaults to most recent inferred round)",
-    ),
-    seconds_back: int | None = Query(
-        None,
-        ge=1,
-        description="Alternative to 'rounds'; converts seconds to round count",
-    ),
-    miners: int | None = Query(
-        None,
-        ge=1,
-        le=MAX_ROSTER_SIZE,
-        description="Roster size to return (defaults to 8)",
-    ),
-    session: AsyncSession = Depends(get_session),
+    subnet_id: Annotated[str, Path(..., description="Subnet identifier")],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    q: Annotated[SubnetTimelineQuery, Depends(get_subnet_timeline_query)],
 ) -> SubnetTimelineResponse:
     return await _timeline_response(
         subnet_id,
         session,
-        rounds=rounds,
-        end_round=end_round,
-        seconds_back=seconds_back,
-        miners=miners,
+        rounds=q.rounds,
+        end_round=q.end_round,
+        seconds_back=q.seconds_back,
+        miners=q.miners,
     )
