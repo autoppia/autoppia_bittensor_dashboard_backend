@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 from sqlalchemy import text
@@ -11,7 +11,7 @@ from app.services.media_storage import build_public_url
 
 
 class UIAgentsRunsServiceMixin:
-    async def get_agent_detail(self, miner_uid: int, season: Optional[int], round_in_season: Optional[int]) -> Dict[str, Any]:
+    async def get_agent_detail(self, miner_uid: int, season: int | None, round_in_season: int | None) -> dict[str, Any]:
         if season is None or round_in_season is None:
             latest = await self.get_latest_round_top_miner()
             if latest:
@@ -125,7 +125,7 @@ class UIAgentsRunsServiceMixin:
         reused_from_agent_run_id = run_ctx["reused_from_agent_run_id"] if run_ctx else None
         zero_reason = run_ctx["zero_reason"] if run_ctx else None
 
-        reused_from_round: Optional[str] = None
+        reused_from_round: str | None = None
         if reused_from_agent_run_id:
             source_round = (
                 (
@@ -150,10 +150,10 @@ class UIAgentsRunsServiceMixin:
             if source_round:
                 reused_from_round = f"{int(source_round['season_number'])}/{int(source_round['round_number_in_season'])}"
 
-        performance_by_website: List[Dict[str, Any]] = []
-        avg_cost_per_task: Optional[float] = None
+        performance_by_website: list[dict[str, Any]] = []
+        avg_cost_per_task: float | None = None
 
-        def _website_key_from_url(raw_url: Optional[str]) -> str:
+        def _website_key_from_url(raw_url: str | None) -> str:
             if not isinstance(raw_url, str) or not raw_url.strip():
                 return "unknown"
             parsed = urlparse(raw_url)
@@ -167,7 +167,7 @@ class UIAgentsRunsServiceMixin:
                 return f"{host}:{port}"
             return host
 
-        source_agent_run_ids: List[str] = []
+        source_agent_run_ids: list[str] = []
         if run_ctx_rows:
             for rc in run_ctx_rows:
                 source_agent_run_ids.append(str(rc.get("reused_from_agent_run_id") or rc.get("agent_run_id")))
@@ -175,7 +175,7 @@ class UIAgentsRunsServiceMixin:
             source_agent_run_ids.append(str(reused_from_agent_run_id or run_agent_run_id))
 
         if source_agent_run_ids:
-            by_website: Dict[str, Dict[str, Any]] = {}
+            by_website: dict[str, dict[str, Any]] = {}
             total_tasks_for_cost = 0
             total_llm_cost = 0.0
             has_llm_usage = False
@@ -351,9 +351,9 @@ class UIAgentsRunsServiceMixin:
             },
         }
 
-    async def get_miner_historical(self, miner_uid: int, season: Optional[int]) -> Dict[str, Any]:
+    async def get_miner_historical(self, miner_uid: int, season: int | None) -> dict[str, Any]:
         where = "WHERE miner_uid = :uid"
-        params: Dict[str, Any] = {"uid": miner_uid}
+        params: dict[str, Any] = {"uid": miner_uid}
         if season is not None:
             where += " AND round_id IN (SELECT r.round_id FROM rounds r JOIN seasons s ON s.season_id=r.season_id WHERE s.season_number=:season)"
             params["season"] = season
@@ -380,7 +380,7 @@ class UIAgentsRunsServiceMixin:
         if not rows:
             raise ValueError(f"Miner {miner_uid} not found in any round")
 
-        by_round: Dict[int, Dict[str, Any]] = {}
+        by_round: dict[int, dict[str, Any]] = {}
         for r in rows:
             rid = int(r["round_id"])
             current = by_round.get(rid)
@@ -498,8 +498,8 @@ class UIAgentsRunsServiceMixin:
         best_score = max([x["post_consensus_avg_reward"] for x in rounds_history] or [0.0])
         best_score_round = None
         best_rank_round = None
-        best_round_season: Optional[int] = None
-        best_round_in_season: Optional[int] = None
+        best_round_season: int | None = None
+        best_round_in_season: int | None = None
         if rounds_history:
             best_score_row = max(
                 rounds_history,
@@ -519,7 +519,7 @@ class UIAgentsRunsServiceMixin:
         total_alpha_earned = sum(float(x.get("alpha_earned") or 0.0) for x in rounds_history)
         total_tao_earned = sum(float(x.get("tao_earned") or 0.0) for x in rounds_history)
 
-        performance_by_website_best_round: List[Dict[str, Any]] = []
+        performance_by_website_best_round: list[dict[str, Any]] = []
         if best_round_in_season is not None and (season is None or best_round_season == season):
             try:
                 best_round_detail = await self.get_agent_detail(miner_uid, best_round_season, best_round_in_season)
@@ -536,7 +536,7 @@ class UIAgentsRunsServiceMixin:
                             "useCases": [],
                         }
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Keep endpoint resilient if best-round details are unavailable
                 performance_by_website_best_round = []
 
@@ -572,7 +572,7 @@ class UIAgentsRunsServiceMixin:
             "roundsHistory": rounds_history,
         }
 
-    async def list_round_agent_runs(self, round_identifier: str, limit: int, skip: int) -> List[Dict[str, Any]]:
+    async def list_round_agent_runs(self, round_identifier: str, limit: int, skip: int) -> list[dict[str, Any]]:
         ref = await self._resolve_round_identifier(round_identifier)
         round_id = int(ref["round_id"])
         rows = (
@@ -601,7 +601,7 @@ class UIAgentsRunsServiceMixin:
         )
         return [self._row_to_agent_eval_run(r) for r in rows]
 
-    async def get_agent_run_by_id(self, agent_run_id: str) -> Dict[str, Any]:
+    async def get_agent_run_by_id(self, agent_run_id: str) -> dict[str, Any]:
         row = (
             (
                 await self.session.execute(
@@ -627,7 +627,7 @@ class UIAgentsRunsServiceMixin:
             raise ValueError(f"Agent run {agent_run_id} not found")
         return self._row_to_agent_eval_run(row)
 
-    def _row_to_agent_eval_run(self, row: Any) -> Dict[str, Any]:
+    def _row_to_agent_eval_run(self, row: Any) -> dict[str, Any]:
         started = float(row["started_at"] or 0.0)
         ended = float(row["ended_at"]) if row["ended_at"] is not None else None
         return {
@@ -656,12 +656,12 @@ class UIAgentsRunsServiceMixin:
     async def get_agent_performance_metrics(
         self,
         agent_id: str,
-        start_date: Optional[datetime],
-        end_date: Optional[datetime],
-    ) -> Dict[str, Any]:
+        start_date: datetime | None,
+        end_date: datetime | None,
+    ) -> dict[str, Any]:
         uid = int(str(agent_id).replace("agent-", ""))
         where = "WHERE miner_uid = :uid"
-        params: Dict[str, Any] = {"uid": uid}
+        params: dict[str, Any] = {"uid": uid}
         if start_date is not None:
             where += " AND started_at >= :start_ts"
             params["start_ts"] = start_date.timestamp()
@@ -694,7 +694,7 @@ class UIAgentsRunsServiceMixin:
         scores = [float(r["average_reward"] or 0.0) for r in rows]
         current_score = scores[-1] if scores else 0.0
         worst_score = min(scores) if scores else 0.0
-        trend: List[Dict[str, Any]] = []
+        trend: list[dict[str, Any]] = []
         for i, r in enumerate(rows, start=1):
             tasks = int(r["total_tasks"] or 0)
             succ = int(r["success_tasks"] or 0)
@@ -731,7 +731,7 @@ class UIAgentsRunsServiceMixin:
             "performanceTrend": trend,
         }
 
-    async def list_agent_runs_for_agent(self, agent_id: str, page: int, limit: int) -> Dict[str, Any]:
+    async def list_agent_runs_for_agent(self, agent_id: str, page: int, limit: int) -> dict[str, Any]:
         uid = int(str(agent_id).replace("agent-", ""))
         offset = (page - 1) * limit
         rows = (
@@ -823,12 +823,12 @@ class UIAgentsRunsServiceMixin:
         agent_id: str,
         limit: int,
         offset: int,
-        activity_type: Optional[str],
-        since: Optional[datetime],
-    ) -> Dict[str, Any]:
+        activity_type: str | None,
+        since: datetime | None,
+    ) -> dict[str, Any]:
         uid = int(str(agent_id).replace("agent-", ""))
         where = "WHERE miner_uid = :uid"
-        params: Dict[str, Any] = {"uid": uid, "limit": limit, "offset": offset}
+        params: dict[str, Any] = {"uid": uid, "limit": limit, "offset": offset}
         if since is not None:
             where += " AND started_at >= :since_ts"
             params["since_ts"] = since.timestamp()
@@ -850,7 +850,7 @@ class UIAgentsRunsServiceMixin:
             .mappings()
             .all()
         )
-        activities: List[Dict[str, Any]] = []
+        activities: list[dict[str, Any]] = []
         for r in rows:
             start_dt = datetime.fromtimestamp(float(r["started_at"] or 0.0), tz=timezone.utc)
             run_started = {
@@ -891,8 +891,8 @@ class UIAgentsRunsServiceMixin:
         limit: int,
         sort_by: str,
         sort_order: str,
-        search: Optional[str],
-    ) -> Dict[str, Any]:
+        search: str | None,
+    ) -> dict[str, Any]:
         latest = (
             await self.session.execute(
                 text(
@@ -909,7 +909,7 @@ class UIAgentsRunsServiceMixin:
         if latest is None:
             return {"agents": [], "total": 0, "page": page, "limit": limit}
         where = "WHERE rvm.round_id = :rid"
-        params: Dict[str, Any] = {"rid": int(latest)}
+        params: dict[str, Any] = {"rid": int(latest)}
         if search:
             where += " AND (LOWER(COALESCE(rvm.name,'')) LIKE :q OR CAST(rvm.miner_uid AS TEXT) LIKE :q)"
             params["q"] = f"%{search.lower()}%"
@@ -964,19 +964,19 @@ class UIAgentsRunsServiceMixin:
         self,
         page: int,
         limit: int,
-        round_id: Optional[str],
-        validator_id: Optional[str],
-        agent_id: Optional[str],
-        query: Optional[str],
-        status: Optional[str],
-        start_date: Optional[datetime],
-        end_date: Optional[datetime],
+        round_id: str | None,
+        validator_id: str | None,
+        agent_id: str | None,
+        query: str | None,
+        status: str | None,
+        start_date: datetime | None,
+        end_date: datetime | None,
         include_unfinished: bool,
         sort_by: str,
         sort_order: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         where = ["1=1"]
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
         if not include_unfinished:
             # Hide in-progress rounds by default: they often carry provisional ranks/scores.
             where.append("(rr.status IS NULL OR LOWER(rr.status) IN ('finished', 'completed', 'evaluating_finished'))")
@@ -1042,7 +1042,7 @@ class UIAgentsRunsServiceMixin:
             .mappings()
             .all()
         )
-        runs: List[Dict[str, Any]] = []
+        runs: list[dict[str, Any]] = []
         for r in rows:
             total_tasks = int(r["total_tasks"] or 0)
             successful = int(r["success_tasks"] or 0)
@@ -1106,7 +1106,7 @@ class UIAgentsRunsServiceMixin:
         }
         return {"runs": paged, "total": total, "page": page, "limit": limit, "facets": facets}
 
-    async def _run_complete_payload(self, run_id: str) -> Dict[str, Any]:
+    async def _run_complete_payload(self, run_id: str) -> dict[str, Any]:
         run = (
             (
                 await self.session.execute(
@@ -1140,7 +1140,7 @@ class UIAgentsRunsServiceMixin:
         if not run:
             raise ValueError("Agent run not found")
         source_run_id = str(run["reused_from_agent_run_id"] or run["agent_run_id"])
-        source_run_info: Optional[Dict[str, Any]] = None
+        source_run_info: dict[str, Any] | None = None
         if source_run_id != str(run["agent_run_id"]):
             source_row = (
                 (
@@ -1174,7 +1174,7 @@ class UIAgentsRunsServiceMixin:
                     "seasonNumber": (int(source_row["season_number"]) if source_row["season_number"] is not None else None),
                 }
 
-        def _as_epoch(value: Any) -> Optional[int]:
+        def _as_epoch(value: Any) -> int | None:
             if value is None:
                 return None
             if isinstance(value, datetime):
@@ -1204,7 +1204,7 @@ class UIAgentsRunsServiceMixin:
             .mappings()
             .all()
         )
-        eval_items: List[Dict[str, Any]] = []
+        eval_items: list[dict[str, Any]] = []
         for e in evaluations:
             use_case = e["use_case"]
             use_case_name = ""
@@ -1232,7 +1232,7 @@ class UIAgentsRunsServiceMixin:
                 }
             )
 
-        by_website: Dict[str, Dict[str, Any]] = {}
+        by_website: dict[str, dict[str, Any]] = {}
         for item in eval_items:
             site = item["website"]
             entry = by_website.setdefault(
@@ -1482,43 +1482,43 @@ class UIAgentsRunsServiceMixin:
             "complete": {"statistics": statistics, "evaluations": eval_items, "info": info},
         }
 
-    async def get_agent_run_complete_data(self, run_id: str) -> Dict[str, Any]:
+    async def get_agent_run_complete_data(self, run_id: str) -> dict[str, Any]:
         payload = await self._run_complete_payload(run_id)
         return payload["complete"]
 
-    async def get_agent_run_detail_data(self, run_id: str) -> Dict[str, Any]:
+    async def get_agent_run_detail_data(self, run_id: str) -> dict[str, Any]:
         payload = await self._run_complete_payload(run_id)
         return payload["run"]
 
-    async def get_agent_run_personas_data(self, run_id: str) -> Dict[str, Any]:
+    async def get_agent_run_personas_data(self, run_id: str) -> dict[str, Any]:
         payload = await self._run_complete_payload(run_id)
         return payload["personas"]
 
-    async def get_agent_run_statistics_data(self, run_id: str) -> Dict[str, Any]:
+    async def get_agent_run_statistics_data(self, run_id: str) -> dict[str, Any]:
         payload = await self._run_complete_payload(run_id)
         return payload["statistics"]
 
-    async def get_agent_run_summary_data(self, run_id: str) -> Dict[str, Any]:
+    async def get_agent_run_summary_data(self, run_id: str) -> dict[str, Any]:
         payload = await self._run_complete_payload(run_id)
         return payload["summary"]
 
-    async def get_agent_run_tasks_data(self, run_id: str) -> Dict[str, Any]:
+    async def get_agent_run_tasks_data(self, run_id: str) -> dict[str, Any]:
         payload = await self._run_complete_payload(run_id)
         return payload["tasks"]
 
-    async def get_agent_run_timeline_data(self, run_id: str) -> List[Dict[str, Any]]:
+    async def get_agent_run_timeline_data(self, run_id: str) -> list[dict[str, Any]]:
         payload = await self._run_complete_payload(run_id)
         return payload["timeline"]
 
-    async def get_agent_run_logs_data(self, run_id: str) -> Dict[str, Any]:
+    async def get_agent_run_logs_data(self, run_id: str) -> dict[str, Any]:
         payload = await self._run_complete_payload(run_id)
         return payload["logs"]
 
-    async def get_agent_run_metrics_data(self, run_id: str) -> Dict[str, Any]:
+    async def get_agent_run_metrics_data(self, run_id: str) -> dict[str, Any]:
         payload = await self._run_complete_payload(run_id)
         return payload["metrics"]
 
-    async def compare_agent_runs_data(self, run_ids: List[str]) -> Dict[str, Any]:
+    async def compare_agent_runs_data(self, run_ids: list[str]) -> dict[str, Any]:
         complete = []
         for rid in run_ids:
             try:
