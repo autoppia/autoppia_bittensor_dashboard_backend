@@ -82,7 +82,7 @@ class MinerInfo(BaseModel):
             if not all([result.scheme in ["http", "https"], result.netloc]):
                 if not normalized.lower().startswith("data:image/"):
                     raise ValueError("Invalid image URL: %s. Must be a valid URL or empty string." % (v,))
-        except Exception:  # noqa: BLE001 - urlparse or validation failure, surface as ValueError
+        except Exception:  # noqa: BLE001  # NOSONAR - urlparse or validation failure, surface as ValueError
             raise ValueError("Invalid image URL: %s. Must be a valid URL or empty string." % (v,)) from None
         return normalized
 
@@ -137,9 +137,8 @@ class Miner(BaseModel):
 
     @model_validator(mode="after")  # type: ignore[misc]
     def _validate_identity(cls, values: "Miner") -> "Miner":  # type: ignore[override]
-        if values.uid is not None:
-            if not values.hotkey:
-                raise ValueError("hotkey is required when uid is provided")
+        if values.uid is not None and not values.hotkey:
+            raise ValueError("hotkey is required when uid is provided")
         return values
 
     @field_validator("hotkey")
@@ -245,9 +244,8 @@ class ValidatorRoundMiner(BaseModel):
     def _validate_identity(  # type: ignore[override]
         cls, values: "ValidatorRoundMiner"
     ) -> "ValidatorRoundMiner":
-        if values.miner_uid is not None:
-            if not values.miner_hotkey:
-                raise ValueError("miner_hotkey is required when miner_uid is provided")
+        if values.miner_uid is not None and not values.miner_hotkey:
+            raise ValueError("miner_hotkey is required when miner_uid is provided")
         return values
 
 
