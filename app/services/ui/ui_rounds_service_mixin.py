@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from sqlalchemy import text
 
 
 class UIRoundsServiceMixin:
-    async def _round_ref(self, season: int, round_in_season: int) -> Optional[Dict[str, Any]]:
+    async def _round_ref(self, season: int, round_in_season: int) -> dict[str, Any] | None:
         row = (
             (
                 await self.session.execute(
@@ -28,7 +28,7 @@ class UIRoundsServiceMixin:
         )
         return dict(row) if row else None
 
-    async def get_available_rounds(self) -> List[str]:
+    async def get_available_rounds(self) -> list[str]:
         rows = (
             (
                 await self.session.execute(
@@ -47,7 +47,7 @@ class UIRoundsServiceMixin:
         )
         return [f"{int(r['season_number'])}/{int(r['round_number_in_season'])}" for r in rows]
 
-    async def get_round_miners(self, season: int, round_in_season: int) -> Dict[str, Any]:
+    async def get_round_miners(self, season: int, round_in_season: int) -> dict[str, Any]:
         ref = await self._round_ref(season, round_in_season)
         if not ref:
             return {"round": f"{season}/{round_in_season}", "miners": []}
@@ -87,7 +87,7 @@ class UIRoundsServiceMixin:
             .all()
         )
 
-        dedup: Dict[int, Dict[str, Any]] = {}
+        dedup: dict[int, dict[str, Any]] = {}
         for r in rows:
             uid = int(r["uid"])
             score = float(r["post_consensus_avg_reward"] or 0.0)
@@ -108,7 +108,7 @@ class UIRoundsServiceMixin:
         miners = sorted(dedup.values(), key=lambda x: (x["post_consensus_rank"], -x["post_consensus_avg_reward"]))
         return {"round": f"{season}/{round_in_season}", "miners": miners}
 
-    async def get_latest_round_top_miner(self) -> Optional[Dict[str, Any]]:
+    async def get_latest_round_top_miner(self) -> dict[str, Any] | None:
         row = (
             (
                 await self.session.execute(
@@ -154,7 +154,7 @@ class UIRoundsServiceMixin:
             "miner_hotkey": miner_hotkey,
         }
 
-    async def get_rounds_list(self, page: int, limit: int) -> Tuple[List[Dict[str, Any]], int]:
+    async def get_rounds_list(self, page: int, limit: int) -> tuple[list[dict[str, Any]], int]:
         offset = (page - 1) * limit
         rows = (
             (
@@ -185,7 +185,7 @@ class UIRoundsServiceMixin:
         total = (await self.session.execute(text("SELECT COUNT(*) FROM rounds"))).scalar_one()
         return [self._round_row_to_payload(r) for r in rows], int(total or 0)
 
-    async def get_current_round(self) -> Optional[Dict[str, Any]]:
+    async def get_current_round(self) -> dict[str, Any] | None:
         row = (
             (
                 await self.session.execute(
@@ -213,7 +213,7 @@ class UIRoundsServiceMixin:
         )
         return self._round_row_to_payload(row) if row else None
 
-    async def get_round_detail(self, season: int, round_in_season: int) -> Dict[str, Any]:
+    async def get_round_detail(self, season: int, round_in_season: int) -> dict[str, Any]:
         row = (
             (
                 await self.session.execute(
@@ -289,7 +289,7 @@ class UIRoundsServiceMixin:
         payload["validatorRoundCount"] = len(validator_rounds)
         return payload
 
-    async def get_round_detail_by_round_id(self, round_id: int) -> Dict[str, Any]:
+    async def get_round_detail_by_round_id(self, round_id: int) -> dict[str, Any]:
         row = (
             (
                 await self.session.execute(
@@ -312,7 +312,7 @@ class UIRoundsServiceMixin:
             raise ValueError(f"Round {round_id} not found")
         return await self.get_round_detail(int(row["season_number"]), int(row["round_number_in_season"]))
 
-    def _round_row_to_payload(self, row: Any) -> Dict[str, Any]:
+    def _round_row_to_payload(self, row: Any) -> dict[str, Any]:
         season = int(row["season_number"])
         round_in_season = int(row["round_number_in_season"])
         round_id = int(row["round_id"])
@@ -340,7 +340,7 @@ class UIRoundsServiceMixin:
             "roundIdRaw": round_id,
         }
 
-    async def _resolve_round_identifier(self, round_identifier: str) -> Dict[str, Any]:
+    async def _resolve_round_identifier(self, round_identifier: str) -> dict[str, Any]:
         raw = str(round_identifier).strip()
         if "/" in raw:
             season_s, round_s = raw.split("/", 1)
@@ -438,7 +438,7 @@ class UIRoundsServiceMixin:
             raise ValueError(f"Round {raw} not found")
         return dict(row)
 
-    async def get_round_statistics(self, round_identifier: str) -> Dict[str, Any]:
+    async def get_round_statistics(self, round_identifier: str) -> dict[str, Any]:
         ref = await self._resolve_round_identifier(round_identifier)
         round_id = int(ref["round_id"])
         encoded_id = int(ref["season_number"]) * 10000 + int(ref["round_number_in_season"])
@@ -530,10 +530,10 @@ class UIRoundsServiceMixin:
         limit: int,
         sort_by: str,
         sort_order: str,
-        success: Optional[bool],
-        min_score: Optional[float],
-        max_score: Optional[float],
-    ) -> Dict[str, Any]:
+        success: bool | None,
+        min_score: float | None,
+        max_score: float | None,
+    ) -> dict[str, Any]:
         ref = await self._resolve_round_identifier(round_identifier)
         round_id = int(ref["round_id"])
         rows = (
@@ -603,7 +603,7 @@ class UIRoundsServiceMixin:
         end = start + limit
         return {"miners": miners[start:end], "total": total, "page": page, "limit": limit}
 
-    async def get_round_validators_data(self, round_identifier: str) -> Dict[str, Any]:
+    async def get_round_validators_data(self, round_identifier: str) -> dict[str, Any]:
         ref = await self._resolve_round_identifier(round_identifier)
         round_id = int(ref["round_id"])
         rows = (
@@ -665,7 +665,7 @@ class UIRoundsServiceMixin:
             )
         return {"validators": validators, "total": len(validators)}
 
-    async def get_round_progress_data(self, round_identifier: str, current_block: Optional[int]) -> Dict[str, Any]:
+    async def get_round_progress_data(self, round_identifier: str, current_block: int | None) -> dict[str, Any]:
         ref = await self._resolve_round_identifier(round_identifier)
         season = int(ref["season_number"])
         round_in_season = int(ref["round_number_in_season"])
@@ -727,7 +727,7 @@ class UIRoundsServiceMixin:
             "previousRound": f"{season}/{int(row_prev)}" if row_prev is not None else None,
         }
 
-    async def get_round_summary_data(self, round_identifier: str) -> Dict[str, Any]:
+    async def get_round_summary_data(self, round_identifier: str) -> dict[str, Any]:
         ref = await self._resolve_round_identifier(round_identifier)
         round_id = int(ref["round_id"])
         season = int(ref["season_number"])
@@ -760,7 +760,7 @@ class UIRoundsServiceMixin:
             "timeRemaining": "0s",
         }
 
-    async def get_round_with_validators(self, season: int, round_in_season: int) -> Dict[str, Any]:
+    async def get_round_with_validators(self, season: int, round_in_season: int) -> dict[str, Any]:
         ref = await self._resolve_round_identifier(f"{season}/{round_in_season}")
         round_id = int(ref["round_id"])
         outcome = (
@@ -838,7 +838,7 @@ class UIRoundsServiceMixin:
             .mappings()
             .all()
         )
-        validators: List[Dict[str, Any]] = []
+        validators: list[dict[str, Any]] = []
         for vr in validators_raw:
             rvid = int(vr["round_validator_id"])
             local_stats = (
