@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,14 +22,14 @@ router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
 @router.get("")
 async def list_agents(
-    session: AsyncSession = Depends(get_session),
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-    type: AgentType | None = Query(None),
-    status: AgentStatus | None = Query(None),
-    sortBy: str = Query("averageScore"),
-    sortOrder: str = Query("desc"),
-    search: str | None = Query(None),
+    session: Annotated[AsyncSession, Depends(get_session)],
+    page: Annotated[int, Query(1, ge=1)] = 1,
+    limit: Annotated[int, Query(20, ge=1, le=100)] = 20,
+    type: Annotated[AgentType | None, Query(None)] = None,
+    status: Annotated[AgentStatus | None, Query(None)] = None,
+    sort_by: Annotated[str, Query("averageScore", alias="sortBy")] = "averageScore",
+    sort_order: Annotated[str, Query("desc", alias="sortOrder")] = "desc",
+    search: Annotated[str | None, Query(None)] = None,
 ):
     """
     List agents with pagination and filtering.
@@ -38,8 +38,8 @@ async def list_agents(
     data = await newdb.list_agents_catalog(
         page=page,
         limit=limit,
-        sort_by=sortBy,
-        sort_order=sortOrder,
+        sort_by=sort_by,
+        sort_order=sort_order,
         search=search,
     )
     if type is not None:
@@ -51,9 +51,9 @@ async def list_agents(
     return {"success": True, "data": data}
 
 
-@router.get("/latest-round-top-miner")
+@router.get("/latest-round-top-miner", responses={500: {"description": "Internal error fetching round/top miner"}})
 async def get_latest_round_top_miner(
-    session: AsyncSession = Depends(get_session),
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """
     Get latest round and top miner for initial redirect when accessing /subnet36/agents.
@@ -89,15 +89,15 @@ async def get_latest_round_top_miner(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error(f"Error getting latest round and top miner: {exc}", exc_info=True)
+        logger.error("Error getting latest round and top miner: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.get("/rounds")
+@router.get("/rounds", responses={404: {"description": "Not found"}, 500: {"description": "Internal error"}})
 async def get_rounds_data(
-    round_number: Optional[int] = Query(None, description="Round number (compat alias)"),
-    round_identifier: Optional[str] = Query(None, description="Round in format 'season/round' (e.g. '83/20')"),
-    session: AsyncSession = Depends(get_session),
+    round_number: Annotated[int | None, Query(None, description="Round number (compat alias)")] = None,
+    round_identifier: Annotated[str | None, Query(None, description="Round in format 'season/round' (e.g. '83/20')")] = None,
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """
     Get available rounds and miners for a selected round (or first round if none selected).
@@ -144,15 +144,15 @@ async def get_rounds_data(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        logger.error(f"Error getting rounds data: {exc}", exc_info=True)
+        logger.error("Error getting rounds data: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.get("/round-details")
+@router.get("/round-details", responses={404: {"description": "Not found"}, 500: {"description": "Internal error"}})
 async def get_miner_round_details(
-    round: str = Query(..., description="Round identifier in format 'season/round' (e.g., '1/1') or encoded number"),
-    miner_uid: int = Query(..., description="Miner UID"),
-    session: AsyncSession = Depends(get_session),
+    round: Annotated[str, Query(..., description="Round identifier in format 'season/round' (e.g., '1/1') or encoded number")],
+    miner_uid: Annotated[int, Query(..., description="Miner UID")],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """
     Get detailed information about a specific miner in a specific round.
@@ -170,15 +170,15 @@ async def get_miner_round_details(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        logger.error(f"Error getting miner round details: {exc}", exc_info=True)
+        logger.error("Error getting miner round details: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.get("/{miner_uid}/historical")
+@router.get("/{miner_uid}/historical", responses={404: {"description": "Not found"}, 500: {"description": "Internal error"}})
 async def get_miner_historical(
     miner_uid: int,
-    season: Optional[int] = Query(None, description="Optional season number to filter historical data"),
-    session: AsyncSession = Depends(get_session),
+    season: Annotated[int | None, Query(None, description="Optional season number to filter historical data")] = None,
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """
     Get historical statistics for a miner across all rounds or for a specific season.
@@ -196,16 +196,16 @@ async def get_miner_historical(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        logger.error(f"Error getting miner historical data: {exc}", exc_info=True)
+        logger.error("Error getting miner historical data: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.get("/{agent_id}")
+@router.get("/{agent_id}", responses={404: {"description": "Agent not found"}})
 async def get_agent(
     agent_id: str,
-    session: AsyncSession = Depends(get_session),
-    round: Optional[int] = Query(None),
-    season: Optional[int] = Query(None),
+    session: Annotated[AsyncSession, Depends(get_session)],
+    round: Annotated[int | None, Query(None)] = None,
+    season: Annotated[int | None, Query(None)] = None,
 ):
     newdb = UIDataService(session)
     try:
@@ -216,33 +216,33 @@ async def get_agent(
     return {"success": True, "data": data}
 
 
-@router.get("/{agent_id}/performance")
+@router.get("/{agent_id}/performance", responses={404: {"description": "Agent not found"}})
 async def get_agent_performance(
     agent_id: str,
-    session: AsyncSession = Depends(get_session),
-    timeRange: Optional[str] = Query(None),
-    startDate: Optional[datetime] = Query(None),
-    endDate: Optional[datetime] = Query(None),
-    granularity: Optional[str] = Query(None),
+    session: Annotated[AsyncSession, Depends(get_session)],
+    time_range: Annotated[str | None, Query(None, alias="timeRange")] = None,
+    start_date: Annotated[datetime | None, Query(None, alias="startDate")] = None,
+    end_date: Annotated[datetime | None, Query(None, alias="endDate")] = None,
+    granularity: Annotated[str | None, Query(None)] = None,
 ):
     newdb = UIDataService(session)
     try:
         metrics = await newdb.get_agent_performance_metrics(
             agent_id=agent_id,
-            start_date=startDate,
-            end_date=endDate,
+            start_date=start_date,
+            end_date=end_date,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"success": True, "data": {"metrics": metrics}}
 
 
-@router.get("/{agent_id}/runs")
+@router.get("/{agent_id}/runs", responses={404: {"description": "Agent not found"}})
 async def list_agent_runs(
     agent_id: str,
-    session: AsyncSession = Depends(get_session),
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    session: Annotated[AsyncSession, Depends(get_session)],
+    page: Annotated[int, Query(1, ge=1)] = 1,
+    limit: Annotated[int, Query(20, ge=1, le=100)] = 20,
 ):
     newdb = UIDataService(session)
     try:
@@ -252,14 +252,14 @@ async def list_agent_runs(
     return {"success": True, "data": data}
 
 
-@router.get("/{agent_id}/activity")
+@router.get("/{agent_id}/activity", responses={404: {"description": "Agent not found"}})
 async def get_agent_activity(
     agent_id: str,
-    session: AsyncSession = Depends(get_session),
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-    type: ActivityType | None = Query(None),
-    since: datetime | None = Query(None),
+    session: Annotated[AsyncSession, Depends(get_session)],
+    limit: Annotated[int, Query(20, ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(0, ge=0)] = 0,
+    type: Annotated[ActivityType | None, Query(None)] = None,
+    since: Annotated[datetime | None, Query(None)] = None,
 ):
     newdb = UIDataService(session)
     try:
