@@ -44,7 +44,7 @@ if ! command -v redis-server &> /dev/null; then
         brew install redis && INSTALLED=true || true
     fi
 
-    if [ "$INSTALLED" = false ]; then
+    if [[ "$INSTALLED" == false ]]; then
         echo "❌ No se pudo instalar Redis automáticamente"
         echo "Por favor instala Redis manualmente:"
         echo "  - Ubuntu/Debian: sudo apt-get install redis-server redis-tools"
@@ -104,6 +104,6 @@ if pgrep -x "redis-server" > /dev/null; then
         echo "   ⚠️  redis-cli no disponible para verificar conexión"
     fi
 else
-    echo "❌ Error: Redis no se pudo iniciar"
+    echo "❌ Error: Redis no se pudo iniciar" >&2
     exit 1
 fi
