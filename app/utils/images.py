@@ -11,17 +11,21 @@ from app.models.core import MinerInfo
 logging.getLogger(__name__).setLevel(logging.WARNING)
 
 DEFAULT_VALIDATOR_IMAGE = "/validators/Other.png"
+VALIDATOR_IMAGE_ROUNDTABLE = "/validators/roundtable.jpg"
+VALIDATOR_IMAGE_RIZZO = "/validators/rizzo.png"
+HTTPS_PREFIX = "https://"
+
 VALIDATOR_IMAGE_OVERRIDES = {
     "autoppia": "/validators/Autoppia.png",
-    "roundtable21": "/validators/roundtable.jpg",
-    "round-table21": "/validators/roundtable.jpg",
-    "roundtable": "/validators/roundtable.jpg",
-    "round-table": "/validators/roundtable.jpg",
-    "rt21": "/validators/roundtable.jpg",
-    "rt-21": "/validators/roundtable.jpg",
-    "rizzo": "/validators/rizzo.png",
-    "rizzo-insured": "/validators/rizzo.png",
-    "rizzo-(insured)": "/validators/rizzo.png",
+    "roundtable21": VALIDATOR_IMAGE_ROUNDTABLE,
+    "round-table21": VALIDATOR_IMAGE_ROUNDTABLE,
+    "roundtable": VALIDATOR_IMAGE_ROUNDTABLE,
+    "round-table": VALIDATOR_IMAGE_ROUNDTABLE,
+    "rt21": VALIDATOR_IMAGE_ROUNDTABLE,
+    "rt-21": VALIDATOR_IMAGE_ROUNDTABLE,
+    "rizzo": VALIDATOR_IMAGE_RIZZO,
+    "rizzo-insured": VALIDATOR_IMAGE_RIZZO,
+    "rizzo-(insured)": VALIDATOR_IMAGE_RIZZO,
     "tao5": "/validators/tao5.png",
     "kraken": "/validators/Kraken.png",
     "yuma": "/validators/Yuma.png",
@@ -37,11 +41,14 @@ SOTA_IMAGE_OVERRIDES = {
 
 FALLBACK_MINER_IMAGES = tuple(f"/miners/{index}.svg" for index in range(50))
 
+S3_HOST_EU_WEST_1 = "autoppia-subnet.s3.eu-west-1.amazonaws.com"
+S3_HOST_DEFAULT = "autoppia-subnet.s3.amazonaws.com"
+
 DEFAULT_ALLOWED_IMAGE_HOSTS = {
     "infinitewebarena.autoppia.com",
     "dev-infinitewebarena.autoppia.com",
-    "autoppia-subnet.s3.eu-west-1.amazonaws.com",  # S3 bucket for validators/miners/gifs
-    "autoppia-subnet.s3.amazonaws.com",  # S3 default region URL
+    S3_HOST_EU_WEST_1,  # S3 bucket for validators/miners/gifs
+    S3_HOST_DEFAULT,  # S3 default region URL
 }
 
 
@@ -114,7 +121,7 @@ def _sanitize_url(candidate: str | None) -> str:
     if value.startswith("//"):
         value = f"https:{value}"
 
-    if value.startswith("http://") or value.startswith("https://"):
+    if value.startswith("http://") or value.startswith(HTTPS_PREFIX):
         rewritten = _rewrite_github_blob(value)
         try:
             parsed = urlparse(rewritten)
@@ -227,17 +234,14 @@ def sanitize_miner_image(candidate: str | None) -> str:
         return ""
 
     # ONLY allow HTTPS S3 URLs in images-miner folder
-    if value.startswith("https://"):
+    if value.startswith(HTTPS_PREFIX):
         try:
             parsed = urlparse(value)
             hostname = (parsed.hostname or "").lower()
             path = parsed.path or "/"
 
             # MUST be our S3 bucket
-            if hostname not in (
-                "autoppia-subnet.s3.eu-west-1.amazonaws.com",
-                "autoppia-subnet.s3.amazonaws.com",
-            ):
+            if hostname not in (S3_HOST_EU_WEST_1, S3_HOST_DEFAULT):
                 return ""  # ❌ Reject external URLs
 
             # MUST be in /images-miner/ or /images-miners/ folder
@@ -317,17 +321,14 @@ def _validate_validator_image_url(url: str | None) -> str | None:
         return None
 
     # ONLY allow HTTPS S3 URLs in images-validator folder
-    if url_clean.startswith("https://"):
+    if url_clean.startswith(HTTPS_PREFIX):
         try:
             parsed = urlparse(url_clean)
             hostname = (parsed.hostname or "").lower()
             path = parsed.path or "/"
 
             # MUST be our S3 bucket
-            if hostname not in (
-                "autoppia-subnet.s3.eu-west-1.amazonaws.com",
-                "autoppia-subnet.s3.amazonaws.com",
-            ):
+            if hostname not in (S3_HOST_EU_WEST_1, S3_HOST_DEFAULT):
                 logger.debug("[_validate_validator_image_url] Rejecting external hostname: %s", hostname)
                 return None  # ❌ Reject external URLs
 
