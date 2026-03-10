@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Iterable
 
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import selectinload
@@ -91,7 +91,7 @@ class ValidatorStorageHelpersMixin:
             {"incoming_season_number": int(incoming_season_number)},
         )
 
-    async def _get_main_validator_cfg(self) -> tuple[Optional[int], str]:
+    async def _get_main_validator_cfg(self) -> tuple[int | None, str]:
         row = (
             await self.session.execute(
                 text(
@@ -108,7 +108,7 @@ class ValidatorStorageHelpersMixin:
             return None, ""
         return row[0], (row[1] or "").strip()
 
-    async def _is_highest_stake_backup(self, validator_uid: int, validator_stake: Optional[float]) -> bool:
+    async def _is_highest_stake_backup(self, validator_uid: int, validator_stake: float | None) -> bool:
         cfg_uid, _ = await self._get_main_validator_cfg()
         sql_text = """
             SELECT rv.validator_uid, MAX(COALESCE(rv.stake, 0)) AS max_stake
@@ -139,7 +139,7 @@ class ValidatorStorageHelpersMixin:
         return current_stake >= top_stake and int(validator_uid) < top_uid
 
     @staticmethod
-    def _to_float(value: Any) -> Optional[float]:
+    def _to_float(value: Any) -> float | None:
         if value is None:
             return None
         try:
@@ -161,7 +161,7 @@ class ValidatorStorageHelpersMixin:
     def _derive_run_zero_reason_from_evaluations(run_row: AgentEvaluationRunORM) -> str:
         """Derive zero_reason for a run with score 0 from its evaluations (never leave 0 without reason)."""
         evaluations = list(getattr(run_row, "evaluations", []) or [])
-        zero_reasons: List[str] = []
+        zero_reasons: list[str] = []
         for ev in evaluations:
             score = getattr(ev, "evaluation_score", None)
             if score is not None and float(score) <= 0.0:
@@ -174,7 +174,7 @@ class ValidatorStorageHelpersMixin:
         (reason, _) = Counter(zero_reasons).most_common(1)[0]
         return reason
 
-    def _compute_agent_run_stats(self, run_row: AgentEvaluationRunORM) -> Dict[str, Any]:
+    def _compute_agent_run_stats(self, run_row: AgentEvaluationRunORM) -> dict[str, Any]:
         task_solutions = list(getattr(run_row, "task_solutions", []) or [])
         evaluations = list(getattr(run_row, "evaluations", []) or [])
 
@@ -190,7 +190,7 @@ class ValidatorStorageHelpersMixin:
 
         total_tasks = int(total_tasks or 0)
 
-        scores: List[float] = []
+        scores: list[float] = []
         for eval_obj in evaluations:
             value = self._to_float(getattr(eval_obj, "evaluation_score", None)) or self._to_float(getattr(eval_obj, "eval_score", None))
             # 🔍 CRITICAL: If no evaluation_score found, default to 0.0 (task failed)
@@ -221,14 +221,14 @@ class ValidatorStorageHelpersMixin:
             success_tasks = total_tasks
         failed_tasks = max(total_tasks - success_tasks, 0)
 
-        evaluation_times: List[float] = []
+        evaluation_times: list[float] = []
         for eval_obj in evaluations:
             value = self._to_float(getattr(eval_obj, "evaluation_time", None))
             if value is not None and value >= 0.0:
                 evaluation_times.append(value)
         average_execution_time = sum(evaluation_times) / len(evaluation_times) if evaluation_times else None
 
-        reward_values: List[float] = []
+        reward_values: list[float] = []
         for eval_obj in evaluations:
             reward_candidate: Any = getattr(eval_obj, "reward", None)
             if reward_candidate is None:
@@ -252,12 +252,12 @@ class ValidatorStorageHelpersMixin:
             "average_reward": average_reward,
         }
 
-    async def _get_round_row(self, validator_round_id: str) -> Optional[ValidatorRoundORM]:
+    async def _get_round_row(self, validator_round_id: str) -> ValidatorRoundORM | None:
         # Load with eager loading for validator_snapshot (1:1 relationship)
         stmt = select(ValidatorRoundORM).options(selectinload(ValidatorRoundORM.validator_snapshot)).where(ValidatorRoundORM.validator_round_id == validator_round_id)
         return await self.session.scalar(stmt)
 
-    async def _is_main_validator_identity(self, validator_uid: int, validator_hotkey: Optional[str]) -> bool:
+    async def _is_main_validator_identity(self, validator_uid: int, validator_hotkey: str | None) -> bool:
         cfg_uid, cfg_hotkey = await self._get_main_validator_cfg()
         payload_hotkey = (validator_hotkey or "").strip()
         if cfg_uid is None and not cfg_hotkey:
@@ -271,9 +271,9 @@ class ValidatorStorageHelpersMixin:
     async def _assert_start_round_authority_and_state(
         self,
         validator_round: ValidatorRound,
-        validator_stake: Optional[float],
-        validator_version: Optional[str] = None,
-        validator_config: Optional[Dict[str, Any]] = None,
+        validator_stake: float | None,
+        validator_version: str | None = None,
+        validator_config: dict[str, Any] | None = None,
     ) -> None:
         is_main = await self._is_main_validator_identity(
             validator_round.validator_uid,
@@ -390,7 +390,7 @@ class ValidatorStorageHelpersMixin:
         )
 
     @staticmethod
-    def _normalize_runtime_config_for_compare(config: Optional[Dict[str, Any]]) -> Optional[str]:
+    def _normalize_runtime_config_for_compare(config: dict[str, Any] | None) -> str | None:
         if not isinstance(config, dict) or not config:
             return None
         # Remove obvious identity/noise keys that can differ per validator process.
@@ -413,9 +413,9 @@ class ValidatorStorageHelpersMixin:
         season_number: int,
         round_number_in_season: int,
         validator_uid: int,
-        validator_hotkey: Optional[str],
-        validator_version: Optional[str],
-        validator_config: Optional[Dict[str, Any]],
+        validator_hotkey: str | None,
+        validator_version: str | None,
+        validator_config: dict[str, Any] | None,
     ) -> None:
         # Only applies to non-main validators once the canonical round is active.
         is_main = await self._is_main_validator_identity(validator_uid, validator_hotkey)
@@ -470,8 +470,8 @@ class ValidatorStorageHelpersMixin:
         self,
         round_row: ValidatorRoundORM,
         validator_uid: int,
-        validator_hotkey: Optional[str],
-        validator_stake: Optional[float],
+        validator_hotkey: str | None,
+        validator_stake: float | None,
     ) -> None:
         is_main = await self._is_main_validator_identity(validator_uid, validator_hotkey)
         if is_main:
@@ -533,17 +533,17 @@ class ValidatorStorageHelpersMixin:
             await self.session.delete(row)
         await self.session.flush()
 
-    async def _get_agent_run_row(self, agent_run_id: str) -> Optional[AgentEvaluationRunORM]:
+    async def _get_agent_run_row(self, agent_run_id: str) -> AgentEvaluationRunORM | None:
         stmt = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == agent_run_id)
         return await self.session.scalar(stmt)
 
-    async def _resolve_reused_source_run(self, source_run_id: Optional[str]) -> Optional[AgentEvaluationRunORM]:
+    async def _resolve_reused_source_run(self, source_run_id: str | None) -> AgentEvaluationRunORM | None:
         """Follow reused_from chain and return the root source run."""
         if not source_run_id:
             return None
         visited: set[str] = set()
-        current_id: Optional[str] = source_run_id
-        root: Optional[AgentEvaluationRunORM] = None
+        current_id: str | None = source_run_id
+        root: AgentEvaluationRunORM | None = None
         while current_id and current_id not in visited:
             visited.add(current_id)
             row = await self._get_agent_run_row(current_id)
@@ -580,7 +580,7 @@ class ValidatorStorageHelpersMixin:
         if updated:
             await self.session.flush()
 
-    async def _get_task_row(self, task_id: str) -> Optional[TaskORM]:
+    async def _get_task_row(self, task_id: str) -> TaskORM | None:
         stmt = select(TaskORM).where(TaskORM.task_id == task_id)
         return await self.session.scalar(stmt)
 
@@ -595,9 +595,9 @@ class ValidatorStorageHelpersMixin:
     async def _ensure_unique_round_number(
         self,
         validator_uid: int,
-        round_number: Optional[int],
+        round_number: int | None,
         *,
-        exclude_round_id: Optional[str] = None,
+        exclude_round_id: str | None = None,
     ) -> None:
         """DEPRECATED: Use _ensure_unique_season_round instead."""
         if round_number is None:
@@ -626,7 +626,7 @@ class ValidatorStorageHelpersMixin:
         season_number: int,
         round_number_in_season: int,
         *,
-        exclude_round_id: Optional[str] = None,
+        exclude_round_id: str | None = None,
     ) -> None:
         """Ensure no existing round for this validator with same season and round_in_season."""
         stmt = (
@@ -771,7 +771,7 @@ class ValidatorStorageHelpersMixin:
         await self.session.flush()
         return row
 
-    def _validator_round_kwargs(self, model: ValidatorRound) -> Dict[str, Any]:
+    def _validator_round_kwargs(self, model: ValidatorRound) -> dict[str, Any]:
         # validator_uid, validator_hotkey, validator_coldkey moved to ValidatorRoundValidatorORM
         # metadata/round summary is stored in validator_summary at finish_round, not at start
         start_block = int(model.start_block or 0)
@@ -783,7 +783,7 @@ class ValidatorStorageHelpersMixin:
                 round_blocks = int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
                 if round_blocks > 0:
                     end_block = start_block + round_blocks
-            except Exception:
+            except Exception:  # noqa: BLE001
                 end_block = None
 
         start_epoch = int(model.start_epoch or 0)
@@ -793,7 +793,7 @@ class ValidatorStorageHelpersMixin:
                 from app.services.round_calc import block_to_epoch
 
                 end_epoch = int(block_to_epoch(int(end_block)))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 end_epoch = None
 
         return {
@@ -813,7 +813,7 @@ class ValidatorStorageHelpersMixin:
     def _agent_run_kwargs(
         self,
         model: AgentEvaluationRun,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return {
             "agent_run_id": model.agent_run_id,
             "validator_round_id": model.validator_round_id,
@@ -838,7 +838,7 @@ class ValidatorStorageHelpersMixin:
             "zero_reason": getattr(model, "zero_reason", None),
         }
 
-    def _task_kwargs(self, model: Task) -> Dict[str, Any]:
+    def _task_kwargs(self, model: Task) -> dict[str, Any]:
         return {
             "task_id": model.task_id,
             "validator_round_id": model.validator_round_id,
@@ -854,7 +854,7 @@ class ValidatorStorageHelpersMixin:
     def _task_solution_kwargs(
         self,
         model: TaskSolution,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return {
             "solution_id": model.solution_id,
             "task_id": model.task_id,
@@ -870,20 +870,20 @@ class ValidatorStorageHelpersMixin:
     def _evaluation_kwargs(
         self,
         model: Evaluation,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         # Normalize evaluation_score and reward (accept eval_score from legacy payloads)
         eval_score_val = getattr(model, "evaluation_score", None) or getattr(model, "eval_score", None)
         if eval_score_val is None:
             eval_score_val = 0.0
         try:
             eval_score_val = float(eval_score_val)
-        except Exception:
+        except Exception:  # noqa: BLE001
             eval_score_val = 0.0
 
         reward_val = getattr(model, "reward", 0.0)
         try:
             reward_val = float(reward_val)
-        except Exception:
+        except Exception:  # noqa: BLE001
             reward_val = 0.0
 
         # Preserve reward provided by validator (it already includes score/time/cost shaping).
