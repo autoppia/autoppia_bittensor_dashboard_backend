@@ -5,7 +5,7 @@ Evaluation-centric UI models for the dashboard.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -14,8 +14,8 @@ from app.models.ui.agent_runs import Action, Log
 
 class ResponseBase(BaseModel):
     success: bool
-    error: Optional[str] = None
-    code: Optional[str] = None
+    error: str | None = None
+    code: str | None = None
 
 
 class EvaluationStatus(str, Enum):
@@ -32,8 +32,8 @@ class EvaluationTaskInfo(BaseModel):
     id: str
     url: str
     prompt: str
-    useCase: Optional[str] = None
-    useCaseMetadata: Dict[str, Any] = Field(default_factory=dict)
+    useCase: str | None = None
+    useCaseMetadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class EvaluationListItem(BaseModel):
@@ -44,46 +44,46 @@ class EvaluationListItem(BaseModel):
     agentId: str
     validatorId: str
     roundId: int
-    season: Optional[int] = None  # Season number (e.g., 1, 2, 3)
+    season: int | None = None  # Season number (e.g., 1, 2, 3)
     taskId: str
     taskUrl: str
     status: EvaluationStatus
     score: float
     reward: float
     responseTime: float
-    createdAt: Optional[str]
-    updatedAt: Optional[str]
-    zeroReason: Optional[str] = None  # Reason for score 0 (e.g. task_timeout, tests_failed)
+    createdAt: str | None = None
+    updatedAt: str | None = None
+    zeroReason: str | None = None  # Reason for score 0 (e.g. task_timeout, tests_failed)
 
 
 class EvaluationDetail(EvaluationListItem):
     """Full detail for an evaluation including solution and result artifacts."""
 
     task: EvaluationTaskInfo
-    actions: List[Action] = Field(default_factory=list)
-    logs: List[Log] = Field(default_factory=list)
-    screenshots: List[str] = Field(default_factory=list)
-    taskSolution: Dict[str, Any] = Field(default_factory=dict)
-    evaluationResult: Dict[str, Any] = Field(default_factory=dict)
-    extras: Dict[str, Any] = Field(default_factory=dict)
+    actions: list[Action] = Field(default_factory=list)
+    logs: list[Log] = Field(default_factory=list)
+    screenshots: list[str] = Field(default_factory=list)
+    taskSolution: dict[str, Any] = Field(default_factory=dict)
+    evaluationResult: dict[str, Any] = Field(default_factory=dict)
+    extras: dict[str, Any] = Field(default_factory=dict)
 
 
 class EvaluationListResponse(ResponseBase):
     """Response wrapper for evaluation list requests."""
 
-    data: Optional[Dict[str, Any]] = None
+    data: dict[str, Any] | None = None
 
 
 class EvaluationDetailResponse(ResponseBase):
     """Response wrapper for evaluation detail requests."""
 
-    data: Optional[Dict[str, EvaluationDetail]] = None
+    data: dict[str, EvaluationDetail] | None = None
 
 
 class EvaluationGifUploadResponse(ResponseBase):
     """Response wrapper for evaluation GIF upload requests."""
 
-    data: Optional[Dict[str, str]] = None
+    data: dict[str, str] | None = None
 
 
 __all__ = [
