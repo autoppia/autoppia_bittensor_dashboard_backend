@@ -30,7 +30,6 @@ import asyncio
 import os
 import time
 from pathlib import Path
-from typing import Optional
 
 
 # Best-effort load environment from .env without requiring python-dotenv
@@ -40,7 +39,7 @@ def _load_env_from_dotenv(dotenv_path: str = ".env") -> None:
 
         load_dotenv(dotenv_path)
         return
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         path = Path(dotenv_path)
@@ -57,7 +56,7 @@ def _load_env_from_dotenv(dotenv_path: str = ".env") -> None:
                     if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
                         val = val[1:-1]
                     os.environ.setdefault(key, val)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -96,7 +95,7 @@ def _upload_file(client_tuple, file_path: str) -> str:
             return resp["id"]
 
 
-def _create_ft_job(client_tuple, training_file_id: str, model: str, suffix: Optional[str] = None):
+def _create_ft_job(client_tuple, training_file_id: str, model: str, suffix: str | None = None):
     mode, client = client_tuple
     if mode == "v1":
         kwargs = {"training_file": training_file_id, "model": model}
@@ -132,7 +131,7 @@ def _count_lines(path: Path) -> int:
     try:
         with path.open("r", encoding="utf-8") as f:
             return sum(1 for _ in f)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return 0
 
 
@@ -141,7 +140,7 @@ async def _maybe_generate_dataset(
     *,
     generate_if_missing: bool,
     min_score: float,
-    max_actions: Optional[int],
+    max_actions: int | None,
     batch_size: int,
 ) -> bool:
     if dataset_path.exists():
@@ -222,7 +221,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _sanitize_model_name(model: str) -> tuple[str, Optional[str]]:
+def _sanitize_model_name(model: str) -> tuple[str, str | None]:
     """Return (chosen_model, note) and map deprecated aliases to supported models.
 
     Currently maps 'gpt-4o-mini' → 'gpt-4.1-mini'.
