@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import Any, Dict, Optional
+from typing import Annotated, Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy import and_, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,17 +37,54 @@ MAX_EVALUATIONS_LIMIT = 500000
 DEFAULT_EVALUATIONS_LIMIT = 500000
 
 
+class ValidatorDetailsQuery(BaseModel):
+    """Query params for GET /{uid}/details (round param exposed as 'round' in API)."""
+
+    round_filter: Optional[str] = None
+    website: Optional[str] = None
+    useCase: Optional[str] = None
+    limit: int = DEFAULT_EVALUATIONS_LIMIT
+
+    model_config = {"extra": "forbid"}
+
+
+def get_validator_details_query(
+    round_filter: Annotated[
+        Optional[str],
+        Query(None, alias="round", description="Filter by round (format: 'season/round', e.g., '1/1')"),
+    ] = None,
+    website: Annotated[
+        Optional[str],
+        Query(None, description="Filter evaluations table by website (e.g., 'AutoCinema')"),
+    ] = None,
+    useCase: Annotated[
+        Optional[str],
+        Query(None, description="Filter evaluations table by use case (e.g., 'SEARCH_FILM')"),
+    ] = None,
+    limit: Annotated[
+        Optional[int],
+        Query(
+            DEFAULT_EVALUATIONS_LIMIT,
+            ge=1,
+            le=MAX_EVALUATIONS_LIMIT,
+            description="Limit number of evaluations to process. Default: 500000, Max: 500000",
+        ),
+    ] = DEFAULT_EVALUATIONS_LIMIT,
+) -> ValidatorDetailsQuery:
+    return ValidatorDetailsQuery(
+        round_filter=round_filter,
+        website=website,
+        useCase=useCase,
+        limit=limit if limit is not None else DEFAULT_EVALUATIONS_LIMIT,
+    )
+
+
 @router.get("/{uid}/details")
 @cache("validator_details", ttl=120)  # Cache 2 minutos como recomienda Codex
 async def get_validator_details(
     uid: int,
-    round: Optional[str] = Query(None, description="Filter by round (format: 'season/round', e.g., '1/1')"),
-    website: Optional[str] = Query(None, description="Filter evaluations table by website (e.g., 'AutoCinema')"),
-    useCase: Optional[str] = Query(None, description="Filter evaluations table by use case (e.g., 'SEARCH_FILM')"),
-    limit: Optional[int] = Query(
-        DEFAULT_EVALUATIONS_LIMIT, ge=1, le=MAX_EVALUATIONS_LIMIT, description=f"Limit number of evaluations to process. Default: {DEFAULT_EVALUATIONS_LIMIT}, Max: {MAX_EVALUATIONS_LIMIT}"
-    ),
-    session: AsyncSession = Depends(get_session),
+    session: Annotated[AsyncSession, Depends(get_session)],
+    q: Annotated[ValidatorDetailsQuery, Depends(get_validator_details_query)],
 ):
     """
     Get detailed statistics for a validator, aggregated by web and use case.
@@ -69,9 +107,9 @@ async def get_validator_details(
     # Parse round parameter if provided
     season_filter = None
     round_filter = None
-    if round is not None:
+    if q.round_filter is not None:
         try:
-            parts = round.split("/")
+            parts = q.round_filter.split("/")
             if len(parts) == 2:
                 season_filter = int(parts[0])
                 round_filter = int(parts[1])
@@ -131,9 +169,9 @@ async def get_validator_details(
         fresh_data = get_validator_data(uid=uid)
         if fresh_data and fresh_data.get("stake") is not None:
             validator_stake = float(fresh_data.get("stake") or 0.0)
-            logger.debug(f"Validator {uid} stake from metagraph: {validator_stake:.2f} RAO")
+            logger.debug("Validator %s stake from metagraph: %.2f RAO", uid, validator_stake)
     except MetagraphError:
-        logger.debug(f"Metagraph data unavailable for validator {uid}, using DB fallback")
+        logger.debug("Metagraph data unavailable for validator %s, using DB fallback", uid)
 
     # Fallback to DB if metagraph data not available
     # Note: DB stake might be in TAO, so we need to convert it to RAO for consistency
@@ -156,23 +194,23 @@ async def get_validator_details(
             # Otherwise, assume it's already in RAO
             if db_stake < 1.0:
                 validator_stake = db_stake * 1_000_000_000  # Convert TAO to RAO
-                logger.debug(f"Validator {uid} stake from DB (converted TAO->RAO): {validator_stake:.2f} RAO")
+                logger.debug("Validator %s stake from DB (converted TAO->RAO): %.2f RAO", uid, validator_stake)
             else:
                 validator_stake = db_stake
-                logger.debug(f"Validator {uid} stake from DB: {validator_stake:.2f} RAO")
+                logger.debug("Validator %s stake from DB: %.2f RAO", uid, validator_stake)
         elif validator_snapshot and validator_snapshot.stake is not None:
             db_stake = float(validator_snapshot.stake)
             # If DB stake is very small (< 1), assume it's in TAO and convert to RAO
             if db_stake < 1.0:
                 validator_stake = db_stake * 1_000_000_000  # Convert TAO to RAO
-                logger.debug(f"Validator {uid} stake from snapshot (converted TAO->RAO): {validator_stake:.2f} RAO")
+                logger.debug("Validator %s stake from snapshot (converted TAO->RAO): %.2f RAO", uid, validator_stake)
             else:
                 validator_stake = db_stake
-                logger.debug(f"Validator {uid} stake from snapshot: {validator_stake:.2f} RAO")
+                logger.debug("Validator %s stake from snapshot: %.2f RAO", uid, validator_stake)
 
     # Log for debugging (can be removed in production)
     if validator_stake == 0:
-        logger.debug(f"Validator {uid} stake is 0 (this may be correct if validator has no stake)")
+        logger.debug("Validator %s stake is 0 (this may be correct if validator has no stake)", uid)
 
     # Get available rounds for this validator (return as "season/round" strings)
     rounds_query = (
@@ -214,12 +252,12 @@ async def get_validator_details(
     )
 
     # Aplicar filtros opcionales
-    if website is not None:
-        base_evaluations_query = base_evaluations_query.where(TaskORM.web_project_id == website)
+    if q.website is not None:
+        base_evaluations_query = base_evaluations_query.where(TaskORM.web_project_id == q.website)
 
     # Filtro de useCase en SQL (JSONB -> 'name')
-    if useCase is not None:
-        use_case_normalized = useCase.upper().replace(" ", "_")
+    if q.useCase is not None:
+        use_case_normalized = q.useCase.upper().replace(" ", "_")
         base_evaluations_query = base_evaluations_query.where(func.upper(func.replace(TaskORM.use_case["name"].astext, " ", "_")) == use_case_normalized)
 
     # Filtro por round (including reused runs source data when applicable)
@@ -237,7 +275,7 @@ async def get_validator_details(
             base_evaluations_query = base_evaluations_query.where(literal(False))
 
     # Aplicar límite configurable (por defecto 500k)
-    base_evaluations_query = base_evaluations_query.limit(limit)
+    base_evaluations_query = base_evaluations_query.limit(q.limit)
 
     evaluations_subquery = base_evaluations_query.subquery()
 
@@ -657,7 +695,7 @@ async def get_validator_details(
     webs_list.sort(key=lambda w: get_web_order(w.get("webId", "")))
 
     # Contar total de evaluaciones procesadas vs total disponible
-    has_more = limit is not None and total_evaluations_processed >= limit
+    has_more = total_evaluations_processed >= q.limit
 
     # Build response
     response_data = {
