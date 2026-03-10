@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 QUERY_FORCE_WINDOW_DESCRIPTION = "TESTING-only override to skip chain round/window checks"
 DETAIL_CHAIN_UNAVAILABLE = "Chain state unavailable"
 ERROR_ROUND_WINDOW_NOT_ACTIVE = "round window not active"
+MSG_AGENT_RUN_REGISTERED = "Agent run registered"
 
 
 async def start_round(
@@ -167,20 +168,20 @@ async def start_round(
             existing_round = await service._get_round_row(validator_round.validator_round_id)  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001 - idempotency check: missing round -> None
             existing_round = None
-        if existing_round is not None:
-            if (
-                existing_round.validator_snapshot
-                and existing_round.validator_snapshot.validator_uid == validator_round.validator_uid
-                and existing_round.validator_snapshot.validator_hotkey == validator_round.validator_hotkey
-            ):
-                logger.info(
-                    "Validator round %s already registered; treating as idempotent",
-                    validator_round.validator_round_id,
-                )
-                return {
-                    "message": "Validator round created",
-                    "validator_round_id": validator_round.validator_round_id,
-                }
+        if (
+            existing_round is not None
+            and existing_round.validator_snapshot
+            and existing_round.validator_snapshot.validator_uid == validator_round.validator_uid
+            and existing_round.validator_snapshot.validator_hotkey == validator_round.validator_hotkey
+        ):
+            logger.info(
+                "Validator round %s already registered; treating as idempotent",
+                validator_round.validator_round_id,
+            )
+            return {
+                "message": "Validator round created",
+                "validator_round_id": validator_round.validator_round_id,
+            }
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except RoundConflictError as exc:
         detail = str(exc)
@@ -226,7 +227,7 @@ async def start_round(
                 )
             )
             existing = await session.scalar(stmt)
-        except Exception:  # noqa: BLE001 - lookup failure -> None, then 409 below
+        except Exception:  # noqa: BLE001  # NOSONAR - lookup failure -> None, then 409 below
             existing = None
         if existing is not None:
             logger.warning(
@@ -259,7 +260,7 @@ async def start_round(
                     validator_snapshot=validator_snapshot,
                 )
                 await session.commit()
-            except Exception as inner_exc:  # noqa: BLE001 - replace-round failure, return 500
+            except Exception as inner_exc:  # noqa: BLE001  # NOSONAR - replace-round failure, return 500
                 await session.rollback()
                 logger.error(
                     "Failed to create new round after deleting old one: %s",
@@ -416,7 +417,7 @@ async def start_agent_run(
                 validator_round_id,
             )
             return {
-                "message": "Agent run registered",
+                "message": MSG_AGENT_RUN_REGISTERED,
                 "agent_run_id": agent_run.agent_run_id,
             }
 
@@ -449,7 +450,7 @@ async def start_agent_run(
                     agent_run.agent_run_id,
                 )
                 return {
-                    "message": "Agent run registered",
+                    "message": MSG_AGENT_RUN_REGISTERED,
                     "agent_run_id": existing_for_miner.agent_run_id,
                 }
 
@@ -577,7 +578,7 @@ async def start_agent_run(
                     agent_run.agent_run_id,
                 )
                 return {
-                    "message": "Agent run registered",
+                    "message": MSG_AGENT_RUN_REGISTERED,
                     "agent_run_id": agent_run.agent_run_id,
                 }
             logger.warning(
@@ -602,7 +603,7 @@ async def start_agent_run(
         agent_run.agent_run_id,
         validator_round_id,
     )
-    return {"message": "Agent run registered", "agent_run_id": agent_run.agent_run_id}
+    return {"message": MSG_AGENT_RUN_REGISTERED, "agent_run_id": agent_run.agent_run_id}
 
 
 async def finish_round(
@@ -610,7 +611,7 @@ async def finish_round(
     payload: FinishRoundRequest,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
-    force: Annotated[bool, Query(False, description="TESTING-only override to skip validation")] = False,
+    _force: Annotated[bool, Query(False, description="TESTING-only override (reserved for future use)")] = False,
 ):
     """
     Mark a validator round as finished and update all agent_runs with final metrics.
@@ -630,9 +631,7 @@ async def finish_round(
 
         # Normalize status to match ValidatorRound literal type
         normalized_status = payload.status.lower()
-        if normalized_status in {"completed", "complete"}:
-            normalized_status = "finished"
-        elif normalized_status not in {
+        if normalized_status in {"completed", "complete"} or normalized_status not in {
             "active",
             "finished",
             "pending",
