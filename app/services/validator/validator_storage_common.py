@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
+from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:
     from app.models.core import AgentEvaluationRun
@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 @dataclass
 class PersistenceResult:
     validator_uid: int
-    saved_entities: Dict[str, Any]
+    saved_entities: dict[str, Any]
 
 
 class RoundConflictError(ValueError):
@@ -21,7 +21,7 @@ class DuplicateIdentifierError(ValueError):
     """Raised when an identifier that must be unique already exists."""
 
 
-def _non_empty_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _non_empty_dict(value: dict[str, Any] | None) -> dict[str, Any]:
     return value or {}
 
 
@@ -29,7 +29,7 @@ def _non_empty_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 _AGENT_RUN_META_REDUNDANT_KEYS = frozenset({"handshake_note", "reused_from_round"})
 
 
-def _agent_run_meta_for_storage(model: "AgentEvaluationRun") -> Dict[str, Any]:
+def _agent_run_meta_for_storage(model: "AgentEvaluationRun") -> dict[str, Any]:
     """Store only useful agent_run metadata; omit handshake_note/reused_from_round (already in is_reused/reused_from_agent_run_id)."""
     meta = getattr(model, "metadata", None) or {}
     if not meta:
@@ -38,7 +38,7 @@ def _agent_run_meta_for_storage(model: "AgentEvaluationRun") -> Dict[str, Any]:
     return _non_empty_dict(cleaned)
 
 
-def _clean_meta_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _clean_meta_dict(value: dict[str, Any] | None) -> dict[str, Any]:
     """Clean metadata dict: remove empty/useless fields and normalize heavy payloads.
     llm_usage detail is not stored here (lives in evaluation_llm_usage).
     llm_calls (prompt/response traces) are stored in compact form for observability.
@@ -63,13 +63,13 @@ def _clean_meta_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             return raw
         return raw[:max_len] + f"... [truncated {len(raw) - max_len} chars]"
 
-    def _compact_llm_calls(raw_calls: Any) -> List[Dict[str, Any]]:
+    def _compact_llm_calls(raw_calls: Any) -> list[dict[str, Any]]:
         """
         Persist prompt/response traces in DB with conservative size bounds.
         """
         if not isinstance(raw_calls, list):
             return []
-        compact: List[Dict[str, Any]] = []
+        compact: list[dict[str, Any]] = []
         # Keep at most 40 calls per evaluation to avoid oversized JSON payloads.
         for call in raw_calls[:40]:
             if not isinstance(call, dict):
@@ -105,8 +105,8 @@ def _clean_meta_dict(value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return cleaned
 
 
-def _action_dump(actions: Iterable[Any]) -> List[Dict[str, Any]]:
-    dumped: List[Dict[str, Any]] = []
+def _action_dump(actions: Iterable[Any]) -> list[dict[str, Any]]:
+    dumped: list[dict[str, Any]] = []
     for action in actions:
         if hasattr(action, "model_dump"):
             dumped.append(action.model_dump(mode="json", exclude_none=True))
@@ -115,7 +115,7 @@ def _action_dump(actions: Iterable[Any]) -> List[Dict[str, Any]]:
     return dumped
 
 
-def _optional_dump(value: Any) -> Optional[Dict[str, Any]]:
+def _optional_dump(value: Any) -> dict[str, Any] | None:
     if value is None:
         return None
     if hasattr(value, "model_dump"):
