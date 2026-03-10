@@ -4,6 +4,10 @@ Utility functions for formatting scores as percentages.
 
 from __future__ import annotations
 
+# Tolerance for "score == 1.0" to avoid float equality (Sonar / reliability)
+_SCORE_ONE_TOLERANCE = 1e-9
+
+
 def format_score_as_percentage(score: float | int | None) -> str:
     """
     Convert a score from 0-1 format to 0-100 percentage format with % symbol.
@@ -42,9 +46,8 @@ def format_score_as_percentage_float(score: float | int | None) -> float:
     if score_float > 1.0:
         return round(score_float, 1)
 
-    # If score is exactly 1.0, it could be 100% or 1.0%
-    # We'll assume 1.0 means 100% (already converted)
-    if score_float == 1.0:
+    # If score is effectively 1.0, treat as 100% (avoid float equality)
+    if abs(score_float - 1.0) < _SCORE_ONE_TOLERANCE:
         return 100.0
 
     # Otherwise convert from 0-1 to percentage
