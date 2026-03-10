@@ -25,7 +25,7 @@ if pgrep -x "redis-server" > /dev/null; then
     echo "   ✅ Redis ya está corriendo (PID: $(pgrep -x redis-server))"
 else
     echo "   ⚠️  Redis no está corriendo, iniciando..."
-    if [ -f "scripts/bash/start_redis.sh" ]; then
+        if [[ -f "scripts/bash/start_redis.sh" ]]; then
         # Temporalmente desactivar set -e para que no falle si Redis ya está corriendo
         set +e
         bash scripts/bash/start_redis.sh
@@ -36,18 +36,18 @@ else
         if pgrep -x "redis-server" > /dev/null; then
             echo "   ✅ Redis iniciado correctamente"
         else
-            echo "   ❌ Error: No se pudo iniciar Redis"
-            echo "   💡 Intenta manualmente: bash scripts/bash/start_redis.sh"
+            echo "   ❌ Error: No se pudo iniciar Redis" >&2
+            echo "   💡 Intenta manualmente: bash scripts/bash/start_redis.sh" >&2
             exit 1
         fi
     else
-        echo "   ❌ Error: Script start_redis.sh no encontrado"
+        echo "   ❌ Error: Script start_redis.sh no encontrado" >&2
         exit 1
     fi
 fi
 echo ""
 
-# 2. Verificar e iniciar Background Updater
+# 2. Verificarar e iniciar Background Updater
 echo "2️⃣  Verificando Background Updater..."
 if command -v pm2 &> /dev/null; then
     # Buscar cualquier proceso que contenga "background-updater"
@@ -56,12 +56,12 @@ if command -v pm2 &> /dev/null; then
         BACKGROUND_RUNNING=true
     fi
 
-    if [ "$BACKGROUND_RUNNING" = true ]; then
+    if [[ "$BACKGROUND_RUNNING" == true ]]; then
         BACKGROUND_NAME=$(pm2 list 2>/dev/null | grep "background-updater" | awk '{print $2}' | head -1)
         echo "   ✅ Background updater ya está corriendo en PM2 (nombre: ${BACKGROUND_NAME:-background-updater})"
     else
         echo "   ⚠️  Background updater no está corriendo, iniciando..."
-        if [ -f "scripts/bash/start_background_updater.sh" ]; then
+        if [[ -f "scripts/bash/start_background_updater.sh" ]]; then
             # Ejecutar en modo no interactivo
             NO_INTERACTIVE=1 bash scripts/bash/start_background_updater.sh
 
@@ -99,8 +99,8 @@ fi
 
 # Verificar que el puerto esté libre ahora
 if lsof -ti:"${PORT}" > /dev/null 2>&1; then
-    echo "❌ Error: No se pudo liberar el puerto ${PORT}"
-    echo "   Ejecuta manualmente: lsof -ti:\"${PORT}\" | xargs kill -9"
+    echo "❌ Error: No se pudo liberar el puerto ${PORT}" >&2
+    echo "   Ejecuta manualmente: lsof -ti:\"${PORT}\" | xargs kill -9" >&2
     exit 1
 fi
 
@@ -108,10 +108,10 @@ echo "✅ Puerto ${PORT} libre"
 echo ""
 
 # Verificar que existe .env
-if [ ! -f .env ]; then
+if [[ ! -f .env ]]; then
     echo "⚠️  Archivo .env no encontrado"
     echo "   Creando .env desde .env.example si existe..."
-    if [ -f .env.example ]; then
+    if [[ -f .env.example ]]; then
         cp .env.example .env
         echo "   ✅ .env creado desde .env.example"
     else
@@ -124,9 +124,9 @@ echo "📋 Verificando configuración..."
 
 # Determinar el ambiente desde .env o usar 'local' por defecto
 ENV_MODE="local"
-if [ -f .env ]; then
+if [[ -f .env ]]; then
     ENV_VALUE=$(grep "^ENVIRONMENT=" .env 2>/dev/null | cut -d'=' -f2 | tr -d '"' | tr -d "'" | tr '[:lower:]' '[:upper:]' || echo "")
-    if [ -n "$ENV_VALUE" ]; then
+    if [[ -n "$ENV_VALUE" ]]; then
         ENV_MODE=$(echo "$ENV_VALUE" | tr '[:upper:]' '[:lower:]')
     fi
 fi
@@ -134,7 +134,7 @@ fi
 # Verificar variables de base de datos según el ambiente
 # El sistema construye DATABASE_URL automáticamente desde POSTGRES_*_LOCAL, etc.
 DB_VARS_OK=true
-if [ -f .env ]; then
+if [[ -f .env ]]; then
     if grep -qE "^(POSTGRES_USER|POSTGRES_USER_${ENV_MODE^^})=" .env 2>/dev/null && \
        grep -qE "^(POSTGRES_PASSWORD|POSTGRES_PASSWORD_${ENV_MODE^^})=" .env 2>/dev/null && \
        grep -qE "^(POSTGRES_HOST|POSTGRES_HOST_${ENV_MODE^^})=" .env 2>/dev/null && \
@@ -168,7 +168,7 @@ echo "   Presiona Ctrl+C para detener"
 echo ""
 
 # Activar venv si existe
-if [ -d "venv" ]; then
+if [[ -d "venv" ]]; then
     source venv/bin/activate
     echo "✅ Virtual environment activado"
     echo ""
