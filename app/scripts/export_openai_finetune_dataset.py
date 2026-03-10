@@ -215,7 +215,7 @@ def _matching_solution(task_row: TaskORM, solution_id: str | None) -> TaskSoluti
             if s.solution_id == solution_id:
                 return s
     # Fallback: first solution row (solutions is non-empty here)
-    return solutions[0] if solutions else None
+    return next(iter(solutions), None)
 
 
 async def _iter_task_batches(session: AsyncSession, batch_size: int) -> AsyncIterator[list[TaskORM]]:
