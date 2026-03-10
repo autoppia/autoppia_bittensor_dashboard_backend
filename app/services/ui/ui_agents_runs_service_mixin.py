@@ -437,6 +437,8 @@ class UIAgentsRunsServiceMixin:
 
         performance_by_website: List[Dict[str, Any]] = []
         avg_cost_per_task: Optional[float] = None
+        derived_tasks_received: Optional[int] = None
+        derived_tasks_success: Optional[int] = None
 
         def _website_key_from_url(raw_url: Optional[str]) -> str:
             if not isinstance(raw_url, str) or not raw_url.strip():
@@ -564,6 +566,8 @@ class UIAgentsRunsServiceMixin:
 
         if source_agent_run_ids:
             by_website: Dict[str, Dict[str, Any]] = {}
+            total_task_rows = 0
+            total_success_rows = 0
             for source_agent_run_id in source_agent_run_ids:
                 task_rows = (
                     (
@@ -601,6 +605,7 @@ class UIAgentsRunsServiceMixin:
                     .all()
                 )
                 for row in task_rows:
+                    total_task_rows += 1
                     actions = row.get("actions") or []
                     website = str(row.get("web_project_id") or "").strip() or _website_key_from_url(row.get("task_url"))
                     action_url = None
@@ -617,12 +622,15 @@ class UIAgentsRunsServiceMixin:
                     score = float(row.get("evaluation_score") or 0.0)
                     if score > 0:
                         item["tasks_success"] += 1
+                        total_success_rows += 1
             for entry in by_website.values():
                 tasks_received = int(entry["tasks_received"] or 0)
                 tasks_success = int(entry["tasks_success"] or 0)
                 entry["success_rate"] = (tasks_success / tasks_received) if tasks_received > 0 else 0.0
                 performance_by_website.append(entry)
             performance_by_website.sort(key=lambda x: x["tasks_received"], reverse=True)
+            derived_tasks_received = total_task_rows
+            derived_tasks_success = total_success_rows
         if canonical_avg_cost is not None and canonical_avg_cost > 0:
             avg_cost_per_task = canonical_avg_cost
 
@@ -676,13 +684,15 @@ class UIAgentsRunsServiceMixin:
 
         best_round_number = int(best_round_history_row["round_number_in_season"]) if best_round_history_row.get("round_number_in_season") is not None else round_in_season
         best_round_matches_selected = requested_round_in_season is None or int(round_in_season) == int(best_round_number)
+        best_round_tasks_received = derived_tasks_received if derived_tasks_received is not None else total_tasks
+        best_round_tasks_success = derived_tasks_success if derived_tasks_success is not None else success_tasks
         best_round_payload = (
             {
                 "round": int(best_round_number),
                 "post_consensus_avg_reward": reward,
                 "post_consensus_avg_eval_time": avg_time,
-                "tasks_received": total_tasks,
-                "tasks_success": success_tasks,
+                "tasks_received": best_round_tasks_received,
+                "tasks_success": best_round_tasks_success,
                 "validators_count": len(validators),
                 "post_consensus_avg_cost": avg_cost_per_task,
                 "performanceByWebsite": performance_by_website,
