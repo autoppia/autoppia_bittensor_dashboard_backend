@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import defer, selectinload
@@ -197,7 +197,7 @@ class ValidatorStorageRoundsMixin:
         self,
         *,
         validator_round_id: str,
-        miner_uid: Optional[int] = None,
+        miner_uid: int | None = None,
     ) -> None:
         """Keep round_validator_miners reuse flags aligned with miner_evaluation_runs."""
         sql_base = """
@@ -226,7 +226,7 @@ class ValidatorStorageRoundsMixin:
               AND mer.validator_round_id = rv.validator_round_id
               AND mer.miner_uid = rvm.miner_uid
         """
-        params: Dict[str, Any] = {"validator_round_id": validator_round_id}
+        params: dict[str, Any] = {"validator_round_id": validator_round_id}
         if miner_uid is not None:
             sql_base += "\n  AND rvm.miner_uid = :miner_uid\n"
             params["miner_uid"] = int(miner_uid)
@@ -274,7 +274,7 @@ class ValidatorStorageRoundsMixin:
                 end_block = round_row.end_block or round_row.start_block
                 round_row.end_epoch = int(block_to_epoch(end_block))
             await self.session.flush()
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Keep start resilient; finish_round also has epoch backfill.
             pass
 
@@ -403,21 +403,21 @@ class ValidatorStorageRoundsMixin:
         validator_round_id: str,
         status: str,
         ended_at: float,
-        agent_runs: Optional[List[Dict[str, Any]]] = None,
-        round_metadata: Optional[Dict[str, Any]] = None,
-        validator_summary: Optional[Dict[str, Any]] = None,
-        local_evaluation: Optional[Dict[str, Any]] = None,
-        post_consensus_evaluation: Optional[Dict[str, Any]] = None,
-        ipfs_uploaded: Optional[Dict[str, Any]] = None,
-        ipfs_downloaded: Optional[Dict[str, Any]] = None,
-        s3_logs: Optional[Dict[str, Any]] = None,
-        validator_state: Optional[Dict[str, Any]] = None,
-        validator_iwap_prev_round_json: Optional[Dict[str, Any]] = None,
+        agent_runs: list[dict[str, Any]] | None = None,
+        round_metadata: dict[str, Any] | None = None,
+        validator_summary: dict[str, Any] | None = None,
+        local_evaluation: dict[str, Any] | None = None,
+        post_consensus_evaluation: dict[str, Any] | None = None,
+        ipfs_uploaded: dict[str, Any] | None = None,
+        ipfs_downloaded: dict[str, Any] | None = None,
+        s3_logs: dict[str, Any] | None = None,
+        validator_state: dict[str, Any] | None = None,
+        validator_iwap_prev_round_json: dict[str, Any] | None = None,
     ) -> None:
         """Mark a validator round as completed."""
         round_row = await self._ensure_round_exists(validator_round_id)
         authoritative_finish = True
-        authority_conflict_reason: Optional[str] = None
+        authority_conflict_reason: str | None = None
         snapshot = getattr(round_row, "validator_snapshot", None)
         if snapshot is not None:
             try:
@@ -448,43 +448,43 @@ class ValidatorStorageRoundsMixin:
                 persisted_round_in_season = int(getattr(round_row, "round_number_in_season", 0) or 0)
                 if persisted_round_in_season > 0:
                     round_metadata["round_number"] = persisted_round_in_season
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 rb = round_metadata.get("start_block")
                 if rb is not None and int(rb) > 0 and (getattr(round_row, "start_block", None) in (None, 0)):
                     round_row.start_block = int(rb)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 rb = round_metadata.get("end_block")
                 if rb is not None and int(rb) > 0 and (getattr(round_row, "end_block", None) in (None, 0)):
                     round_row.end_block = int(rb)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 re = round_metadata.get("start_epoch")
                 if re is not None and int(re) > 0 and (getattr(round_row, "start_epoch", None) in (None, 0)):
                     round_row.start_epoch = int(re)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 re = round_metadata.get("end_epoch")
                 if re is not None and int(re) > 0 and (getattr(round_row, "end_epoch", None) in (None, 0)):
                     round_row.end_epoch = int(re)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 rs = round_metadata.get("started_at")
                 if rs is not None and (getattr(round_row, "started_at", None) in (None, 0)):
                     round_row.started_at = float(rs)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 ra = round_metadata.get("ended_at")
                 if ra is not None and (getattr(round_row, "ended_at", None) in (None, 0)):
                     round_row.ended_at = float(ra)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Ensure start/end epoch are populated even when testing overrides bypassed chain-boundary fill
         try:
@@ -496,7 +496,7 @@ class ValidatorStorageRoundsMixin:
                     round_row.start_epoch = int(block_to_epoch(round_row.start_block))
                 if getattr(round_row, "end_epoch", None) is None:
                     round_row.end_epoch = int(block_to_epoch(round_row.end_block or round_row.start_block))
-        except Exception:
+        except Exception:  # noqa: BLE001
             # If boundary computation fails, proceed without blocking finish
             pass
 
@@ -523,7 +523,7 @@ class ValidatorStorageRoundsMixin:
             alpha_price = get_price(netuid=settings.VALIDATOR_NETUID)
             if alpha_price <= 0:
                 alpha_price = float(settings.SUBNET_PRICE_FALLBACK)
-        except Exception:
+        except Exception:  # noqa: BLE001
             alpha_price = float(settings.SUBNET_PRICE_FALLBACK)
 
         if round_metadata and isinstance(round_metadata, dict):
@@ -581,12 +581,12 @@ class ValidatorStorageRoundsMixin:
                             rs.get("miner_scores").items(),
                             key=lambda kv: float(kv[1] or 0.0),
                         )[0]
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         inferred_uid = None
                 if inferred_uid is not None:
                     try:
                         winner_obj["miner_uid"] = int(inferred_uid)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     rs["winner"] = winner_obj
                     pre_summary["round_summary"] = rs
@@ -598,7 +598,7 @@ class ValidatorStorageRoundsMixin:
                 if inferred_season_uid is not None:
                     try:
                         season_summary["current_winner_uid"] = int(inferred_season_uid)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             pre_summary["season_summary"] = season_summary
             merged["evaluation_pre_consensus"] = pre_summary
@@ -644,15 +644,15 @@ class ValidatorStorageRoundsMixin:
                     "validator_iwap_prev_round_json": json.dumps(validator_iwap_prev_round_json) if validator_iwap_prev_round_json is not None else None,
                 },
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.exception("finish_round: failed to synchronize summaries into round_validators")
 
-        rank_map: Dict[str, Optional[int]] = {}
-        weight_map: Dict[str, Optional[float]] = {}
-        zero_reason_map: Dict[str, Optional[str]] = {}
-        is_reused_map: Dict[str, bool] = {}
-        reused_from_map: Dict[str, Optional[str]] = {}
-        agent_runs_by_id: Dict[str, Dict[str, Any]] = {}
+        rank_map: dict[str, int | None] = {}
+        weight_map: dict[str, float | None] = {}
+        zero_reason_map: dict[str, str | None] = {}
+        is_reused_map: dict[str, bool] = {}
+        reused_from_map: dict[str, str | None] = {}
+        agent_runs_by_id: dict[str, dict[str, Any]] = {}
         if agent_runs:
             for agent_run_data in agent_runs:
                 agent_run_id = agent_run_data.get("agent_run_id")
@@ -827,12 +827,12 @@ class ValidatorStorageRoundsMixin:
         await self._enrich_validator_summary_post_consensus_from_db(round_row)
         try:
             await self._sync_round_validators_post_consensus_json(round_row)
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.exception("finish_round: failed to sync enriched post-consensus summary into round_validators")
         if authoritative_finish:
             try:
                 await self._upsert_round_outcome_from_summary(round_row)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.exception("finish_round: failed to upsert round_outcomes from summary tables")
         else:
             logger.info(
@@ -864,7 +864,7 @@ class ValidatorStorageRoundsMixin:
         await self.session.flush()
 
         # Snapshots (1:1 relationship - only one snapshot per round)
-        validator_snapshot_ids: List[int] = []
+        validator_snapshot_ids: list[int] = []
         if payload.validator_snapshots:
             # Take the first snapshot (should only be one)
             snapshot = payload.validator_snapshots[0]
@@ -874,13 +874,13 @@ class ValidatorStorageRoundsMixin:
             )
             validator_snapshot_ids.append(row.id)
 
-        miner_snapshot_ids: List[int] = []
+        miner_snapshot_ids: list[int] = []
         for snapshot in payload.miner_snapshots:
             row = await self._upsert_miner_snapshot(round_row, snapshot)
             miner_snapshot_ids.append(row.id)
 
         # Agent runs
-        agent_run_ids: List[str] = []
+        agent_run_ids: list[str] = []
         for agent_run in payload.agent_evaluation_runs:
             kwargs = self._agent_run_kwargs(agent_run)
             stmt = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == agent_run.agent_run_id)
@@ -895,7 +895,7 @@ class ValidatorStorageRoundsMixin:
         task_ids = [task.task_id for task in payload.tasks]
 
         # Task solutions
-        task_solution_ids: List[str] = []
+        task_solution_ids: list[str] = []
         for solution in payload.task_solutions:
             kwargs = self._task_solution_kwargs(solution)
             stmt = select(TaskSolutionORM).where(TaskSolutionORM.solution_id == solution.solution_id)
@@ -906,9 +906,9 @@ class ValidatorStorageRoundsMixin:
             task_solution_ids.append(solution.solution_id)
 
         # Evaluations
-        evaluation_ids: List[str] = []
-        evaluation_rows: Dict[str, EvaluationORM] = {}
-        execution_histories: List[tuple[EvaluationORM, list]] = []  # Store for later creation
+        evaluation_ids: list[str] = []
+        evaluation_rows: dict[str, EvaluationORM] = {}
+        execution_histories: list[tuple[EvaluationORM, list]] = []  # Store for later creation
 
         for evaluation in payload.evaluations:
             kwargs = self._evaluation_kwargs(evaluation)
@@ -998,12 +998,12 @@ class ValidatorStorageRoundsMixin:
     async def ensure_round_exists_or_create_minimal_for_round_log(
         self,
         validator_round_id: str,
-        season: Optional[int],
-        round_in_season: Optional[int],
-        validator_uid: Optional[int],
-        validator_hotkey: Optional[str],
+        season: int | None,
+        round_in_season: int | None,
+        validator_uid: int | None,
+        validator_hotkey: str | None,
         *,
-        owner_hotkey_from_request: Optional[str] = None,
+        owner_hotkey_from_request: str | None = None,
     ) -> ValidatorRoundORM:
         """
         Return the round row, creating a minimal round + validator snapshot if the round
@@ -1056,9 +1056,9 @@ class ValidatorStorageRoundsMixin:
     async def ensure_unique_round_number(
         self,
         validator_uid: int,
-        round_number: Optional[int],
+        round_number: int | None,
         *,
-        exclude_round_id: Optional[str] = None,
+        exclude_round_id: str | None = None,
     ) -> None:
         """DEPRECATED: Public wrapper to guard against duplicate round numbers."""
         await self._ensure_unique_round_number(validator_uid, round_number, exclude_round_id=exclude_round_id)
