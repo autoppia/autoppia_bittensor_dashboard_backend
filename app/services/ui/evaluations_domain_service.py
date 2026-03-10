@@ -4,7 +4,6 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
 
 import asyncpg
 from sqlalchemy import select
@@ -61,7 +60,7 @@ from app.services.ui.ui_shared_helpers import (
 logger = logging.getLogger(__name__)
 
 
-def _get_validator_uid_from_context(context: "EvaluationContext") -> Optional[int]:
+def _get_validator_uid_from_context(context: "EvaluationContext") -> int | None:
     if hasattr(context.round, "validator_info") and context.round.validator_info:
         return context.round.validator_info.uid
     if hasattr(context.round, "validators") and context.round.validators:
@@ -86,12 +85,12 @@ class EvaluationsDomainServiceMixin:
         self,
         page: int,
         limit: int,
-        run_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        validator_id: Optional[str] = None,
-        task_id: Optional[str] = None,
-        round_id: Optional[int] = None,
-    ) -> Dict[str, object]:
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        validator_id: str | None = None,
+        task_id: str | None = None,
+        round_id: int | None = None,
+    ) -> dict[str, object]:
         """
         Lista evaluaciones con paginación optimizada en SQL.
 
@@ -174,8 +173,8 @@ class EvaluationsDomainServiceMixin:
                 context = EvaluationsDomainServiceMixin._build_context(self, evaluation_row)
                 item = self._build_list_item(context)
                 items.append(item)
-            except Exception as e:
-                logger.warning(f"Error building context for evaluation {evaluation_row.evaluation_id}: {e}")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Error building context for evaluation %s: %s", evaluation_row.evaluation_id, e)
                 continue
 
         return {
@@ -185,7 +184,7 @@ class EvaluationsDomainServiceMixin:
             "limit": limit,
         }
 
-    async def export_evaluations_by_season(self, season: int) -> List[Dict[str, object]]:
+    async def export_evaluations_by_season(self, season: int) -> list[dict[str, object]]:
         stmt = (
             select(
                 EvaluationORM,
@@ -206,7 +205,7 @@ class EvaluationsDomainServiceMixin:
         )
 
         rows = (await self.session.execute(stmt)).all()
-        export_items: List[Dict[str, object]] = []
+        export_items: list[dict[str, object]] = []
         for evaluation_row, season_number, round_number_in_season in rows:
             export_items.append(
                 {
@@ -370,7 +369,7 @@ class EvaluationsDomainServiceMixin:
             useCaseMetadata=(dict(context.task.use_case) if isinstance(context.task.use_case, dict) else {}),
         )
 
-        actions: List[Action] = []
+        actions: list[Action] = []
         for index, action in enumerate(context.task_solution.actions):
             selector = None
             value = None
@@ -413,7 +412,7 @@ class EvaluationsDomainServiceMixin:
         return EvaluationStatus.PENDING
 
     @staticmethod
-    def _format_timestamp(value: Optional[float]) -> Optional[str]:
+    def _format_timestamp(value: float | None) -> str | None:
         if value is None:
             return None
         try:
@@ -422,7 +421,7 @@ class EvaluationsDomainServiceMixin:
             return None
 
     @staticmethod
-    def _extract_use_case(task: Task) -> Optional[str]:
+    def _extract_use_case(task: Task) -> str | None:
         if isinstance(task.use_case, dict):
             return task.use_case.get("name")
         if isinstance(task.use_case, str):
@@ -492,7 +491,7 @@ class EvaluationsDomainServiceMixin:
                 )
             else:
                 pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         result = Evaluation(**data)
         return result
@@ -535,7 +534,7 @@ class EvaluationsDomainServiceMixin:
     @staticmethod
     def _deserialize_agent_run(
         agent_run_row: AgentEvaluationRunORM,
-        round_row: Optional[ValidatorRoundORM],
+        round_row: ValidatorRoundORM | None,
     ) -> AgentEvaluationRun:
         miner_snapshot = None
         if round_row is not None:
