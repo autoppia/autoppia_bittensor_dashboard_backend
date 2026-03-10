@@ -29,6 +29,12 @@ except ImportError:
 # Use PostgreSQL JSONB (required for this app)
 JSON = _PG_JSONB
 
+# Sonar S1192: shared literals for relationship cascade and foreign keys
+CASCADE_ALL_DELETE_ORPHAN = "all, delete-orphan"
+FK_VALIDATOR_ROUNDS_ROUND_ID = "validator_rounds.validator_round_id"
+FK_MINER_EVAL_RUNS_AGENT_RUN_ID = "miner_evaluation_runs.agent_run_id"
+FK_TASKS_TASK_ID = "tasks.task_id"
+
 
 def utcnow() -> datetime:
     """Return the current UTC time."""
@@ -85,27 +91,27 @@ class ValidatorRoundORM(TimestampMixin, Base):
     validator_snapshot: Mapped["ValidatorRoundValidatorORM"] = relationship(
         back_populates="validator_round",
         uselist=False,  # 1:1 relationship
-        cascade="all, delete-orphan",
+        cascade=CASCADE_ALL_DELETE_ORPHAN,
     )
     miner_snapshots: Mapped[list["ValidatorRoundMinerORM"]] = relationship(
         back_populates="validator_round",
-        cascade="all, delete-orphan",
+        cascade=CASCADE_ALL_DELETE_ORPHAN,
     )
     agent_runs: Mapped[list["AgentEvaluationRunORM"]] = relationship(
         back_populates="validator_round",
-        cascade="all, delete-orphan",
+        cascade=CASCADE_ALL_DELETE_ORPHAN,
     )
     tasks: Mapped[list["TaskORM"]] = relationship(
         back_populates="validator_round",
-        cascade="all, delete-orphan",
+        cascade=CASCADE_ALL_DELETE_ORPHAN,
     )
     evaluations: Mapped[list["EvaluationORM"]] = relationship(
         back_populates="validator_round",
-        cascade="all, delete-orphan",
+        cascade=CASCADE_ALL_DELETE_ORPHAN,
     )
     round_summaries: Mapped[list["ValidatorRoundSummaryORM"]] = relationship(
         back_populates="validator_round",
-        cascade="all, delete-orphan",
+        cascade=CASCADE_ALL_DELETE_ORPHAN,
     )
 
     @property
@@ -138,7 +144,7 @@ class ValidatorRoundValidatorORM(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     validator_round_id: Mapped[str] = mapped_column(
-        ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
+        ForeignKey(FK_VALIDATOR_ROUNDS_ROUND_ID, ondelete="CASCADE"),
         nullable=False,
         unique=True,  # 1:1 relationship
     )
@@ -176,7 +182,7 @@ class ValidatorRoundMinerORM(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     validator_round_id: Mapped[str] = mapped_column(
-        ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
+        ForeignKey(FK_VALIDATOR_ROUNDS_ROUND_ID, ondelete="CASCADE"),
         nullable=False,
     )
     miner_uid: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
@@ -213,7 +219,7 @@ class ValidatorRoundSummaryORM(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     validator_round_id: Mapped[str] = mapped_column(
-        ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
+        ForeignKey(FK_VALIDATOR_ROUNDS_ROUND_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -258,7 +264,7 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     agent_run_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     validator_round_id: Mapped[str] = mapped_column(
-        ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
+        ForeignKey(FK_VALIDATOR_ROUNDS_ROUND_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -284,7 +290,7 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     is_reused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     reused_from_agent_run_id: Mapped[str | None] = mapped_column(
         String(128),
-        ForeignKey("miner_evaluation_runs.agent_run_id", ondelete="SET NULL"),
+        ForeignKey(FK_MINER_EVAL_RUNS_AGENT_RUN_ID, ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -292,8 +298,8 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     zero_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="agent_runs")
-    task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(back_populates="agent_run", cascade="all, delete-orphan")
-    evaluations: Mapped[list["EvaluationORM"]] = relationship(back_populates="agent_run", cascade="all, delete-orphan")
+    task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(back_populates="agent_run", cascade=CASCADE_ALL_DELETE_ORPHAN)
+    evaluations: Mapped[list["EvaluationORM"]] = relationship(back_populates="agent_run", cascade=CASCADE_ALL_DELETE_ORPHAN)
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +319,7 @@ class TaskORM(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     validator_round_id: Mapped[str] = mapped_column(
-        ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
+        ForeignKey(FK_VALIDATOR_ROUNDS_ROUND_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -326,8 +332,8 @@ class TaskORM(TimestampMixin, Base):
     use_case: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="tasks")
-    task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(back_populates="task", cascade="all, delete-orphan")
-    evaluations: Mapped[list["EvaluationORM"]] = relationship(back_populates="task", cascade="all, delete-orphan")
+    task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(back_populates="task", cascade=CASCADE_ALL_DELETE_ORPHAN)
+    evaluations: Mapped[list["EvaluationORM"]] = relationship(back_populates="task", cascade=CASCADE_ALL_DELETE_ORPHAN)
 
     @property
     def data(self) -> dict[str, Any]:
@@ -356,14 +362,14 @@ class TaskSolutionORM(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     solution_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.task_id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey(FK_TASKS_TASK_ID, ondelete="CASCADE"), nullable=False, index=True)
     agent_run_id: Mapped[str] = mapped_column(
-        ForeignKey("miner_evaluation_runs.agent_run_id", ondelete="CASCADE"),
+        ForeignKey(FK_MINER_EVAL_RUNS_AGENT_RUN_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     validator_round_id: Mapped[str] = mapped_column(
-        ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
+        ForeignKey(FK_VALIDATOR_ROUNDS_ROUND_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -377,7 +383,7 @@ class TaskSolutionORM(TimestampMixin, Base):
 
     task: Mapped["TaskORM"] = relationship(back_populates="task_solutions")
     agent_run: Mapped["AgentEvaluationRunORM"] = relationship(back_populates="task_solutions")
-    evaluations: Mapped[list["EvaluationORM"]] = relationship(back_populates="task_solution", cascade="all, delete-orphan")
+    evaluations: Mapped[list["EvaluationORM"]] = relationship(back_populates="task_solution", cascade=CASCADE_ALL_DELETE_ORPHAN)
 
     @property
     def data(self) -> dict[str, Any]:
@@ -412,16 +418,16 @@ class EvaluationORM(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     evaluation_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     validator_round_id: Mapped[str] = mapped_column(
-        ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
+        ForeignKey(FK_VALIDATOR_ROUNDS_ROUND_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     agent_run_id: Mapped[str] = mapped_column(
-        ForeignKey("miner_evaluation_runs.agent_run_id", ondelete="CASCADE"),
+        ForeignKey(FK_MINER_EVAL_RUNS_AGENT_RUN_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.task_id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey(FK_TASKS_TASK_ID, ondelete="CASCADE"), nullable=False, index=True)
     task_solution_id: Mapped[str] = mapped_column(
         ForeignKey("task_solutions.solution_id", ondelete="CASCADE"),
         nullable=False,
@@ -448,11 +454,11 @@ class EvaluationORM(TimestampMixin, Base):
     execution_history_record: Mapped["EvaluationExecutionHistoryORM | None"] = relationship(
         back_populates="evaluation",
         uselist=False,
-        cascade="all, delete-orphan",
+        cascade=CASCADE_ALL_DELETE_ORPHAN,
     )
     llm_usage: Mapped[list["EvaluationLLMUsageORM"]] = relationship(
         back_populates="evaluation",
-        cascade="all, delete-orphan",
+        cascade=CASCADE_ALL_DELETE_ORPHAN,
     )
 
     @property
@@ -537,17 +543,17 @@ class TaskExecutionLogORM(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_id: Mapped[str] = mapped_column(
-        ForeignKey("tasks.task_id", ondelete="CASCADE"),
+        ForeignKey(FK_TASKS_TASK_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     agent_run_id: Mapped[str] = mapped_column(
-        ForeignKey("miner_evaluation_runs.agent_run_id", ondelete="CASCADE"),
+        ForeignKey(FK_MINER_EVAL_RUNS_AGENT_RUN_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     validator_round_id: Mapped[str] = mapped_column(
-        ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
+        ForeignKey(FK_VALIDATOR_ROUNDS_ROUND_ID, ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
