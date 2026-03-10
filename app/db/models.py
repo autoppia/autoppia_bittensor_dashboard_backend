@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    inspect,
     String,
     Text,
     UniqueConstraint,
@@ -25,12 +26,8 @@ except ImportError:
     raise ImportError("PostgreSQL dialect not available - install asyncpg")
 
 
-def _select_json_type():
-    """Always return JSONB for PostgreSQL."""
-    return _PG_JSONB
-
-
-JSON = _select_json_type()
+# Use PostgreSQL JSONB (required for this app)
+JSON = _PG_JSONB
 
 
 def utcnow() -> datetime:
@@ -61,29 +58,29 @@ class ValidatorRoundORM(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     validator_round_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
-    season_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    round_number_in_season: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    season_number: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    round_number_in_season: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     start_block: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_block: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    end_block: Mapped[int | None] = mapped_column(Integer, nullable=True)
     start_epoch: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_epoch: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    end_epoch: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     started_at: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    ended_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ended_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     n_tasks: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
-    validator_summary: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    s3_logs: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    validator_summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    s3_logs: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # Consensus decision snapshot (round-level, queryable source of truth)
-    winner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    winner_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    reigning_uid_before_round: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    reigning_score_before_round: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    top_candidate_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    top_candidate_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    required_improvement_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    dethroned: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, index=True)
+    winner_uid: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    winner_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reigning_uid_before_round: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    reigning_score_before_round: Mapped[float | None] = mapped_column(Float, nullable=True)
+    top_candidate_uid: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    top_candidate_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    required_improvement_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    dethroned: Mapped[bool | None] = mapped_column(Boolean, nullable=True, index=True)
 
     validator_snapshot: Mapped["ValidatorRoundValidatorORM"] = relationship(
         back_populates="validator_round",
@@ -147,16 +144,16 @@ class ValidatorRoundValidatorORM(TimestampMixin, Base):
     )
     validator_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     validator_hotkey: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    validator_coldkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    validator_coldkey: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    name: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-    stake: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    vtrust: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
-    version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    stake: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vtrust: Mapped[float | None] = mapped_column(Float, nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    version: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Validator configuration used during this round
-    config: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True, default=None)
+    config: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(
         back_populates="validator_snapshot",
@@ -182,15 +179,15 @@ class ValidatorRoundMinerORM(TimestampMixin, Base):
         ForeignKey("validator_rounds.validator_round_id", ondelete="CASCADE"),
         nullable=False,
     )
-    miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    miner_hotkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
-    miner_coldkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    miner_uid: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    miner_hotkey: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    miner_coldkey: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     name: Mapped[str] = mapped_column(String(256), nullable=False)
-    image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
-    github_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    github_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     is_sota: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    version: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="miner_snapshots")
 
@@ -221,25 +218,25 @@ class ValidatorRoundSummaryORM(TimestampMixin, Base):
         index=True,
     )
     miner_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    miner_hotkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    miner_hotkey: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
 
     # Local evaluation (pre-consensus, from this validator)
-    local_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    local_avg_reward: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    local_avg_eval_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    local_avg_eval_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    local_tasks_received: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    local_tasks_success: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    local_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    local_avg_reward: Mapped[float | None] = mapped_column(Float, nullable=True)
+    local_avg_eval_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    local_avg_eval_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    local_tasks_received: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    local_tasks_success: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Post-consensus evaluation (aggregated from all validators)
-    post_consensus_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    post_consensus_avg_reward: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    post_consensus_avg_eval_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    post_consensus_avg_eval_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    post_consensus_tasks_received: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    post_consensus_tasks_success: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    subnet_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True, comment="Subnet price (alpha to TAO rate) at the time of this round")
+    post_consensus_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    post_consensus_avg_reward: Mapped[float | None] = mapped_column(Float, nullable=True)
+    post_consensus_avg_eval_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    post_consensus_avg_eval_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    post_consensus_tasks_received: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    post_consensus_tasks_success: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    subnet_price: Mapped[float | None] = mapped_column(Float, nullable=True, comment="Subnet price (alpha to TAO rate) at the time of this round")
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="round_summaries")
 
@@ -267,17 +264,17 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     )
     # validator_uid and validator_hotkey removed - obtain via validator_round.validator_snapshot
 
-    miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    miner_hotkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    miner_uid: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    miner_hotkey: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     # is_sota and version removed - obtain via validator_round.miner_snapshots
 
     started_at: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    ended_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    elapsed_sec: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ended_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    elapsed_sec: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    average_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    average_execution_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    average_reward: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    average_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    average_execution_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    average_reward: Mapped[float | None] = mapped_column(Float, nullable=True)
     total_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     success_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -285,14 +282,14 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     is_reused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    reused_from_agent_run_id: Mapped[Optional[str]] = mapped_column(
+    reused_from_agent_run_id: Mapped[str | None] = mapped_column(
         String(128),
         ForeignKey("miner_evaluation_runs.agent_run_id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     # Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, all_tasks_failed)
-    zero_reason: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    zero_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="agent_runs")
     task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(back_populates="agent_run", cascade="all, delete-orphan")
@@ -320,8 +317,8 @@ class TaskORM(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    web_project_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    web_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    web_project_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    web_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     specifications: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -373,8 +370,8 @@ class TaskSolutionORM(TimestampMixin, Base):
     validator_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     validator_hotkey: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
 
-    miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    miner_hotkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    miner_uid: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    miner_hotkey: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
 
     actions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
 
@@ -430,25 +427,25 @@ class EvaluationORM(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    miner_hotkey: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    miner_uid: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    miner_hotkey: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     validator_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     validator_hotkey: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
 
     evaluation_score: Mapped[float] = mapped_column("evaluation_score", Float, nullable=False, default=0.0)  # Evaluation score (tests/actions only, 0-1)
     reward: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # Reward value (evaluation_score + time_score, used for consensus)
     evaluation_time: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    gif_recording: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    gif_recording: Mapped[str | None] = mapped_column(Text, nullable=True)
     extra_info: Mapped[dict[str, Any]] = mapped_column("extra_info", JSON, nullable=False, default=dict)  # e.g. timeout flag; was "meta"
     # Reason for score 0 at evaluation level (e.g. task_timeout, tests_failed)
-    zero_reason: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    zero_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # LLM usage: only in evaluation_llm_usage table (relationship llm_usage), not duplicated here
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="evaluations")
     task: Mapped["TaskORM"] = relationship(back_populates="evaluations")
     task_solution: Mapped["TaskSolutionORM"] = relationship(back_populates="evaluations")
     agent_run: Mapped["AgentEvaluationRunORM"] = relationship(back_populates="evaluations")
-    execution_history_record: Mapped[Optional["EvaluationExecutionHistoryORM"]] = relationship(
+    execution_history_record: Mapped["EvaluationExecutionHistoryORM | None"] = relationship(
         back_populates="evaluation",
         uselist=False,
         cascade="all, delete-orphan",
@@ -516,10 +513,10 @@ class EvaluationLLMUsageORM(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     evaluation: Mapped["EvaluationORM"] = relationship(back_populates="llm_usage")
 
@@ -554,12 +551,12 @@ class TaskExecutionLogORM(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    validator_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    miner_uid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    season: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    round_in_season: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    validator_uid: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    miner_uid: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    season: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    round_in_season: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     payload_ref: Mapped[str] = mapped_column(String(512), nullable=False)
-    payload_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    payload_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 # ---------------------------------------------------------------------------
