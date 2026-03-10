@@ -7,7 +7,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -48,8 +48,8 @@ class TaskExecutionLogUploadResponse(BaseModel):
 @router.post("", response_model=TaskExecutionLogUploadResponse)
 async def upload_task_execution_log(
     request: TaskExecutionLogUploadRequest,
-    session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_validator_auth),
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _: Annotated[dict, Depends(require_validator_auth)],
 ) -> TaskExecutionLogUploadResponse:
     """
     Store a per-task execution log in S3 (gzipped JSON) and save metadata in DB.
