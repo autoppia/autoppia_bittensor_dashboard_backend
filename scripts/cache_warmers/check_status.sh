@@ -1,6 +1,9 @@
 #!/bin/bash
 # Check Status - Verificación rápida del sistema de cache warming
 
+# curl -w format for response time (used in several checks)
+CURL_TIME_FMT='%{time_total}'
+
 echo "╔════════════════════════════════════════════════════════════╗"
 echo "║     AUTOPPIA CACHE WARMING - ESTADO DEL SISTEMA           ║"
 echo "╚════════════════════════════════════════════════════════════╝"
@@ -9,7 +12,7 @@ echo
 # 1. Scripts
 echo "1️⃣  SCRIPTS INSTALADOS:"
 SCRIPTS_COUNT=$(ls -1 /root/cache_warmers/warm_*.sh 2>/dev/null | wc -l)
-if [ "$SCRIPTS_COUNT" -eq 4 ]; then
+if [[ "$SCRIPTS_COUNT" -eq 4 ]]; then
     echo "   ✅ 4 scripts instalados"
     ls -1 /root/cache_warmers/warm_*.sh | sed 's|/root/cache_warmers/||' | sed 's/^/      - /'
 else
@@ -33,7 +36,7 @@ echo
 # 3. Backend
 echo "3️⃣  BACKEND API:"
 if curl -s -f http://localhost:8080/api/v1/overview/metrics > /dev/null 2>&1; then
-    RESPONSE_TIME=$(curl -s -w '%{time_total}' -o /dev/null http://localhost:8080/api/v1/overview/metrics)
+    RESPONSE_TIME=$(curl -s -w "$CURL_TIME_FMT" -o /dev/null http://localhost:8080/api/v1/overview/metrics)
     echo "   ✅ Backend respondiendo"
     echo "      Tiempo: ${RESPONSE_TIME}s"
 else
@@ -45,12 +48,12 @@ echo
 # 4. Última Ejecución
 echo "4️⃣  ÚLTIMA EJECUCIÓN DE WARMERS:"
 for log in /root/cache_warmers/*.log; do
-    if [ -f "$log" ]; then
+    if [[ -f "$log" ]]; then
         LAST_LINE=$(tail -1 "$log" 2>/dev/null)
         LOG_NAME=$(basename "$log" .log)
         MINUTES_AGO=$(( ($(date +%s) - $(stat -c %Y "$log")) / 60 ))
 
-        if [ "$MINUTES_AGO" -lt 15 ]; then
+        if [[ "$MINUTES_AGO" -lt 15 ]]; then
             echo "   ✅ $LOG_NAME: hace $MINUTES_AGO minutos"
         else
             echo "   ⚠️  $LOG_NAME: hace $MINUTES_AGO minutos (antiguo)"
@@ -64,7 +67,7 @@ echo "5️⃣  TEST DE PERFORMANCE:"
 echo "   Probando endpoints críticos..."
 
 # Test metrics
-METRICS_TIME=$(curl -s -w '%{time_total}' -o /dev/null http://localhost:8080/api/v1/overview/metrics)
+METRICS_TIME=$(curl -s -w "$CURL_TIME_FMT" -o /dev/null http://localhost:8080/api/v1/overview/metrics)
 if (( $(echo "$METRICS_TIME < 0.5" | bc -l) )); then
     echo "   ✅ metrics: ${METRICS_TIME}s (RÁPIDO)"
 else
@@ -72,7 +75,7 @@ else
 fi
 
 # Test round 16
-R16_TIME=$(curl -s -w '%{time_total}' -o /dev/null http://localhost:8080/api/v1/rounds/16)
+R16_TIME=$(curl -s -w "$CURL_TIME_FMT" -o /dev/null http://localhost:8080/api/v1/rounds/16)
 if (( $(echo "$R16_TIME < 0.5" | bc -l) )); then
     echo "   ✅ round 16: ${R16_TIME}s (RÁPIDO)"
 else
@@ -80,7 +83,7 @@ else
 fi
 
 # Test round 15
-R15_TIME=$(curl -s -w '%{time_total}' -o /dev/null http://localhost:8080/api/v1/rounds/15)
+R15_TIME=$(curl -s -w "$CURL_TIME_FMT" -o /dev/null http://localhost:8080/api/v1/rounds/15)
 if (( $(echo "$R15_TIME < 0.5" | bc -l) )); then
     echo "   ✅ round 15: ${R15_TIME}s (RÁPIDO)"
 else
@@ -91,7 +94,7 @@ echo
 
 # 6. Resumen
 echo "6️⃣  RESUMEN:"
-if [ "$SCRIPTS_COUNT" -eq 4 ] && [ "$CRON_COUNT" -eq 4 ]; then
+if [[ "$SCRIPTS_COUNT" -eq 4 ]] && [[ "$CRON_COUNT" -eq 4 ]]; then
     echo "   ✅ Sistema funcionando correctamente"
     echo "   📊 22 endpoints siendo pre-calentados automáticamente"
     echo "   ⏰ Próxima ejecución: <2 minutos"
