@@ -953,28 +953,52 @@ class UIRoundsServiceMixin:
                 }
             )
 
+        # Build winner dict with explicit branches to avoid nested conditionals (Sonar S1066)
+        if winner_uid is None:
+            post_consensus_winner = None
+        else:
+            if winner_row:
+                winner_name = winner_row["name"]
+                winner_hotkey = winner_row["miner_hotkey"]
+                winner_github = winner_row["github_url"]
+                winner_avg_reward = float(
+                    winner_row["effective_reward"] or winner_row["post_consensus_avg_reward"] or 0.0
+                )
+                winner_avg_eval_score = float(
+                    winner_row["effective_eval_score"] or winner_row["post_consensus_avg_eval_score"] or 0.0
+                )
+                winner_avg_eval_time = float(
+                    winner_row["effective_eval_time"] or winner_row["post_consensus_avg_eval_time"] or 0.0
+                )
+            else:
+                winner_name = f"miner {winner_uid}"
+                winner_hotkey = None
+                winner_github = None
+                winner_avg_reward = float(outcome["winner_score"] or 0.0)
+                winner_avg_eval_score = 0.0
+                winner_avg_eval_time = 0.0
+            post_consensus_winner = {
+                "uid": winner_uid,
+                "name": winner_name,
+                "image": f"/miners/{winner_uid % 100}.svg",
+                "hotkey": winner_hotkey,
+                "github_url": winner_github,
+                "avg_reward": winner_avg_reward,
+                "avg_eval_score": winner_avg_eval_score,
+                "avg_eval_time": winner_avg_eval_time,
+            }
+
+        raw_summary_value = outcome["post_consensus_summary"] if outcome else None
+
         return {
             "round_number": season * 10000 + round_in_season,
             "season": season,
             "round_in_season": round_in_season,
             "post_consensus_summary": {
-                "winner": (
-                    {
-                        "uid": winner_uid,
-                        "name": (winner_row["name"] if winner_row else f"miner {winner_uid}"),
-                        "image": f"/miners/{winner_uid % 100}.svg",
-                        "hotkey": winner_row["miner_hotkey"] if winner_row else None,
-                        "github_url": winner_row["github_url"] if winner_row else None,
-                        "avg_reward": float(winner_row["effective_reward"] or winner_row["post_consensus_avg_reward"] or 0.0) if winner_row else float(outcome["winner_score"] or 0.0),
-                        "avg_eval_score": float(winner_row["effective_eval_score"] or winner_row["post_consensus_avg_eval_score"] or 0.0) if winner_row else 0.0,
-                        "avg_eval_time": float(winner_row["effective_eval_time"] or winner_row["post_consensus_avg_eval_time"] or 0.0) if winner_row else 0.0,
-                    }
-                    if winner_uid is not None
-                    else None
-                ),
+                "winner": post_consensus_winner,
                 "miners_evaluated": int(miners_evaluated or 0),
                 "tasks_evaluated": int(tasks_evaluated or 0),
-                "raw_summary": outcome["post_consensus_summary"] if outcome else None,
+                "raw_summary": raw_summary_value,
             },
             "validators": validators,
         }
