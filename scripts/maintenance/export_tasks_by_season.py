@@ -11,6 +11,8 @@ Output format matches the benchmark task cache:
 }
 """
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import json
@@ -18,7 +20,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable
+from typing import Any, Iterable
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -84,7 +86,7 @@ async def export_tasks(
     async with AsyncSessionLocal() as session:
         tasks = await _fetch_tasks_by_season(session, season)
 
-    grouped: Dict[str, list[Dict[str, Any]]] = defaultdict(list)
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for task in tasks:
         project_id = task.web_project_id or "unknown"
         if project_filter and project_id not in project_filter:
@@ -96,7 +98,7 @@ async def export_tasks(
         return
 
     timestamp = _now_iso()
-    all_tasks: list[Dict[str, Any]] = []
+    all_tasks: list[dict[str, Any]] = []
     for project_id, project_tasks in grouped.items():
         if limit_per_project is not None:
             project_tasks = project_tasks[:limit_per_project]
