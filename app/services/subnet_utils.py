@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from app.config import settings
 
@@ -37,7 +36,7 @@ def _env_fallback(netuid: int) -> float:
     return 1.0
 
 
-def _try_fetch_price_sync(netuid: int) -> Optional[float]:
+def _try_fetch_price_sync(netuid: int) -> float | None:
     """Best-effort subnet price fetch using bittensor (sync path).
 
     Tries several likely API shapes and falls back gracefully. Returns None on
@@ -45,7 +44,7 @@ def _try_fetch_price_sync(netuid: int) -> Optional[float]:
     """
     try:
         import bittensor as bt  # type: ignore
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
     kwargs = {}
@@ -58,7 +57,7 @@ def _try_fetch_price_sync(netuid: int) -> Optional[float]:
     subtensor = None
     try:
         subtensor = bt.subtensor(**kwargs)  # type: ignore[attr-defined]
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
     try:
@@ -85,9 +84,9 @@ def _try_fetch_price_sync(netuid: int) -> Optional[float]:
                             val = float(getattr(data, key))  # type: ignore[arg-type]
                             if val > 0:
                                 return val
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         continue
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # 2) get_subnet_price(netuid)
@@ -97,7 +96,7 @@ def _try_fetch_price_sync(netuid: int) -> Optional[float]:
                 val = float(fn(int(netuid)))
                 if val > 0:
                     return val
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # 3) Inspect metagraph for any price-like attribute (very defensive)
@@ -119,7 +118,7 @@ def _try_fetch_price_sync(netuid: int) -> Optional[float]:
         if subtensor is not None:
             try:
                 subtensor.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 
@@ -139,7 +138,7 @@ def get_price(netuid: int = 36, ttl_seconds: int = 300) -> float:
         price = get_price_from_redis()
         if price is not None and price > 0:
             return float(price)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Fallback to env
