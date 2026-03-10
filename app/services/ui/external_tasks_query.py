@@ -2,7 +2,7 @@
 External tasks query helpers backed by the current UI data schema tables.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,7 +36,7 @@ PORT_TO_NAME = {
 NAME_TO_PORT = {v: k for k, v in PORT_TO_NAME.items()}
 
 
-def _map_website_port_to_name(url: Optional[str]) -> str:
+def _map_website_port_to_name(url: str | None) -> str:
     """Map localhost:PORT URLs to friendly website names."""
     if not url:
         return "unknown"
@@ -48,22 +48,22 @@ def _map_website_port_to_name(url: Optional[str]) -> str:
         port = str(parsed.port) if parsed.port else None
         if port and port in PORT_TO_NAME:
             return PORT_TO_NAME[port]
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return "unknown"
 
 
-def _map_website_name_to_port(website_name: Optional[str]) -> Optional[str]:
+def _map_website_name_to_port(website_name: str | None) -> str | None:
     """Map website name to port number for SQL filtering."""
     if not website_name:
         return None
     return NAME_TO_PORT.get(website_name.lower())
 
 
-def _normalize_tests(raw_tests: Optional[List[Any]]) -> List[Dict[str, Any]]:
+def _normalize_tests(raw_tests: list[Any] | None) -> list[dict[str, Any]]:
     """Ensure task tests are returned as plain dicts."""
-    normalized: List[Dict[str, Any]] = []
+    normalized: list[dict[str, Any]] = []
     if not raw_tests:
         return normalized
 
@@ -94,21 +94,21 @@ async def get_tasks_with_solutions(
     session: AsyncSession,
     page: int = 1,
     limit: int = 50,
-    task_id: Optional[str] = None,
-    website: Optional[str] = None,
-    use_case: Optional[str] = None,
-    web_version: Optional[str] = None,
-    miner_uid: Optional[int] = None,
-    agent_id: Optional[str] = None,
-    validator_id: Optional[str] = None,
-    round_id: Optional[int] = None,
-    min_score: Optional[float] = None,
-    max_score: Optional[float] = None,
-    status: Optional[str] = None,
-    success: Optional[bool] = None,
+    task_id: str | None = None,
+    website: str | None = None,
+    use_case: str | None = None,
+    web_version: str | None = None,
+    miner_uid: int | None = None,
+    agent_id: str | None = None,
+    validator_id: str | None = None,
+    round_id: int | None = None,
+    min_score: float | None = None,
+    max_score: float | None = None,
+    status: str | None = None,
+    success: bool | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get tasks with their solutions, applying multiple filters.
 
