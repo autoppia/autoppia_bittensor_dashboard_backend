@@ -6,6 +6,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+# Sonar S1192: shared Field description literals
+DESC_AGENT_NAME = "Agent name"
+DESC_TOTAL_NUMBER_OF_RUNS = "Total number of runs"
+DESC_AGENT_IDENTIFIER = "Agent identifier"
+DESC_ROUND_IDENTIFIER = "Round identifier"
+DESC_ITEMS_PER_PAGE = "Items per page"
+
 
 # --- Enums ---
 class AgentType(str, Enum):
@@ -82,7 +89,7 @@ class Agent(BaseModel):
 
     id: str = Field(..., description="Unique agent identifier")
     uid: int | None = Field(None, description="Miner UID")
-    name: str = Field(..., description="Agent name")
+    name: str = Field(..., description=DESC_AGENT_NAME)
     hotkey: str | None = Field(None, description="Miner hotkey")
     type: AgentType = Field(..., description="Agent type")
     imageUrl: str = Field(..., description="URL to agent image/icon")
@@ -92,7 +99,7 @@ class Agent(BaseModel):
     description: str | None = Field(None, description="Agent description")
     version: str | None = Field(None, description="Agent version")
     status: AgentStatus = Field(..., description="Agent status")
-    totalRuns: int = Field(default=0, description="Total number of runs")
+    totalRuns: int = Field(default=0, description=DESC_TOTAL_NUMBER_OF_RUNS)
     successfulRuns: int = Field(default=0, description="Number of successful runs")
     currentScore: float = Field(default=0.0, description="Current score (renamed from average score)")
     currentTopScore: float = Field(default=0.0, description="Current top score (renamed from best score)")
@@ -132,7 +139,7 @@ class AgentRun(BaseModel):
 
     runId: str = Field(..., description="Unique run identifier")
     agentId: str = Field(..., description="Agent identifier")
-    roundId: int = Field(..., description="Round identifier")
+    roundId: int = Field(..., description=DESC_ROUND_IDENTIFIER)
     validatorId: str = Field(..., description="Validator identifier")
     startTime: datetime = Field(..., description="Run start time")
     endTime: datetime | None = Field(None, description="Run end time")
@@ -152,7 +159,7 @@ class AgentActivity(BaseModel):
     id: str = Field(..., description="Unique activity identifier")
     type: ActivityType = Field(..., description="Activity type")
     agentId: str = Field(..., description="Agent identifier")
-    agentName: str = Field(..., description="Agent name")
+    agentName: str = Field(..., description=DESC_AGENT_NAME)
     message: str = Field(..., description="Activity message")
     timestamp: datetime = Field(..., description="Activity timestamp")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Activity metadata")
@@ -180,7 +187,7 @@ class PerformanceTrend(BaseModel):
 class ScoreRoundDataPoint(BaseModel):
     """Score vs round data point."""
 
-    round_id: int = Field(..., description="Round identifier")
+    round_id: int = Field(..., description=DESC_ROUND_IDENTIFIER)
     score: float = Field(..., description="Score achieved in this round")
     rank: int | None = Field(None, description="Rank in this round")
     reward: float | None = Field(None, description="Reward received in this round")
@@ -210,7 +217,7 @@ class AgentPerformanceMetrics(BaseModel):
 class AgentRoundMetrics(BaseModel):
     """Round-specific metrics for an agent."""
 
-    roundId: int = Field(..., description="Round identifier")
+    roundId: int = Field(..., description=DESC_ROUND_IDENTIFIER)
     score: float = Field(..., description="Average score achieved in the round")
     rank: int | None = Field(None, description="Agent rank within the round leaderboard")
     totalRuns: int = Field(default=0, description="Number of validator runs for the agent in the round")
@@ -246,7 +253,7 @@ class AgentComparison(BaseModel):
     """Agent comparison model."""
 
     agentId: str = Field(..., description="Agent identifier")
-    name: str = Field(..., description="Agent name")
+    name: str = Field(..., description=DESC_AGENT_NAME)
     metrics: AgentComparisonMetrics = Field(..., description="Agent metrics")
 
 
@@ -272,7 +279,7 @@ class TopAgent(BaseModel):
     """Top agent model."""
 
     id: str = Field(..., description="Agent identifier")
-    name: str = Field(..., description="Agent name")
+    name: str = Field(..., description=DESC_AGENT_NAME)
     score: float = Field(..., description="Agent score")
 
 
@@ -280,7 +287,7 @@ class MostActiveAgent(BaseModel):
     """Most active agent model."""
 
     id: str = Field(..., description="Agent identifier")
-    name: str = Field(..., description="Agent name")
+    name: str = Field(..., description=DESC_AGENT_NAME)
     runs: int = Field(..., description="Number of runs")
 
 
@@ -299,7 +306,7 @@ class AgentStatistics(BaseModel):
     totalAgents: int = Field(default=0, description="Total number of agents")
     activeAgents: int = Field(default=0, description="Number of active agents")
     inactiveAgents: int = Field(default=0, description="Number of inactive agents")
-    totalRuns: int = Field(default=0, description="Total number of runs")
+    totalRuns: int = Field(default=0, description=DESC_TOTAL_NUMBER_OF_RUNS)
     successfulRuns: int = Field(default=0, description="Number of successful runs")
     averageSuccessRate: float = Field(default=0.0, description="Average success rate")
     averageCurrentScore: float = Field(default=0.0, description="Average current score")
@@ -316,7 +323,7 @@ class AgentListResponse(BaseModel):
     agents: list[Agent] = Field(..., description="List of agents")
     total: int = Field(..., description="Total number of agents")
     page: int = Field(..., description="Current page number")
-    limit: int = Field(..., description="Items per page")
+    limit: int = Field(..., description=DESC_ITEMS_PER_PAGE)
 
 
 class AgentDetailResponse(BaseModel):
@@ -344,9 +351,9 @@ class AgentRunsResponse(BaseModel):
     """Agent runs response model."""
 
     runs: list[AgentRun] = Field(..., description="List of runs")
-    total: int = Field(..., description="Total number of runs")
+    total: int = Field(..., description=DESC_TOTAL_NUMBER_OF_RUNS)
     page: int = Field(..., description="Current page number")
-    limit: int = Field(..., description="Items per page")
+    limit: int = Field(..., description=DESC_ITEMS_PER_PAGE)
     availableRounds: list[int] = Field(default_factory=list, description="Rounds that include runs for the agent")
     selectedRound: int | None = Field(default=None, description="Round currently selected")
 
@@ -395,7 +402,7 @@ class AgentListQuery(BaseModel):
     """Agent list query parameters."""
 
     page: int = Field(default=1, ge=1, description="Page number")
-    limit: int = Field(default=20, ge=1, le=100, description="Items per page")
+    limit: int = Field(default=20, ge=1, le=100, description=DESC_ITEMS_PER_PAGE)
     type: AgentType | None = Field(None, description="Filter by agent type")
     status: AgentStatus | None = Field(None, description="Filter by status")
     sortBy: str = Field(default="name", description="Sort field")
@@ -416,7 +423,7 @@ class AgentRunsQuery(BaseModel):
     """Agent runs query parameters."""
 
     page: int = Field(default=1, ge=1, description="Page number")
-    limit: int = Field(default=20, ge=1, le=100, description="Items per page")
+    limit: int = Field(default=20, ge=1, le=100, description=DESC_ITEMS_PER_PAGE)
     roundId: int | None = Field(None, description="Filter by round ID")
     validatorId: str | None = Field(None, description="Filter by validator ID")
     status: RunStatus | None = Field(None, description="Filter by status")
