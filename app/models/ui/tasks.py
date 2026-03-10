@@ -457,7 +457,7 @@ class TaskSearchResponse(BaseModel):
 
     tasks: list[Task] = Field(..., description="List of tasks")
     total: int = Field(..., description=DESC_TOTAL_NUMBER_OF_TASKS)
-    page: int = Field(..., description="Current page")
+    page: int = Field(..., description=DESC_CURRENT_PAGE)
     limit: int = Field(..., description=DESC_ITEMS_PER_PAGE)
     facets: SearchFacets = Field(..., description="Search facets")
 
@@ -467,7 +467,7 @@ class TaskListResponse(BaseModel):
 
     tasks: list[Task] = Field(..., description="List of tasks")
     total: int = Field(..., description=DESC_TOTAL_NUMBER_OF_TASKS)
-    page: int = Field(..., description="Current page")
+    page: int = Field(..., description=DESC_CURRENT_PAGE)
     limit: int = Field(..., description=DESC_ITEMS_PER_PAGE)
 
 
@@ -476,7 +476,7 @@ class TaskActionsResponse(BaseModel):
 
     actions: list[TaskAction] = Field(..., description="List of actions")
     total: int = Field(..., description=DESC_TOTAL_NUMBER_OF_ACTIONS)
-    page: int = Field(..., description="Current page")
+    page: int = Field(..., description=DESC_CURRENT_PAGE)
     limit: int = Field(..., description=DESC_ITEMS_PER_PAGE)
 
 
