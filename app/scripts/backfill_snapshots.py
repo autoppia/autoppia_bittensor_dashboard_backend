@@ -22,21 +22,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
-async def backfill_snapshots(max_rounds: int | None = None):
+def backfill_snapshots(_max_rounds: int | None = None):
     """
     Backfill snapshots for all completed rounds that don't have one yet.
 
     NOTE: This functionality is disabled - RoundSnapshotORM model does not exist.
+    _max_rounds reserved for when backfill is re-enabled.
     """
     logger.warning("⚠️ Snapshot materialization is disabled - RoundSnapshotORM model does not exist")
     logger.warning("⚠️ Skipping snapshot backfill - functionality removed")
 
 
-async def backfill_agent_stats(max_rounds: int | None = None):
+def backfill_agent_stats(_max_rounds: int | None = None):
     """
     Backfill agent stats for historical rounds.
 
     NOTE: This functionality is disabled - AgentStatsORM model does not exist.
+    _max_rounds reserved for when backfill is re-enabled.
     """
     logger.warning("⚠️ Agent stats backfill is disabled - AgentStatsORM model does not exist")
     logger.warning("⚠️ Skipping agent stats backfill - functionality removed")
@@ -56,13 +58,13 @@ async def main():
         logger.info("\n" + "=" * 60)
         logger.info("Backfilling snapshots...")
         logger.info("=" * 60 + "\n")
-        await backfill_snapshots(max_rounds=args.max_rounds)
+        backfill_snapshots(_max_rounds=args.max_rounds)
 
     if args.mode in ["stats", "both"]:
         logger.info("\n" + "=" * 60)
         logger.info("Backfilling agent stats...")
         logger.info("=" * 60 + "\n")
-        await backfill_agent_stats(max_rounds=args.max_rounds)
+        backfill_agent_stats(_max_rounds=args.max_rounds)
 
     logger.info("\n✅ All backfill operations complete!")
 
