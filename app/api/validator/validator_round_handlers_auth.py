@@ -1,8 +1,18 @@
+"""
+Auth-check endpoint handler for validator round API.
+"""
+
 from __future__ import annotations
 
-from typing import Any
+from pydantic import BaseModel
 
 
-async def validator_auth_check() -> dict[str, Any]:
+class ValidatorAuthCheckResponse(BaseModel):
+    """Response for GET /auth-check (Sonar: avoid raw dict)."""
+
+    message: str = "Validator authentication verified"
+
+
+async def validator_auth_check() -> ValidatorAuthCheckResponse:
     """Lightweight endpoint validators can call to verify auth headers before starting a round."""
-    return {"message": "Validator authentication verified"}
+    return ValidatorAuthCheckResponse()
