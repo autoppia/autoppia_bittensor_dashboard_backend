@@ -329,7 +329,7 @@ async def get_round(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        logger.error("Error loading round %s: %s", round_id, exc, exc_info=True)
+        logger.error("Error loading round (see exc_info)", exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {
