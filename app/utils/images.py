@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from hashlib import sha256
-from typing import Optional
 from urllib.parse import urlparse
 
 from app.config import settings
@@ -50,7 +49,7 @@ def _slugify(value: str) -> str:
     return value.strip().lower().replace(" ", "-").replace("_", "-")
 
 
-def _normalize_allowed_host(entry: Optional[str]) -> Optional[str]:
+def _normalize_allowed_host(entry: str | None) -> str | None:
     if entry is None:
         return None
     value = entry.strip().lower()
@@ -70,7 +69,7 @@ def _build_allowed_hosts() -> set[str]:
         parsed = urlparse(str(base_url))
         if parsed.hostname:
             hosts.add(parsed.hostname.lower())
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return hosts
@@ -79,7 +78,7 @@ def _build_allowed_hosts() -> set[str]:
 _ALLOWED_IMAGE_HOSTS = _build_allowed_hosts()
 
 
-def _is_allowed_host(hostname: Optional[str]) -> bool:
+def _is_allowed_host(hostname: str | None) -> bool:
     if not hostname:
         return False
     host = hostname.lower()
@@ -102,7 +101,7 @@ def _normalize_relative_path(value: str) -> str:
     return f"/{normalized}" if normalized else "/"
 
 
-def _sanitize_url(candidate: Optional[str]) -> str:
+def _sanitize_url(candidate: str | None) -> str:
     if not candidate:
         return ""
     value = candidate.strip()
@@ -119,7 +118,7 @@ def _sanitize_url(candidate: Optional[str]) -> str:
         rewritten = _rewrite_github_blob(value)
         try:
             parsed = urlparse(rewritten)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return ""
         if _is_allowed_host(parsed.hostname):
             path = parsed.path or "/"
@@ -139,14 +138,14 @@ def _sanitize_url(candidate: Optional[str]) -> str:
     return _normalize_relative_path(value)
 
 
-def _ensure_absolute_url(candidate: Optional[str], fallback: Optional[str] = None) -> str:
+def _ensure_absolute_url(candidate: str | None, fallback: str | None = None) -> str:
     primary = _sanitize_url(candidate)
     if primary:
         return primary
     return _sanitize_url(fallback)
 
 
-def normalize_asset_path(candidate: Optional[str]) -> str:
+def normalize_asset_path(candidate: str | None) -> str:
     """
     Public helper that normalizes any candidate asset reference into a safe
     root-relative path (or empty string when not usable).
@@ -154,7 +153,7 @@ def normalize_asset_path(candidate: Optional[str]) -> str:
     return _sanitize_url(candidate)
 
 
-def resolve_agent_image(info: Optional[MinerInfo], existing: Optional[str] = None) -> str:
+def resolve_agent_image(info: MinerInfo | None, existing: str | None = None) -> str:
     """
     Determine the most appropriate image URL for a miner/agent.
 
@@ -199,7 +198,7 @@ def resolve_agent_image(info: Optional[MinerInfo], existing: Optional[str] = Non
     return _ensure_absolute_url(fallback_path, fallback=existing_url)
 
 
-def sanitize_miner_image(candidate: Optional[str]) -> str:
+def sanitize_miner_image(candidate: str | None) -> str:
     """
     Validate that miner image URL is from authorized S3 paths ONLY.
 
@@ -255,7 +254,7 @@ def sanitize_miner_image(candidate: Optional[str]) -> str:
     return ""
 
 
-def _fallback_miner_image(info: Optional[MinerInfo], existing: Optional[str]) -> str:
+def _fallback_miner_image(info: MinerInfo | None, existing: str | None) -> str:
     if existing:
         return _ensure_absolute_url(existing)
 
@@ -266,7 +265,7 @@ def _fallback_miner_image(info: Optional[MinerInfo], existing: Optional[str]) ->
         return _ensure_absolute_url(FALLBACK_MINER_IMAGES[index])
 
     # Fallback: use hash if UID is not available
-    identifier: Optional[str] = None
+    identifier: str | None = None
     if info:
         candidates = [
             getattr(info, "hotkey", None),
@@ -287,7 +286,7 @@ def _fallback_miner_image(info: Optional[MinerInfo], existing: Optional[str]) ->
     return _ensure_absolute_url(FALLBACK_MINER_IMAGES[index])
 
 
-def _validate_validator_image_url(url: Optional[str]) -> Optional[str]:
+def _validate_validator_image_url(url: str | None) -> str | None:
     """
     Validate that validator image URL is from authorized S3 paths ONLY.
 
@@ -314,7 +313,7 @@ def _validate_validator_image_url(url: Optional[str]) -> Optional[str]:
 
     # REJECT relative paths - validators MUST use S3
     if not url_clean.startswith("http"):
-        logger.debug(f"[_validate_validator_image_url] Rejecting relative path: {url_clean}")
+        logger.debug("[_validate_validator_image_url] Rejecting relative path: %s", url_clean)
         return None
 
     # ONLY allow HTTPS S3 URLs in images-validator folder
@@ -329,28 +328,28 @@ def _validate_validator_image_url(url: Optional[str]) -> Optional[str]:
                 "autoppia-subnet.s3.eu-west-1.amazonaws.com",
                 "autoppia-subnet.s3.amazonaws.com",
             ):
-                logger.debug(f"[_validate_validator_image_url] Rejecting external hostname: {hostname}")
+                logger.debug("[_validate_validator_image_url] Rejecting external hostname: %s", hostname)
                 return None  # ❌ Reject external URLs
 
             # MUST be in /images-validator/ or /images-validators/ folder
             # Accept both singular and plural for backwards compatibility
             if not (path.startswith("/images-validator/") or path.startswith("/images-validators/")):
-                logger.debug(f"[_validate_validator_image_url] Rejecting non-validator path: {path}")
+                logger.debug("[_validate_validator_image_url] Rejecting non-validator path: %s", path)
                 return None  # ❌ Reject other S3 folders
 
             # ✅ Valid S3 validator image
-            logger.debug(f"[_validate_validator_image_url] ✅ Valid S3 URL: {url_clean}")
+            logger.debug("[_validate_validator_image_url] ✅ Valid S3 URL: %s", url_clean)
             return url_clean
-        except Exception as exc:
-            logger.warning(f"[_validate_validator_image_url] Failed to parse URL {url_clean}: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[_validate_validator_image_url] Failed to parse URL %s: %s", url_clean, exc)
             return None
 
     # Reject anything else (http://, malformed, etc.)
-    logger.debug(f"[_validate_validator_image_url] Rejecting non-https URL: {url_clean}")
+    logger.debug("[_validate_validator_image_url] Rejecting non-https URL: %s", url_clean)
     return None
 
 
-def resolve_validator_image(name: Optional[str], existing: Optional[str] = None) -> str:
+def resolve_validator_image(name: str | None, existing: str | None = None) -> str:
     """
     Determine the best image for a validator card.
 
@@ -365,7 +364,7 @@ def resolve_validator_image(name: Optional[str], existing: Optional[str] = None)
 
     default_url = _ensure_absolute_url(DEFAULT_VALIDATOR_IMAGE)
 
-    logger.debug(f"[resolve_validator_image] name={name}, existing={existing}, default={default_url}")
+    logger.debug("[resolve_validator_image] name=%s, existing=%s, default=%s", name, existing, default_url)
 
     # PRIORITY 1: Use name-based override if configured
     # For rizzo and roundtable, ALWAYS use local images, ignoring any S3 URLs
@@ -376,14 +375,14 @@ def resolve_validator_image(name: Optional[str], existing: Optional[str] = None)
         # First try exact match
         if slug in VALIDATOR_IMAGE_OVERRIDES:
             override = _ensure_absolute_url(VALIDATOR_IMAGE_OVERRIDES[slug], fallback=default_url)
-            logger.debug(f"[resolve_validator_image] Using name override for '{slug}': {override}")
+            logger.debug("[resolve_validator_image] Using name override for '%s': %s", slug, override)
             return override
 
         # Aggressive override: Check if name contains "rizzo" (case-insensitive)
         # This handles: "Rizzo", "Rizzo (Insured)", "rizzo-insured", etc.
         if "rizzo" in name_lower:
             override = _ensure_absolute_url(VALIDATOR_IMAGE_OVERRIDES["rizzo"], fallback=default_url)
-            logger.debug(f"[resolve_validator_image] Using aggressive override for Rizzo (name='{name}', contains 'rizzo'): {override}")
+            logger.debug("[resolve_validator_image] Using aggressive override for Rizzo (name='%s', contains 'rizzo'): %s", name, override)
             return override
 
         # Check for roundtable/rt21 variations (case-insensitive)
@@ -402,15 +401,15 @@ def resolve_validator_image(name: Optional[str], existing: Optional[str] = None)
             or rt_pattern.search(name_lower)
         ):
             override = _ensure_absolute_url(VALIDATOR_IMAGE_OVERRIDES["roundtable"], fallback=default_url)
-            logger.debug(f"[resolve_validator_image] Using aggressive override for RoundTable (name='{name}', contains 'roundtable' or 'rt21'): {override}")
+            logger.debug("[resolve_validator_image] Using aggressive override for RoundTable (name='%s', contains 'roundtable' or 'rt21'): %s", name, override)
             return override
 
     # PRIORITY 2: Use existing URL from validator (if valid and not overridden)
     validated_existing = _validate_validator_image_url(existing)
     if validated_existing:
-        logger.debug(f"[resolve_validator_image] Using validated S3 URL: {validated_existing}")
+        logger.debug("[resolve_validator_image] Using validated S3 URL: %s", validated_existing)
         return validated_existing
 
     # PRIORITY 3: Default placeholder
-    logger.debug(f"[resolve_validator_image] Using default placeholder: {default_url}")
+    logger.debug("[resolve_validator_image] Using default placeholder: %s", default_url)
     return default_url
