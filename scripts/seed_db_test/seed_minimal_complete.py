@@ -9,12 +9,13 @@ Script para limpiar todas las tablas y crear datos mínimos pero completos:
 - Datos en validator_round_summary_miners
 """
 
+from __future__ import annotations
+
 import asyncio
 import random
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -105,7 +106,7 @@ async def clear_all_tables():
             await session.commit()
             print("✅ Todas las tablas limpiadas\n")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             await session.rollback()
             print(f"❌ Error limpiando tablas: {e}")
             raise
@@ -342,7 +343,7 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
             subnet_price = get_price(netuid=settings.VALIDATOR_NETUID if hasattr(settings, "VALIDATOR_NETUID") else 36)
             if subnet_price <= 0:
                 subnet_price = 0.0043  # Default fallback price
-        except Exception:
+        except Exception:  # noqa: BLE001
             subnet_price = 0.0043  # Default fallback price
 
         summary = ValidatorRoundSummaryORM(
@@ -483,7 +484,7 @@ async def calculate_post_consensus_scores(session: AsyncSession, round_number: i
     validator_round_ids = [f"round_{round_number}_validator_{v['uid']}" for v in VALIDATORS]
 
     # Obtener todos los summaries para este round
-    summaries_by_miner: Dict[int, List[ValidatorRoundSummaryORM]] = {}
+    summaries_by_miner: dict[int, list[ValidatorRoundSummaryORM]] = {}
     total_stake = 0.0
 
     for validator_round_id in validator_round_ids:
@@ -505,7 +506,7 @@ async def calculate_post_consensus_scores(session: AsyncSession, round_number: i
                 summaries_by_miner[miner_uid].append(summary)
 
     # Calcular consensus scores (stake-weighted average)
-    consensus_scores: Dict[int, float] = {}
+    consensus_scores: dict[int, float] = {}
     for miner_uid, summaries in summaries_by_miner.items():
         weighted_sum = 0.0
         total_weight = 0.0
@@ -548,7 +549,7 @@ async def calculate_post_consensus_scores(session: AsyncSession, round_number: i
             subnet_price = get_price(netuid=settings.VALIDATOR_NETUID if hasattr(settings, "VALIDATOR_NETUID") else 36)
             if subnet_price <= 0:
                 subnet_price = 0.0043  # Default fallback price
-        except Exception:
+        except Exception:  # noqa: BLE001
             subnet_price = 0.0043  # Default fallback price
 
         for summary in summaries:
@@ -636,7 +637,7 @@ async def main():
             tasks_with_version = result.scalar()
             print(f"\n   ✅ {tasks_with_version} tareas tienen web_version asignada")
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"\n❌ Error durante el proceso: {e}")
         import traceback
 
