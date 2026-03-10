@@ -86,8 +86,46 @@ class UIAgentsRunsServiceMixin:
                         s.season_number,
                         r.round_number_in_season,
                         MIN(COALESCE(rvm.post_consensus_rank, 9999)) AS rank,
-                        SUM(COALESCE(rvm.post_consensus_tasks_received, 0)) AS tasks_received,
-                        SUM(COALESCE(rvm.post_consensus_tasks_success, 0)) AS tasks_success,
+                        CASE
+                          WHEN SUM(
+                            CASE
+                              WHEN rvm.post_consensus_tasks_received IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                              THEN COALESCE(rv.stake, 0)
+                              ELSE 0
+                            END
+                          ) > 0
+                          THEN ROUND(
+                            SUM(COALESCE(rvm.post_consensus_tasks_received, 0) * COALESCE(rv.stake, 0))
+                            / NULLIF(SUM(
+                              CASE
+                                WHEN rvm.post_consensus_tasks_received IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                                THEN COALESCE(rv.stake, 0)
+                                ELSE 0
+                              END
+                            ), 0)
+                          )::int
+                          ELSE 0
+                        END AS tasks_received,
+                        CASE
+                          WHEN SUM(
+                            CASE
+                              WHEN rvm.post_consensus_tasks_success IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                              THEN COALESCE(rv.stake, 0)
+                              ELSE 0
+                            END
+                          ) > 0
+                          THEN ROUND(
+                            SUM(COALESCE(rvm.post_consensus_tasks_success, 0) * COALESCE(rv.stake, 0))
+                            / NULLIF(SUM(
+                              CASE
+                                WHEN rvm.post_consensus_tasks_success IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                                THEN COALESCE(rv.stake, 0)
+                                ELSE 0
+                              END
+                            ), 0)
+                          )::int
+                          ELSE 0
+                        END AS tasks_success,
                         CASE
                           WHEN SUM(
                             CASE
@@ -1756,10 +1794,13 @@ class UIAgentsRunsServiceMixin:
             weighted_score_sum = 0.0
             weighted_time_sum = 0.0
             weighted_cost_sum = 0.0
+            weighted_tasks_received_sum = 0.0
+            weighted_tasks_success_sum = 0.0
             stake_sum_reward = 0.0
             stake_sum_score = 0.0
             stake_sum_time = 0.0
             stake_sum_cost = 0.0
+            stake_sum_tasks = 0.0
             post_consensus_rank: Optional[int] = None
             post_consensus_time: Optional[float] = None
             post_consensus_tasks_received = 0
@@ -1768,28 +1809,44 @@ class UIAgentsRunsServiceMixin:
 
             for vr in validator_rows:
                 stake = float(vr["stake"] or 0.0)
+
+                # Use post-consensus values (the IPFS-agreed consensus) as primary source;
+                # fall back to per-run values only when post-consensus is unavailable.
+                pc_reward = vr["post_consensus_avg_reward"]
+                pc_score = vr["post_consensus_avg_eval_score"]
+                pc_time = vr["post_consensus_avg_eval_time"]
+                pc_cost = vr["post_consensus_avg_eval_cost"]
                 run_rew = vr["run_reward"]
                 run_score = vr["run_score"]
                 run_time = vr["run_time"]
                 run_cost = vr["run_avg_cost"]
 
-                # Stake-weighted consensus metrics from actual per-validator run values
-                if run_rew is not None and stake > 0:
-                    weighted_reward_sum += float(run_rew) * stake
+                reward_val = float(pc_reward) if pc_reward is not None else (float(run_rew) if run_rew is not None else None)
+                score_val = float(pc_score) if pc_score is not None else (float(run_score) if run_score is not None else None)
+                time_val = float(pc_time) if pc_time is not None else (float(run_time) if run_time is not None else None)
+                cost_val = float(pc_cost) if pc_cost is not None else (float(run_cost) if run_cost is not None else None)
+
+                if reward_val is not None and stake > 0:
+                    weighted_reward_sum += reward_val * stake
                     stake_sum_reward += stake
-                if run_score is not None and stake > 0:
-                    weighted_score_sum += float(run_score) * stake
+                if score_val is not None and stake > 0:
+                    weighted_score_sum += score_val * stake
                     stake_sum_score += stake
-                if run_time is not None and stake > 0:
-                    weighted_time_sum += float(run_time) * stake
+                if time_val is not None and stake > 0:
+                    weighted_time_sum += time_val * stake
                     stake_sum_time += stake
-                if run_cost is not None and stake > 0:
-                    weighted_cost_sum += float(run_cost) * stake
+                if cost_val is not None and stake > 0:
+                    weighted_cost_sum += cost_val * stake
                     stake_sum_cost += stake
 
-                # Tasks are absolute counts — sum across all validators, not averaged.
-                post_consensus_tasks_received += int(vr["post_consensus_tasks_received"] or 0)
-                post_consensus_tasks_success += int(vr["post_consensus_tasks_success"] or 0)
+                # Tasks: post_consensus values already represent the consensus-agreed total
+                # across all validators — use stake-weighted average, not sum.
+                pc_tasks_received = vr["post_consensus_tasks_received"]
+                pc_tasks_success = vr["post_consensus_tasks_success"]
+                if pc_tasks_received is not None and stake > 0:
+                    weighted_tasks_received_sum += int(pc_tasks_received) * stake
+                    weighted_tasks_success_sum += int(pc_tasks_success or 0) * stake
+                    stake_sum_tasks += stake
 
                 # Only need rank for the consensus rank display
                 rk = vr["post_consensus_rank"]
@@ -1840,6 +1897,9 @@ class UIAgentsRunsServiceMixin:
             consensus_score = weighted_score_sum / stake_sum_score if stake_sum_score > 0 else None
             post_consensus_time = weighted_time_sum / stake_sum_time if stake_sum_time > 0 else None
             post_consensus_avg_cost = weighted_cost_sum / stake_sum_cost if stake_sum_cost > 0 else None
+            if stake_sum_tasks > 0:
+                post_consensus_tasks_received = round(weighted_tasks_received_sum / stake_sum_tasks)
+                post_consensus_tasks_success = round(weighted_tasks_success_sum / stake_sum_tasks)
             post_consensus_available = post_consensus_rank is not None or consensus_reward is not None
 
             rounds_out.append(
