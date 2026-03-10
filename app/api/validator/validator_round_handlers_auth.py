@@ -13,6 +13,6 @@ class ValidatorAuthCheckResponse(BaseModel):
     message: str = "Validator authentication verified"
 
 
-async def validator_auth_check() -> ValidatorAuthCheckResponse:
+def validator_auth_check() -> ValidatorAuthCheckResponse:
     """Lightweight endpoint validators can call to verify auth headers before starting a round."""
     return ValidatorAuthCheckResponse()
