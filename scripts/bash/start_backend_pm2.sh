@@ -65,9 +65,9 @@ fi
 echo ""
 
 # 3. Liberar puerto si está ocupado
-if lsof -ti:${PORT} > /dev/null 2>&1; then
+if lsof -ti:"${PORT}" > /dev/null 2>&1; then
     echo "⚠️  Puerto ${PORT} ocupado. Liberando..."
-    lsof -ti:${PORT} | xargs kill -9 2>/dev/null || true
+    lsof -ti:"${PORT}" | xargs kill -9 2>/dev/null || true
     sleep 2
 fi
 
