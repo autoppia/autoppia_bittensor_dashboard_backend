@@ -122,7 +122,7 @@ def _try_fetch_price_sync(netuid: int) -> float | None:
                 pass
 
 
-def get_price(netuid: int = 36, ttl_seconds: int = 300) -> float:
+def get_price(netuid: int = 36, _ttl_seconds: int = 300) -> float:
     """Get subnet price from Redis (managed by background thread).
 
     GET endpoints should use this - it never calls the blockchain.
@@ -145,12 +145,12 @@ def get_price(netuid: int = 36, ttl_seconds: int = 300) -> float:
     return _env_fallback(int(netuid))
 
 
-async def get_price_async(netuid: int = 36, ttl_seconds: int = 300) -> float:
+def get_price_async(netuid: int = 36, ttl_seconds: int = 300) -> float:
     """Async variant - just returns sync version (reads from Redis).
 
     No async needed since we only read from Redis now.
     """
-    return get_price(netuid=netuid, ttl_seconds=ttl_seconds)
+    return get_price(netuid=netuid, _ttl_seconds=ttl_seconds)
 
 
 def get_price_cached(netuid: int = 36, ttl_seconds: int = 300) -> float:
@@ -158,4 +158,4 @@ def get_price_cached(netuid: int = 36, ttl_seconds: int = 300) -> float:
 
     Safe for GET endpoints - never calls blockchain.
     """
-    return get_price(netuid=netuid, ttl_seconds=ttl_seconds)
+    return get_price(netuid=netuid, _ttl_seconds=ttl_seconds)
