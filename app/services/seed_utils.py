@@ -305,8 +305,8 @@ def _random_vtrust() -> float:
 def _build_validator_identity_and_snapshot(
     validator_round_id: str,
     record: ValidatorSeedRecord,
-    _round_number: int,
-    _started_at: float,
+    round_number: int,
+    started_at: float,
 ) -> tuple[Validator, ValidatorRoundValidator]:
     identity = Validator(
         uid=record.uid,
@@ -330,7 +330,7 @@ def _build_validator_identity_and_snapshot(
 def _build_miner_identity_and_snapshot(
     validator_round_id: str,
     record: MinerSeedRecord,
-    _now_ts: float,
+    now_ts: float,
 ) -> tuple[Miner, ValidatorRoundMiner]:
     identity = Miner(
         uid=record.uid,
