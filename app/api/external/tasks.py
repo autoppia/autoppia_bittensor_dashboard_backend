@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Optional
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -21,18 +21,18 @@ class TasksWithSolutionsQuery(BaseModel):
     key: str
     page: int = 1
     limit: int = 50
-    taskId: Optional[str] = None
-    website: Optional[str] = None
-    useCase: Optional[str] = None
-    webVersion: Optional[str] = None
-    minerUid: Optional[int] = None
-    agentId: Optional[str] = None
-    validatorId: Optional[str] = None
-    roundId: Optional[int] = None
-    minScore: Optional[float] = None
-    maxScore: Optional[float] = None
-    status: Optional[str] = None
-    success: Optional[bool] = None
+    taskId: str | None = None
+    website: str | None = None
+    useCase: str | None = None
+    webVersion: str | None = None
+    minerUid: int | None = None
+    agentId: str | None = None
+    validatorId: str | None = None
+    roundId: int | None = None
+    minScore: float | None = None
+    maxScore: float | None = None
+    status: str | None = None
+    success: bool | None = None
     sort: str = "created_at_desc"
 
     model_config = {"extra": "forbid"}
@@ -42,22 +42,22 @@ def get_tasks_query(
     key: Annotated[str, Query(description="API key for authentication")],
     page: Annotated[int, Query(1, ge=1)] = 1,
     limit: Annotated[int, Query(50, ge=1, le=500)] = 50,
-    taskId: Annotated[Optional[str], Query(None, alias="taskId")] = None,
-    website: Annotated[Optional[str], Query(None)] = None,
-    useCase: Annotated[Optional[str], Query(None, alias="useCase")] = None,
+    taskId: Annotated[str | None, Query(None, alias="taskId")] = None,
+    website: Annotated[str | None, Query(None)] = None,
+    useCase: Annotated[str | None, Query(None, alias="useCase")] = None,
     webVersion: Annotated[
-        Optional[str], Query(None, alias="webVersion", description="Filter by web demo version (e.g., '0.1.0+d2e4029e')")
+        str | None, Query(None, alias="webVersion", description="Filter by web demo version (e.g., '0.1.0+d2e4029e')")
     ] = None,
-    minerUid: Annotated[Optional[int], Query(None, alias="minerUid")] = None,
-    agentId: Annotated[Optional[str], Query(None, alias="agentId")] = None,
-    validatorId: Annotated[Optional[str], Query(None, alias="validatorId")] = None,
-    roundId: Annotated[Optional[int], Query(None, alias="roundId")] = None,
-    minScore: Annotated[Optional[float], Query(None, alias="minScore")] = None,
-    maxScore: Annotated[Optional[float], Query(None, alias="maxScore")] = None,
-    status: Annotated[Optional[str], Query(None)] = None,
-    success: Annotated[Optional[bool], Query(None)] = None,
+    minerUid: Annotated[int | None, Query(None, alias="minerUid")] = None,
+    agentId: Annotated[str | None, Query(None, alias="agentId")] = None,
+    validatorId: Annotated[str | None, Query(None, alias="validatorId")] = None,
+    roundId: Annotated[int | None, Query(None, alias="roundId")] = None,
+    minScore: Annotated[float | None, Query(None, alias="minScore")] = None,
+    maxScore: Annotated[float | None, Query(None, alias="maxScore")] = None,
+    status: Annotated[str | None, Query(None)] = None,
+    success: Annotated[bool | None, Query(None)] = None,
     sort: Annotated[
-        Optional[str],
+        str | None,
         Query("created_at_desc", description="Sort order: created_at_desc, created_at_asc, score_desc, score_asc"),
     ] = "created_at_desc",
 ) -> TasksWithSolutionsQuery:
