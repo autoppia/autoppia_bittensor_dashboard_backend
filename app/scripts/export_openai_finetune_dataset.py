@@ -36,6 +36,7 @@ import asyncio
 import json
 from typing import Any, AsyncIterator
 
+import aiofiles
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
@@ -213,8 +214,8 @@ def _matching_solution(task_row: TaskORM, solution_id: str | None) -> TaskSoluti
         for s in solutions:
             if s.solution_id == solution_id:
                 return s
-    # Fallback: first solution row
-    return solutions[0]
+    # Fallback: first solution row (solutions is non-empty here)
+    return solutions[0] if solutions else None
 
 
 async def _iter_task_batches(session: AsyncSession, batch_size: int) -> AsyncIterator[list[TaskORM]]:
@@ -272,7 +273,7 @@ async def export_dataset(
     """Export dataset and return number of examples written."""
     count = 0
     async with AsyncSessionLocal() as session:
-        with open(output_path, "w", encoding="utf-8") as f:
+        async with aiofiles.open(output_path, "w", encoding="utf-8") as f:
             async for batch in _iter_task_batches(session, batch_size):
                 for task_row in batch:
                     best_eval = _select_best_evaluation(task_row)
@@ -309,7 +310,7 @@ async def export_dataset(
                         actions=simplified,
                         system_prompt=system_prompt,
                     )
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    await f.write(json.dumps(record, ensure_ascii=False) + "\n")
                     count += 1
 
     return count
