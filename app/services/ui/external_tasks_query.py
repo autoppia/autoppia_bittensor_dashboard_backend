@@ -2,6 +2,7 @@
 External tasks query helpers backed by the current UI data schema tables.
 """
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -37,6 +38,28 @@ NAME_TO_PORT = {v: k for k, v in PORT_TO_NAME.items()}
 
 # Tolerance for "score == 1.0" to avoid float equality (Sonar / reliability)
 SCORE_ONE_TOLERANCE = 1e-9
+
+
+@dataclass
+class TaskSolutionsQueryParams:
+    """Query parameters for get_tasks_with_solutions (reduces function arity)."""
+
+    page: int = 1
+    limit: int = 50
+    task_id: str | None = None
+    website: str | None = None
+    use_case: str | None = None
+    web_version: str | None = None
+    miner_uid: int | None = None
+    agent_id: str | None = None
+    validator_id: str | None = None
+    round_id: int | None = None
+    min_score: float | None = None
+    max_score: float | None = None
+    status: str | None = None
+    success: bool | None = None
+    sort_by: str = "created_at"
+    sort_order: str = "desc"
 
 
 def _map_website_port_to_name(url: str | None) -> str:
@@ -95,22 +118,7 @@ def _normalize_tests(raw_tests: list[Any] | None) -> list[dict[str, Any]]:
 
 async def get_tasks_with_solutions(
     session: AsyncSession,
-    page: int = 1,
-    limit: int = 50,
-    task_id: str | None = None,
-    website: str | None = None,
-    use_case: str | None = None,
-    web_version: str | None = None,
-    miner_uid: int | None = None,
-    agent_id: str | None = None,
-    validator_id: str | None = None,
-    round_id: int | None = None,
-    min_score: float | None = None,
-    max_score: float | None = None,
-    status: str | None = None,
-    success: bool | None = None,
-    sort_by: str = "created_at",
-    sort_order: str = "desc",
+    params: TaskSolutionsQueryParams,
 ) -> dict[str, Any]:
     """
     Get tasks with their solutions, applying multiple filters.
@@ -118,7 +126,7 @@ async def get_tasks_with_solutions(
     Returns:
         Dictionary with tasks, solutions, and pagination info
     """
-    skip = max(0, (page - 1) * limit)
+    skip = max(0, (params.page - 1) * params.limit)
 
     # Build base query with eager loading
     base_stmt = select(EvaluationORM).options(
@@ -132,11 +140,11 @@ async def get_tasks_with_solutions(
     filters = []
 
     # Filter by task_id
-    if task_id:
-        filters.append(EvaluationORM.task_id == task_id)
+    if params.task_id:
+        filters.append(EvaluationORM.task_id == params.task_id)
 
     # Filter by web_version (can be done in SQL since it's a column)
-    if web_version:
+    if params.web_version:
         # Join with TaskORM to filter by web_version
         # Check if TaskORM is already in the query to avoid duplicate joins
         if TaskORM not in list(base_stmt.froms):
@@ -148,16 +156,16 @@ async def get_tasks_with_solutions(
                 TaskORM,
                 EvaluationORM.task_id == TaskORM.task_id,
             )
-        filters.append(TaskORM.web_version == web_version)
+        filters.append(TaskORM.web_version == params.web_version)
 
     # Filter by website/project - can be done in SQL by filtering URL by port
-    website_filter = website.lower() if website else None
+    website_filter = params.website.lower() if params.website else None
     website_port = _map_website_name_to_port(website_filter) if website_filter else None
     website_filtered_in_sql = False
 
     # Filter by use_case (use_case is a JSON dict, extract 'name' field)
     # We can filter directly in SQL using the index on use_case->>'name'
-    use_case_filter = use_case.lower() if use_case else None
+    use_case_filter = params.use_case.lower() if params.use_case else None
     use_case_filtered_in_sql = False
 
     # If we need to filter by website or use_case, join with TaskORM
@@ -189,7 +197,7 @@ async def get_tasks_with_solutions(
             use_case_filtered_in_sql = True
 
     # Filter by miner_uid
-    if miner_uid is not None:
+    if params.miner_uid is not None:
         base_stmt = base_stmt.join(
             AgentEvaluationRunORM,
             EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
@@ -198,10 +206,10 @@ async def get_tasks_with_solutions(
             AgentEvaluationRunORM,
             EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
         )
-        filters.append(AgentEvaluationRunORM.miner_uid == miner_uid)
+        filters.append(AgentEvaluationRunORM.miner_uid == params.miner_uid)
 
     # Filter by agent_id (miner hotkey)
-    if agent_id:
+    if params.agent_id:
         if AgentEvaluationRunORM not in list(base_stmt.froms):
             base_stmt = base_stmt.join(
                 AgentEvaluationRunORM,
@@ -211,10 +219,10 @@ async def get_tasks_with_solutions(
                 AgentEvaluationRunORM,
                 EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
             )
-        filters.append(func.lower(AgentEvaluationRunORM.miner_hotkey) == agent_id.lower())
+        filters.append(func.lower(AgentEvaluationRunORM.miner_hotkey) == params.agent_id.lower())
 
     # Filter by validator_id
-    if validator_id:
+    if params.validator_id:
         if AgentEvaluationRunORM not in list(base_stmt.froms):
             base_stmt = base_stmt.join(
                 AgentEvaluationRunORM,
@@ -224,10 +232,10 @@ async def get_tasks_with_solutions(
                 AgentEvaluationRunORM,
                 EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
             )
-        filters.append(func.lower(AgentEvaluationRunORM.validator_hotkey) == validator_id.lower())
+        filters.append(func.lower(AgentEvaluationRunORM.validator_hotkey) == params.validator_id.lower())
 
     # Filter by round_id
-    if round_id is not None:
+    if params.round_id is not None:
         if AgentEvaluationRunORM not in list(base_stmt.froms):
             base_stmt = base_stmt.join(
                 AgentEvaluationRunORM,
@@ -264,8 +272,8 @@ async def get_tasks_with_solutions(
             filters.append(EvaluationORM.evaluation_score.is_(None))
 
     # Filter by success (true = score ≈ 1.0, false = score < 1.0); avoid float equality
-    if success is not None:
-        if success:
+    if params.success is not None:
+        if params.success:
             filters.append(
                 EvaluationORM.evaluation_score.between(
                     1.0 - SCORE_ONE_TOLERANCE, 1.0 + SCORE_ONE_TOLERANCE
@@ -286,8 +294,8 @@ async def get_tasks_with_solutions(
         "duration": EvaluationORM.created_at,  # Fallback to created_at
     }
 
-    order_expr = sort_columns.get(sort_by, EvaluationORM.created_at)
-    if sort_order.lower() == "desc":
+    order_expr = sort_columns.get(params.sort_by, EvaluationORM.created_at)
+    if params.sort_order.lower() == "desc":
         order_clause = order_expr.desc()
     else:
         order_clause = order_expr.asc()
@@ -302,13 +310,13 @@ async def get_tasks_with_solutions(
         # Then apply pagination in Python
         # Increase fetch limit to ensure we get enough data when filtering
         fetch_multiplier = 20 if use_case_filter else 5
-        fetch_limit = min(limit * fetch_multiplier, 2000)  # Increased from 500 to 2000
-        fetch_offset = max(0, (page - 1) * limit)
+        fetch_limit = min(params.limit * fetch_multiplier, 2000)  # Increased from 500 to 2000
+        fetch_offset = max(0, (params.page - 1) * params.limit)
         base_stmt = base_stmt.offset(fetch_offset).limit(fetch_limit)
     else:
         # Direct SQL pagination - simple: offset and limit
         # Both filters are in SQL, so we can paginate directly
-        base_stmt = base_stmt.offset(skip).limit(limit)
+        base_stmt = base_stmt.offset(skip).limit(params.limit)
 
     # Execute queries
     result = await session.execute(base_stmt)
@@ -407,14 +415,14 @@ async def get_tasks_with_solutions(
         total = len(tasks_with_solutions)
         # Apply pagination after filtering
         start_idx = skip
-        end_idx = skip + limit
+        end_idx = skip + params.limit
         tasks_with_solutions = tasks_with_solutions[start_idx:end_idx]
     # else: total from DB count is already accurate - both filters were in SQL
 
     return {
         "tasks": tasks_with_solutions,
         "total": total,
-        "page": page,
-        "limit": limit,
-        "totalPages": (total + limit - 1) // limit if limit > 0 else 0,
+        "page": params.page,
+        "limit": params.limit,
+        "totalPages": (total + params.limit - 1) // params.limit if params.limit > 0 else 0,
     }
