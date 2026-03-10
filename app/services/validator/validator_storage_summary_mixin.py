@@ -683,6 +683,19 @@ class ValidatorStorageSummaryMixin:
 
         competitive_rows = [row for row in payload_miners if int(row["uid"]) != burn_uid]
 
+        # Override tasks_received in competitive_rows with the post-consensus combined value
+        # from round_validator_miners (which aggregates across all validators), so that
+        # tasks_evaluated reflects the full multi-validator evaluation count (e.g. 80 = 2×40)
+        # rather than just one validator's local view (e.g. 40).
+        if competitive_rows and summary_rows:
+            summary_tasks_by_uid = {int(sr.miner_uid): int(sr.post_consensus_tasks_received or 0) for sr in summary_rows if sr.miner_uid is not None}
+            summary_success_by_uid = {int(sr.miner_uid): int(sr.post_consensus_tasks_success or 0) for sr in summary_rows if sr.miner_uid is not None}
+            for row in competitive_rows:
+                uid = int(row["uid"])
+                if uid in summary_tasks_by_uid and summary_tasks_by_uid[uid] > row["tasks_received"]:
+                    row["tasks_received"] = summary_tasks_by_uid[uid]
+                    row["tasks_success"] = summary_success_by_uid.get(uid, row["tasks_success"])
+
         # Fallback for reused rounds: if the post_consensus payload had no miners
         # (e.g. because round_validators.post_consensus_json is NULL and
         # validator_summary.evaluation_post_consensus was not yet enriched),
