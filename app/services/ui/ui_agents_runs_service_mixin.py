@@ -1958,10 +1958,13 @@ class UIAgentsRunsServiceMixin:
                     WITH ranked AS (
                       SELECT DISTINCT ON (rvm.miner_uid)
                         rvm.miner_uid, rvm.name, rvm.image_url, rvm.is_sota,
-                        rvm.best_local_rank, rvm.best_local_reward
+                        COALESCE(rvm.post_consensus_rank, rvm.best_local_rank) AS best_local_rank,
+                        COALESCE(rvm.post_consensus_avg_reward, rvm.best_local_reward) AS best_local_reward
                       FROM round_validator_miners rvm
                       {where}
-                      ORDER BY rvm.miner_uid, rvm.best_local_rank ASC NULLS LAST, rvm.best_local_reward DESC NULLS LAST
+                      ORDER BY rvm.miner_uid,
+                        COALESCE(rvm.post_consensus_rank, rvm.best_local_rank) ASC NULLS LAST,
+                        COALESCE(rvm.post_consensus_avg_reward, rvm.best_local_reward) DESC NULLS LAST
                     )
                     SELECT * FROM ranked
                     """
