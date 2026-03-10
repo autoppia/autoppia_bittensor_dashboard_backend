@@ -9,6 +9,9 @@ from sqlalchemy import text
 from app.config import settings
 from app.services.media_storage import build_public_url
 
+# SQL fragment reused for miner-scoped raw queries (Sonar: literal duplication)
+_SQL_WHERE_MINER_UID = "WHERE miner_uid = :uid"
+
 
 class UIAgentsRunsServiceMixin:
     async def get_agent_detail(self, miner_uid: int, season: int | None, round_in_season: int | None) -> dict[str, Any]:
@@ -352,7 +355,7 @@ class UIAgentsRunsServiceMixin:
         }
 
     async def get_miner_historical(self, miner_uid: int, season: int | None) -> dict[str, Any]:
-        where = "WHERE miner_uid = :uid"
+        where = _SQL_WHERE_MINER_UID
         params: dict[str, Any] = {"uid": miner_uid}
         if season is not None:
             where += " AND round_id IN (SELECT r.round_id FROM rounds r JOIN seasons s ON s.season_id=r.season_id WHERE s.season_number=:season)"
@@ -814,7 +817,7 @@ class UIAgentsRunsServiceMixin:
             "total": int(total or 0),
             "page": page,
             "limit": limit,
-            "availableRounds": sorted(list({int(run["roundId"]) for run in runs if int(run["roundId"]) > 0}), reverse=True),
+            "availableRounds": sorted({int(run["roundId"]) for run in runs if int(run["roundId"]) > 0}, reverse=True),
             "selectedRound": None,
         }
 
@@ -827,7 +830,7 @@ class UIAgentsRunsServiceMixin:
         since: datetime | None,
     ) -> dict[str, Any]:
         uid = int(str(agent_id).replace("agent-", ""))
-        where = "WHERE miner_uid = :uid"
+        where = _SQL_WHERE_MINER_UID
         params: dict[str, Any] = {"uid": uid, "limit": limit, "offset": offset}
         if since is not None:
             where += " AND started_at >= :since_ts"
