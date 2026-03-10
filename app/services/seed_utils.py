@@ -6,7 +6,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Sequence
 
 import httpx
 from httpx import ASGITransport, AsyncClient
@@ -47,7 +47,7 @@ MAX_MINER_UID = 255
 SEED_GIF_URL = "https://autoppia-subnet.s3.eu-west-1.amazonaws.com/gifs/evaluation_51_9ff54518-99d8-4262-bab4-2a549032ba7c_81cb33c33048.gif"
 
 
-def _asset_url(path: Optional[str]) -> Optional[str]:
+def _asset_url(path: str | None) -> str | None:
     if not path:
         return None
     normalized = normalize_asset_path(str(path))
@@ -72,7 +72,7 @@ def _get_fastapi_app():
         try:
             _settings.AUTH_DISABLED = True  # type: ignore[attr-defined]
             logger.info("Validator auth disabled for seeding (TESTING=true)")
-        except Exception:  # pragma: no cover - defensive
+        except Exception:  # noqa: BLE001  # pragma: no cover - defensive
             logger.debug("Unable to toggle AUTH_DISABLED for seeding", exc_info=True)
 
     return fastapi_app
@@ -82,21 +82,21 @@ def _get_fastapi_app():
 class ValidatorSeedRecord:
     uid: int
     hotkey: str
-    coldkey: Optional[str]
-    name: Optional[str]
-    image: Optional[str]
-    version: Optional[str]
+    coldkey: str | None
+    name: str | None
+    image: str | None
+    version: str | None
 
 
 @dataclass(frozen=True)
 class MinerSeedRecord:
     uid: int
     hotkey: str
-    coldkey: Optional[str]
+    coldkey: str | None
     name: str
-    image: Optional[str]
-    provider: Optional[str]
-    github: Optional[str]
+    image: str | None
+    provider: str | None
+    github: str | None
 
 
 @dataclass(frozen=True)
@@ -107,7 +107,7 @@ class TaskTemplate:
     prompt: str
     use_case_label: str
     use_case_slug: str
-    default_actions: List[Dict[str, Any]]
+    default_actions: list[dict[str, Any]]
 
 
 @dataclass
@@ -115,8 +115,8 @@ class AgentRunBundle:
     miner_identity: Miner
     miner_snapshot: ValidatorRoundMiner
     agent_run: AgentEvaluationRun
-    task_solutions: List[TaskSolution]
-    evaluations: List[Evaluation]
+    task_solutions: list[TaskSolution]
+    evaluations: list[Evaluation]
     average_score: float
 
 
@@ -126,37 +126,37 @@ class SeedPayload:
     validator_snapshot: ValidatorRoundValidator
     validator_round: ValidatorRound
     validator_record: ValidatorSeedRecord
-    miner_records: List[MinerSeedRecord]
-    tasks: List[Task]
-    agent_bundles: List[AgentRunBundle]
+    miner_records: list[MinerSeedRecord]
+    tasks: list[Task]
+    agent_bundles: list[AgentRunBundle]
 
     @property
-    def miner_identities(self) -> List[Miner]:
+    def miner_identities(self) -> list[Miner]:
         return [bundle.miner_identity for bundle in self.agent_bundles]
 
     @property
-    def miner_snapshots(self) -> List[ValidatorRoundMiner]:
+    def miner_snapshots(self) -> list[ValidatorRoundMiner]:
         return [bundle.miner_snapshot for bundle in self.agent_bundles]
 
     @property
-    def agent_runs(self) -> List[AgentEvaluationRun]:
+    def agent_runs(self) -> list[AgentEvaluationRun]:
         return [bundle.agent_run for bundle in self.agent_bundles]
 
     @property
-    def task_solutions(self) -> List[TaskSolution]:
+    def task_solutions(self) -> list[TaskSolution]:
         return [solution for bundle in self.agent_bundles for solution in bundle.task_solutions]
 
     @property
-    def evaluations(self) -> List[Evaluation]:
+    def evaluations(self) -> list[Evaluation]:
         return [evaluation for bundle in self.agent_bundles for evaluation in bundle.evaluations]
 
 
 def _try_fetch_metagraph(
     netuid: int = METAGRAPH_NETUID,
-) -> Dict[int, Tuple[str, Optional[str]]]:
+) -> dict[int, tuple[str, str | None]]:
     try:
         import bittensor as bt  # type: ignore
-    except Exception as exc:  # pragma: no cover - optional dependency
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - optional dependency
         logger.info("Bittensor not available for metagraph lookup: %s", exc)
         return {}
 
@@ -166,21 +166,21 @@ def _try_fetch_metagraph(
         uids = list(map(int, metagraph.uids))
         hotkeys = [str(hk) for hk in metagraph.hotkeys]
         coldkeys = getattr(metagraph, "coldkeys", None)
-        records: Dict[int, Tuple[str, Optional[str]]] = {}
+        records: dict[int, tuple[str, str | None]] = {}
         for index, uid in enumerate(uids):
             coldkey = None
             if coldkeys:
                 coldkey = str(coldkeys[index])
             records[uid] = (hotkeys[index], coldkey)
         return records
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - defensive
         logger.warning("Failed to fetch metagraph identities: %s", exc)
         return {}
 
 
-def _build_validator_seed_records() -> Dict[int, ValidatorSeedRecord]:
+def _build_validator_seed_records() -> dict[int, ValidatorSeedRecord]:
     metagraph_records = _try_fetch_metagraph()
-    records: Dict[int, ValidatorSeedRecord] = {}
+    records: dict[int, ValidatorSeedRecord] = {}
 
     for uid, metadata in VALIDATOR_DIRECTORY.items():
         meta_hotkey = metadata.get("hotkey")
@@ -222,9 +222,9 @@ def _fallback_miner_seed_records(
     count: int,
     exclude_uids: set[int],
     used_uids: set[int],
-) -> List[MinerSeedRecord]:
+) -> list[MinerSeedRecord]:
     providers = ["TensorOps", "SynapseX", "AutoMiner Labs", "NeuraForge"]
-    records: List[MinerSeedRecord] = []
+    records: list[MinerSeedRecord] = []
     available_uids = [uid for uid in range(MIN_MINER_UID, MAX_MINER_UID + 1) if uid not in exclude_uids and uid not in used_uids]
 
     if len(available_uids) < count:
@@ -248,9 +248,9 @@ def _fallback_miner_seed_records(
     return records
 
 
-def _build_miner_seed_records(num_miners: int, exclude_uids: set[int]) -> List[MinerSeedRecord]:
+def _build_miner_seed_records(num_miners: int, exclude_uids: set[int]) -> list[MinerSeedRecord]:
     metagraph_records = _try_fetch_metagraph()
-    records: List[MinerSeedRecord] = []
+    records: list[MinerSeedRecord] = []
     used_uids: set[int] = set()
 
     def _is_within_range(uid: int) -> bool:
@@ -307,7 +307,7 @@ def _build_validator_identity_and_snapshot(
     record: ValidatorSeedRecord,
     round_number: int,
     started_at: float,
-) -> Tuple[Validator, ValidatorRoundValidator]:
+) -> tuple[Validator, ValidatorRoundValidator]:
     identity = Validator(
         uid=record.uid,
         hotkey=record.hotkey,
@@ -331,7 +331,7 @@ def _build_miner_identity_and_snapshot(
     validator_round_id: str,
     record: MinerSeedRecord,
     now_ts: float,
-) -> Tuple[Miner, ValidatorRoundMiner]:
+) -> tuple[Miner, ValidatorRoundMiner]:
     identity = Miner(
         uid=record.uid,
         hotkey=record.hotkey,
@@ -351,7 +351,7 @@ def _build_miner_identity_and_snapshot(
     return identity, snapshot
 
 
-TASK_LIBRARY: List[TaskTemplate] = [
+TASK_LIBRARY: list[TaskTemplate] = [
     TaskTemplate(
         website_name="Autoppia Cinema",
         website_slug="autocinema",
@@ -524,9 +524,9 @@ TASK_LIBRARY: List[TaskTemplate] = [
 ]
 
 
-def _build_tasks(validator_round_id: str, num_tasks: int) -> Tuple[List[Task], List[TaskTemplate]]:
-    tasks: List[Task] = []
-    templates: List[TaskTemplate] = []
+def _build_tasks(validator_round_id: str, num_tasks: int) -> tuple[list[Task], list[TaskTemplate]]:
+    tasks: list[Task] = []
+    templates: list[TaskTemplate] = []
 
     for index in range(num_tasks):
         template = random.choice(TASK_LIBRARY)
@@ -591,14 +591,14 @@ def _build_agent_run_bundle(
         metadata={"seed_index": index},
     )
 
-    task_solutions: List[TaskSolution] = []
-    evaluations: List[Evaluation] = []
+    task_solutions: list[TaskSolution] = []
+    evaluations: list[Evaluation] = []
 
     for task_index, task in enumerate(tasks):
         template = task_templates[task_index % len(task_templates)]
         solution_id = f"{agent_run_id}-solution-{task_index:03d}"
 
-        actions: List[Action] = []
+        actions: list[Action] = []
         for action_payload in template.default_actions:
             action_payload = dict(action_payload)
             action_type = action_payload.pop("type")
@@ -698,7 +698,7 @@ def build_seed_payload(
         metadata={"source": "seed"},
     )
 
-    agent_bundles: List[AgentRunBundle] = []
+    agent_bundles: list[AgentRunBundle] = []
     for index, miner_record in enumerate(miner_records):
         miner_identity, miner_snapshot = _build_miner_identity_and_snapshot(
             validator_round_id=validator_round_id,
@@ -778,7 +778,7 @@ async def _guard_duplicate_round(validator_uid: int, round_number: int) -> None:
         await service.ensure_unique_round_number(validator_uid, round_number)
 
 
-def _ensure_response(response: httpx.Response, context: str) -> Dict[str, Any]:
+def _ensure_response(response: httpx.Response, context: str) -> dict[str, Any]:
     if response.status_code >= 400:
         raise RuntimeError(f"{context} failed with status={response.status_code} body={response.text}")
     return response.json()
@@ -786,11 +786,11 @@ def _ensure_response(response: httpx.Response, context: str) -> Dict[str, Any]:
 
 def _compute_round_outcome(
     payload: SeedPayload,
-) -> Tuple[List[Dict[str, Any]], List[float], Dict[str, float]]:
+) -> tuple[list[dict[str, Any]], list[float], dict[str, float]]:
     sorted_bundles = sorted(payload.agent_bundles, key=lambda bundle: bundle.average_score, reverse=True)
     n_winners = min(3, len(sorted_bundles))
-    winners_data: List[Dict[str, Any]] = []
-    winner_scores: List[float] = []
+    winners_data: list[dict[str, Any]] = []
+    winner_scores: list[float] = []
 
     for rank, bundle in enumerate(sorted_bundles[:n_winners], start=1):
         winners_data.append(
@@ -814,8 +814,8 @@ async def seed_validator_round(
     num_tasks: int,
     num_miners: int,
     *,
-    client: Optional[AsyncClient] = None,
-    round_number: Optional[int] = None,
+    client: AsyncClient | None = None,
+    round_number: int | None = None,
 ) -> PersistenceResult:
     if round_number is None:
         round_number = await _determine_next_round_number()
@@ -910,7 +910,7 @@ async def seed_validator_round(
             "finish_round",
         )
 
-        saved_entities: Dict[str, Any] = {
+        saved_entities: dict[str, Any] = {
             "validator_round": payload.validator_round.validator_round_id,
             "validator_snapshots": [payload.validator_snapshot.validator_hotkey],
             "miner_snapshots": [snapshot.miner_hotkey for snapshot in payload.miner_snapshots],
@@ -941,7 +941,7 @@ async def seed_validator_round_bulk(
     num_tasks: int,
     num_miners: int,
     *,
-    round_number: Optional[int] = None,
+    round_number: int | None = None,
 ) -> PersistenceResult:
     if round_number is None:
         round_number = await _determine_next_round_number()
