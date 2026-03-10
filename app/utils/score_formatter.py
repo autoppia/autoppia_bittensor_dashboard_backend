@@ -2,10 +2,9 @@
 Utility functions for formatting scores as percentages.
 """
 
-from typing import Union
+from __future__ import annotations
 
-
-def format_score_as_percentage(score: Union[float, int, None]) -> str:
+def format_score_as_percentage(score: float | int | None) -> str:
     """
     Convert a score from 0-1 format to 0-100 percentage format with % symbol.
 
@@ -23,7 +22,7 @@ def format_score_as_percentage(score: Union[float, int, None]) -> str:
     return f"{percentage}%"
 
 
-def format_score_as_percentage_float(score: Union[float, int, None]) -> float:
+def format_score_as_percentage_float(score: float | int | None) -> float:
     """
     Convert a score from 0-1 format to 0-100 percentage format as float.
 
