@@ -34,7 +34,7 @@ if pgrep -x "redis-server" > /dev/null; then
     echo "   ✅ Redis ya está corriendo"
 else
     echo "   ⚠️  Redis no está corriendo"
-    if [ -f "scripts/bash/start_redis.sh" ]; then
+    if [[ -f "scripts/bash/start_redis.sh" ]]; then
         set +e
         bash scripts/bash/start_redis.sh
         set -e
@@ -78,7 +78,7 @@ if pm2 list 2>/dev/null | grep -q "$PM2_API_NAME"; then
     pm2 restart "$PM2_API_NAME" --update-env
     echo "   ✅ $PM2_API_NAME reiniciado"
 else
-    if [ ! -d "venv" ]; then
+    if [[ ! -d "venv" ]]; then
         echo "   ❌ No se encontró venv. Crea uno con: python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt"
         exit 1
     fi
