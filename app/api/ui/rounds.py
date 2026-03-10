@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/rounds", tags=["rounds"])
 
 
-async def _service(session: AsyncSession) -> UIDataService:
+def _service(session: AsyncSession) -> UIDataService:
     return UIDataService(session)
 
 
@@ -62,79 +62,79 @@ def _find_validator_in_data(data: dict, validator_id: str) -> Any:
 
 class RoundIdsQuery(BaseModel):
     limit: int = 500
-    status: Optional[str] = None
-    sortOrder: str = "desc"
+    status: str | None = None
+    sort_order: str = "desc"
     model_config = {"extra": "forbid"}
 
 
 def get_round_ids_query(
     limit: Annotated[int, Query(500, ge=1, le=1000)] = 500,
-    status: Annotated[Optional[str], Query(None)] = None,
-    sortOrder: Annotated[str, Query("desc")] = "desc",
+    status: Annotated[str | None, Query(None)] = None,
+    sort_order: Annotated[str, Query("desc", alias="sortOrder")] = "desc",
 ) -> RoundIdsQuery:
-    return RoundIdsQuery(limit=limit, status=status, sortOrder=sortOrder)
+    return RoundIdsQuery(limit=limit, status=status, sort_order=sort_order)
 
 
 class RoundsListQuery(BaseModel):
     page: int = 1
     limit: int = 10
-    status: Optional[str] = None
-    sortBy: str = "round"
-    sortOrder: str = "desc"
-    skip: Optional[int] = None
+    status: str | None = None
+    sort_by: str = "round"
+    sort_order: str = "desc"
+    skip: int | None = None
     model_config = {"extra": "forbid"}
 
 
 def get_rounds_list_query(
     page: Annotated[int, Query(1, ge=1)] = 1,
     limit: Annotated[int, Query(10, ge=1, le=100)] = 10,
-    status: Annotated[Optional[str], Query(None)] = None,
-    sortBy: Annotated[str, Query("round")] = "round",
-    sortOrder: Annotated[str, Query("desc")] = "desc",
-    skip: Annotated[Optional[int], Query(None, ge=0)] = None,
+    status: Annotated[str | None, Query(None)] = None,
+    sort_by: Annotated[str, Query("round", alias="sortBy")] = "round",
+    sort_order: Annotated[str, Query("desc", alias="sortOrder")] = "desc",
+    skip: Annotated[int | None, Query(None, ge=0)] = None,
 ) -> RoundsListQuery:
-    return RoundsListQuery(page=page, limit=limit, status=status, sortBy=sortBy, sortOrder=sortOrder, skip=skip)
+    return RoundsListQuery(page=page, limit=limit, status=status, sort_by=sort_by, sort_order=sort_order, skip=skip)
 
 
 class RoundMinersQuery(BaseModel):
     page: int = 1
     limit: int = 20
-    sortBy: str = "score"
-    sortOrder: str = "desc"
-    success: Optional[bool] = None
-    minScore: Optional[float] = None
-    maxScore: Optional[float] = None
+    sort_by: str = "score"
+    sort_order: str = "desc"
+    success: bool | None = None
+    min_score: float | None = None
+    max_score: float | None = None
     model_config = {"extra": "forbid"}
 
 
 def get_round_miners_query(
     page: Annotated[int, Query(1, ge=1)] = 1,
     limit: Annotated[int, Query(20, ge=1, le=100)] = 20,
-    sortBy: Annotated[str, Query("score")] = "score",
-    sortOrder: Annotated[str, Query("desc")] = "desc",
-    success: Annotated[Optional[bool], Query(None)] = None,
-    minScore: Annotated[Optional[float], Query(None)] = None,
-    maxScore: Annotated[Optional[float], Query(None)] = None,
+    sort_by: Annotated[str, Query("score", alias="sortBy")] = "score",
+    sort_order: Annotated[str, Query("desc", alias="sortOrder")] = "desc",
+    success: Annotated[bool | None, Query(None)] = None,
+    min_score: Annotated[float | None, Query(None, alias="minScore")] = None,
+    max_score: Annotated[float | None, Query(None, alias="maxScore")] = None,
 ) -> RoundMinersQuery:
     return RoundMinersQuery(
-        page=page, limit=limit, sortBy=sortBy, sortOrder=sortOrder,
-        success=success, minScore=minScore, maxScore=maxScore,
+        page=page, limit=limit, sort_by=sort_by, sort_order=sort_order,
+        success=success, min_score=min_score, max_score=max_score,
     )
 
 
 class RoundActivityQuery(BaseModel):
     limit: int = 20
     offset: int = 0
-    activity_type: Optional[str] = None
-    since: Optional[str] = None
+    activity_type: str | None = None
+    since: str | None = None
     model_config = {"extra": "forbid"}
 
 
 def get_round_activity_query(
     limit: Annotated[int, Query(20, ge=1, le=100)] = 20,
     offset: Annotated[int, Query(0, ge=0)] = 0,
-    activity_type: Annotated[Optional[str], Query(None, alias="type")] = None,
-    since: Annotated[Optional[str], Query(None)] = None,
+    activity_type: Annotated[str | None, Query(None, alias="type")] = None,
+    since: Annotated[str | None, Query(None)] = None,
 ) -> RoundActivityQuery:
     return RoundActivityQuery(limit=limit, offset=offset, activity_type=activity_type, since=since)
 
@@ -153,7 +153,7 @@ async def list_round_ids(
     Get lightweight list of round IDs only (no nested data).
     Much faster than full /rounds endpoint - use this for dropdowns and lists.
     """
-    service = await _service(session)
+    service = _service(session)
     entries, _ = await service.get_rounds_list(page=1, limit=q.limit)
     round_ids = [int(e.get("id", 0)) for e in entries if int(e.get("id", 0)) > 0]
     return {
@@ -171,7 +171,7 @@ async def list_rounds(
     session: Annotated[AsyncSession, Depends(get_session)],
     q: Annotated[RoundsListQuery, Depends(get_rounds_list_query)],
 ):
-    service = await _service(session)
+    service = _service(session)
     if q.skip is not None:
         page = (q.skip // q.limit) + 1
         offset = q.skip % q.limit
@@ -203,19 +203,19 @@ router.add_api_route(
 )
 
 
-@router.get("/current", response_model=RoundDetailResponse)
+@router.get("/current", responses={404: {"description": "No rounds available"}})
 @cache("rounds_current", ttl=300)  # Cache 5 minutes - different key to avoid collision with overview
 async def get_current_round(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> RoundDetailResponse:
-    service = await _service(session)
+    service = _service(session)
     current = await service.get_current_round()
     if current is None:
         raise HTTPException(status_code=404, detail="No rounds available")
     return RoundDetailResponse(success=True, data={"round": current})
 
 
-@router.get("/{season}/{round}/progress", response_model=RoundProgressResponse)
+@router.get("/{season}/{round}/progress", responses={404: {"description": "Round not found"}})
 async def get_round_progress_by_season(
     season: int,
     round: int,  # noqa: A001 - path param name must match URL segment {round}
@@ -225,7 +225,7 @@ async def get_round_progress_by_season(
 
     Example: /rounds/1/1/progress returns progress for Season 1, Round 1
     """
-    service = await _service(session)
+    service = _service(session)
     try:
         progress = await service.get_round_progress_data(f"{season}/{round}", get_current_block_estimate())
     except ValueError as exc:
@@ -233,7 +233,7 @@ async def get_round_progress_by_season(
     return RoundProgressResponse(success=True, data={"progress": progress})
 
 
-@router.get("/{season}/{round}", response_model=RoundDetailResponse)
+@router.get("/{season}/{round}", responses={404: {"description": "Round not found"}})
 @cache("round_by_season", ttl=300)
 async def get_round_by_season(
     season: int,
@@ -244,7 +244,7 @@ async def get_round_by_season(
 
     Example: /rounds/8/3 returns Season 8, Round 3
     """
-    service = await _service(session)
+    service = _service(session)
     try:
         detail_data = await service.get_round_detail(season, round)
     except ValueError as exc:
@@ -253,7 +253,7 @@ async def get_round_by_season(
     return RoundDetailResponse(success=True, data={"round": detail_data})
 
 
-@router.get("/get-round")
+@router.get("/get-round", responses={404: {"description": "Round not found"}, 500: {"description": "Server error"}})
 async def get_round_aggregated(
     season: Annotated[int, Query(..., description="Season number (e.g., 1)")],
     round_in_season: Annotated[int, Query(..., description="Round number within season (e.g., 1)")],
@@ -266,7 +266,7 @@ async def get_round_aggregated(
     - aggregated: winner, avg_winner_score, avg_eval_time, miners_evaluated, tasks_evaluated (post-consensus, desde Autoppia UID 83)
     - validators: lista de validators con sus métricas locales (prefijo local_)
     """
-    service = await _service(session)
+    service = _service(session)
     try:
         data = await service.get_round_with_validators(season, round_in_season)
         return {"success": True, "data": data}
@@ -277,7 +277,7 @@ async def get_round_aggregated(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.get("/{round_id}/basic")
+@router.get("/{round_id}/basic", responses={404: {"description": "Round not found"}})
 @cache("round_basic", ttl=300)  # Cache 5 minutes
 async def get_round_basic(
     round_id: str,
@@ -287,7 +287,7 @@ async def get_round_basic(
     Get basic round info without nested agent runs, tasks, solutions, or evaluations.
     Use this for round page header and status display.
     """
-    service = await _service(session)
+    service = _service(session)
     try:
         basic_data = await _round_detail_from_identifier(service, round_id)
     except ValueError as exc:
@@ -298,7 +298,7 @@ async def get_round_basic(
     }
 
 
-@router.get("/{round_id}")
+@router.get("/{round_id}", responses={404: {"description": "Round not found"}, 500: {"description": "Server error"}})
 async def get_round(
     round_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -315,7 +315,7 @@ async def get_round(
     - Current round cached in Redis (updates frequently)
     - Auto-caching on first request
     """
-    service = await _service(session)
+    service = _service(session)
     try:
         if "/" in round_id:
             season_s, round_s = round_id.split("/", 1)
@@ -328,7 +328,7 @@ async def get_round(
                 detail_data = await service.get_round_detail_by_round_id(parsed)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.error("Error loading round %s: %s", round_id, exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -338,13 +338,13 @@ async def get_round(
     }
 
 
-@router.get("/{round_id}/statistics", response_model=RoundStatisticsResponse)
+@router.get("/{round_id}/statistics", responses={404: {"description": "Round not found"}})
 @cache("round_statistics", ttl=180)  # Cache 3 minutes
 async def get_round_statistics(
     round_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> RoundStatisticsResponse:
-    service = await _service(session)
+    service = _service(session)
     try:
         stats = await service.get_round_statistics(round_id)
     except ValueError as exc:
@@ -352,37 +352,37 @@ async def get_round_statistics(
     return RoundStatisticsResponse(success=True, data={"statistics": stats})
 
 
-@router.get("/{round_id}/miners", response_model=RoundMinersResponse)
+@router.get("/{round_id}/miners", responses={404: {"description": "Round not found"}})
 @cache("round_miners", ttl=300)  # Cache 5 minutes
 async def get_round_miners(
     round_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
     q: Annotated[RoundMinersQuery, Depends(get_round_miners_query)],
 ) -> RoundMinersResponse:
-    service = await _service(session)
+    service = _service(session)
     try:
         data = await service.get_round_miners_data(
             round_identifier=round_id,
             page=q.page,
             limit=q.limit,
-            sort_by=q.sortBy,
-            sort_order=q.sortOrder,
+            sort_by=q.sort_by,
+            sort_order=q.sort_order,
             success=q.success,
-            min_score=q.minScore,
-            max_score=q.maxScore,
+            min_score=q.min_score,
+            max_score=q.max_score,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RoundMinersResponse(success=True, data=data)
 
 
-@router.get("/{round_id}/miners/top", response_model=RoundMinersResponse)
+@router.get("/{round_id}/miners/top", responses={404: {"description": "Round not found"}})
 async def get_top_round_miners(
     round_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: Annotated[int, Query(10, ge=1, le=50)] = 10,
 ) -> RoundMinersResponse:
-    service = await _service(session)
+    service = _service(session)
     try:
         data = await service.get_round_miners_data(
             round_identifier=round_id,
@@ -399,13 +399,13 @@ async def get_top_round_miners(
     return RoundMinersResponse(success=True, data=data)
 
 
-@router.get("/{round_id}/miners/{uid}", response_model=RoundMinersResponse)
+@router.get("/{round_id}/miners/{uid}", responses={404: {"description": "Miner or round not found"}})
 async def get_round_miner(
     round_id: str,
     uid: int,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> RoundMinersResponse:
-    service = await _service(session)
+    service = _service(session)
     try:
         data = await service.get_round_miners_data(
             round_identifier=round_id,
@@ -425,12 +425,12 @@ async def get_round_miner(
     return RoundMinersResponse(success=True, data={"miner": miner})
 
 
-@router.get("/{round_id}/validators", response_model=RoundValidatorsResponse)
+@router.get("/{round_id}/validators", responses={404: {"description": "Round not found"}})
 async def get_round_validators(
     round_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> RoundValidatorsResponse:
-    service = await _service(session)
+    service = _service(session)
     try:
         data = await service.get_round_validators_data(round_id)
     except ValueError as exc:
@@ -438,12 +438,12 @@ async def get_round_validators(
     return RoundValidatorsResponse(success=True, data=data)
 
 
-@router.get("/by-id/{round_id}/validators", response_model=RoundValidatorsResponse, include_in_schema=False)
+@router.get("/by-id/{round_id}/validators", responses={404: {"description": "Round not found"}}, include_in_schema=False)
 async def get_round_validators_by_id_alias(
     round_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> RoundValidatorsResponse:
-    service = await _service(session)
+    service = _service(session)
     try:
         data = await service.get_round_validators_data(round_id)
     except ValueError as exc:
@@ -451,13 +451,13 @@ async def get_round_validators_by_id_alias(
     return RoundValidatorsResponse(success=True, data=data)
 
 
-@router.get("/{round_id}/validators/{validator_id}", response_model=RoundValidatorsResponse)
+@router.get("/{round_id}/validators/{validator_id}", responses={404: {"description": "Validator or round not found"}})
 async def get_round_validator(
     round_id: str,
     validator_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> RoundValidatorsResponse:
-    service = await _service(session)
+    service = _service(session)
     try:
         data = await service.get_round_validators_data(round_id)
         validator = _find_validator_in_data(data, validator_id)
@@ -468,13 +468,13 @@ async def get_round_validator(
     return RoundValidatorsResponse(success=True, data={"validator": validator})
 
 
-@router.get("/by-id/{round_id}/validators/{validator_id}", response_model=RoundValidatorsResponse, include_in_schema=False)
+@router.get("/by-id/{round_id}/validators/{validator_id}", responses={404: {"description": "Validator or round not found"}}, include_in_schema=False)
 async def get_round_validator_by_id_alias(
     round_id: str,
     validator_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> RoundValidatorsResponse:
-    service = await _service(session)
+    service = _service(session)
     try:
         data = await service.get_round_validators_data(round_id)
         validator = _find_validator_in_data(data, validator_id)
@@ -485,13 +485,13 @@ async def get_round_validator_by_id_alias(
     return RoundValidatorsResponse(success=True, data={"validator": validator})
 
 
-@router.get("/{round_id}/activity", response_model=RoundActivityResponse)
+@router.get("/{round_id}/activity", responses={404: {"description": "Round not found"}})
 async def get_round_activity(
     round_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
     q: Annotated[RoundActivityQuery, Depends(get_round_activity_query)],
 ) -> RoundActivityResponse:
-    service = await _service(session)
+    service = _service(session)
     try:
         detail = await _round_detail_from_identifier(service, round_id)
         activities = []
@@ -523,13 +523,13 @@ async def get_round_activity(
     return RoundActivityResponse(success=True, data=data)
 
 
-@router.get("/{round_id}/progress", response_model=RoundProgressResponse)
+@router.get("/{round_id}/progress", responses={404: {"description": "Round not found"}})
 async def get_round_progress(
     round_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> RoundProgressResponse:
     """Get round progress for the provided identifier (season/round or numeric)."""
-    service = await _service(session)
+    service = _service(session)
     try:
         progress = await service.get_round_progress_data(round_id, get_current_block_estimate())
     except ValueError as exc:
@@ -537,12 +537,12 @@ async def get_round_progress(
     return RoundProgressResponse(success=True, data={"progress": progress})
 
 
-@router.post("/compare", response_model=RoundComparisonResponse)
+@router.post("/compare", responses={400: {"description": "Invalid request"}, 404: {"description": "Round not found"}})
 async def compare_rounds(
     payload: RoundComparisonRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> RoundComparisonResponse:
-    service = await _service(session)
+    service = _service(session)
     if not payload.roundIds:
         raise HTTPException(status_code=400, detail="roundIds cannot be empty")
     try:
@@ -571,12 +571,12 @@ async def compare_rounds(
     return RoundComparisonResponse(success=True, data={"rounds": comparisons})
 
 
-@router.get("/{round_id}/timeline", response_model=RoundTimelineResponse)
+@router.get("/{round_id}/timeline", responses={404: {"description": "Round not found"}})
 async def get_round_timeline(
     round_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> RoundTimelineResponse:
-    service = await _service(session)
+    service = _service(session)
     try:
         detail = await _round_detail_from_identifier(service, round_id)
         timeline = []
@@ -602,12 +602,12 @@ async def get_round_timeline(
     return RoundTimelineResponse(success=True, data={"timeline": timeline})
 
 
-@router.get("/{round_id}/summary", response_model=RoundSummaryResponse)
+@router.get("/{round_id}/summary", responses={404: {"description": "Round not found"}})
 async def get_round_summary(
     round_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> RoundSummaryResponse:
-    service = await _service(session)
+    service = _service(session)
     try:
         summary = await service.get_round_summary_data(round_id)
     except ValueError as exc:
@@ -617,7 +617,7 @@ async def get_round_summary(
 
 @router.get(
     "/{round_id}/agent-runs",
-    response_model=List[AgentEvaluationRunWithDetails],
+    responses={500: {"description": "Server error"}},
 )
 async def list_round_agent_runs(
     round_id: str,
@@ -625,7 +625,7 @@ async def list_round_agent_runs(
     limit: Annotated[int, Query(100, ge=1, le=500)] = 100,
     skip: Annotated[int, Query(0, ge=0)] = 0,
 ) -> List[AgentEvaluationRunWithDetails]:
-    service = await _service(session)
+    service = _service(session)
     try:
         runs = await service.list_round_agent_runs(round_id, limit=limit, skip=skip)
         return [AgentEvaluationRunWithDetails(**run) for run in runs]
@@ -640,13 +640,13 @@ async def list_round_agent_runs(
 
 @router.get(
     "/agent-runs/{agent_run_id}",
-    response_model=AgentEvaluationRunWithDetails,
+    responses={404: {"description": "Agent run not found"}, 500: {"description": "Server error"}},
 )
 async def get_agent_run(
     agent_run_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AgentEvaluationRunWithDetails:
-    service = await _service(session)
+    service = _service(session)
     try:
         run = await service.get_agent_run_by_id(agent_run_id)
         return AgentEvaluationRunWithDetails(**run)
