@@ -9,7 +9,6 @@ import asyncpg
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.exc import InterfaceError as SQLInterfaceError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -64,7 +63,7 @@ def _get_validator_uid_from_context(context: "EvaluationContext") -> int | None:
     if hasattr(context.round, "validator_info") and context.round.validator_info:
         return context.round.validator_info.uid
     if hasattr(context.round, "validators") and context.round.validators:
-        return context.round.validators[0].uid if context.round.validators else None
+        return context.round.validators[0].uid
     return None
 
 
@@ -267,8 +266,7 @@ class EvaluationsDomainServiceMixin:
                 asyncpg.exceptions.InternalClientError,
                 asyncpg.exceptions.ConnectionDoesNotExistError,
                 AsyncAdapt_asyncpg_dbapi.Error,  # Catches other asyncpg errors
-                SQLInterfaceError,  # SQLAlchemy wraps asyncpg errors
-                DBAPIError,  # Base class for all DBAPI errors
+                DBAPIError,  # Base class for all DBAPI errors (includes SQLAlchemy InterfaceError)
             ) as e:
                 if attempt < max_retries - 1:
                     logger.warning(
@@ -489,8 +487,6 @@ class EvaluationsDomainServiceMixin:
                         for u in usage_list
                     ],
                 )
-            else:
-                pass
         except Exception:  # noqa: BLE001
             pass
         result = Evaluation(**data)
