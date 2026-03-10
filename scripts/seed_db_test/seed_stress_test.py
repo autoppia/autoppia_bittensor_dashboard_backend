@@ -10,12 +10,13 @@ Script de STRESS TEST para generar grandes volúmenes de datos:
 Este script está diseñado para probar el rendimiento del sistema con grandes volúmenes de datos.
 """
 
+from __future__ import annotations
+
 import asyncio
 import random
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -45,7 +46,7 @@ BATCH_SIZE = 10  # Procesar en lotes para mejor rendimiento
 
 
 # Generar validators dinámicamente
-def generate_validators(count: int) -> List[Dict]:
+def generate_validators(count: int) -> list[dict]:
     """Genera una lista de validators para el stress test."""
     base_validators = [
         {"uid": 124, "name": "Autoppia", "hotkey": "5DUmbxsTWuMxefEk36BYX8qNsF18BbUeTgBPuefBN6gSDe8j", "stake": 925_000, "vtrust": 0.97},
@@ -74,7 +75,7 @@ def generate_validators(count: int) -> List[Dict]:
 
 
 # Generar miners dinámicamente
-def generate_miners(count: int) -> List[Dict]:
+def generate_miners(count: int) -> list[dict]:
     """Genera una lista de miners para el stress test."""
     base_miners = [
         {"uid": 80, "hotkey": "5DypvN3kYgf19DmpXNxqUU7fZkccRJS6HnsREaWj82sQdWd8", "name": "Miner 80"},
@@ -97,7 +98,7 @@ def generate_miners(count: int) -> List[Dict]:
 
 
 # Generar tareas dinámicamente
-def generate_tasks(count: int, round_num: int) -> List[Dict]:
+def generate_tasks(count: int, round_num: int) -> list[dict]:
     """Genera una lista de tareas para el stress test."""
     websites = ["autocinema", "autobooks", "autoshop", "autotravel", "autofood"]
     use_cases = [
@@ -163,7 +164,7 @@ async def clear_all_tables():
 
             print("✅ Todas las tablas limpiadas\n")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             await session.rollback()
             print(f"❌ Error limpiando tablas: {e}")
             raise
@@ -173,8 +174,8 @@ async def create_validator_round(
     session: AsyncSession,
     validator: dict,
     round_number: int,
-    tasks: List[Dict],
-    miners: List[Dict],
+    tasks: list[dict],
+    miners: list[dict],
 ):
     """Crea un validator round completo con todos los datos."""
     validator_round_id = f"round_{round_number}_validator_{validator['uid']}"
@@ -379,7 +380,7 @@ async def create_validator_round(
         subnet_price = get_price(netuid=settings.VALIDATOR_NETUID if hasattr(settings, "VALIDATOR_NETUID") else 36)
         if subnet_price <= 0:
             subnet_price = 0.0043
-    except Exception:
+    except Exception:  # noqa: BLE001
         subnet_price = 0.0043
 
     # Crear summary records - verificar si ya existe antes de crear
@@ -453,11 +454,11 @@ async def create_validator_round(
     return len(all_evaluations)
 
 
-async def calculate_post_consensus_scores(session: AsyncSession, round_number: int, validators: List[Dict]):
+async def calculate_post_consensus_scores(session: AsyncSession, round_number: int, validators: list[dict]):
     """Calcula los scores post-consensus agregando datos de todos los validators del round."""
     validator_round_ids = [f"round_{round_number}_validator_{v['uid']}" for v in validators]
 
-    summaries_by_miner: Dict[int, List[ValidatorRoundSummaryORM]] = {}
+    summaries_by_miner: dict[int, list[ValidatorRoundSummaryORM]] = {}
     total_stake = 0.0
 
     for validator_round_id in validator_round_ids:
@@ -478,7 +479,7 @@ async def calculate_post_consensus_scores(session: AsyncSession, round_number: i
                 summaries_by_miner[miner_uid].append(summary)
 
     # Calcular consensus scores (stake-weighted average)
-    consensus_scores: Dict[int, float] = {}
+    consensus_scores: dict[int, float] = {}
     for miner_uid, summaries in summaries_by_miner.items():
         weighted_sum = 0.0
         total_weight = 0.0
@@ -569,7 +570,7 @@ async def main():
                     try:
                         evaluations_count = await create_validator_round(session, validator, round_num, tasks, miners)
                         total_evaluations += evaluations_count
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001
                         print(f"  ⚠️  Error creando round {round_num} para validator {validator['name']}: {e}")
                         await session.rollback()
                         # Continuar con el siguiente validator
@@ -578,7 +579,7 @@ async def main():
                 # Commit después de crear todos los validator rounds para este round
                 try:
                     await session.commit()
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     print(f"  ⚠️  Error en commit del round {round_num}: {e}")
                     await session.rollback()
                     continue
@@ -614,7 +615,7 @@ async def main():
             print(f"⚡ Velocidad: {total_evaluations / elapsed:.0f} evaluations/segundo")
             print("\n✅ ¡Stress test completado exitosamente!")
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"\n❌ Error durante el stress test: {e}")
         import traceback
 
