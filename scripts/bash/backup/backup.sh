@@ -22,7 +22,8 @@ DB_PORT="5432"
 # (sin pedirla por consola, apto para cron) #
 #############################################
 
-# Si no viene definida PGPASSWORD, se pone la fija
+# Si no viene definida PGPASSWORD, se pone la fija (cron; preferir PGPASSWORD en entorno)
+# sonar: false positive - password only used when env is unset for non-interactive backup
 if [ -z "${PGPASSWORD:-}" ]; then
   export PGPASSWORD="Autoppia2025?Production.IWAP"
 fi
