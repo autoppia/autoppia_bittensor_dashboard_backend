@@ -114,7 +114,7 @@ def _get_validator_uid_from_context(context: "AgentRunContext") -> int | None:
     if hasattr(context.round, "validator_info") and context.round.validator_info:
         return context.round.validator_info.uid
     if hasattr(context.round, "validators") and context.round.validators:
-        return context.round.validators[0].uid if context.round.validators else None
+        return context.round.validators[0].uid
     return None
 
 
@@ -557,8 +557,8 @@ class TasksDomainServiceMixin:
             }
 
         # Get unique task_ids and agent_run_ids from the paginated evaluations
-        task_ids = list(set(ev.task_id for ev in eval_rows))
-        agent_run_ids_from_evals = list(set(ev.agent_run_id for ev in eval_rows))
+        task_ids = list({ev.task_id for ev in eval_rows})
+        agent_run_ids_from_evals = list({ev.agent_run_id for ev in eval_rows})
 
         # Fetch tasks for these evaluations
         task_stmt = select(TaskORM).where(TaskORM.task_id.in_(task_ids))
@@ -579,7 +579,7 @@ class TasksDomainServiceMixin:
             agent_runs_by_id = {run.agent_run_id: run for run in run_rows}
 
         # Fetch round info for these evaluations
-        round_ids = list(set(ev.validator_round_id for ev in eval_rows))
+        round_ids = list({ev.validator_round_id for ev in eval_rows})
         round_map: dict[str, ValidatorRoundORM] = {}
         if round_ids:
             round_rows = await self.session.scalars(
@@ -631,8 +631,18 @@ class TasksDomainServiceMixin:
             round_row = round_map.get(ev.validator_round_id)
 
             score = getattr(ev, "evaluation_score", 0.0) if ev else 0.0
-            duration = ev.evaluation_time if ev and ev.evaluation_time is not None else (run.elapsed_sec if run else 0.0)
-            status_val = TaskStatus.COMPLETED if ev and score >= 0.5 else (TaskStatus.FAILED if ev else TaskStatus.PENDING)
+            if ev and ev.evaluation_time is not None:
+                duration = ev.evaluation_time
+            elif run:
+                duration = run.elapsed_sec
+            else:
+                duration = 0.0
+            if ev and score >= 0.5:
+                status_val = TaskStatus.COMPLETED
+            elif ev:
+                status_val = TaskStatus.FAILED
+            else:
+                status_val = TaskStatus.PENDING
 
             # Filters that depend on run/eval info (applied after enrichment)
             if agent_run_id and ev.agent_run_id != agent_run_id:
@@ -660,11 +670,25 @@ class TasksDomainServiceMixin:
 
             eval_cost = costs_by_eval.get(ev.evaluation_id) if ev and ev.evaluation_id else None
 
+            if run:
+                agent_run_id_val = run.agent_run_id
+            elif ev:
+                agent_run_id_val = ev.agent_run_id
+            elif sol:
+                agent_run_id_val = sol.agent_run_id
+            else:
+                agent_run_id_val = ""
+
+            start_ts = _ts(run.started_at if run else None) or _ts(round_row.start_epoch if round_row else None)
+            if start_ts is None:
+                start_ts = _ts(task_row.created_at.timestamp())
+            end_ts = _ts(run.ended_at if run else None)
+
             items.append(
                 UITask(
                     taskId=task_row.task_id,
                     evaluationId=ev.evaluation_id if ev else None,
-                    agentRunId=(run.agent_run_id if run else (ev.agent_run_id if ev else sol.agent_run_id if sol else "")),
+                    agentRunId=agent_run_id_val,
                     roundNumber=getattr(round_row, "round_number_in_season", None),
                     season=getattr(round_row, "season_number", None),
                     website=task_row.url,
@@ -676,8 +700,8 @@ class TasksDomainServiceMixin:
                     score=score,
                     successRate=int(score * 100),
                     duration=int(duration or 0),
-                    startTime=_ts(run.started_at if run else None) or _ts(round_row.start_epoch if round_row else None) or _ts(task_row.created_at.timestamp()),
-                    endTime=_ts(run.ended_at if run else None),
+                    startTime=start_ts,
+                    endTime=end_ts,
                     createdAt=task_row.created_at,
                     updatedAt=task_row.updated_at,
                     actions=None,
@@ -1193,9 +1217,15 @@ class TasksDomainServiceMixin:
             )
 
         validator_uid = _get_validator_uid_from_context(context)
+        if validator and validator.name:
+            validator_display_name = validator.name
+        elif validator_uid:
+            validator_display_name = _format_validator_id(validator_uid)
+        else:
+            validator_display_name = "unknown"
         validator_info = UITaskValidatorInfo(
             id=_format_validator_id(validator_uid) if validator_uid else "unknown",
-            name=(validator.name if validator and validator.name else _format_validator_id(validator_uid) if validator_uid else "unknown"),
+            name=validator_display_name,
             image="https://placehold.co/64x64?text=V",
             description="",
             website="",
