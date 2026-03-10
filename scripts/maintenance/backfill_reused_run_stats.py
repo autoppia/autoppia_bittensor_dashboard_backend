@@ -9,6 +9,8 @@ Uso (con venv y .env/DATABASE_URL):
   python scripts/maintenance/backfill_reused_run_stats.py --dry-run   # solo imprime qué se actualizaría
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 import sys
