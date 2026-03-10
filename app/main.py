@@ -69,15 +69,16 @@ cors_kwargs = {
 if settings.CORS_ALLOW_ORIGIN_REGEX:
     cors_kwargs["allow_origin_regex"] = settings.CORS_ALLOW_ORIGIN_REGEX
 
-app.add_middleware(CORSMiddleware, **cors_kwargs)
-
-# Detailed logging middleware (optional, configured via env)
+# Detailed logging middleware (optional, configured via env) - add before CORS so CORS is last
 if settings.LOG_REQUEST_BODY or settings.LOG_RESPONSE_BODY:
     app.add_middleware(
         DetailedLoggingMiddleware,
         log_request_body=settings.LOG_REQUEST_BODY,
         log_response_body=settings.LOG_RESPONSE_BODY,
     )
+
+# CORS last in chain (outermost middleware, runs first on request)
+app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 # Static files
 images_path = os.path.join(os.path.dirname(__file__), "..", "images")
@@ -273,7 +274,7 @@ async def on_startup():
         # Overview cache warmer is also disabled - use external cron/PM2 if needed
         logger.info("ℹ️  Overview cache warmer disabled (use external process if needed)")
 
-    except Exception as e:  # noqa: BLE001 - catch-all at startup, log and re-raise
+    except Exception as e:  # noqa: BLE001  # NOSONAR - catch-all at startup, log and re-raise
         logger.error("Failed to initialize application: %s", e, exc_info=True)
         raise
 
