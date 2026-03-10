@@ -314,11 +314,10 @@ async def upload_evaluation_gif(
     gif: Annotated[UploadFile, File(...)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> EvaluationGifUploadResponse:
-    logger.info("Received GIF upload request for evaluation %s", evaluation_id)
+    logger.info("Received GIF upload request for evaluation")
     if gif.content_type != "image/gif":
         logger.warning(
-            "Rejected GIF upload for evaluation %s due to invalid content type %s",
-            evaluation_id,
+            "Rejected GIF upload due to invalid content type: %s",
             gif.content_type,
         )
         raise HTTPException(
@@ -333,7 +332,7 @@ async def upload_evaluation_gif(
         if not evaluation_row:
             raise ValueError(f"Evaluation {evaluation_id} not found")
     except ValueError as exc:
-        logger.warning("GIF upload requested for unknown evaluation %s", evaluation_id)
+        logger.warning("GIF upload requested for unknown evaluation")
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     await _reset_session_transaction(session)
 
