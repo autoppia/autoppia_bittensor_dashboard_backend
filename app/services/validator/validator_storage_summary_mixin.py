@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from sqlalchemy import func, select, text
 
@@ -52,12 +52,12 @@ class ValidatorStorageSummaryMixin:
 
         handshake_uids = await self._get_handshake_participant_uids(round_row.validator_round_id)
 
-        miners_payload: List[Dict[str, Any]] = []
+        miners_payload: list[dict[str, Any]] = []
         tasks_evaluated_total = 0
         tasks_success_total = 0
-        rewards: List[float] = []
-        eval_scores: List[float] = []
-        eval_times: List[float] = []
+        rewards: list[float] = []
+        eval_scores: list[float] = []
+        eval_times: list[float] = []
 
         burn_uid = int(settings.BURN_UID)
 
@@ -173,15 +173,15 @@ class ValidatorStorageSummaryMixin:
 
         try:
             req_pct_f = float(required_improvement_pct) if required_improvement_pct is not None else None
-        except Exception:
+        except Exception:  # noqa: BLE001
             req_pct_f = None
         try:
             reigning_score_f = float(reigning_score_before) if reigning_score_before is not None else None
-        except Exception:
+        except Exception:  # noqa: BLE001
             reigning_score_f = None
         try:
             candidate_score_f = float(top_candidate_score) if top_candidate_score is not None else None
-        except Exception:
+        except Exception:  # noqa: BLE001
             candidate_score_f = None
 
         dethrone_threshold = reigning_score_f * (1.0 + req_pct_f) if reigning_score_f is not None and req_pct_f is not None else None
@@ -203,20 +203,20 @@ class ValidatorStorageSummaryMixin:
             season_summary["round_result"] = "no_winner"
         enriched_post["season_summary"] = season_summary
 
-        def _to_int(value: Any) -> Optional[int]:
+        def _to_int(value: Any) -> int | None:
             try:
                 if value is None:
                     return None
                 return int(value)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return None
 
-        def _to_float(value: Any) -> Optional[float]:
+        def _to_float(value: Any) -> float | None:
             try:
                 if value is None:
                     return None
                 return float(value)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return None
 
         # Keep round-level consensus decision as first-class columns in validator_rounds.
@@ -481,17 +481,17 @@ class ValidatorStorageSummaryMixin:
         self,
         *,
         validator_round_id: str,
-        local_evaluation: Optional[Dict[str, Any]] = None,
-        post_consensus_evaluation: Optional[Dict[str, Any]] = None,
-        subnet_price: Optional[float] = None,
+        local_evaluation: dict[str, Any] | None = None,
+        post_consensus_evaluation: dict[str, Any] | None = None,
+        subnet_price: float | None = None,
     ) -> None:
         """Populate validator_round_summary_miners table from local_evaluation and post_consensus_evaluation.
 
         If no evaluation data is provided, creates basic summary records from agent_runs.
         """
         # Build a map of miner_uid -> summary data
-        summary_map: Dict[int, Dict[str, Any]] = {}
-        run_metrics_map: Dict[int, Dict[str, Any]] = {}
+        summary_map: dict[int, dict[str, Any]] = {}
+        run_metrics_map: dict[int, dict[str, Any]] = {}
 
         # Always read local metrics from persisted agent runs as the source of truth.
         stmt_runs = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.validator_round_id == validator_round_id).where(AgentEvaluationRunORM.miner_uid.isnot(None))
