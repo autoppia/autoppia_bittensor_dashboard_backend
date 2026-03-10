@@ -13,7 +13,7 @@ CURRENT=$(curl -s "$BASE/api/v1/overview/rounds/current" | python3 -c "import sy
 # Pre-warm the 3 previous rounds
 for i in 1 2 3; do
     R=$((CURRENT - i))
-    if [ $R -gt 0 ]; then
+    if [ "$R" -gt 0 ]; then
         curl -s "$BASE/api/v1/rounds/$R" > /dev/null &
         curl -s "$BASE/api/v1/rounds/$R/basic" > /dev/null &
     fi
