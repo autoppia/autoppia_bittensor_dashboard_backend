@@ -2012,7 +2012,7 @@ class TasksDomainServiceMixin:
         task_details = self._build_task_details_clean(context)
 
         # Build results without actions, screenshots, logs
-        results = self._build_results_clean(context, actions)
+        results = self._build_results_clean(context)
 
         # Build info object
         info = self._build_info(context)
@@ -2035,7 +2035,7 @@ class TasksDomainServiceMixin:
         task_dict.pop("logs", None)
         return task_dict
 
-    def _build_results_clean(self, context: TaskContext, actions: list[TaskAction]) -> dict[str, Any]:
+    def _build_results_clean(self, context: TaskContext) -> dict[str, Any]:
         """Build result (singular) without actions, screenshots, logs, summary, taskId."""
         # Get evaluation score and convert to binary (0 or 1)
         eval_score_raw = getattr(context.evaluation, "evaluation_score", 0.0) if context.evaluation else 0.0
