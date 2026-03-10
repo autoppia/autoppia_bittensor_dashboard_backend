@@ -1934,6 +1934,9 @@ class UIAgentsRunsServiceMixin:
                     SELECT r.round_id
                     FROM rounds r
                     JOIN seasons s ON s.season_id = r.season_id
+                    WHERE EXISTS (
+                        SELECT 1 FROM round_validator_miners rvm2 WHERE rvm2.round_id = r.round_id
+                    )
                     ORDER BY s.season_number DESC, r.round_number_in_season DESC
                     LIMIT 1
                     """
