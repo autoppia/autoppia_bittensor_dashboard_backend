@@ -42,18 +42,18 @@ def get_tasks_query(
     key: Annotated[str, Query(description="API key for authentication")],
     page: Annotated[int, Query(1, ge=1)] = 1,
     limit: Annotated[int, Query(50, ge=1, le=500)] = 50,
-    taskId: Annotated[str | None, Query(None, alias="taskId")] = None,
+    task_id: Annotated[str | None, Query(None, alias="taskId")] = None,
     website: Annotated[str | None, Query(None)] = None,
-    useCase: Annotated[str | None, Query(None, alias="useCase")] = None,
-    webVersion: Annotated[
+    use_case: Annotated[str | None, Query(None, alias="useCase")] = None,
+    web_version: Annotated[
         str | None, Query(None, alias="webVersion", description="Filter by web demo version (e.g., '0.1.0+d2e4029e')")
     ] = None,
-    minerUid: Annotated[int | None, Query(None, alias="minerUid")] = None,
-    agentId: Annotated[str | None, Query(None, alias="agentId")] = None,
-    validatorId: Annotated[str | None, Query(None, alias="validatorId")] = None,
-    roundId: Annotated[int | None, Query(None, alias="roundId")] = None,
-    minScore: Annotated[float | None, Query(None, alias="minScore")] = None,
-    maxScore: Annotated[float | None, Query(None, alias="maxScore")] = None,
+    miner_uid: Annotated[int | None, Query(None, alias="minerUid")] = None,
+    agent_id: Annotated[str | None, Query(None, alias="agentId")] = None,
+    validator_id: Annotated[str | None, Query(None, alias="validatorId")] = None,
+    round_id: Annotated[int | None, Query(None, alias="roundId")] = None,
+    min_score: Annotated[float | None, Query(None, alias="minScore")] = None,
+    max_score: Annotated[float | None, Query(None, alias="maxScore")] = None,
     status: Annotated[str | None, Query(None)] = None,
     success: Annotated[bool | None, Query(None)] = None,
     sort: Annotated[
@@ -65,23 +65,26 @@ def get_tasks_query(
         key=key,
         page=page,
         limit=limit,
-        taskId=taskId,
+        taskId=task_id,
         website=website,
-        useCase=useCase,
-        webVersion=webVersion,
-        minerUid=minerUid,
-        agentId=agentId,
-        validatorId=validatorId,
-        roundId=roundId,
-        minScore=minScore,
-        maxScore=maxScore,
+        useCase=use_case,
+        webVersion=web_version,
+        minerUid=miner_uid,
+        agentId=agent_id,
+        validatorId=validator_id,
+        roundId=round_id,
+        minScore=min_score,
+        maxScore=max_score,
         status=status,
         success=success,
         sort=sort or "created_at_desc",
     )
 
 
-@router.get("/with-solutions")
+@router.get(
+    "/with-solutions",
+    responses={422: {"description": "Invalid API key"}},
+)
 async def get_tasks_with_solutions_endpoint(
     session: Annotated[AsyncSession, Depends(get_session)],
     query: Annotated[TasksWithSolutionsQuery, Depends(get_tasks_query)],
@@ -96,22 +99,13 @@ async def get_tasks_with_solutions_endpoint(
 
     sort_by = "created_at"
     sort_order = "desc"
-    if query.sort:
-        if query.sort == "created_at_desc":
-            sort_by = "created_at"
-            sort_order = "desc"
-        elif query.sort == "created_at_asc":
-            sort_by = "created_at"
-            sort_order = "asc"
-        elif query.sort == "score_desc":
-            sort_by = "score"
-            sort_order = "desc"
-        elif query.sort == "score_asc":
-            sort_by = "score"
-            sort_order = "asc"
-        else:
-            sort_by = "created_at"
-            sort_order = "desc"
+    if query.sort == "created_at_asc":
+        sort_by, sort_order = "created_at", "asc"
+    elif query.sort == "score_desc":
+        sort_by, sort_order = "score", "desc"
+    elif query.sort == "score_asc":
+        sort_by, sort_order = "score", "asc"
+    # created_at_desc or unknown: keep default
 
     data = await get_tasks_with_solutions(
         session=session,
