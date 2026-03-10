@@ -60,7 +60,7 @@ echo "🚀 Iniciando Redis..."
 redis-server --daemonize yes --port 6379 2>/dev/null || {
     # Si falla, podría ser un problema de permisos o que el puerto esté ocupado
     # Verificar si el puerto está ocupado
-    if lsof -ti:6379 > /dev/null 2>&1 || ss -tuln 2>/dev/null | grep -q ":6379"; then
+    if lsof -ti:"6379" > /dev/null 2>&1 || ss -tuln 2>/dev/null | grep -q ":6379"; then
         echo "   ⚠️  Puerto 6379 ya está en uso, verificando si es Redis..."
         sleep 1
         if pgrep -x "redis-server" > /dev/null; then
