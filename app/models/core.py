@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from urllib.parse import urlparse
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -34,10 +35,10 @@ def now_ts() -> float:
 def _require_non_empty(value: str, field_name: str) -> str:
     """Ensure a non-empty string value is provided."""
     if value is None:
-        raise ValueError(f"{field_name} is required")
+        raise ValueError("%s is required" % (field_name,))
     value_str = str(value).strip()
     if not value_str:
-        raise ValueError(f"{field_name} cannot be blank")
+        raise ValueError("%s cannot be blank" % (field_name,))
     return value_str
 
 
@@ -49,18 +50,18 @@ def _require_non_empty(value: str, field_name: str) -> str:
 class ValidatorInfo(BaseModel):
     uid: int
     hotkey: str
-    coldkey: Optional[str] = None
+    coldkey: str | None = None
     stake: float = 0.0
     vtrust: float = 0.0
-    name: Optional[str] = None
-    version: Optional[str] = None
-    image_url: Optional[str] = None
+    name: str | None = None
+    version: str | None = None
+    image_url: str | None = None
 
 
 class MinerInfo(BaseModel):
-    uid: Optional[int] = Field(default=None, description="Bittensor miner UID")
-    hotkey: Optional[str] = Field(default=None, description="Bittensor miner hotkey")
-    coldkey: Optional[str] = Field(default=None, description="Bittensor miner coldkey")
+    uid: int | None = Field(default=None, description="Bittensor miner UID")
+    hotkey: str | None = Field(default=None, description="Bittensor miner hotkey")
+    coldkey: str | None = Field(default=None, description="Bittensor miner coldkey")
     agent_name: str = Field(default="", description="Display name for the agent")
     agent_image: str = Field(default="", description="Image URL for the agent")
     github: str = Field(default="", description="Repository URL for the agent")
@@ -77,14 +78,12 @@ class MinerInfo(BaseModel):
         if normalized.startswith("/"):
             return normalized
         try:
-            from urllib.parse import urlparse
-
             result = urlparse(normalized)
             if not all([result.scheme in ["http", "https"], result.netloc]):
                 if not normalized.lower().startswith("data:image/"):
-                    raise ValueError(f"Invalid image URL: {v}. Must be a valid URL or empty string.")
-        except Exception:
-            raise ValueError(f"Invalid image URL: {v}. Must be a valid URL or empty string.")
+                    raise ValueError("Invalid image URL: %s. Must be a valid URL or empty string." % (v,))
+        except Exception:  # noqa: BLE001 - urlparse or validation failure, surface as ValueError
+            raise ValueError("Invalid image URL: %s. Must be a valid URL or empty string." % (v,)) from None
         return normalized
 
     @field_validator("hotkey")
@@ -121,7 +120,7 @@ class Validator(BaseModel):
 
     uid: int = Field(..., description="Unique validator UID on-chain")
     hotkey: str = Field(..., description="Validator hotkey corresponding to the UID")
-    coldkey: Optional[str] = Field(default=None, description="Optional coldkey recorded for the validator")
+    coldkey: str | None = Field(default=None, description="Optional coldkey recorded for the validator")
 
     @field_validator("hotkey")
     @classmethod
@@ -132,9 +131,9 @@ class Validator(BaseModel):
 class Miner(BaseModel):
     """Immutable miner identity."""
 
-    uid: Optional[int] = Field(default=None, description="Miner UID")
-    hotkey: Optional[str] = Field(default=None, description="Miner hotkey for on-chain miners")
-    coldkey: Optional[str] = Field(default=None, description="Optional miner coldkey")
+    uid: int | None = Field(default=None, description="Miner UID")
+    hotkey: str | None = Field(default=None, description="Miner hotkey for on-chain miners")
+    coldkey: str | None = Field(default=None, description="Optional miner coldkey")
 
     @model_validator(mode="after")  # type: ignore[misc]
     def _validate_identity(cls, values: "Miner") -> "Miner":  # type: ignore[override]
@@ -145,7 +144,7 @@ class Miner(BaseModel):
 
     @field_validator("hotkey")
     @classmethod
-    def _normalize_hotkey(cls, value: Optional[str]) -> Optional[str]:
+    def _normalize_hotkey(cls, value: str | None) -> str | None:
         if value is None:
             return None
         normalized = value.strip()
@@ -167,22 +166,22 @@ class ValidatorRound(BaseModel):
     round_number_in_season: int = Field(..., description="Round number within the current season (1-indexed)")
     validator_uid: int = Field(..., description="UID of the validator executing the round")
     validator_hotkey: str = Field(..., description="Hotkey of the validator executing the round")
-    validator_coldkey: Optional[str] = Field(default=None, description="Optional coldkey snapshot for the validator")
+    validator_coldkey: str | None = Field(default=None, description="Optional coldkey snapshot for the validator")
 
     # Bittensor chain metadata
     start_block: int = Field(..., description="Chain block when the round started")
-    end_block: Optional[int] = Field(default=None, description="Chain block when the round ended")
+    end_block: int | None = Field(default=None, description="Chain block when the round ended")
     start_epoch: int = Field(..., description="Epoch at which the round started")
-    end_epoch: Optional[int] = Field(default=None, description="Epoch at which the round ended")
+    end_epoch: int | None = Field(default=None, description="Epoch at which the round ended")
 
     # Timing metadata
     started_at: float = Field(default_factory=now_ts, description="Start timestamp")
-    ended_at: Optional[float] = Field(default=None, description="End timestamp for the round")
+    ended_at: float | None = Field(default=None, description="End timestamp for the round")
     n_tasks: int = Field(..., description="Total number of tasks issued in the round")
 
     # Summary metrics (miners count: use metadata/validator_summary.round miners_responded_handshake / miners_evaluated)
     status: Literal["active", "finished", "pending", "evaluating_finished"] = Field(default="active", description="Lifecycle status for the validator round")
-    metadata: Dict[str, Any] = Field(
+    metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Extensible metadata produced during the round execution",
     )
@@ -194,15 +193,15 @@ class ValidatorRoundValidator(BaseModel):
     validator_round_id: str = Field(..., description="Validator round identifier")
     validator_uid: int = Field(..., description="Validator UID for the snapshot")
     validator_hotkey: str = Field(..., description="Validator hotkey for the snapshot")
-    validator_coldkey: Optional[str] = Field(default=None, description="Validator coldkey for the snapshot")
+    validator_coldkey: str | None = Field(default=None, description="Validator coldkey for the snapshot")
 
-    name: Optional[str] = Field(default=None, description="Validator display name")
-    stake: Optional[float] = Field(default=None, description="Recorded stake")
-    vtrust: Optional[float] = Field(default=None, description="Recorded vTrust metric")
-    image_url: Optional[str] = Field(default=None, description="Avatar URL")
-    version: Optional[str] = Field(default=None, description="Validator software version during the round")
-    config: Optional[Dict[str, Any]] = Field(default=None, description="Validator configuration used during this round")
-    validator_config: Optional[Dict[str, Any]] = Field(default=None, description="Validator configuration (from payload)")
+    name: str | None = Field(default=None, description="Validator display name")
+    stake: float | None = Field(default=None, description="Recorded stake")
+    vtrust: float | None = Field(default=None, description="Recorded vTrust metric")
+    image_url: str | None = Field(default=None, description="Avatar URL")
+    version: str | None = Field(default=None, description="Validator software version during the round")
+    config: dict[str, Any] | None = Field(default=None, description="Validator configuration used during this round")
+    validator_config: dict[str, Any] | None = Field(default=None, description="Validator configuration (from payload)")
 
     @model_validator(mode="after")  # type: ignore[misc]
     def _extract_config_from_validator_config(cls, values: "ValidatorRoundValidator") -> "ValidatorRoundValidator":  # type: ignore[override]
@@ -229,18 +228,18 @@ class ValidatorRoundMiner(BaseModel):
     """
 
     validator_round_id: str = Field(..., description="Validator round identifier")
-    miner_uid: Optional[int] = Field(default=None, description="Miner UID if the agent is on-chain")
-    miner_hotkey: Optional[str] = Field(default=None, description="Miner hotkey if applicable")
-    miner_coldkey: Optional[str] = Field(default=None, description="Miner coldkey if applicable")
+    miner_uid: int | None = Field(default=None, description="Miner UID if the agent is on-chain")
+    miner_hotkey: str | None = Field(default=None, description="Miner hotkey if applicable")
+    miner_coldkey: str | None = Field(default=None, description="Miner coldkey if applicable")
 
     agent_name: str = Field(..., description="Display name for the agent")
-    image_url: Optional[str] = Field(default=None, description="Image URL associated with the agent")
-    github_url: Optional[str] = Field(default=None, description="Repository URL or source code reference")
+    image_url: str | None = Field(default=None, description="Image URL associated with the agent")
+    github_url: str | None = Field(default=None, description="Repository URL or source code reference")
     is_sota: bool = Field(
         default=False,
         description="Whether the agent is a benchmark/SOTA rather than a miner",
     )
-    version: Optional[str] = Field(default=None, description="Version or build identifier for the agent")
+    version: str | None = Field(default=None, description="Version or build identifier for the agent")
 
     @model_validator(mode="after")  # type: ignore[misc]
     def _validate_identity(  # type: ignore[override]
@@ -266,27 +265,27 @@ class AgentEvaluationRun(BaseModel):
     validator_round_id: str = Field(..., description="Foreign key to the validator round")
     # validator_uid and validator_hotkey removed - obtain via validator_round.validator_snapshot
 
-    miner_uid: Optional[int] = Field(default=None, description="Miner UID")
-    miner_hotkey: Optional[str] = Field(default=None, description="Miner hotkey")
+    miner_uid: int | None = Field(default=None, description="Miner UID")
+    miner_hotkey: str | None = Field(default=None, description="Miner hotkey")
     # is_sota and version removed - obtain via validator_round.miner_snapshots
 
     started_at: float = Field(default_factory=now_ts, description="Start timestamp for the evaluation run")
-    ended_at: Optional[float] = Field(default=None, description="End timestamp for the evaluation run")
-    elapsed_sec: Optional[float] = Field(default=None, description="Elapsed time in seconds")
+    ended_at: float | None = Field(default=None, description="End timestamp for the evaluation run")
+    elapsed_sec: float | None = Field(default=None, description="Elapsed time in seconds")
 
     # Aggregated metrics
-    average_score: Optional[float] = Field(default=None, description="Average evaluation score across tasks")
-    average_execution_time: Optional[float] = Field(default=None, description="Average execution time per task")
-    average_reward: Optional[float] = Field(default=None, description="Average reward produced across tasks")
+    average_score: float | None = Field(default=None, description="Average evaluation score across tasks")
+    average_execution_time: float | None = Field(default=None, description="Average execution time per task")
+    average_reward: float | None = Field(default=None, description="Average reward produced across tasks")
     total_tasks: int = Field(default=0, description="Total tasks attempted")
     success_tasks: int = Field(default=0, alias="completed_tasks", description="Tasks completed successfully (evaluation_score >= 0.5)")
     failed_tasks: int = Field(default=0, description="Tasks that failed (evaluation_score < 0.5)")
     # rank and weight removed - obtain via validator_round_summary_miners
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Extensible metadata for the run")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Extensible metadata for the run")
 
     is_reused: bool = Field(default=False, description="True when this run reuses results from a previous run (same code)")
-    reused_from_agent_run_id: Optional[str] = Field(default=None, description="Agent run id that was evaluated; evaluations come from that run")
-    zero_reason: Optional[str] = Field(default=None, description="Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, all_tasks_failed)")
+    reused_from_agent_run_id: str | None = Field(default=None, description="Agent run id that was evaluated; evaluations come from that run")
+    zero_reason: str | None = Field(default=None, description="Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, all_tasks_failed)")
 
     @model_validator(mode="after")  # type: ignore[misc]
     def _validate_identity(  # type: ignore[override]
@@ -353,15 +352,15 @@ class Task(BaseModel):
 
     task_id: str = Field(..., description="Primary identifier for the task")
     validator_round_id: str = Field(..., description="Validator round that owns this task")
-    web_project_id: Optional[str] = Field(default=None, description="Web project identifier if applicable")
-    web_version: Optional[str] = Field(default=None, description="Version of the web project used for this task")
+    web_project_id: str | None = Field(default=None, description="Web project identifier if applicable")
+    web_version: str | None = Field(default=None, description="Version of the web project used for this task")
     url: str = Field(..., description="Target URL where the task must be executed")
     prompt: str = Field(..., description="Natural language description of the task objectives")
-    specifications: Dict[str, Any] = Field(
+    specifications: dict[str, Any] = Field(
         default_factory=dict,
         description="Browser configuration and additional task requirements",
     )
-    tests: List[TestUnion] = Field(
+    tests: list[TestUnion] = Field(
         default_factory=list,
         description="Collection of validation tests associated with the task",
     )
@@ -390,7 +389,7 @@ class Action(BaseModel):
     """Single action executed by an agent while solving a task."""
 
     type: str = Field(..., description="Action type identifier")
-    attributes: Dict[str, Any] = Field(default_factory=dict, description="Serialized action attributes")
+    attributes: dict[str, Any] = Field(default_factory=dict, description="Serialized action attributes")
 
     model_config = {"extra": "allow"}
 
@@ -424,17 +423,17 @@ class TaskSolution(BaseModel):
     validator_round_id: str = Field(..., description="Validator round that owns this solution")
     validator_uid: int = Field(..., description="Validator UID that evaluated the task")
     validator_hotkey: str = Field(..., description="Validator hotkey that evaluated the task")
-    miner_uid: Optional[int] = Field(default=None, description="Miner UID if the agent is on-chain")
-    miner_hotkey: Optional[str] = Field(default=None, description="Miner hotkey if the agent is on-chain")
+    miner_uid: int | None = Field(default=None, description="Miner UID if the agent is on-chain")
+    miner_hotkey: str | None = Field(default=None, description="Miner hotkey if the agent is on-chain")
 
-    actions: List[Action] = Field(
+    actions: list[Action] = Field(
         default_factory=list,
         description="Ordered list of actions executed by the agent",
     )
 
     model_config = {"extra": "allow"}
 
-    def nested_model_dump(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+    def nested_model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         base_dump = super().model_dump(*args, **kwargs)
         base_dump["actions"] = [action.model_dump() for action in self.actions]
         return base_dump
@@ -459,8 +458,8 @@ class Evaluation(BaseModel):
     agent_run_id: str = Field(..., description="Agent run associated with the evaluation")
     task_id: str = Field(..., description="Task evaluated in this evaluation")
     task_solution_id: str = Field(..., description="Task solution evaluated in this evaluation")
-    miner_uid: Optional[int] = Field(default=None, description="Miner UID associated with the evaluation")
-    miner_hotkey: Optional[str] = Field(default=None, description="Miner hotkey associated with the evaluation")
+    miner_uid: int | None = Field(default=None, description="Miner UID associated with the evaluation")
+    miner_hotkey: str | None = Field(default=None, description="Miner hotkey associated with the evaluation")
     validator_uid: int = Field(..., description="Validator UID that produced the evaluation")
     validator_hotkey: str = Field(..., description="Validator hotkey that produced the evaluation")
 
@@ -471,19 +470,19 @@ class Evaluation(BaseModel):
 
     reward: float = Field(default=0.0, description="Reward value (evaluation_score + time_score, used for consensus)")
     evaluation_time: float = Field(default=0.0, description="Time taken to evaluate the solution (seconds)")
-    execution_history: List[Any] = Field(
+    execution_history: list[Any] = Field(
         default_factory=list,
         description="Ordered history of execution steps captured during evaluation",
     )
-    gif_recording: Optional[str] = Field(
+    gif_recording: str | None = Field(
         default=None,
         description="Optional base64-encoded GIF recording of the browser state",
     )
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Extensible metadata for the evaluation")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Extensible metadata for the evaluation")
     # Reason for score 0 at evaluation level (e.g. task_timeout, tests_failed)
-    zero_reason: Optional[str] = Field(default=None, description="Reason for evaluation score 0 when applicable")
+    zero_reason: str | None = Field(default=None, description="Reason for evaluation score 0 when applicable")
     # LLM usage tracking (per-call details)
-    llm_usage: List[Dict[str, Any]] = Field(
+    llm_usage: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Per-provider/model usage entries: {provider, model, tokens, cost}",
     )
@@ -501,7 +500,7 @@ class Evaluation(BaseModel):
             and self.validator_round_id == agent_run.validator_round_id
         )
 
-    def model_dump(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         base_dump = super().model_dump(*args, **kwargs)
 
         def _serialize_action(action: Any) -> Any:
@@ -519,9 +518,9 @@ class Evaluation(BaseModel):
 class AgentEvaluationRunWithDetails(AgentEvaluationRun):
     """AgentEvaluationRun enriched with related entities."""
 
-    tasks: List[Task] = Field(default_factory=list, description="Tasks relevant to the agent run")
-    task_solutions: List[TaskSolution] = Field(default_factory=list, description="Solutions submitted by the agent")
-    evaluations: List[Evaluation] = Field(
+    tasks: list[Task] = Field(default_factory=list, description="Tasks relevant to the agent run")
+    task_solutions: list[TaskSolution] = Field(default_factory=list, description="Solutions submitted by the agent")
+    evaluations: list[Evaluation] = Field(
         default_factory=list,
         description="Evaluations of tasks and solutions produced for the agent",
     )
@@ -530,15 +529,15 @@ class AgentEvaluationRunWithDetails(AgentEvaluationRun):
 class ValidatorRoundSubmissionRequest(BaseModel):
     """Request payload for persisting a complete validator round."""
 
-    validator_identities: List[Validator]
-    miner_identities: List[Miner]
+    validator_identities: list[Validator]
+    miner_identities: list[Miner]
     validator_round: ValidatorRound
-    validator_snapshots: List[ValidatorRoundValidator]
-    miner_snapshots: List[ValidatorRoundMiner]
-    agent_evaluation_runs: List[AgentEvaluationRun]
-    tasks: List[Task]
-    task_solutions: List[TaskSolution]
-    evaluations: List[Evaluation]
+    validator_snapshots: list[ValidatorRoundValidator]
+    miner_snapshots: list[ValidatorRoundMiner]
+    agent_evaluation_runs: list[AgentEvaluationRun]
+    tasks: list[Task]
+    task_solutions: list[TaskSolution]
+    evaluations: list[Evaluation]
 
 
 __all__ = [
