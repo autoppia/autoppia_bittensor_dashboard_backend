@@ -46,7 +46,7 @@ if [ "$BACKGROUND_RUNNING" = true ] && [ -n "$BACKGROUND_NAME" ]; then
     echo ""
     read -p "¿Quieres reiniciarlo? (y/n): " -n 1 -r
     echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if [[ "$REPLY" =~ ^[Yy]$ ]]; then
         pm2 restart "$BACKGROUND_NAME"
         echo "✅ Background updater reiniciado"
     else
