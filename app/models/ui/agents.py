@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -79,16 +81,16 @@ class Agent(BaseModel):
     """Agent model representing an AI agent in the system."""
 
     id: str = Field(..., description="Unique agent identifier")
-    uid: Optional[int] = Field(None, description="Miner UID")
+    uid: int | None = Field(None, description="Miner UID")
     name: str = Field(..., description="Agent name")
-    hotkey: Optional[str] = Field(None, description="Miner hotkey")
+    hotkey: str | None = Field(None, description="Miner hotkey")
     type: AgentType = Field(..., description="Agent type")
     imageUrl: str = Field(..., description="URL to agent image/icon")
-    githubUrl: Optional[str] = Field(None, description="GitHub repository URL")
-    taostatsUrl: Optional[str] = Field(None, description="Taostats URL")
-    isSota: Optional[bool] = Field(None, description="Whether agent is SOTA")
-    description: Optional[str] = Field(None, description="Agent description")
-    version: Optional[str] = Field(None, description="Agent version")
+    githubUrl: str | None = Field(None, description="GitHub repository URL")
+    taostatsUrl: str | None = Field(None, description="Taostats URL")
+    isSota: bool | None = Field(None, description="Whether agent is SOTA")
+    description: str | None = Field(None, description="Agent description")
+    version: str | None = Field(None, description="Agent version")
     status: AgentStatus = Field(..., description="Agent status")
     totalRuns: int = Field(default=0, description="Total number of runs")
     successfulRuns: int = Field(default=0, description="Number of successful runs")
@@ -121,8 +123,8 @@ class Task(BaseModel):
     score: float = Field(default=0.0, description="Task score")
     duration: int = Field(default=0, description="Task duration in seconds")
     startTime: datetime = Field(..., description="Task start time")
-    endTime: Optional[datetime] = Field(None, description="Task end time")
-    error: Optional[str] = Field(None, description="Error message if failed")
+    endTime: datetime | None = Field(None, description="Task end time")
+    error: str | None = Field(None, description="Error message if failed")
 
 
 class AgentRun(BaseModel):
@@ -133,15 +135,15 @@ class AgentRun(BaseModel):
     roundId: int = Field(..., description="Round identifier")
     validatorId: str = Field(..., description="Validator identifier")
     startTime: datetime = Field(..., description="Run start time")
-    endTime: Optional[datetime] = Field(None, description="Run end time")
+    endTime: datetime | None = Field(None, description="Run end time")
     status: RunStatus = Field(..., description="Run status")
     totalTasks: int = Field(default=0, description="Total number of tasks")
     completedTasks: int = Field(default=0, description="Number of completed tasks")
     score: float = Field(default=0.0, description="Run score")
     duration: int = Field(default=0, description="Run duration in seconds")
-    ranking: Optional[int] = Field(None, description="Run ranking")
-    tasks: List[Task] = Field(default_factory=list, description="List of tasks")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Run metadata")
+    ranking: int | None = Field(None, description="Run ranking")
+    tasks: list[Task] = Field(default_factory=list, description="List of tasks")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Run metadata")
 
 
 class AgentActivity(BaseModel):
@@ -153,7 +155,7 @@ class AgentActivity(BaseModel):
     agentName: str = Field(..., description="Agent name")
     message: str = Field(..., description="Activity message")
     timestamp: datetime = Field(..., description="Activity timestamp")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Activity metadata")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Activity metadata")
 
 
 # --- Performance Metrics Models ---
@@ -171,8 +173,8 @@ class PerformanceTrend(BaseModel):
 
     round: int = Field(..., description="Round number represented by this data point")
     score: float = Field(..., description="Average score for the round")
-    responseTime: Optional[float] = Field(default=None, description="Average response time recorded for the round")
-    successRate: Optional[float] = Field(default=None, description="Success rate percentage recorded for the round")
+    responseTime: float | None = Field(default=None, description="Average response time recorded for the round")
+    successRate: float | None = Field(default=None, description="Success rate percentage recorded for the round")
 
 
 class ScoreRoundDataPoint(BaseModel):
@@ -180,17 +182,17 @@ class ScoreRoundDataPoint(BaseModel):
 
     round_id: int = Field(..., description="Round identifier")
     score: float = Field(..., description="Score achieved in this round")
-    rank: Optional[int] = Field(None, description="Rank in this round")
-    reward: Optional[float] = Field(None, description="Reward received in this round")
+    rank: int | None = Field(None, description="Rank in this round")
+    reward: float | None = Field(None, description="Reward received in this round")
     timestamp: datetime = Field(..., description="Round timestamp")
-    benchmarks: Optional[List[Dict[str, Any]]] = Field(default=None, description="Benchmark scores recorded during this round")
+    benchmarks: list[dict[str, Any]] | None = Field(default=None, description="Benchmark scores recorded during this round")
 
 
 class AgentPerformanceMetrics(BaseModel):
     """Agent performance metrics model."""
 
     agentId: str = Field(..., description="Agent identifier")
-    timeRange: Dict[str, str] = Field(..., description="Time range with start and end")
+    timeRange: dict[str, str] = Field(..., description="Time range with start and end")
     totalRuns: int = Field(default=0, description="Total runs in time range")
     successfulRuns: int = Field(default=0, description="Successful runs in time range")
     failedRuns: int = Field(default=0, description="Failed runs in time range")
@@ -202,7 +204,7 @@ class AgentPerformanceMetrics(BaseModel):
     completedTasks: int = Field(default=0, description="Completed tasks")
     taskCompletionRate: float = Field(default=0.0, description="Task completion rate")
     scoreDistribution: ScoreDistribution = Field(default_factory=ScoreDistribution, description="Score distribution")
-    performanceTrend: List[PerformanceTrend] = Field(default_factory=list, description="Performance trend data")
+    performanceTrend: list[PerformanceTrend] = Field(default_factory=list, description="Performance trend data")
 
 
 class AgentRoundMetrics(BaseModel):
@@ -210,11 +212,11 @@ class AgentRoundMetrics(BaseModel):
 
     roundId: int = Field(..., description="Round identifier")
     score: float = Field(..., description="Average score achieved in the round")
-    rank: Optional[int] = Field(None, description="Agent rank within the round leaderboard")
+    rank: int | None = Field(None, description="Agent rank within the round leaderboard")
     totalRuns: int = Field(default=0, description="Number of validator runs for the agent in the round")
     totalValidators: int = Field(default=0, description="Number of validators that evaluated the agent in the round")
-    validatorUids: List[int] = Field(default_factory=list, description="Validator UIDs that evaluated the agent")
-    validators: List[Dict[str, Any]] = Field(
+    validatorUids: list[int] = Field(default_factory=list, description="Validator UIDs that evaluated the agent")
+    validators: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Validator metadata (uid, hotkey, name) for the round",
     )
@@ -260,9 +262,9 @@ class ComparisonMetrics(BaseModel):
 class AgentComparisonResponse(BaseModel):
     """Agent comparison response model."""
 
-    agents: List[AgentComparison] = Field(..., description="List of compared agents")
+    agents: list[AgentComparison] = Field(..., description="List of compared agents")
     comparisonMetrics: ComparisonMetrics = Field(..., description="Comparison summary")
-    timeRange: Dict[str, str] = Field(..., description="Time range")
+    timeRange: dict[str, str] = Field(..., description="Time range")
 
 
 # --- Statistics Models ---
@@ -311,7 +313,7 @@ class AgentStatistics(BaseModel):
 class AgentListResponse(BaseModel):
     """Agent list response model."""
 
-    agents: List[Agent] = Field(..., description="List of agents")
+    agents: list[Agent] = Field(..., description="List of agents")
     total: int = Field(..., description="Total number of agents")
     page: int = Field(..., description="Current page number")
     limit: int = Field(..., description="Items per page")
@@ -321,12 +323,12 @@ class AgentDetailResponse(BaseModel):
     """Agent detail response model."""
 
     agent: Agent = Field(..., description="Agent details")
-    scoreRoundData: List[ScoreRoundDataPoint] = Field(default_factory=list, description="Score vs round data points")
-    availableRounds: List[int] = Field(
+    scoreRoundData: list[ScoreRoundDataPoint] = Field(default_factory=list, description="Score vs round data points")
+    availableRounds: list[int] = Field(
         default_factory=list,
         description="Rounds where the agent participated",
     )
-    roundMetrics: Optional[AgentRoundMetrics] = Field(
+    roundMetrics: AgentRoundMetrics | None = Field(
         default=None,
         description="Round-specific metrics for the selected round",
     )
@@ -341,12 +343,12 @@ class AgentPerformanceResponse(BaseModel):
 class AgentRunsResponse(BaseModel):
     """Agent runs response model."""
 
-    runs: List[AgentRun] = Field(..., description="List of runs")
+    runs: list[AgentRun] = Field(..., description="List of runs")
     total: int = Field(..., description="Total number of runs")
     page: int = Field(..., description="Current page number")
     limit: int = Field(..., description="Items per page")
-    availableRounds: List[int] = Field(default_factory=list, description="Rounds that include runs for the agent")
-    selectedRound: Optional[int] = Field(default=None, description="Round currently selected")
+    availableRounds: list[int] = Field(default_factory=list, description="Rounds that include runs for the agent")
+    selectedRound: int | None = Field(default=None, description="Round currently selected")
 
 
 class AgentRunDetailResponse(BaseModel):
@@ -358,7 +360,7 @@ class AgentRunDetailResponse(BaseModel):
 class AgentActivityResponse(BaseModel):
     """Agent activity response model."""
 
-    activities: List[AgentActivity] = Field(..., description="List of activities")
+    activities: list[AgentActivity] = Field(..., description="List of activities")
     total: int = Field(..., description="Total number of activities")
 
 
@@ -371,21 +373,21 @@ class AgentStatisticsResponse(BaseModel):
 class AgentCompareRequest(BaseModel):
     """Agent comparison request model."""
 
-    agentIds: List[str] = Field(..., description="List of agent IDs to compare")
-    timeRange: Optional[TimeRange] = Field(None, description="Time range for comparison")
-    startDate: Optional[datetime] = Field(None, description="Start date for comparison")
-    endDate: Optional[datetime] = Field(None, description="End date for comparison")
-    metrics: List[str] = Field(default_factory=list, description="Metrics to compare")
+    agentIds: list[str] = Field(..., description="List of agent IDs to compare")
+    timeRange: TimeRange | None = Field(None, description="Time range for comparison")
+    startDate: datetime | None = Field(None, description="Start date for comparison")
+    endDate: datetime | None = Field(None, description="End date for comparison")
+    metrics: list[str] = Field(default_factory=list, description="Metrics to compare")
 
 
 # --- Standard API Response Model ---
 class APIResponse(BaseModel):
     """Standard API response model."""
 
-    data: Optional[Any] = Field(None, description="Response data")
+    data: Any | None = Field(None, description="Response data")
     success: bool = Field(..., description="Success status")
-    message: Optional[str] = Field(None, description="Success message")
-    error: Optional[str] = Field(None, description="Error message")
+    message: str | None = Field(None, description="Success message")
+    error: str | None = Field(None, description="Error message")
 
 
 # --- Query Parameter Models ---
@@ -394,19 +396,19 @@ class AgentListQuery(BaseModel):
 
     page: int = Field(default=1, ge=1, description="Page number")
     limit: int = Field(default=20, ge=1, le=100, description="Items per page")
-    type: Optional[AgentType] = Field(None, description="Filter by agent type")
-    status: Optional[AgentStatus] = Field(None, description="Filter by status")
+    type: AgentType | None = Field(None, description="Filter by agent type")
+    status: AgentStatus | None = Field(None, description="Filter by status")
     sortBy: str = Field(default="name", description="Sort field")
     sortOrder: str = Field(default="asc", description="Sort order")
-    search: Optional[str] = Field(None, description="Search term")
+    search: str | None = Field(None, description="Search term")
 
 
 class AgentPerformanceQuery(BaseModel):
     """Agent performance query parameters."""
 
     timeRange: TimeRange = Field(default=TimeRange.SEVEN_DAYS, description="Time range")
-    startDate: Optional[datetime] = Field(None, description="Start date")
-    endDate: Optional[datetime] = Field(None, description="End date")
+    startDate: datetime | None = Field(None, description="Start date")
+    endDate: datetime | None = Field(None, description="End date")
     granularity: Granularity = Field(default=Granularity.DAY, description="Data granularity")
 
 
@@ -415,13 +417,13 @@ class AgentRunsQuery(BaseModel):
 
     page: int = Field(default=1, ge=1, description="Page number")
     limit: int = Field(default=20, ge=1, le=100, description="Items per page")
-    roundId: Optional[int] = Field(None, description="Filter by round ID")
-    validatorId: Optional[str] = Field(None, description="Filter by validator ID")
-    status: Optional[RunStatus] = Field(None, description="Filter by status")
+    roundId: int | None = Field(None, description="Filter by round ID")
+    validatorId: str | None = Field(None, description="Filter by validator ID")
+    status: RunStatus | None = Field(None, description="Filter by status")
     sortBy: str = Field(default="startTime", description="Sort field")
     sortOrder: str = Field(default="desc", description="Sort order")
-    startDate: Optional[datetime] = Field(None, description="Start date filter")
-    endDate: Optional[datetime] = Field(None, description="End date filter")
+    startDate: datetime | None = Field(None, description="Start date filter")
+    endDate: datetime | None = Field(None, description="End date filter")
 
 
 class AgentActivityQuery(BaseModel):
@@ -429,8 +431,8 @@ class AgentActivityQuery(BaseModel):
 
     limit: int = Field(default=20, ge=1, le=100, description="Number of activities")
     offset: int = Field(default=0, ge=0, description="Number of activities to skip")
-    type: Optional[ActivityType] = Field(None, description="Filter by activity type")
-    since: Optional[datetime] = Field(None, description="Filter activities after timestamp")
+    type: ActivityType | None = Field(None, description="Filter by activity type")
+    since: datetime | None = Field(None, description="Filter activities after timestamp")
 
 
 class AllAgentActivityQuery(BaseModel):
@@ -438,6 +440,6 @@ class AllAgentActivityQuery(BaseModel):
 
     limit: int = Field(default=20, ge=1, le=100, description="Number of activities")
     offset: int = Field(default=0, ge=0, description="Number of activities to skip")
-    type: Optional[ActivityType] = Field(None, description="Filter by activity type")
-    since: Optional[datetime] = Field(None, description="Filter activities after timestamp")
-    agentId: Optional[str] = Field(None, description="Filter by specific agent ID")
+    type: ActivityType | None = Field(None, description="Filter by activity type")
+    since: datetime | None = Field(None, description="Filter activities after timestamp")
+    agentId: str | None = Field(None, description="Filter by specific agent ID")
