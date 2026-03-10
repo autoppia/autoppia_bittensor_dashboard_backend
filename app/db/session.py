@@ -8,7 +8,6 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.exc import InterfaceError as SQLInterfaceError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import settings
@@ -109,8 +108,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             asyncpg.exceptions.InternalClientError,
             asyncpg.exceptions.ConnectionDoesNotExistError,
             AsyncAdapt_asyncpg_dbapi.Error,  # includes InterfaceError, catch other asyncpg errors
-            SQLInterfaceError,  # SQLAlchemy wraps asyncpg errors
-            DBAPIError,  # Base class for all DBAPI errors
+            DBAPIError,  # Base class for all DBAPI errors (includes SQLInterfaceError)
         ) as e:
             # Connection is in an inconsistent state due to concurrent operations
             # The pool will detect and remove broken connections on next use
