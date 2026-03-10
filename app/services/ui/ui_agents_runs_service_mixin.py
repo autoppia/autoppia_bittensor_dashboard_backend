@@ -1785,10 +1785,9 @@ class UIAgentsRunsServiceMixin:
             validator_rows = rd.pop("_validators_raw")
 
             # Build per-validator entries and collect values for consensus.
-            # We compute stake-weighted averages of the ACTUAL run values (run_reward,
-            # run_score) so both reward and score are consistently weighted by stake.
-            # The stored post_consensus_avg_eval_score is a simple average so we
-            # intentionally ignore it for the consensus display.
+            # All metrics (reward, score, time, cost) are stake-weighted averages of
+            # the actual per-validator run values. Tasks use stake-weighted average of
+            # the post_consensus values (which already represent the consensus-agreed total).
             validators_out: List[Dict[str, Any]] = []
             weighted_reward_sum = 0.0
             weighted_score_sum = 0.0
@@ -1809,34 +1808,23 @@ class UIAgentsRunsServiceMixin:
 
             for vr in validator_rows:
                 stake = float(vr["stake"] or 0.0)
-
-                # Use post-consensus values (the IPFS-agreed consensus) as primary source;
-                # fall back to per-run values only when post-consensus is unavailable.
-                pc_reward = vr["post_consensus_avg_reward"]
-                pc_score = vr["post_consensus_avg_eval_score"]
-                pc_time = vr["post_consensus_avg_eval_time"]
-                pc_cost = vr["post_consensus_avg_eval_cost"]
                 run_rew = vr["run_reward"]
                 run_score = vr["run_score"]
                 run_time = vr["run_time"]
                 run_cost = vr["run_avg_cost"]
 
-                reward_val = float(pc_reward) if pc_reward is not None else (float(run_rew) if run_rew is not None else None)
-                score_val = float(pc_score) if pc_score is not None else (float(run_score) if run_score is not None else None)
-                time_val = float(pc_time) if pc_time is not None else (float(run_time) if run_time is not None else None)
-                cost_val = float(pc_cost) if pc_cost is not None else (float(run_cost) if run_cost is not None else None)
-
-                if reward_val is not None and stake > 0:
-                    weighted_reward_sum += reward_val * stake
+                # Stake-weighted consensus metrics from each validator's run values.
+                if run_rew is not None and stake > 0:
+                    weighted_reward_sum += float(run_rew) * stake
                     stake_sum_reward += stake
-                if score_val is not None and stake > 0:
-                    weighted_score_sum += score_val * stake
+                if run_score is not None and stake > 0:
+                    weighted_score_sum += float(run_score) * stake
                     stake_sum_score += stake
-                if time_val is not None and stake > 0:
-                    weighted_time_sum += time_val * stake
+                if run_time is not None and stake > 0:
+                    weighted_time_sum += float(run_time) * stake
                     stake_sum_time += stake
-                if cost_val is not None and stake > 0:
-                    weighted_cost_sum += cost_val * stake
+                if run_cost is not None and stake > 0:
+                    weighted_cost_sum += float(run_cost) * stake
                     stake_sum_cost += stake
 
                 # Tasks: post_consensus values already represent the consensus-agreed total
