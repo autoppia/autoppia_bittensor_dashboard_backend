@@ -93,7 +93,7 @@ async def _timeline_response(
 
 @router.get(
     "/{subnet_id}/timeline",
-    response_model=SubnetTimelineResponse,
+    responses={404: {"description": "Subnet not found"}},
     summary="Get timeline animation data for a subnet",
 )
 async def get_subnet_timeline(
