@@ -4,7 +4,6 @@ import base64
 import logging
 import threading
 import time
-from typing import Dict, Optional
 
 from fastapi import Depends, HTTPException, Request, status
 
@@ -32,7 +31,7 @@ class ValidatorAuthService:
     def __init__(self) -> None:
         self._cache_ttl = max(1, int(settings.VALIDATOR_AUTH_CACHE_TTL or 180))
         self._cache_lock = threading.Lock()
-        self._stakes_cache: Dict[str, float] = {}
+        self._stakes_cache: dict[str, float] = {}
         self._cache_expiry = 0.0
         self._log_signature_payloads = bool(str(getattr(settings, "LOG_VALIDATOR_SIGNATURES", "")).lower() not in {"", "0", "false", "none"})
 
@@ -52,13 +51,13 @@ class ValidatorAuthService:
         except Exception as exc:  # pragma: no cover - defensive
             raise InvalidSignatureError("Signature must be a valid base64-encoded string") from exc
 
-    def _load_metagraph_stakes(self) -> Dict[str, float]:
+    def _load_metagraph_stakes(self) -> dict[str, float]:
         try:
             import bittensor as bt  # type: ignore
         except Exception as exc:  # pragma: no cover - optional dependency
             raise AuthUnavailableError(f"Bittensor library unavailable: {exc}") from exc
 
-        subtensor_kwargs: Dict[str, str] = {}
+        subtensor_kwargs: dict[str, str] = {}
         if settings.SUBTENSOR_NETWORK:
             # Bittensor accepts URLs directly as the network parameter
             # This works for both URLs (ws://...) and network names (finney, testnet)
@@ -98,14 +97,14 @@ class ValidatorAuthService:
             except TypeError:
                 stake_values = [stake_values_raw]
 
-        stakes: Dict[str, float] = {}
+        stakes: dict[str, float] = {}
         for index, hotkey in enumerate(hotkeys):
-            raw_value: Optional[float] = None
+            raw_value: float | None = None
             if index < len(stake_values):
                 candidate = stake_values[index]
                 try:
                     raw_value = float(candidate.item()) if hasattr(candidate, "item") else float(candidate)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     logger.debug(
                         "Unable to coerce stake value for hotkey=%s candidate=%r",
                         hotkey,
@@ -116,7 +115,7 @@ class ValidatorAuthService:
             stakes[str(hotkey)] = float(raw_value or 0.0)
         return stakes
 
-    def _get_cached_stakes(self) -> Dict[str, float]:
+    def _get_cached_stakes(self) -> dict[str, float]:
         now = time.time()
         if now < self._cache_expiry and self._stakes_cache:
             return self._stakes_cache
@@ -146,7 +145,7 @@ class ValidatorAuthService:
 
         try:
             keypair = bt.Keypair(ss58_address=hotkey)  # type: ignore[attr-defined]
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             raise InvalidSignatureError(f"Invalid validator hotkey address: {exc}") from exc
 
         try:
