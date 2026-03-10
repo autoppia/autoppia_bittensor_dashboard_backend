@@ -17,18 +17,21 @@ REDIS_PASSWORD=""
 USE_DOCKER=false
 
 if [ -f .env ]; then
-    export $(grep -v '^#' .env | xargs)
+    set -a
+    # shellcheck source=/dev/null
+    source <(grep -v '^#' .env | grep -v '^[[:space:]]*$')
+    set +a
     ENVIRONMENT="${ENVIRONMENT:-local}"
     ENVIRONMENT_UPPER=$(echo "$ENVIRONMENT" | tr '[:lower:]' '[:upper:]')
 
-    # Obtener configuración de Redis
+    # Obtener configuración de Redis (indirect expansion, sin eval)
     REDIS_HOST_VAR="REDIS_HOST_${ENVIRONMENT_UPPER}"
     REDIS_PORT_VAR="REDIS_PORT_${ENVIRONMENT_UPPER}"
     REDIS_PASSWORD_VAR="REDIS_PASSWORD_${ENVIRONMENT_UPPER}"
 
-    REDIS_HOST=$(eval echo \${REDIS_HOST:-${REDIS_HOST_VAR:-localhost}})
-    REDIS_PORT=$(eval echo \${REDIS_PORT:-${REDIS_PORT_VAR:-6379}})
-    REDIS_PASSWORD=$(eval echo \$${REDIS_PASSWORD_VAR})
+    REDIS_HOST="${REDIS_HOST:-${!REDIS_HOST_VAR:-localhost}}"
+    REDIS_PORT="${REDIS_PORT:-${!REDIS_PORT_VAR:-6379}}"
+    REDIS_PASSWORD="${!REDIS_PASSWORD_VAR:-}"
 
     # Verificar si Redis está en Docker
     if [ -f docker-compose.yml ] && docker compose ps redis 2>/dev/null | grep -q "redis"; then
