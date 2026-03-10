@@ -27,7 +27,6 @@ import logging
 import threading
 import time
 from datetime import datetime
-from typing import Optional
 
 from app.config import settings
 from app.services.metagraph_service import (
@@ -51,7 +50,7 @@ REDIS_KEY_SUBNET_PRICE = "subnet:price"
 REDIS_KEY_PRICE_LAST_UPDATE = "subnet:price:last_update"
 
 # Global state
-_updater_thread: Optional[threading.Thread] = None
+_updater_thread: threading.Thread | None = None
 _should_stop = threading.Event()
 _is_running = False
 
@@ -68,13 +67,13 @@ def _fetch_and_cache_block() -> bool:
 
         block = refresh_block_now()
         if block is not None:
-            logger.debug(f"✅ Block updated: {block}")
+            logger.debug("✅ Block updated: %s", block)
             return True
         else:
             logger.warning("Failed to fetch current block from chain")
             return False
     except Exception as exc:
-        logger.error(f"Error fetching/caching block: {exc}", exc_info=True)
+        logger.error("Error fetching/caching block: %s", exc, exc_info=True)
         return False
 
 
@@ -104,11 +103,11 @@ def _fetch_and_cache_price() -> bool:
         redis_cache.set(REDIS_KEY_SUBNET_PRICE, float(price), ttl=PRICE_UPDATE_INTERVAL)
         redis_cache.set(REDIS_KEY_PRICE_LAST_UPDATE, time.time(), ttl=PRICE_UPDATE_INTERVAL)
 
-        logger.info(f"✅ Subnet price updated: {price:.6f} TAO (source: {source})")
+        logger.info("✅ Subnet price updated: %.6f TAO (source: %s)", price, source)
         return True
 
     except Exception as exc:
-        logger.error(f"❌ Failed to update subnet price: {exc}")
+        logger.error("❌ Failed to update subnet price: %s", exc)
         return False
 
 
@@ -123,10 +122,10 @@ def _updater_worker():
 
     logger.info("=" * 80)
     logger.info("🚀 Background Data Updater Thread Starting")
-    logger.info(f"   - Metagraph update interval: {METAGRAPH_UPDATE_INTERVAL / 60:.0f} minutes")
-    logger.info(f"   - Price update interval: {PRICE_UPDATE_INTERVAL / 60:.0f} minutes")
-    logger.info(f"   - Block update interval: {BLOCK_UPDATE_INTERVAL} seconds")
-    logger.info(f"   - Metagraph cache TTL: {METAGRAPH_CACHE_TTL / 60:.0f} minutes")
+    logger.info("   - Metagraph update interval: %.0f minutes", METAGRAPH_UPDATE_INTERVAL / 60)
+    logger.info("   - Price update interval: %.0f minutes", PRICE_UPDATE_INTERVAL / 60)
+    logger.info("   - Block update interval: %s seconds", BLOCK_UPDATE_INTERVAL)
+    logger.info("   - Metagraph cache TTL: %.0f minutes", METAGRAPH_CACHE_TTL / 60)
     logger.info("=" * 80)
 
     _is_running = True
@@ -139,7 +138,7 @@ def _updater_worker():
             logger.info("✅ Redis is available, starting metagraph updates")
             break
         retry_count += 1
-        logger.warning(f"⏳ Waiting for Redis ({retry_count}/{max_retries}), retrying in 5 seconds...")
+        logger.warning("⏳ Waiting for Redis (%s/%s), retrying in 5 seconds...", retry_count, max_retries)
         time.sleep(5)
 
     if not redis_cache.is_available():
@@ -154,12 +153,12 @@ def _updater_worker():
     if last_update:
         age_seconds = time.time() - last_update
         age_minutes = age_seconds / 60
-        logger.info(f"📊 Found existing metagraph data in Redis (age: {age_minutes:.1f} minutes)")
+        logger.info("📊 Found existing metagraph data in Redis (age: %.1f minutes)", age_minutes)
 
         if age_seconds < METAGRAPH_UPDATE_INTERVAL:
             # Data is fresh, skip initial update
             should_update_immediately = False
-            logger.info(f"⏭️  Existing data is fresh, next update in {(METAGRAPH_UPDATE_INTERVAL - age_seconds) / 60:.1f} minutes")
+            logger.info("⏭️  Existing data is fresh, next update in %.1f minutes", (METAGRAPH_UPDATE_INTERVAL - age_seconds) / 60)
         else:
             logger.info("⚠️  Existing data is stale, performing immediate update")
     else:
@@ -225,12 +224,12 @@ def _updater_worker():
         # Log periodic status
         total_updates = metagraph_update_count + price_update_count + block_update_count
         if total_updates > 0 and total_updates % 50 == 0:
-            logger.info(f"📊 Updater status: {metagraph_update_count} metagraph, {price_update_count} price, {block_update_count} block updates")
+            logger.info("📊 Updater status: %s metagraph, %s price, %s block updates", metagraph_update_count, price_update_count, block_update_count)
 
     logger.info("=" * 80)
     logger.info("🛑 Background Data Updater Thread Stopped")
-    logger.info(f"   - Metagraph updates performed: {metagraph_update_count}")
-    logger.info(f"   - Price updates performed: {price_update_count}")
+    logger.info("   - Metagraph updates performed: %s", metagraph_update_count)
+    logger.info("   - Price updates performed: %s", price_update_count)
     logger.info("=" * 80)
     _is_running = False
 
@@ -243,7 +242,7 @@ def _perform_update() -> bool:
         True if update succeeded, False otherwise
     """
     try:
-        logger.info(f"🔄 Starting metagraph update at {datetime.now().isoformat()}")
+        logger.info("🔄 Starting metagraph update at %s", datetime.now().isoformat())
 
         start_time = time.time()
         refresh_metagraph_data()
@@ -254,14 +253,14 @@ def _perform_update() -> bool:
         validator_count = status.get("validator_count", 0)
         vtrust_source = status.get("vtrust_source", "unknown")
 
-        logger.info(f"✅ Update completed in {elapsed:.2f}s - {validator_count} validators (vTrust: {vtrust_source})")
+        logger.info("✅ Update completed in %.2fs - %s validators (vTrust: %s)", elapsed, validator_count, vtrust_source)
         return True
 
     except MetagraphError as exc:
-        logger.error(f"❌ Metagraph update failed: {exc}")
+        logger.error("❌ Metagraph update failed: %s", exc)
         return False
     except Exception as exc:
-        logger.error(f"❌ Unexpected error during update: {exc}", exc_info=True)
+        logger.error("❌ Unexpected error during update: %s", exc, exc_info=True)
         return False
 
 
@@ -320,7 +319,7 @@ def stop_metagraph_updater(timeout: float = 10.0):
     _updater_thread.join(timeout=timeout)
 
     if _updater_thread.is_alive():
-        logger.warning(f"⚠️  Background updater thread did not stop within {timeout}s timeout")
+        logger.warning("⚠️  Background updater thread did not stop within %ss timeout", timeout)
     else:
         logger.info("✅ Background updater thread stopped gracefully")
 
@@ -337,7 +336,7 @@ def is_updater_running() -> bool:
     return _is_running
 
 
-def get_price_from_redis() -> Optional[float]:
+def get_price_from_redis() -> float | None:
     """
     Get cached subnet price from Redis (fast, no blockchain calls).
 
@@ -352,11 +351,11 @@ def get_price_from_redis() -> Optional[float]:
             return float(value)
         except (TypeError, ValueError):
             return None
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
-def get_price_last_update() -> Optional[float]:
+def get_price_last_update() -> float | None:
     """
     Get timestamp of last price update.
 
@@ -365,11 +364,11 @@ def get_price_last_update() -> Optional[float]:
     """
     try:
         return redis_cache.get(REDIS_KEY_PRICE_LAST_UPDATE)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
-def get_block_from_redis() -> Optional[int]:
+def get_block_from_redis() -> int | None:
     """
     Get current block from Redis (fast, non-blocking).
 
@@ -380,11 +379,11 @@ def get_block_from_redis() -> Optional[int]:
         from app.services.chain_state import REDIS_KEY_CURRENT_BLOCK
 
         return redis_cache.get(REDIS_KEY_CURRENT_BLOCK)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
-def get_block_last_update() -> Optional[float]:
+def get_block_last_update() -> float | None:
     """
     Get timestamp of last block update.
 
@@ -395,7 +394,7 @@ def get_block_last_update() -> Optional[float]:
         from app.services.chain_state import REDIS_KEY_BLOCK_TIMESTAMP
 
         return redis_cache.get(REDIS_KEY_BLOCK_TIMESTAMP)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
