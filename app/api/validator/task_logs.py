@@ -45,7 +45,7 @@ class TaskExecutionLogUploadResponse(BaseModel):
     error: Optional[str] = None
 
 
-@router.post("", response_model=TaskExecutionLogUploadResponse)
+@router.post("")
 async def upload_task_execution_log(
     request: TaskExecutionLogUploadRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
