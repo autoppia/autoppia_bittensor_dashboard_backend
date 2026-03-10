@@ -305,8 +305,6 @@ def _random_vtrust() -> float:
 def _build_validator_identity_and_snapshot(
     validator_round_id: str,
     record: ValidatorSeedRecord,
-    round_number: int,
-    started_at: float,
 ) -> tuple[Validator, ValidatorRoundValidator]:
     identity = Validator(
         uid=record.uid,
@@ -330,7 +328,6 @@ def _build_validator_identity_and_snapshot(
 def _build_miner_identity_and_snapshot(
     validator_round_id: str,
     record: MinerSeedRecord,
-    now_ts: float,
 ) -> tuple[Miner, ValidatorRoundMiner]:
     identity = Miner(
         uid=record.uid,
@@ -677,8 +674,6 @@ def build_seed_payload(
     validator_identity, validator_snapshot = _build_validator_identity_and_snapshot(
         validator_round_id=validator_round_id,
         record=validator_record,
-        round_number=round_number,
-        started_at=started_at,
     )
 
     validator_round = ValidatorRound(
@@ -703,7 +698,6 @@ def build_seed_payload(
         miner_identity, miner_snapshot = _build_miner_identity_and_snapshot(
             validator_round_id=validator_round_id,
             record=miner_record,
-            now_ts=started_at,
         )
         bundle = _build_agent_run_bundle(
             validator_round=validator_round,
