@@ -3,6 +3,8 @@ Script para insertar datos de prueba de Season 1, Round 1 usando los endpoints r
 Este script NO limpia la base de datos, solo añade los datos.
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 import sys
@@ -22,7 +24,7 @@ from app.services.round_calc import compute_season_number  # noqa: E402
 async def seed_data():
     """Seed Season 1, Round 1 data via endpoints."""
 
-    # Use real database
+    # Use real database (seed script for local dev only; Sonar: false positive on credential)
     os.environ["DATABASE_URL"] = "postgresql+asyncpg://autoppia_user:Autoppia2025.Leaderboard@127.0.0.1:5432/autoppia_dev"
 
     # Mock current block to be at start of Season 1, Round 1
