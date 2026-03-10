@@ -8,9 +8,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Cargar .env si existe
+# Cargar .env si existe (evitar word-splitting de export $(...))
 if [ -f .env ]; then
-    export $(grep -v '^#' .env | xargs)
+    set -a
+    # shellcheck source=/dev/null
+    source <(grep -v '^#' .env | grep -v '^[[:space:]]*$')
+    set +a
 else
     echo -e "${YELLOW}⚠️  No se encontró archivo .env${NC}"
     exit 1
@@ -20,9 +23,9 @@ fi
 ENVIRONMENT="${ENVIRONMENT:-local}"
 ENVIRONMENT_UPPER=$(echo "$ENVIRONMENT" | tr '[:lower:]' '[:upper:]')
 
-# Obtener la contraseña según el entorno
+# Obtener la contraseña según el entorno (indirect expansion, sin eval)
 REDIS_PASSWORD_VAR="REDIS_PASSWORD_${ENVIRONMENT_UPPER}"
-REDIS_PASSWORD=$(eval echo \$${REDIS_PASSWORD_VAR})
+REDIS_PASSWORD="${!REDIS_PASSWORD_VAR:-}"
 
 # Exportar REDIS_PASSWORD para docker compose
 export REDIS_PASSWORD
