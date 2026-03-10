@@ -16,7 +16,7 @@ REDIS_PORT="6379"
 REDIS_PASSWORD=""
 USE_DOCKER=false
 
-if [ -f .env ]; then
+if [[ -f .env ]]; then
     set -a
     # shellcheck source=/dev/null
     source <(grep -v '^#' .env | grep -v '^[[:space:]]*$')
@@ -34,7 +34,7 @@ if [ -f .env ]; then
     REDIS_PASSWORD="${!REDIS_PASSWORD_VAR:-}"
 
     # Verificar si Redis está en Docker
-    if [ -f docker-compose.yml ] && docker compose ps redis 2>/dev/null | grep -q "redis"; then
+    if [[ -f docker-compose.yml ]] && docker compose ps redis 2>/dev/null | grep -q "redis"; then
         USE_DOCKER=true
     fi
 fi
@@ -43,12 +43,12 @@ echo "📋 Configuración detectada:"
 echo "   Entorno: $ENVIRONMENT"
 echo "   Host: $REDIS_HOST"
 echo "   Puerto: $REDIS_PORT"
-if [ -n "$REDIS_PASSWORD" ]; then
+if [[ -n "$REDIS_PASSWORD" ]]; then
     echo "   Contraseña: *** (configurada)"
 else
     echo "   Contraseña: (ninguna)"
 fi
-if [ "$USE_DOCKER" = true ]; then
+if [[ "$USE_DOCKER" == true ]]; then
     echo "   Modo: Docker Compose"
 else
     echo "   Modo: Local"
@@ -58,19 +58,20 @@ echo ""
 # Función para ejecutar comandos Redis
 run_redis_cmd() {
     local cmd="$1"
-    if [ "$USE_DOCKER" = true ]; then
-        if [ -n "$REDIS_PASSWORD" ]; then
+    if [[ "$USE_DOCKER" == true ]]; then
+        if [[ -n "$REDIS_PASSWORD" ]]; then
             docker compose exec -T redis redis-cli -a "$REDIS_PASSWORD" "$cmd" 2>&1 | grep -v "Warning"
         else
             docker compose exec -T redis redis-cli "$cmd" 2>&1
         fi
     else
-        if [ -n "$REDIS_PASSWORD" ]; then
+        if [[ -n "$REDIS_PASSWORD" ]]; then
             redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" -a "$REDIS_PASSWORD" "$cmd" 2>&1 | grep -v "Warning"
         else
             redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" "$cmd" 2>&1
         fi
     fi
+    return
 }
 
 # Verificar conexión a Redis
@@ -80,7 +81,7 @@ if run_redis_cmd "PING" | grep -q "PONG"; then
 else
     echo "   ❌ No se pudo conectar a Redis"
     echo "   💡 Verifica que Redis esté corriendo:"
-    if [ "$USE_DOCKER" = true ]; then
+    if [[ "$USE_DOCKER" == true ]]; then
         echo "      docker compose ps redis"
     else
         echo "      redis-cli ping"
@@ -94,11 +95,11 @@ echo "📊 Estadísticas actuales de Redis:"
 KEYS_COUNT=$(run_redis_cmd "DBSIZE" | tr -d '\r\n' | grep -oE '[0-9]+' || echo "0")
 echo "   Total de claves: $KEYS_COUNT"
 
-if [ "$KEYS_COUNT" -gt 0 ]; then
+if [[ "$KEYS_COUNT" -gt 0 ]]; then
     echo ""
     echo "   🔍 Muestra de claves (primeras 10):"
     SAMPLE_KEYS=$(run_redis_cmd "KEYS *" | head -10 | grep -v "^$" || echo "")
-    if [ -n "$SAMPLE_KEYS" ]; then
+    if [[ -n "$SAMPLE_KEYS" ]]; then
         echo "$SAMPLE_KEYS" | sed 's/^/      - /'
     else
         echo "      (no se pudieron listar claves)"
@@ -138,7 +139,7 @@ echo ""
 echo "🔍 Verificando..."
 NEW_KEYS_COUNT=$(run_redis_cmd "DBSIZE" | tr -d '\r\n' | grep -oE '[0-9]+' || echo "0")
 
-if [ "$NEW_KEYS_COUNT" -eq "0" ]; then
+if [[ "$NEW_KEYS_COUNT" -eq 0 ]]; then
     echo "   ✅ Confirmado: Redis está vacío ($NEW_KEYS_COUNT claves)"
 else
     echo "   ⚠️  Advertencia: Todavía hay $NEW_KEYS_COUNT claves en Redis"
