@@ -217,9 +217,8 @@ def _updater_worker():
         time_until_block = BLOCK_UPDATE_INTERVAL - time_since_block
         time_until_next = min(time_until_metagraph, time_until_price, time_until_block, 10)  # Max 10s sleep
 
-        if time_until_next > 0:
-            if _should_stop.wait(timeout=time_until_next):
-                break  # Stop flag was set
+        if time_until_next > 0 and _should_stop.wait(timeout=time_until_next):
+            break  # Stop flag was set
 
         # Log periodic status
         total_updates = metagraph_update_count + price_update_count + block_update_count
