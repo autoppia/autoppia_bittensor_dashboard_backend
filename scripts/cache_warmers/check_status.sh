@@ -24,7 +24,7 @@ echo
 # 2. Cron
 echo "2️⃣  CRON JOBS:"
 CRON_COUNT=$(crontab -l 2>/dev/null | grep -c cache_warmers)
-if [ "$CRON_COUNT" -eq 4 ]; then
+if [[ "$CRON_COUNT" -eq 4 ]]; then
     echo "   ✅ 4 cron jobs configurados"
     crontab -l 2>/dev/null | grep cache_warmers | sed 's/^/      /'
 else
