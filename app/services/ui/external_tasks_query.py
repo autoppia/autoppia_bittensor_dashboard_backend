@@ -35,6 +35,9 @@ PORT_TO_NAME = {
 
 NAME_TO_PORT = {v: k for k, v in PORT_TO_NAME.items()}
 
+# Tolerance for "score == 1.0" to avoid float equality (Sonar / reliability)
+SCORE_ONE_TOLERANCE = 1e-9
+
 
 def _map_website_port_to_name(url: str | None) -> str:
     """Map localhost:PORT URLs to friendly website names."""
@@ -136,7 +139,7 @@ async def get_tasks_with_solutions(
     if web_version:
         # Join with TaskORM to filter by web_version
         # Check if TaskORM is already in the query to avoid duplicate joins
-        if TaskORM not in [t for t in base_stmt.froms]:
+        if TaskORM not in list(base_stmt.froms):
             base_stmt = base_stmt.join(
                 TaskORM,
                 EvaluationORM.task_id == TaskORM.task_id,
@@ -159,7 +162,7 @@ async def get_tasks_with_solutions(
 
     # If we need to filter by website or use_case, join with TaskORM
     if website_port or use_case_filter:
-        if TaskORM not in [t for t in base_stmt.froms]:
+        if TaskORM not in list(base_stmt.froms):
             base_stmt = base_stmt.join(
                 TaskORM,
                 EvaluationORM.task_id == TaskORM.task_id,
@@ -199,7 +202,7 @@ async def get_tasks_with_solutions(
 
     # Filter by agent_id (miner hotkey)
     if agent_id:
-        if AgentEvaluationRunORM not in [t for t in base_stmt.froms]:
+        if AgentEvaluationRunORM not in list(base_stmt.froms):
             base_stmt = base_stmt.join(
                 AgentEvaluationRunORM,
                 EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
@@ -212,7 +215,7 @@ async def get_tasks_with_solutions(
 
     # Filter by validator_id
     if validator_id:
-        if AgentEvaluationRunORM not in [t for t in base_stmt.froms]:
+        if AgentEvaluationRunORM not in list(base_stmt.froms):
             base_stmt = base_stmt.join(
                 AgentEvaluationRunORM,
                 EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
@@ -225,7 +228,7 @@ async def get_tasks_with_solutions(
 
     # Filter by round_id
     if round_id is not None:
-        if AgentEvaluationRunORM not in [t for t in base_stmt.froms]:
+        if AgentEvaluationRunORM not in list(base_stmt.froms):
             base_stmt = base_stmt.join(
                 AgentEvaluationRunORM,
                 EvaluationORM.agent_run_id == AgentEvaluationRunORM.agent_run_id,
@@ -260,10 +263,14 @@ async def get_tasks_with_solutions(
         elif status_lower == "pending":
             filters.append(EvaluationORM.evaluation_score.is_(None))
 
-    # Filter by success (true = score = 1.0, false = score < 1.0)
+    # Filter by success (true = score ≈ 1.0, false = score < 1.0); avoid float equality
     if success is not None:
         if success:
-            filters.append(EvaluationORM.evaluation_score == 1.0)
+            filters.append(
+                EvaluationORM.evaluation_score.between(
+                    1.0 - SCORE_ONE_TOLERANCE, 1.0 + SCORE_ONE_TOLERANCE
+                )
+            )
         else:
             filters.append(EvaluationORM.evaluation_score < 1.0)
 
