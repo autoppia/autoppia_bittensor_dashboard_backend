@@ -17,13 +17,17 @@ from app.db.base import Base
 logger = logging.getLogger(__name__)
 
 
+# Placeholder for DSN password redaction (Sonar: not a credential, API param name triggers S2068)
+_DSN_REDACT_PLACEHOLDER = "***"
+
+
 def _redact_dsn(dsn: str) -> str:
     """Render a DSN string with password redacted for safe logging."""
     try:
         u = make_url(dsn)
-        # Force a visible placeholder so we don't rely on driver hiding behavior
-        return str(u.set(password="***"))
-    except Exception:  # noqa: BLE001 - best-effort fallback for malformed DSN
+        # Force a visible placeholder so we don't rely on driver hiding behavior (URL.set param is API)
+        return str(u.set(password=_DSN_REDACT_PLACEHOLDER))
+    except Exception:  # noqa: BLE001  # NOSONAR - best-effort fallback for malformed DSN
         return dsn.replace("@", "@***:") if "://" in dsn else dsn
 
 
@@ -102,10 +106,9 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         try:
             await session.close()
         except (
-            AsyncAdapt_asyncpg_dbapi.InterfaceError,
             asyncpg.exceptions.InternalClientError,
             asyncpg.exceptions.ConnectionDoesNotExistError,
-            AsyncAdapt_asyncpg_dbapi.Error,  # Catch other asyncpg errors
+            AsyncAdapt_asyncpg_dbapi.Error,  # includes InterfaceError, catch other asyncpg errors
             SQLInterfaceError,  # SQLAlchemy wraps asyncpg errors
             DBAPIError,  # Base class for all DBAPI errors
         ) as e:
@@ -116,7 +119,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
                 "Connection error during session close (concurrent operation): %s",
                 str(e),
             )
-        except Exception as e:  # noqa: BLE001 - catch-all at session boundary, then re-raise
+        except Exception as e:  # noqa: BLE001  # NOSONAR - catch-all at session boundary, then re-raise
             logger.error("Unexpected error during session close: %s", str(e))
             raise
 
