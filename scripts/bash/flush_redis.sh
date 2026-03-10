@@ -116,7 +116,7 @@ echo "   Esto no se puede deshacer."
 echo ""
 read -p "¿Estás seguro de que quieres continuar? (escribe 'SI' para confirmar): " CONFIRM
 
-if [ "$CONFIRM" != "SI" ]; then
+if [[ "$CONFIRM" != "SI" ]]; then
     echo ""
     echo "❌ Operación cancelada"
     exit 0
