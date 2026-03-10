@@ -138,7 +138,7 @@ class AgentRun(BaseModel):
     """Agent run model representing a single execution of an agent."""
 
     runId: str = Field(..., description="Unique run identifier")
-    agentId: str = Field(..., description="Agent identifier")
+    agentId: str = Field(..., description=DESC_AGENT_IDENTIFIER)
     roundId: int = Field(..., description=DESC_ROUND_IDENTIFIER)
     validatorId: str = Field(..., description="Validator identifier")
     startTime: datetime = Field(..., description="Run start time")
@@ -158,7 +158,7 @@ class AgentActivity(BaseModel):
 
     id: str = Field(..., description="Unique activity identifier")
     type: ActivityType = Field(..., description="Activity type")
-    agentId: str = Field(..., description="Agent identifier")
+    agentId: str = Field(..., description=DESC_AGENT_IDENTIFIER)
     agentName: str = Field(..., description=DESC_AGENT_NAME)
     message: str = Field(..., description="Activity message")
     timestamp: datetime = Field(..., description="Activity timestamp")
@@ -198,7 +198,7 @@ class ScoreRoundDataPoint(BaseModel):
 class AgentPerformanceMetrics(BaseModel):
     """Agent performance metrics model."""
 
-    agentId: str = Field(..., description="Agent identifier")
+    agentId: str = Field(..., description=DESC_AGENT_IDENTIFIER)
     timeRange: dict[str, str] = Field(..., description="Time range with start and end")
     totalRuns: int = Field(default=0, description="Total runs in time range")
     successfulRuns: int = Field(default=0, description="Successful runs in time range")
@@ -252,7 +252,7 @@ class AgentComparisonMetrics(BaseModel):
 class AgentComparison(BaseModel):
     """Agent comparison model."""
 
-    agentId: str = Field(..., description="Agent identifier")
+    agentId: str = Field(..., description=DESC_AGENT_IDENTIFIER)
     name: str = Field(..., description=DESC_AGENT_NAME)
     metrics: AgentComparisonMetrics = Field(..., description="Agent metrics")
 
@@ -278,7 +278,7 @@ class AgentComparisonResponse(BaseModel):
 class TopAgent(BaseModel):
     """Top agent model."""
 
-    id: str = Field(..., description="Agent identifier")
+    id: str = Field(..., description=DESC_AGENT_IDENTIFIER)
     name: str = Field(..., description=DESC_AGENT_NAME)
     score: float = Field(..., description="Agent score")
 
@@ -286,7 +286,7 @@ class TopAgent(BaseModel):
 class MostActiveAgent(BaseModel):
     """Most active agent model."""
 
-    id: str = Field(..., description="Agent identifier")
+    id: str = Field(..., description=DESC_AGENT_IDENTIFIER)
     name: str = Field(..., description=DESC_AGENT_NAME)
     runs: int = Field(..., description="Number of runs")
 
