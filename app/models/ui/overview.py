@@ -26,26 +26,35 @@ class MinerSummary(BaseModel):
     name: Optional[str] = None
 
 
+class OverviewLeader(BaseModel):
+    """Current season leader details for the overview payload."""
+
+    minerUid: Optional[int] = None
+    minerHotkey: Optional[str] = None
+    minerImage: Optional[str] = None
+    minerGithubUrl: Optional[str] = None
+    minerName: Optional[str] = None
+    reward: float = 0.0
+    cost: Optional[float] = None
+    score: Optional[float] = None
+    time: Optional[float] = None
+    validators: int = 0
+    totalWebsitesEvaluated: int = 0
+    tasksReceived: int = 0
+    tasksSuccess: int = 0
+
+
 class OverviewMetrics(BaseModel):
     """Overview dashboard metrics."""
 
     model_config = {"extra": "allow"}
 
-    topMinerUid: Optional[int] = None
-    topMinerName: Optional[str] = None
-    topReward: float = 0.0  # post_consensus_avg_reward of the top miner
-    totalWebsites: int
-    totalValidators: int
+    leader: Optional[OverviewLeader] = None
+    season: Optional[int] = None
+    round: Optional[int] = None
     totalMiners: int
     tasksPerValidator: Optional[int] = None  # Tasks in latest round for Autoppia validator
-    totalTasksPerValidator: Optional[int] = None  # Alias explícito para clientes que esperan este nombre
     minerList: Optional[List[MinerSummary]] = None  # UIDs and names for the metrics round
-    currentRound: int
-    currentSeason: Optional[int] = None
-    currentRoundInSeason: Optional[int] = None
-    metricsRound: int
-    metricsSeason: Optional[int] = None
-    metricsRoundInSeason: Optional[int] = None
     subnetVersion: str
     lastUpdated: str  # ISO timestamp
 
