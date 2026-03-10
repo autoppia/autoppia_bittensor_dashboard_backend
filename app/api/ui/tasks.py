@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Annotated, Any, Awaitable, Callable, Optional
+from typing import Annotated, Any, Awaitable, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 
 
-async def _service(session: AsyncSession) -> UIDataService:
+def _service(session: AsyncSession) -> UIDataService:
     return UIDataService(session)
 
 
@@ -30,20 +30,20 @@ class TasksListQuery(BaseModel):
 
     page: int = 1
     limit: int = 20
-    includeDetails: bool = True
-    agentRunId: Optional[str] = None
-    agentId: Optional[str] = None
-    validatorId: Optional[str] = None
-    website: Optional[str] = None
-    useCase: Optional[str] = None
-    status: Optional[str] = None
-    query: Optional[str] = None
-    minScore: Optional[float] = None
-    maxScore: Optional[float] = None
-    startDate: Optional[datetime] = None
-    endDate: Optional[datetime] = None
-    sortBy: str = "startTime"
-    sortOrder: str = "desc"
+    include_details: bool = True
+    agent_run_id: str | None = None
+    agent_id: str | None = None
+    validator_id: str | None = None
+    website: str | None = None
+    use_case: str | None = None
+    status: str | None = None
+    query: str | None = None
+    min_score: float | None = None
+    max_score: float | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    sort_by: str = "startTime"
+    sort_order: str = "desc"
 
     model_config = {"extra": "forbid"}
 
@@ -51,41 +51,41 @@ class TasksListQuery(BaseModel):
 def get_tasks_list_query(
     page: Annotated[int, Query(1, ge=1)] = 1,
     limit: Annotated[int, Query(20, ge=1, le=100)] = 20,
-    includeDetails: Annotated[
+    include_details: Annotated[
         bool,
-        Query(True, description="Include full task details (actions/screenshots/logs). Set false for lightweight listing."),
+        Query(True, description="Include full task details (actions/screenshots/logs). Set false for lightweight listing.", alias="includeDetails"),
     ] = True,
-    agentRunId: Annotated[Optional[str], Query(None)] = None,
-    agentId: Annotated[Optional[str], Query(None)] = None,
-    validatorId: Annotated[Optional[str], Query(None)] = None,
-    website: Annotated[Optional[str], Query(None)] = None,
-    useCase: Annotated[Optional[str], Query(None)] = None,
-    status: Annotated[Optional[str], Query(None)] = None,
-    query: Annotated[Optional[str], Query(None)] = None,
-    minScore: Annotated[Optional[float], Query(None)] = None,
-    maxScore: Annotated[Optional[float], Query(None)] = None,
-    startDate: Annotated[Optional[datetime], Query(None)] = None,
-    endDate: Annotated[Optional[datetime], Query(None)] = None,
-    sortBy: Annotated[str, Query("startTime")] = "startTime",
-    sortOrder: Annotated[str, Query("desc")] = "desc",
+    agent_run_id: Annotated[str | None, Query(None, alias="agentRunId")] = None,
+    agent_id: Annotated[str | None, Query(None, alias="agentId")] = None,
+    validator_id: Annotated[str | None, Query(None, alias="validatorId")] = None,
+    website: Annotated[str | None, Query(None)] = None,
+    use_case: Annotated[str | None, Query(None, alias="useCase")] = None,
+    status: Annotated[str | None, Query(None)] = None,
+    query: Annotated[str | None, Query(None)] = None,
+    min_score: Annotated[float | None, Query(None, alias="minScore")] = None,
+    max_score: Annotated[float | None, Query(None, alias="maxScore")] = None,
+    start_date: Annotated[datetime | None, Query(None, alias="startDate")] = None,
+    end_date: Annotated[datetime | None, Query(None, alias="endDate")] = None,
+    sort_by: Annotated[str, Query("startTime", alias="sortBy")] = "startTime",
+    sort_order: Annotated[str, Query("desc", alias="sortOrder")] = "desc",
 ) -> TasksListQuery:
     return TasksListQuery(
         page=page,
         limit=limit,
-        includeDetails=includeDetails,
-        agentRunId=agentRunId,
-        agentId=agentId,
-        validatorId=validatorId,
+        include_details=include_details,
+        agent_run_id=agent_run_id,
+        agent_id=agent_id,
+        validator_id=validator_id,
         website=website,
-        useCase=useCase,
+        use_case=use_case,
         status=status,
         query=query,
-        minScore=minScore,
-        maxScore=maxScore,
-        startDate=startDate,
-        endDate=endDate,
-        sortBy=sortBy,
-        sortOrder=sortOrder,
+        min_score=min_score,
+        max_score=max_score,
+        start_date=start_date,
+        end_date=end_date,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
 
@@ -105,7 +105,7 @@ async def _fetch_task_or_404(
     task_id: str,
     fetch: Callable[[UIDataService, str], Awaitable[Any]],
 ) -> Any:
-    service = await _service(session)
+    service = _service(session)
     try:
         return await fetch(service, task_id)
     except ValueError as exc:
@@ -122,24 +122,24 @@ async def list_tasks(
     session: Annotated[AsyncSession, Depends(get_session)],
     q: Annotated[TasksListQuery, Depends(get_tasks_list_query)],
 ):
-    service = await _service(session)
+    service = _service(session)
     data = await service.list_tasks(
         page=q.page,
         limit=q.limit,
-        agent_run_id=q.agentRunId,
-        agent_id=q.agentId,
-        validator_id=q.validatorId,
+        agent_run_id=q.agent_run_id,
+        agent_id=q.agent_id,
+        validator_id=q.validator_id,
         website=q.website,
-        use_case=q.useCase,
+        use_case=q.use_case,
         status=q.status,
         query=q.query,
-        min_score=q.minScore,
-        max_score=q.maxScore,
-        start_date=q.startDate,
-        end_date=q.endDate,
-        sort_by=q.sortBy,
-        sort_order=q.sortOrder,
-        include_details=q.includeDetails,
+        min_score=q.min_score,
+        max_score=q.max_score,
+        start_date=q.start_date,
+        end_date=q.end_date,
+        sort_by=q.sort_by,
+        sort_order=q.sort_order,
+        include_details=q.include_details,
     )
     return {"success": True, "data": data}
 
@@ -149,24 +149,24 @@ async def search_tasks(
     session: Annotated[AsyncSession, Depends(get_session)],
     q: Annotated[TasksListQuery, Depends(get_tasks_list_query)],
 ):
-    service = await _service(session)
+    service = _service(session)
     data = await service.search_tasks(
         page=q.page,
         limit=q.limit,
-        agent_run_id=q.agentRunId,
-        agent_id=q.agentId,
-        validator_id=q.validatorId,
+        agent_run_id=q.agent_run_id,
+        agent_id=q.agent_id,
+        validator_id=q.validator_id,
         website=q.website,
-        use_case=q.useCase,
+        use_case=q.use_case,
         status=q.status,
         query=q.query,
-        min_score=q.minScore,
-        max_score=q.maxScore,
-        start_date=q.startDate,
-        end_date=q.endDate,
-        sort_by=q.sortBy,
-        sort_order=q.sortOrder,
-        include_details=q.includeDetails,
+        min_score=q.min_score,
+        max_score=q.max_score,
+        start_date=q.start_date,
+        end_date=q.end_date,
+        sort_by=q.sort_by,
+        sort_order=q.sort_order,
+        include_details=q.include_details,
     )
     return {"success": True, "data": data}
 
@@ -176,13 +176,13 @@ async def search_tasks(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{task_id}")
+@router.get("/{task_id}", responses={404: {"description": "Task not found"}})
 async def get_task(
     task_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     context = await _fetch_task_or_404(session, task_id, lambda s, tid: s.get_task(tid))
-    service = await _service(session)
+    service = _service(session)
     detail = service.build_task_detail(context)
     return {"success": True, "data": {"task": detail}}
 
@@ -193,34 +193,34 @@ async def get_task_details(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     context = await _fetch_task_or_404(session, task_id, lambda s, tid: s.get_task(tid))
-    service = await _service(session)
+    service = _service(session)
     detail = service.build_task_detail(context)
     return {"success": True, "data": {"details": detail}}
 
 
-@router.get("/{task_id}/personas")
+@router.get("/{task_id}/personas", responses={404: {"description": "Task not found"}})
 async def get_task_personas(
     task_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     context = await _fetch_task_or_404(session, task_id, lambda s, tid: s.get_task(tid))
-    service = await _service(session)
+    service = _service(session)
     personas = service.build_personas(context)
     return {"success": True, "data": {"personas": personas.model_dump()}}
 
 
-@router.get("/{task_id}/statistics")
+@router.get("/{task_id}/statistics", responses={404: {"description": "Task not found"}})
 async def get_task_statistics(
     task_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     context = await _fetch_task_or_404(session, task_id, lambda s, tid: s.get_task(tid))
-    service = await _service(session)
+    service = _service(session)
     statistics = service.build_task_statistics(context)
     return {"success": True, "data": {"statistics": statistics.model_dump()}}
 
 
-@router.get("/{task_id}/actions")
+@router.get("/{task_id}/actions", responses={404: {"description": "Task not found"}})
 async def get_task_actions(
     task_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -228,7 +228,7 @@ async def get_task_actions(
     limit: Annotated[int, Query(50, ge=1, le=200)] = 50,
 ):
     context = await _fetch_task_or_404(session, task_id, lambda s, tid: s.get_task(tid))
-    service = await _service(session)
+    service = _service(session)
     actions = service.build_actions(context)
     total = len(actions)
     success_count = sum(1 for action in actions if getattr(action, "success", False))
@@ -251,13 +251,13 @@ async def get_task_actions(
     }
 
 
-@router.get("/{task_id}/screenshots")
+@router.get("/{task_id}/screenshots", responses={404: {"description": "Task not found"}})
 async def get_task_screenshots(
     task_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     context = await _fetch_task_or_404(session, task_id, lambda s, tid: s.get_task(tid))
-    service = await _service(session)
+    service = _service(session)
     screenshots = service.build_screenshots(context)
     return {
         "success": True,
@@ -265,46 +265,46 @@ async def get_task_screenshots(
     }
 
 
-@router.get("/{task_id}/results")
+@router.get("/{task_id}/results", responses={404: {"description": "Task not found"}})
 async def get_task_results(
     task_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     context = await _fetch_task_or_404(session, task_id, lambda s, tid: s.get_task(tid))
-    service = await _service(session)
+    service = _service(session)
     results = service.build_task_results(context)
     return {"success": True, "data": {"results": results}}
 
 
-@router.get("/{task_id}/logs")
+@router.get("/{task_id}/logs", responses={404: {"description": "Task not found"}})
 async def get_task_logs(
     task_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     context = await _fetch_task_or_404(session, task_id, lambda s, tid: s.get_task(tid))
-    service = await _service(session)
+    service = _service(session)
     logs = service.build_logs(context)
     return {"success": True, "data": {"logs": [log.model_dump() for log in logs]}}
 
 
-@router.get("/{task_id}/timeline")
+@router.get("/{task_id}/timeline", responses={404: {"description": "Task not found"}})
 async def get_task_timeline(
     task_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     context = await _fetch_task_or_404(session, task_id, lambda s, tid: s.get_task(tid))
-    service = await _service(session)
+    service = _service(session)
     timeline = service.build_timeline(context)
     return {"success": True, "data": {"timeline": [item.model_dump() for item in timeline]}}
 
 
-@router.get("/{task_id}/metrics")
+@router.get("/{task_id}/metrics", responses={404: {"description": "Task not found"}})
 async def get_task_metrics(
     task_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     context = await _fetch_task_or_404(session, task_id, lambda s, tid: s.get_task(tid))
-    service = await _service(session)
+    service = _service(session)
     metrics = service.build_metrics(context)
     return {"success": True, "data": {"metrics": metrics}}
 
@@ -318,7 +318,7 @@ async def get_task_metrics(
 async def get_task_analytics(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    service = await _service(session)
+    service = _service(session)
     analytics = await service.analytics()
     return {"success": True, "data": {"analytics": analytics}}
 
@@ -328,6 +328,6 @@ async def compare_tasks(
     payload: CompareTasksRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    service = await _service(session)
+    service = _service(session)
     comparison = await service.compare_tasks(payload.taskIds)
     return {"success": True, "data": comparison.model_dump()}
