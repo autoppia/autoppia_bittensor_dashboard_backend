@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
+PM2_APP_NAME="background-updater"
+
 echo "🔍 Verificando background updater..."
 
 # Verificar si PM2 está instalado
@@ -27,15 +29,15 @@ fi
 # Buscar tanto "background-updater" como "background-updater.autoppia.com"
 BACKGROUND_RUNNING=false
 BACKGROUND_NAME=""
-if pm2 list 2>/dev/null | grep -q "background-updater"; then
+if pm2 list 2>/dev/null | grep -q "$PM2_APP_NAME"; then
     BACKGROUND_RUNNING=true
     # Obtener el nombre exacto del proceso
-    BACKGROUND_NAME=$(pm2 list 2>/dev/null | grep "background-updater" | awk '{print $2}' | head -1)
+    BACKGROUND_NAME=$(pm2 list 2>/dev/null | grep "$PM2_APP_NAME" | awk '{print $2}' | head -1)
 fi
 
-if [ "$BACKGROUND_RUNNING" = true ] && [ -n "$BACKGROUND_NAME" ]; then
+if [[ "$BACKGROUND_RUNNING" == true ]] && [[ -n "$BACKGROUND_NAME" ]]; then
     # Si se llama de forma no interactiva (variable NO_INTERACTIVE), solo avisar y salir
-    if [ "${NO_INTERACTIVE:-0}" = "1" ]; then
+    if [[ "${NO_INTERACTIVE:-0}" == "1" ]]; then
         echo "✅ Background updater ya está corriendo en PM2 (nombre: $BACKGROUND_NAME)"
         exit 0
     fi
@@ -56,13 +58,13 @@ if [ "$BACKGROUND_RUNNING" = true ] && [ -n "$BACKGROUND_NAME" ]; then
 fi
 
 # Verificar que existe el archivo background_updater.py
-if [ ! -f "scripts/background_updater.py" ]; then
-    echo "❌ Error: scripts/background_updater.py no encontrado en $PROJECT_ROOT"
+if [[ ! -f "scripts/background_updater.py" ]]; then
+    echo "❌ Error: scripts/background_updater.py no encontrado en $PROJECT_ROOT" >&2
     exit 1
 fi
 
 # Verificar que existe el venv
-if [ ! -d "venv" ]; then
+if [[ ! -d "venv" ]]; then
     echo "⚠️  Virtual environment no encontrado"
     echo "💡 Asegúrate de tener el venv configurado"
 fi
@@ -78,11 +80,11 @@ cd "$PROJECT_ROOT"
 
 # Iniciar usando el comando básico de PM2 que funciona en todas las versiones
 # El formato es: pm2 start <interpreter> --name <name> -- <script>
-pm2 start venv/bin/python3 --name "background-updater" -- scripts/background_updater.py 2>&1
+pm2 start venv/bin/python3 --name "$PM2_APP_NAME" -- scripts/background_updater.py 2>&1
 
 # Verificar que se inició correctamente
 sleep 1
-if pm2 list 2>/dev/null | grep -q "background-updater"; then
+if pm2 list 2>/dev/null | grep -q "$PM2_APP_NAME"; then
     # Guardar la configuración de PM2
     pm2 save 2>/dev/null || true
     echo "✅ Background updater iniciado correctamente"
@@ -92,7 +94,7 @@ else
 fi
 echo ""
 echo "📊 Comandos útiles:"
-echo "  pm2 logs background-updater    # Ver logs"
-echo "  pm2 status                     # Ver estado"
-echo "  pm2 stop background-updater    # Detener"
-echo "  pm2 restart background-updater # Reiniciar"
+echo "  pm2 logs $PM2_APP_NAME    # Ver logs"
+echo "  pm2 status               # Ver estado"
+echo "  pm2 stop $PM2_APP_NAME    # Detener"
+echo "  pm2 restart $PM2_APP_NAME # Reiniciar"
