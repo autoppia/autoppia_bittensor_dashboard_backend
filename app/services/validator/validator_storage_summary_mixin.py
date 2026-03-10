@@ -322,52 +322,101 @@ class ValidatorStorageSummaryMixin:
         Source of truth is validator_round_summary_miners. This makes the summary explicit,
         debuggable, and consistent with APIs that read from round summary rows.
         """
+        round_id = getattr(round_row, "round_id", None)
         stmt_rows = select(ValidatorRoundSummaryORM).where(ValidatorRoundSummaryORM.validator_round_id == round_row.validator_round_id).order_by(ValidatorRoundSummaryORM.miner_uid.asc())
         summary_rows = list(await self.session.scalars(stmt_rows))
         if not summary_rows:
             return
 
-        validators_count = int(
-            await self.session.scalar(select(func.count(func.distinct(ValidatorRoundValidatorORM.validator_uid))).where(ValidatorRoundValidatorORM.validator_round_id == round_row.validator_round_id))
-            or 0
-        )
+        burn_uid = int(settings.BURN_UID)
+        validators_count = 0
+        if round_id is not None:
+            validators_count = int(
+                await self.session.scalar(
+                    text("SELECT COUNT(*) FROM round_validators WHERE round_id = :round_id"),
+                    {"round_id": int(round_id)},
+                )
+                or 0
+            )
+        if validators_count <= 0:
+            validators_count = int(
+                await self.session.scalar(
+                    select(func.count(func.distinct(ValidatorRoundValidatorORM.validator_uid))).where(ValidatorRoundValidatorORM.validator_round_id == round_row.validator_round_id)
+                )
+                or 0
+            )
 
-        miners_payload: List[Dict[str, Any]] = []
+        validator_summary = dict(round_row.validator_summary or {})
+        current_post = self._normalize_post_consensus_payload(validator_summary.get("evaluation_post_consensus"))
+        if current_post:
+            enriched_post = dict(current_post)
+        elif validator_summary.get("evaluation_post_consensus") is None:
+            enriched_post = {}
+        else:
+            enriched_post = {"raw": validator_summary.get("evaluation_post_consensus")}
+
+        existing_miners_by_uid: Dict[int, Dict[str, Any]] = {}
+        for miner_payload in enriched_post.get("miners", []) if isinstance(enriched_post.get("miners"), list) else []:
+            if not isinstance(miner_payload, dict):
+                continue
+            try:
+                miner_uid = int(miner_payload.get("uid", miner_payload.get("miner_uid")))
+            except Exception:
+                continue
+            existing_miners_by_uid[miner_uid] = dict(miner_payload)
+
+        canonical_miners_payload: List[Dict[str, Any]] = []
+        for miner_uid, miner_payload in existing_miners_by_uid.items():
+            best_run = miner_payload.get("best_run_consensus")
+            if not isinstance(best_run, dict):
+                continue
+            if miner_uid == burn_uid:
+                continue
+            canonical_miners_payload.append(
+                {
+                    "miner_uid": miner_uid,
+                    "post_consensus_rank": (int(best_run.get("rank")) if best_run.get("rank") is not None else None),
+                    "post_consensus_avg_reward": float(best_run.get("reward", 0.0) or 0.0),
+                    "post_consensus_avg_eval_score": float(best_run.get("score", 0.0) or 0.0),
+                    "post_consensus_avg_eval_time": float(best_run.get("time", 0.0) or 0.0),
+                    "post_consensus_tasks_received": int(best_run.get("tasks_received", 0) or 0),
+                    "post_consensus_tasks_success": int(best_run.get("tasks_success", 0) or 0),
+                    "weight": (float(best_run.get("weight")) if best_run.get("weight") is not None else None),
+                }
+            )
+
+        miners_payload: List[Dict[str, Any]] = canonical_miners_payload if canonical_miners_payload else []
+        if not miners_payload:
+            for row in summary_rows:
+                miners_payload.append(
+                    {
+                        "miner_uid": int(row.miner_uid),
+                        "miner_hotkey": row.miner_hotkey,
+                        "post_consensus_rank": row.post_consensus_rank,
+                        "post_consensus_avg_reward": row.post_consensus_avg_reward,
+                        "post_consensus_avg_eval_score": row.post_consensus_avg_eval_score,
+                        "post_consensus_avg_eval_time": row.post_consensus_avg_eval_time,
+                        "post_consensus_tasks_received": row.post_consensus_tasks_received,
+                        "post_consensus_tasks_success": row.post_consensus_tasks_success,
+                        "weight": row.weight,
+                    }
+                )
+
         tasks_evaluated_total = 0
         tasks_success_total = 0
         rewards: List[float] = []
         eval_scores: List[float] = []
         eval_times: List[float] = []
-
-        burn_uid = int(settings.BURN_UID)
-
-        for row in summary_rows:
-            post_tasks_received = int(row.post_consensus_tasks_received or 0)
-            post_tasks_success = int(row.post_consensus_tasks_success or 0)
-            is_burn_row = int(row.miner_uid or -1) == burn_uid
-            if not is_burn_row:
-                tasks_evaluated_total += post_tasks_received
-                tasks_success_total += post_tasks_success
-                if row.post_consensus_avg_reward is not None:
-                    rewards.append(float(row.post_consensus_avg_reward))
-                if row.post_consensus_avg_eval_score is not None:
-                    eval_scores.append(float(row.post_consensus_avg_eval_score))
-                if row.post_consensus_avg_eval_time is not None:
-                    eval_times.append(float(row.post_consensus_avg_eval_time))
-
-            miners_payload.append(
-                {
-                    "miner_uid": int(row.miner_uid),
-                    "miner_hotkey": row.miner_hotkey,
-                    "post_consensus_rank": row.post_consensus_rank,
-                    "post_consensus_avg_reward": row.post_consensus_avg_reward,
-                    "post_consensus_avg_eval_score": row.post_consensus_avg_eval_score,
-                    "post_consensus_avg_eval_time": row.post_consensus_avg_eval_time,
-                    "post_consensus_tasks_received": row.post_consensus_tasks_received,
-                    "post_consensus_tasks_success": row.post_consensus_tasks_success,
-                    "weight": row.weight,
-                }
-            )
+        for row in miners_payload:
+            post_tasks_received = int(row.get("post_consensus_tasks_received") or 0)
+            post_tasks_success = int(row.get("post_consensus_tasks_success") or 0)
+            if int(row.get("miner_uid") or -1) == burn_uid:
+                continue
+            tasks_evaluated_total += post_tasks_received
+            tasks_success_total += post_tasks_success
+            rewards.append(float(row.get("post_consensus_avg_reward") or 0.0))
+            eval_scores.append(float(row.get("post_consensus_avg_eval_score") or 0.0))
+            eval_times.append(float(row.get("post_consensus_avg_eval_time") or 0.0))
 
         competitive_miners_payload = [m for m in miners_payload if int(m.get("miner_uid") or -1) != burn_uid]
         winner = next((m for m in competitive_miners_payload if m.get("post_consensus_rank") == 1), None)
@@ -403,49 +452,35 @@ class ValidatorStorageSummaryMixin:
             else None,
         }
 
-        validator_summary = dict(round_row.validator_summary or {})
-        current_post = self._normalize_post_consensus_payload(validator_summary.get("evaluation_post_consensus"))
-        if current_post:
-            enriched_post = dict(current_post)
-        elif validator_summary.get("evaluation_post_consensus") is None:
-            enriched_post = {}
-        else:
-            enriched_post = {"raw": validator_summary.get("evaluation_post_consensus")}
-
-        existing_miners_by_uid: Dict[int, Dict[str, Any]] = {}
-        for miner_payload in enriched_post.get("miners", []) if isinstance(enriched_post.get("miners"), list) else []:
-            if not isinstance(miner_payload, dict):
-                continue
-            try:
-                miner_uid = int(miner_payload.get("uid", miner_payload.get("miner_uid")))
-            except Exception:
-                continue
-            existing_miners_by_uid[miner_uid] = dict(miner_payload)
-
         normalized_miners_payload: List[Dict[str, Any]] = []
-        for row in summary_rows:
-            miner_uid = int(row.miner_uid)
+        summary_rows_by_uid = {int(row.miner_uid): row for row in summary_rows if row.miner_uid is not None}
+        all_miner_uids = sorted(set(summary_rows_by_uid.keys()) | set(existing_miners_by_uid.keys()))
+        for miner_uid in all_miner_uids:
+            row = summary_rows_by_uid.get(miner_uid)
             base_payload = dict(existing_miners_by_uid.get(miner_uid, {}))
             best_run = dict(base_payload.get("best_run_consensus") or {})
             current_run = base_payload.get("current_run_consensus")
 
-            best_run["reward"] = float(row.post_consensus_avg_reward or 0.0)
-            if row.post_consensus_avg_eval_score is not None:
+            if best_run.get("reward") is None and row is not None:
+                best_run["reward"] = float(row.post_consensus_avg_reward or 0.0)
+            if best_run.get("score") is None and row is not None and row.post_consensus_avg_eval_score is not None:
                 best_run["score"] = float(row.post_consensus_avg_eval_score)
-            if row.post_consensus_avg_eval_time is not None:
+            if best_run.get("time") is None and row is not None and row.post_consensus_avg_eval_time is not None:
                 best_run["time"] = float(row.post_consensus_avg_eval_time)
-            if row.post_consensus_avg_eval_cost is not None:
+            if best_run.get("cost") is None and row is not None and row.post_consensus_avg_eval_cost is not None:
                 best_run["cost"] = float(row.post_consensus_avg_eval_cost)
-            best_run["tasks_received"] = int(row.post_consensus_tasks_received or 0)
-            best_run["tasks_success"] = int(row.post_consensus_tasks_success or 0)
-            if row.post_consensus_rank is not None:
+            if int(best_run.get("tasks_received", 0) or 0) <= 0 and row is not None:
+                best_run["tasks_received"] = int(row.post_consensus_tasks_received or 0)
+            if int(best_run.get("tasks_success", 0) or 0) <= 0 and row is not None:
+                best_run["tasks_success"] = int(row.post_consensus_tasks_success or 0)
+            if best_run.get("rank") is None and row is not None and row.post_consensus_rank is not None:
                 best_run["rank"] = int(row.post_consensus_rank)
-            if row.weight is not None:
+            if best_run.get("weight") is None and row is not None and row.weight is not None:
                 best_run["weight"] = float(row.weight)
 
             normalized_payload = dict(base_payload)
             normalized_payload["uid"] = miner_uid
-            normalized_payload["hotkey"] = base_payload.get("hotkey") or base_payload.get("miner_hotkey") or row.miner_hotkey
+            normalized_payload["hotkey"] = base_payload.get("hotkey") or base_payload.get("miner_hotkey") or (row.miner_hotkey if row is not None else None)
             normalized_payload["best_run_consensus"] = best_run
             normalized_payload["current_run_consensus"] = current_run if isinstance(current_run, dict) else None
             normalized_payload.pop("miner_uid", None)
@@ -480,6 +515,9 @@ class ValidatorStorageSummaryMixin:
         leader_before_payload = summary_block.get("leader_before_round") if isinstance(summary_block.get("leader_before_round"), dict) else {}
         leader_before_uid = _to_int(leader_before_payload.get("uid"))
         leader_before_reward = _to_float(leader_before_payload.get("reward"))
+        if int(round_row.round_number_in_season or 0) == 1:
+            leader_before_uid = None
+            leader_before_reward = None
         required_improvement_pct = _to_float(summary_block.get("percentage_to_dethrone")) or 0.05
         summary_leader_after = self._summary_snapshot(summary_block, "leader_after_round")
         summary_candidate = self._summary_snapshot(summary_block, "candidate_this_round")

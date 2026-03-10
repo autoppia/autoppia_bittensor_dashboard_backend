@@ -50,7 +50,7 @@ class UIOverviewServiceMixin:
                 "topMinerUid": None,
                 "topMinerName": None,
                 "topReward": 0.0,
-                "totalWebsites": 14,
+                "totalWebsites": 0,
                 "totalValidators": 0,
                 "totalMiners": 0,
                 "tasksPerValidator": 0,
@@ -148,6 +148,54 @@ class UIOverviewServiceMixin:
                 {"season": metrics_season},
             )
         ).scalar_one()
+
+        total_websites = 0
+        if leader and leader["leader_miner_uid"] is not None:
+            leader_best_round = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT r.round_id
+                            FROM round_validator_miners rvm
+                            JOIN rounds r ON r.round_id = rvm.round_id
+                            JOIN seasons s ON s.season_id = r.season_id
+                            WHERE s.season_number = :season
+                              AND rvm.miner_uid = :miner_uid
+                              AND rvm.post_consensus_avg_reward IS NOT NULL
+                            ORDER BY
+                              rvm.post_consensus_avg_reward DESC,
+                              COALESCE(r.round_number_in_season, 2147483647) ASC,
+                              r.round_id ASC
+                            LIMIT 1
+                            """
+                        ),
+                        {"season": metrics_season, "miner_uid": int(leader["leader_miner_uid"])},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if leader_best_round:
+                total_websites = int(
+                    (
+                        await self.session.execute(
+                            text(
+                                """
+                                SELECT COUNT(DISTINCT t.web_project_id)
+                                FROM tasks t
+                                WHERE t.round_validator_id IN (
+                                  SELECT rv.round_validator_id
+                                  FROM round_validators rv
+                                  WHERE rv.round_id = :round_id
+                                )
+                                """
+                            ),
+                            {"round_id": int(leader_best_round["round_id"])},
+                        )
+                    ).scalar_one()
+                    or 0
+                )
         miners = (
             (
                 await self.session.execute(
@@ -225,7 +273,7 @@ class UIOverviewServiceMixin:
             "topMinerUid": int(leader["leader_miner_uid"]) if leader and leader["leader_miner_uid"] is not None else None,
             "topMinerName": leader["leader_name"] if leader else None,
             "topReward": float(leader["leader_reward"] or 0.0) if leader else 0.0,
-            "totalWebsites": 14,
+            "totalWebsites": total_websites,
             "totalValidators": int(total_validators or 0),
             "totalMiners": len(miners),
             "tasksPerValidator": int(tasks_per_validator or 0),
