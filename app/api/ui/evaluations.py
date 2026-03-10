@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Awaitable, Callable, Optional
+from typing import Annotated, Any, Awaitable, Callable
 
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/evaluations", tags=["evaluations"])
 
 
-async def _service(session: AsyncSession) -> UIDataService:
+def _service(session: AsyncSession) -> UIDataService:
     return UIDataService(session)
 
 
@@ -53,11 +53,11 @@ class EvaluationListQuery(BaseModel):
 
     page: int = 1
     limit: int = 20
-    runId: Optional[str] = None
-    agentId: Optional[str] = None
-    validatorId: Optional[str] = None
-    taskId: Optional[str] = None
-    roundId: Optional[int] = None
+    run_id: str | None = None
+    agent_id: str | None = None
+    validator_id: str | None = None
+    task_id: str | None = None
+    round_id: int | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -65,20 +65,20 @@ class EvaluationListQuery(BaseModel):
 def get_evaluation_list_query(
     page: Annotated[int, Query(1, ge=1)] = 1,
     limit: Annotated[int, Query(20, ge=1, le=100)] = 20,
-    runId: Annotated[Optional[str], Query(None)] = None,
-    agentId: Annotated[Optional[str], Query(None)] = None,
-    validatorId: Annotated[Optional[str], Query(None)] = None,
-    taskId: Annotated[Optional[str], Query(None)] = None,
-    roundId: Annotated[Optional[int], Query(None)] = None,
+    run_id: Annotated[str | None, Query(None, alias="runId")] = None,
+    agent_id: Annotated[str | None, Query(None, alias="agentId")] = None,
+    validator_id: Annotated[str | None, Query(None, alias="validatorId")] = None,
+    task_id: Annotated[str | None, Query(None, alias="taskId")] = None,
+    round_id: Annotated[int | None, Query(None, alias="roundId")] = None,
 ) -> EvaluationListQuery:
     return EvaluationListQuery(
         page=page,
         limit=limit,
-        runId=runId,
-        agentId=agentId,
-        validatorId=validatorId,
-        taskId=taskId,
-        roundId=roundId,
+        run_id=run_id,
+        agent_id=agent_id,
+        validator_id=validator_id,
+        task_id=task_id,
+        round_id=round_id,
     )
 
 
@@ -92,7 +92,7 @@ async def _fetch_or_404(
     evaluation_id: str,
     fetch: Callable[[UIDataService, str], Awaitable[Any]],
 ) -> Any:
-    service = await _service(session)
+    service = _service(session)
     try:
         return await fetch(service, evaluation_id)
     except ValueError as exc:
@@ -104,20 +104,20 @@ async def _fetch_or_404(
 # ---------------------------------------------------------------------------
 
 
-@router.get("", response_model=EvaluationListResponse)
+@router.get("")
 async def list_evaluations(
     session: Annotated[AsyncSession, Depends(get_session)],
     q: Annotated[EvaluationListQuery, Depends(get_evaluation_list_query)],
 ) -> EvaluationListResponse:
-    service = await _service(session)
+    service = _service(session)
     data = await service.list_evaluations(
         page=q.page,
         limit=q.limit,
-        run_id=q.runId,
-        agent_id=q.agentId,
-        validator_id=q.validatorId,
-        task_id=q.taskId,
-        round_id=q.roundId,
+        run_id=q.run_id,
+        agent_id=q.agent_id,
+        validator_id=q.validator_id,
+        task_id=q.task_id,
+        round_id=q.round_id,
     )
     return EvaluationListResponse(success=True, data=data)
 
@@ -127,7 +127,7 @@ async def export_evaluations_by_season(
     season: Annotated[int, Query(..., description="Season number to export evaluations for")],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    service = await _service(session)
+    service = _service(session)
     data = await service.export_evaluations_by_season(season=season)
     return {"success": True, "data": {"season": season, "evaluations": data}}
 
@@ -137,18 +137,18 @@ async def export_evaluations_by_season(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{evaluation_id}", response_model=EvaluationDetailResponse)
+@router.get("/{evaluation_id}", responses={404: {"description": "Evaluation not found"}})
 async def get_evaluation(
     evaluation_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> EvaluationDetailResponse:
     context = await _fetch_or_404(session, evaluation_id, lambda s, eid: s.get_evaluation(eid))
-    service = await _service(session)
+    service = _service(session)
     detail = service.build_detail(context)
     return EvaluationDetailResponse(success=True, data={"evaluation": detail})
 
 
-@router.get("/{evaluation_id}/get-evaluation")
+@router.get("/{evaluation_id}/get-evaluation", responses={404: {"description": "Evaluation not found"}})
 async def get_evaluation_complete(
     evaluation_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -161,7 +161,7 @@ async def get_evaluation_complete(
     return {"success": True, "data": data}
 
 
-@router.get("/{evaluation_id}/task-details")
+@router.get("/{evaluation_id}/task-details", responses={404: {"description": "Evaluation not found"}})
 async def get_evaluation_as_task_details(
     evaluation_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -171,36 +171,36 @@ async def get_evaluation_as_task_details(
     This allows using the same UI components for both tasks and evaluations.
     """
     task_context = await _fetch_or_404(session, evaluation_id, lambda s, eid: s.get_task_by_evaluation_id(eid))
-    service = await _service(session)
+    service = _service(session)
     detail = service.build_task_detail(task_context)
     return {"success": True, "data": {"details": detail}}
 
 
-@router.get("/{evaluation_id}/personas")
+@router.get("/{evaluation_id}/personas", responses={404: {"description": "Evaluation not found"}})
 async def get_evaluation_personas(
     evaluation_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """Get personas for an evaluation (same format as task personas)."""
     task_context = await _fetch_or_404(session, evaluation_id, lambda s, eid: s.get_task_by_evaluation_id(eid))
-    service = await _service(session)
+    service = _service(session)
     personas = service.build_personas(task_context)
     return {"success": True, "data": {"personas": personas.model_dump()}}
 
 
-@router.get("/{evaluation_id}/results")
+@router.get("/{evaluation_id}/results", responses={404: {"description": "Evaluation not found"}})
 async def get_evaluation_results(
     evaluation_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """Get results for an evaluation (same format as task results)."""
     task_context = await _fetch_or_404(session, evaluation_id, lambda s, eid: s.get_task_by_evaluation_id(eid))
-    service = await _service(session)
+    service = _service(session)
     results = service.build_task_results(task_context)
     return {"success": True, "data": {"results": results}}
 
 
-@router.get("/{evaluation_id}/actions")
+@router.get("/{evaluation_id}/actions", responses={404: {"description": "Evaluation not found"}})
 async def get_evaluation_actions(
     evaluation_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -209,7 +209,7 @@ async def get_evaluation_actions(
 ):
     """Get actions for an evaluation (same format as task actions)."""
     task_context = await _fetch_or_404(session, evaluation_id, lambda s, eid: s.get_task_by_evaluation_id(eid))
-    service = await _service(session)
+    service = _service(session)
     actions = service.build_actions(task_context)
     total = len(actions)
     success_count = sum(1 for action in actions if getattr(action, "success", False))
@@ -232,14 +232,14 @@ async def get_evaluation_actions(
     }
 
 
-@router.get("/{evaluation_id}/screenshots")
+@router.get("/{evaluation_id}/screenshots", responses={404: {"description": "Evaluation not found"}})
 async def get_evaluation_screenshots(
     evaluation_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """Get screenshots for an evaluation (same format as task screenshots)."""
     task_context = await _fetch_or_404(session, evaluation_id, lambda s, eid: s.get_task_by_evaluation_id(eid))
-    service = await _service(session)
+    service = _service(session)
     screenshots = service.build_screenshots(task_context)
     return {
         "success": True,
@@ -247,50 +247,50 @@ async def get_evaluation_screenshots(
     }
 
 
-@router.get("/{evaluation_id}/logs")
+@router.get("/{evaluation_id}/logs", responses={404: {"description": "Evaluation not found"}})
 async def get_evaluation_logs(
     evaluation_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """Get logs for an evaluation (same format as task logs)."""
     task_context = await _fetch_or_404(session, evaluation_id, lambda s, eid: s.get_task_by_evaluation_id(eid))
-    service = await _service(session)
+    service = _service(session)
     logs = service.build_logs(task_context)
     return {"success": True, "data": {"logs": [log.model_dump() for log in logs]}}
 
 
-@router.get("/{evaluation_id}/timeline")
+@router.get("/{evaluation_id}/timeline", responses={404: {"description": "Evaluation not found"}})
 async def get_evaluation_timeline(
     evaluation_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """Get timeline for an evaluation (same format as task timeline)."""
     task_context = await _fetch_or_404(session, evaluation_id, lambda s, eid: s.get_task_by_evaluation_id(eid))
-    service = await _service(session)
+    service = _service(session)
     timeline = service.build_timeline(task_context)
     return {"success": True, "data": {"timeline": [item.model_dump() for item in timeline]}}
 
 
-@router.get("/{evaluation_id}/metrics")
+@router.get("/{evaluation_id}/metrics", responses={404: {"description": "Evaluation not found"}})
 async def get_evaluation_metrics(
     evaluation_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """Get metrics for an evaluation (same format as task metrics)."""
     task_context = await _fetch_or_404(session, evaluation_id, lambda s, eid: s.get_task_by_evaluation_id(eid))
-    service = await _service(session)
+    service = _service(session)
     metrics = service.build_metrics(task_context)
     return {"success": True, "data": {"metrics": metrics}}
 
 
-@router.get("/{evaluation_id}/statistics")
+@router.get("/{evaluation_id}/statistics", responses={404: {"description": "Evaluation not found"}})
 async def get_evaluation_statistics(
     evaluation_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """Get statistics for an evaluation (same format as task statistics)."""
     task_context = await _fetch_or_404(session, evaluation_id, lambda s, eid: s.get_task_by_evaluation_id(eid))
-    service = await _service(session)
+    service = _service(session)
     statistics = service.build_task_statistics(task_context)
     return {"success": True, "data": {"statistics": statistics.model_dump()}}
 
@@ -303,19 +303,18 @@ async def get_evaluation_statistics(
 @router.post(
     "/{evaluation_id}/gif",
     status_code=201,
-    response_model=EvaluationGifUploadResponse,
+    responses={
+        400: {"description": "Invalid content type, empty payload, or not a valid GIF"},
+        404: {"description": "Evaluation not found"},
+        500: {"description": "Failed to store GIF or update record"},
+    },
 )
 async def upload_evaluation_gif(
     evaluation_id: str,
     gif: Annotated[UploadFile, File(...)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> EvaluationGifUploadResponse:
-    logger.info(
-        "Received GIF upload request for evaluation %s filename=%s content_type=%s",
-        evaluation_id,
-        gif.filename,
-        gif.content_type,
-    )
+    logger.info("Received GIF upload request for evaluation %s", evaluation_id)
     if gif.content_type != "image/gif":
         logger.warning(
             "Rejected GIF upload for evaluation %s due to invalid content type %s",
@@ -327,7 +326,7 @@ async def upload_evaluation_gif(
             detail="Only GIF images are supported",
         )
 
-    service = await _service(session)
+    service = _service(session)
     try:
         stmt = select(EvaluationORM).where(EvaluationORM.evaluation_id == evaluation_id)
         evaluation_row = await session.scalar(stmt)
@@ -340,11 +339,7 @@ async def upload_evaluation_gif(
 
     file_data = await gif.read()
     received_bytes = len(file_data) if file_data else 0
-    logger.info(
-        "Read GIF upload payload for evaluation %s size_bytes=%s",
-        evaluation_id,
-        received_bytes,
-    )
+    logger.info("Read GIF upload payload size_bytes=%s", received_bytes)
     if not file_data:
         logger.warning(
             "Rejected GIF upload for evaluation %s because payload is empty",
