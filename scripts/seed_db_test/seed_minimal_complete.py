@@ -299,9 +299,9 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
             local_avg_eval_score = sum(e.evaluation_score for e in miner_evaluations) / len(miner_evaluations)
             local_avg_eval_time = sum(e.evaluation_time for e in miner_evaluations) / len(miner_evaluations)
             # Contar tareas únicas recibidas (cada tarea tiene 1 evaluation)
-            local_tasks_received = len(set(e.task_id for e in miner_evaluations))
+            local_tasks_received = len({e.task_id for e in miner_evaluations})
             # Contar tareas únicas exitosas (cada tarea tiene 1 evaluation, relación 1-1)
-            local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.evaluation_score >= 0.5))
+            local_tasks_success = len({e.task_id for e in miner_evaluations if e.evaluation_score >= 0.5})
 
             all_miner_rewards[miner["uid"]] = local_avg_reward
 
@@ -319,9 +319,9 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
         local_avg_eval_score = sum(e.evaluation_score for e in miner_evaluations) / len(miner_evaluations)
         local_avg_eval_time = sum(e.evaluation_time for e in miner_evaluations) / len(miner_evaluations)
         # Contar tareas únicas recibidas (cada tarea tiene 1 evaluation)
-        local_tasks_received = len(set(e.task_id for e in miner_evaluations))
+        local_tasks_received = len({e.task_id for e in miner_evaluations})
         # Contar tareas únicas exitosas (cada tarea tiene 1 evaluation, relación 1-1)
-        local_tasks_success = len(set(e.task_id for e in miner_evaluations if e.evaluation_score >= 0.5))
+        local_tasks_success = len({e.task_id for e in miner_evaluations if e.evaluation_score >= 0.5})
         local_rank = rank_map.get(miner["uid"], 1)
 
         # Post-consensus se calculará después agregando datos de todos los validators
