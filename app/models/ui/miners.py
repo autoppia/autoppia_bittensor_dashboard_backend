@@ -8,6 +8,12 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.utils.validation import validate_miner_image_url
 
+# Sonar S1192: shared Field description literals
+DESC_MINER_UID = "Miner UID"
+DESC_MINER_NAME = "Miner name"
+DESC_TIME_RANGE = "Time range"
+DESC_ITEMS_PER_PAGE = "Items per page"
+
 
 class MinerStatus(str, Enum):
     """Miner status enumeration."""
@@ -73,7 +79,7 @@ class Miner(BaseModel):
 
     id: str = Field(..., description="Unique identifier (string representation of UID)")
     uid: int = Field(..., description="Miner UID")
-    name: str = Field(..., description="Miner name")
+    name: str = Field(..., description=DESC_MINER_NAME)
     hotkey: str = Field(..., description="Miner hotkey")
     imageUrl: str = Field(..., description="Miner image URL (must be valid URL or empty string)")
     githubUrl: str | None = Field(None, description="GitHub repository URL")
@@ -137,7 +143,7 @@ class MinerActivity(BaseModel):
     id: str = Field(..., description="Activity ID")
     type: ActivityType = Field(..., description="Activity type")
     uid: int = Field(..., description="Miner UID")
-    minerName: str = Field(..., description="Miner name")
+    minerName: str = Field(..., description=DESC_MINER_NAME)
     message: str = Field(..., description="Activity message")
     timestamp: datetime = Field(..., description="Activity timestamp")
     metadata: dict[str, Any] = Field(..., description="Activity metadata")
@@ -165,7 +171,7 @@ class MinerPerformanceMetrics(BaseModel):
     """Miner performance metrics model."""
 
     uid: int = Field(..., description="Miner UID")
-    timeRange: dict[str, str] = Field(..., description="Time range")
+    timeRange: dict[str, str] = Field(..., description=DESC_TIME_RANGE)
     totalRuns: int = Field(..., description="Total runs in period")
     successfulRuns: int = Field(..., description="Successful runs in period")
     failedRuns: int = Field(..., description="Failed runs in period")
@@ -184,7 +190,7 @@ class TopMiner(BaseModel):
     """Top performing miner model."""
 
     uid: int = Field(..., description="Miner UID")
-    name: str = Field(..., description="Miner name")
+    name: str = Field(..., description=DESC_MINER_NAME)
     score: float = Field(..., description="Miner score")
 
 
@@ -192,7 +198,7 @@ class MostActiveMiner(BaseModel):
     """Most active miner model."""
 
     uid: int = Field(..., description="Miner UID")
-    name: str = Field(..., description="Miner name")
+    name: str = Field(..., description=DESC_MINER_NAME)
     runs: int = Field(..., description="Number of runs")
 
 
@@ -235,7 +241,7 @@ class MinerComparison(BaseModel):
     """Miner comparison model."""
 
     uid: int = Field(..., description="Miner UID")
-    name: str = Field(..., description="Miner name")
+    name: str = Field(..., description=DESC_MINER_NAME)
     metrics: MinerComparisonMetrics = Field(..., description="Comparison metrics")
 
 
@@ -253,7 +259,7 @@ class MinerComparisonResponse(BaseModel):
 
     miners: list[MinerComparison] = Field(..., description="List of compared miners")
     comparisonMetrics: ComparisonMetrics = Field(..., description="Comparison metrics")
-    timeRange: dict[str, str] = Field(..., description="Time range")
+    timeRange: dict[str, str] = Field(..., description=DESC_TIME_RANGE)
 
 
 # Query Models
@@ -261,7 +267,7 @@ class MinerListQuery(BaseModel):
     """Miner list query model."""
 
     page: int = Field(1, ge=1, description="Page number")
-    limit: int = Field(50, ge=1, le=100, description="Items per page")
+    limit: int = Field(50, ge=1, le=100, description=DESC_ITEMS_PER_PAGE)
     isSota: bool | None = Field(None, description="Filter by SOTA status")
     status: MinerStatus | None = Field(None, description="Filter by status")
     sortBy: str = Field("name", description="Sort field")
@@ -272,7 +278,7 @@ class MinerListQuery(BaseModel):
 class MinerPerformanceQuery(BaseModel):
     """Miner performance query model."""
 
-    timeRange: TimeRange = Field(TimeRange.SEVEN_DAYS, description="Time range")
+    timeRange: TimeRange = Field(TimeRange.SEVEN_DAYS, description=DESC_TIME_RANGE)
     startDate: datetime | None = Field(None, description="Start date")
     endDate: datetime | None = Field(None, description="End date")
     granularity: Granularity = Field(Granularity.DAY, description="Data granularity")
@@ -282,7 +288,7 @@ class MinerRunsQuery(BaseModel):
     """Miner runs query model."""
 
     page: int = Field(1, ge=1, description="Page number")
-    limit: int = Field(20, ge=1, le=100, description="Items per page")
+    limit: int = Field(20, ge=1, le=100, description=DESC_ITEMS_PER_PAGE)
     roundId: int | None = Field(None, description="Filter by round ID")
     validatorId: str | None = Field(None, description="Filter by validator ID")
     status: RunStatus | None = Field(None, description="Filter by status")
@@ -315,7 +321,7 @@ class MinerCompareRequest(BaseModel):
     """Miner compare request model."""
 
     uids: list[int] = Field(..., description="List of miner UIDs to compare")
-    timeRange: TimeRange | None = Field(TimeRange.SEVEN_DAYS, description="Time range")
+    timeRange: TimeRange | None = Field(TimeRange.SEVEN_DAYS, description=DESC_TIME_RANGE)
     startDate: datetime | None = Field(None, description="Start date")
     endDate: datetime | None = Field(None, description="End date")
     metrics: list[str] = Field(["score", "successRate", "duration", "runs"], description="Metrics to compare")
@@ -326,7 +332,7 @@ class Pagination(BaseModel):
     """Pagination model."""
 
     page: int = Field(..., description="Current page")
-    limit: int = Field(..., description="Items per page")
+    limit: int = Field(..., description=DESC_ITEMS_PER_PAGE)
     total: int = Field(..., description="Total number of items")
     totalPages: int = Field(..., description="Total number of pages")
 
