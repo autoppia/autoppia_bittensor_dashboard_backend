@@ -34,7 +34,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, AsyncIterator
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,7 +53,7 @@ SYSTEM_PROMPT_DEFAULT = (
 )
 
 
-def _normalize_action_type(raw_type: Optional[str]) -> str:
+def _normalize_action_type(raw_type: str | None) -> str:
     if not raw_type:
         return "other"
     value = str(raw_type).strip().lower()
@@ -138,10 +138,10 @@ def _normalize_action_type(raw_type: Optional[str]) -> str:
     return alias_map.get(value, value if value in {"navigate", "click", "input", "type", "search", "extract", "submit", "open_tab", "close_tab", "wait", "scroll", "screenshot", "other"} else "other")
 
 
-def _extract_action_fields(action: Any) -> Tuple[str, Optional[str], Optional[str]]:
+def _extract_action_fields(action: Any) -> tuple[str, str | None, str | None]:
     """Return (type, selector, value) from a raw action object or dict."""
     # Support dicts or model-like objects
-    action_dict: Dict[str, Any]
+    action_dict: dict[str, Any]
     if isinstance(action, dict):
         action_dict = action
     elif hasattr(action, "model_dump"):
@@ -165,7 +165,7 @@ def _extract_action_fields(action: Any) -> Tuple[str, Optional[str], Optional[st
     act_type = _normalize_action_type(raw_type)
 
     # Selector may be nested
-    selector: Optional[str] = None
+    selector: str | None = None
     sel_obj = action_dict.get("selector")
     if isinstance(sel_obj, dict):
         selector = sel_obj.get("value") or str(sel_obj)
@@ -179,7 +179,7 @@ def _extract_action_fields(action: Any) -> Tuple[str, Optional[str], Optional[st
             selector = str(sel_attr)
 
     # Value preference: url -> value -> text -> attribute variants
-    value: Optional[str] = (
+    value: str | None = (
         action_dict.get("url")
         or action_dict.get("value")
         or action_dict.get("text")
@@ -196,8 +196,8 @@ def _extract_action_fields(action: Any) -> Tuple[str, Optional[str], Optional[st
     return act_type, selector, value
 
 
-def _select_best_evaluation(task_row: TaskORM) -> Optional[EvaluationORM]:
-    evaluations: List[EvaluationORM] = list(task_row.evaluations or [])
+def _select_best_evaluation(task_row: TaskORM) -> EvaluationORM | None:
+    evaluations: list[EvaluationORM] = list(task_row.evaluations or [])
     if not evaluations:
         return None
     # Prefer the highest evaluation_score; tie-breaker by earliest id ascending
@@ -205,8 +205,8 @@ def _select_best_evaluation(task_row: TaskORM) -> Optional[EvaluationORM]:
     return evaluations[0]
 
 
-def _matching_solution(task_row: TaskORM, solution_id: Optional[str]) -> Optional[TaskSolutionORM]:
-    solutions: List[TaskSolutionORM] = list(task_row.task_solutions or [])
+def _matching_solution(task_row: TaskORM, solution_id: str | None) -> TaskSolutionORM | None:
+    solutions: list[TaskSolutionORM] = list(task_row.task_solutions or [])
     if not solutions:
         return None
     if solution_id:
@@ -217,7 +217,7 @@ def _matching_solution(task_row: TaskORM, solution_id: Optional[str]) -> Optiona
     return solutions[0]
 
 
-async def _iter_task_batches(session: AsyncSession, batch_size: int) -> Iterable[List[TaskORM]]:
+async def _iter_task_batches(session: AsyncSession, batch_size: int) -> AsyncIterator[list[TaskORM]]:
     offset = 0
     while True:
         stmt = (
@@ -247,9 +247,9 @@ def _build_chat_record(
     *,
     url: str,
     prompt: str,
-    actions: List[Dict[str, Any]],
+    actions: list[dict[str, Any]],
     system_prompt: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     user_content = f"URL: {url}\nTask: {prompt}"
     assistant_content = json.dumps(actions, ensure_ascii=False)
     return {
@@ -265,7 +265,7 @@ async def export_dataset(
     output_path: str,
     *,
     min_score: float = 0.0,
-    max_actions: Optional[int] = None,
+    max_actions: int | None = None,
     batch_size: int = 1000,
     system_prompt: str = SYSTEM_PROMPT_DEFAULT,
 ) -> int:
@@ -288,10 +288,10 @@ async def export_dataset(
                     if not raw_actions:
                         continue
 
-                    simplified: List[Dict[str, Any]] = []
+                    simplified: list[dict[str, Any]] = []
                     for raw in raw_actions:
                         a_type, selector, value = _extract_action_fields(raw)
-                        entry: Dict[str, Any] = {"type": a_type}
+                        entry: dict[str, Any] = {"type": a_type}
                         if selector is not None:
                             entry["selector"] = selector
                         if value is not None:
