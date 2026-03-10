@@ -50,7 +50,7 @@ for log in /root/cache_warmers/*.log; do
         LOG_NAME=$(basename "$log" .log)
         MINUTES_AGO=$(( ($(date +%s) - $(stat -c %Y "$log")) / 60 ))
 
-        if [ $MINUTES_AGO -lt 15 ]; then
+        if [ "$MINUTES_AGO" -lt 15 ]; then
             echo "   ✅ $LOG_NAME: hace $MINUTES_AGO minutos"
         else
             echo "   ⚠️  $LOG_NAME: hace $MINUTES_AGO minutos (antiguo)"
