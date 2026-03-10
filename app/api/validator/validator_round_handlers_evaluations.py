@@ -23,7 +23,7 @@ async def add_evaluations_batch(
     agent_run_id: str,
     request: Request,
     payload: Annotated[list[AddEvaluationRequest], Body(..., description="List of evaluation requests")],
-    force: Annotated[bool, Query(False, description="TESTING-only override to skip chain round/window checks")] = False,
+    _force: Annotated[bool, Query(False, description="TESTING-only override (reserved for future use)")] = False,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """Persist multiple evaluation data (tasks, solutions, and evaluations) in a single transaction."""
@@ -120,7 +120,7 @@ async def add_evaluations_batch(
                 logger.info("Batch evaluation %s already exists: %s", idx, exc)
                 evaluations_created += 1
                 continue
-            except Exception as exc:  # noqa: BLE001 - per-item failure, collect and continue
+            except Exception as exc:  # noqa: BLE001  # NOSONAR - per-item failure, collect and continue
                 error_msg = "Batch evaluation %s failed: %s" % (idx, exc)
                 logger.error("%s", error_msg, exc_info=True)
                 errors.append(error_msg)
@@ -138,7 +138,7 @@ async def add_evaluations_batch(
             if agent_run_row:
                 await session.refresh(agent_run_row, ["evaluations", "task_solutions"])
                 # Stats are already updated by add_evaluation(), but this ensures consistency
-        except Exception:  # noqa: BLE001 - non-critical, stats already correct from add_evaluation
+        except Exception:  # noqa: BLE001  # NOSONAR - non-critical, stats already correct from add_evaluation
             pass
 
         result = {
@@ -155,7 +155,7 @@ async def add_evaluations_batch(
 
     except HTTPException:
         raise
-    except Exception as exc:  # noqa: BLE001 - catch-all at batch boundary, return 500
+    except Exception as exc:  # noqa: BLE001  # NOSONAR - catch-all at batch boundary, return 500
         await session.rollback()
         logger.exception("Failed to process batch evaluations")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process batch evaluations: %s" % (exc,)) from exc
