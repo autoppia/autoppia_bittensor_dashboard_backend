@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Annotated, Any
 
 from fastapi import Body, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,9 +10,9 @@ from app.api.validator.common import _ensure_request_matches_round_owner, _requi
 from app.api.validator.schemas import AddEvaluationRequest
 from app.config import settings
 from app.db.session import get_session
-from app.models.core import Evaluation
+from app.models.core import Action as CoreAction, Evaluation, TaskSolution as CoreTaskSolution
 from app.services.chain_state import get_current_block
-from app.services.round_calc import is_inside_window
+from app.services.round_calc import block_to_epoch, is_inside_window, _round_blocks
 from app.services.validator.validator_storage import DuplicateIdentifierError, ValidatorRoundPersistenceService
 
 logger = logging.getLogger(__name__)
@@ -22,9 +22,9 @@ async def add_evaluations_batch(
     validator_round_id: str,
     agent_run_id: str,
     request: Request,
-    payload: list[AddEvaluationRequest] = Body(..., description="List of evaluation requests"),
-    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
-    session: AsyncSession = Depends(get_session),
+    payload: Annotated[list[AddEvaluationRequest], Body(..., description="List of evaluation requests")],
+    force: Annotated[bool, Query(False, description="TESTING-only override to skip chain round/window checks")] = False,
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """Persist multiple evaluation data (tasks, solutions, and evaluations) in a single transaction."""
     service = ValidatorRoundPersistenceService(session)
@@ -43,7 +43,7 @@ async def add_evaluations_batch(
                 async with session.begin_nested():
                     # Merge evaluation_result (if provided) into evaluation so reward/time fields are not dropped
                     request_payload = eval_request
-                    eval_result_payload: Dict[str, Any] | None = None
+                    eval_result_payload: dict[str, Any] | None = None
                     if isinstance(getattr(request_payload, "evaluation_result", None), dict):
                         eval_result_payload = request_payload.evaluation_result  # type: ignore[assignment]
 
@@ -117,12 +117,12 @@ async def add_evaluations_batch(
 
             except DuplicateIdentifierError as exc:
                 # Skip duplicates (idempotency); savepoint was rolled back, duplicate already in DB
-                logger.info(f"Batch evaluation {idx} already exists: {exc}")
+                logger.info("Batch evaluation %s already exists: %s", idx, exc)
                 evaluations_created += 1
                 continue
-            except Exception as exc:
-                error_msg = f"Batch evaluation {idx} failed: {str(exc)}"
-                logger.error(error_msg, exc_info=True)
+            except Exception as exc:  # noqa: BLE001 - per-item failure, collect and continue
+                error_msg = "Batch evaluation %s failed: %s" % (idx, exc)
+                logger.error("%s", error_msg, exc_info=True)
                 errors.append(error_msg)
                 # Savepoint rolled back by begin_nested(); main transaction still valid, continue
 
@@ -138,8 +138,7 @@ async def add_evaluations_batch(
             if agent_run_row:
                 await session.refresh(agent_run_row, ["evaluations", "task_solutions"])
                 # Stats are already updated by add_evaluation(), but this ensures consistency
-        except Exception:
-            # Non-critical: stats should already be correct from add_evaluation()
+        except Exception:  # noqa: BLE001 - non-critical, stats already correct from add_evaluation
             pass
 
         result = {
@@ -156,10 +155,10 @@ async def add_evaluations_batch(
 
     except HTTPException:
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - catch-all at batch boundary, return 500
         await session.rollback()
         logger.exception("Failed to process batch evaluations")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to process batch evaluations: {str(exc)}") from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process batch evaluations: %s" % (exc,)) from exc
 
 
 async def add_evaluation(
@@ -167,21 +166,21 @@ async def add_evaluation(
     agent_run_id: str,
     payload: AddEvaluationRequest,
     request: Request,
-    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
-    session: AsyncSession = Depends(get_session),
+    force: Annotated[bool, Query(False, description="TESTING-only override to skip chain round/window checks")] = False,
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """Persist evaluation data (task, solution, and evaluation with artefacts)."""
     service = ValidatorRoundPersistenceService(session)
-    raw_json: Dict[str, Any] | None = None
+    raw_json: dict[str, Any] | None = None
     try:
         raw_json = await request.json()
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional raw body for heuristic fallback
         raw_json = None
 
     try:
         request_payload = payload
         # Merge evaluation_result (if provided) into evaluation so reward/time fields are not dropped
-        eval_result_payload: Dict[str, Any] | None = None
+        eval_result_payload: dict[str, Any] | None = None
         if isinstance(getattr(request_payload, "evaluation_result", None), dict):
             eval_result_payload = request_payload.evaluation_result  # type: ignore[assignment]
         elif isinstance(raw_json, dict):
@@ -207,12 +206,6 @@ async def add_evaluation(
             raw_actions = raw_ts.get("actions") if isinstance(raw_ts, dict) else None
             ts = getattr(request_payload, "task_solution", None)
             if raw_actions and ts and isinstance(ts.actions, list):
-                from app.models.core import (
-                    Action as CoreAction,
-                )
-                from app.models.core import (
-                    TaskSolution as CoreTaskSolution,
-                )
 
                 def _norm_type(t: str) -> str:
                     key = (t or "other").lower().replace("action", "").replace("-", "_").strip() or "other"
@@ -242,8 +235,7 @@ async def add_evaluation(
                         evaluation=request_payload.evaluation,
                         evaluation_result=getattr(request_payload, "evaluation_result", None),
                     )
-        except Exception:
-            # Non-fatal: fall back to original payload
+        except Exception:  # noqa: BLE001 - non-fatal: fall back to original payload
             pass
 
         task = request_payload.task
@@ -301,7 +293,7 @@ async def add_evaluation(
         try:
             existing_solution = await service.get_task_solution_row(task_solution.solution_id)
             existing_eval = await service.get_evaluation_row(evaluation.evaluation_id)
-        except Exception:
+        except Exception:  # noqa: BLE001 - idempotency check: missing row -> None
             existing_solution = existing_eval = None
         if (
             existing_solution
@@ -337,8 +329,6 @@ async def add_evaluation(
                     detail="Chain state unavailable",
                 )
             # Calculate boundaries from start_block (no longer using round_number)
-            from app.services.round_calc import _round_blocks, block_to_epoch
-
             round_blocks = _round_blocks()
             calculated_start_block = round_row.start_block
             calculated_end_block = calculated_start_block + round_blocks
