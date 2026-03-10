@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -19,39 +20,70 @@ async def _service(session: AsyncSession) -> UIDataService:
     return UIDataService(session)
 
 
+# ---------------------------------------------------------------------------
+# Query model (Sonar: reduce params, avoid shadowing built-in "round")
+# ---------------------------------------------------------------------------
+
+
+class MinerListQuery(BaseModel):
+    """Query params for list_miners (API still accepts ?round= via alias)."""
+
+    page: int = 1
+    limit: int = 50
+    isSota: Optional[bool] = None
+    search: Optional[str] = None
+    round_num: Optional[int] = None  # API query param name is "round" (alias in dependency)
+
+    model_config = {"extra": "forbid"}
+
+
+def get_miner_list_query(
+    page: Annotated[int, Query(1, ge=1)] = 1,
+    limit: Annotated[int, Query(50, ge=1, le=100)] = 50,
+    isSota: Annotated[Optional[bool], Query(None)] = None,
+    search: Annotated[Optional[str], Query(None)] = None,
+    round_num: Annotated[Optional[int], Query(None, alias="round")] = None,
+) -> MinerListQuery:
+    return MinerListQuery(page=page, limit=limit, isSota=isSota, search=search, round_num=round_num)
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+
 @router.get("/")
 @router.get("", include_in_schema=False)
 @cache("miner_list", ttl=600)  # Cache 10 minutes - pre-warmed by background worker
 async def list_miners(
-    session: AsyncSession = Depends(get_session),
-    page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
-    isSota: Optional[bool] = Query(None),
-    search: Optional[str] = Query(None),
-    round: Optional[int] = Query(None),
+    session: Annotated[AsyncSession, Depends(get_session)],
+    q: Annotated[MinerListQuery, Depends(get_miner_list_query)],
 ):
     try:
         service = await _service(session)
         response = await service.list_agents_catalog(
-            page=page,
-            limit=limit,
-            search=search,
+            page=q.page,
+            limit=q.limit,
+            search=q.search,
             sort_by="score",
             sort_order="desc",
         )
         agents = response.get("agents", [])
-        if isSota is not None:
-            agents = [a for a in agents if bool(a.get("isSota")) is isSota]
+        if q.isSota is not None:
+            agents = [a for a in agents if bool(a.get("isSota")) is q.isSota]
         response["agents"] = agents
         response["total"] = len(agents)
         return response
-    except Exception as exc:
-        logger.error(f"Error in list_miners endpoint: {exc}", exc_info=True)
+    except Exception as exc:  # noqa: BLE001 - intentional: catch any service error and return 500
+        logger.error("Error in list_miners endpoint: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/{uid}")
-async def get_miner_detail(uid: int, session: AsyncSession = Depends(get_session)):
+async def get_miner_detail(
+    uid: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
     service = await _service(session)
     try:
         detail = await service.get_agent_detail(uid, season=None, round_in_season=None)
