@@ -78,7 +78,7 @@ class Miner(BaseModel):
     """Miner model."""
 
     id: str = Field(..., description="Unique identifier (string representation of UID)")
-    uid: int = Field(..., description="Miner UID")
+    uid: int = Field(..., description=DESC_MINER_UID)
     name: str = Field(..., description=DESC_MINER_NAME)
     hotkey: str = Field(..., description="Miner hotkey")
     imageUrl: str = Field(..., description="Miner image URL (must be valid URL or empty string)")
@@ -142,7 +142,7 @@ class MinerActivity(BaseModel):
 
     id: str = Field(..., description="Activity ID")
     type: ActivityType = Field(..., description="Activity type")
-    uid: int = Field(..., description="Miner UID")
+    uid: int = Field(..., description=DESC_MINER_UID)
     minerName: str = Field(..., description=DESC_MINER_NAME)
     message: str = Field(..., description="Activity message")
     timestamp: datetime = Field(..., description="Activity timestamp")
@@ -170,7 +170,7 @@ class PerformanceTrend(BaseModel):
 class MinerPerformanceMetrics(BaseModel):
     """Miner performance metrics model."""
 
-    uid: int = Field(..., description="Miner UID")
+    uid: int = Field(..., description=DESC_MINER_UID)
     timeRange: dict[str, str] = Field(..., description=DESC_TIME_RANGE)
     totalRuns: int = Field(..., description="Total runs in period")
     successfulRuns: int = Field(..., description="Successful runs in period")
@@ -189,7 +189,7 @@ class MinerPerformanceMetrics(BaseModel):
 class TopMiner(BaseModel):
     """Top performing miner model."""
 
-    uid: int = Field(..., description="Miner UID")
+    uid: int = Field(..., description=DESC_MINER_UID)
     name: str = Field(..., description=DESC_MINER_NAME)
     score: float = Field(..., description="Miner score")
 
@@ -197,7 +197,7 @@ class TopMiner(BaseModel):
 class MostActiveMiner(BaseModel):
     """Most active miner model."""
 
-    uid: int = Field(..., description="Miner UID")
+    uid: int = Field(..., description=DESC_MINER_UID)
     name: str = Field(..., description=DESC_MINER_NAME)
     runs: int = Field(..., description="Number of runs")
 
@@ -240,7 +240,7 @@ class MinerComparisonMetrics(BaseModel):
 class MinerComparison(BaseModel):
     """Miner comparison model."""
 
-    uid: int = Field(..., description="Miner UID")
+    uid: int = Field(..., description=DESC_MINER_UID)
     name: str = Field(..., description=DESC_MINER_NAME)
     metrics: MinerComparisonMetrics = Field(..., description="Comparison metrics")
 
