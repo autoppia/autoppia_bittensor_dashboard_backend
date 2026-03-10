@@ -12,6 +12,7 @@ logger, log_level = init_logging(settings)
 import os
 import re
 import time
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -83,10 +84,10 @@ images_path = os.path.join(os.path.dirname(__file__), "..", "images")
 try:
     os.makedirs(images_path, exist_ok=True)
 except OSError as exc:
-    logger.warning(f"Unable to prepare images directory at {images_path}: {exc}")
+    logger.warning("Unable to prepare images directory at %s: %s", images_path, exc)
 else:
     app.mount("/images", StaticFiles(directory=images_path), name="images")
-    logger.info(f"Mounted static files from {images_path}")
+    logger.info("Mounted static files from %s", images_path)
 
 
 # Request logging (compact)
@@ -94,10 +95,10 @@ else:
 async def log_requests(request: Request, call_next):
     start = time.time()
     client = request.client.host if request.client else "unknown"
-    logger.info(f"{request.method} {request.url.path} - {client}")
+    logger.info("%s %s - %s", request.method, request.url.path, client)
     resp = await call_next(request)
     elapsed = time.time() - start
-    logger.info(f"{request.method} {request.url.path} - {resp.status_code} - {elapsed:.3f}s")
+    logger.info("%s %s - %s - %.3fs", request.method, request.url.path, resp.status_code, elapsed)
     return resp
 
 
@@ -161,12 +162,12 @@ async def clear_cache():
     from app.services.redis_cache import redis_cache
 
     cleared = redis_cache.clear_pattern("*")
-    return {"message": f"Cleared {cleared} Redis cache entries", "cleared": cleared}
+    return {"message": "Cleared %s Redis cache entries" % (cleared,), "cleared": cleared}
 
 
 @app.post("/admin/warm/agents")
 async def admin_warm_agents(
-    session: AsyncSession = Depends(get_session),
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """
     DEPRECATED: Agent aggregates are now materialized incrementally when rounds finish.
@@ -256,13 +257,13 @@ async def on_startup():
         logger.info("=" * 80)
         logger.info("🔧 BACKEND ROUND CONFIGURATION")
         logger.info("=" * 80)
-        logger.info(f"📊 Mode: {'TESTING' if settings.TESTING else 'PRODUCTION'}")
-        logger.info(f"🔢 MINIMUM_START_BLOCK: {settings.MINIMUM_START_BLOCK:,}")
-        logger.info(f"⏱️  Round Size: {settings.ROUND_SIZE_EPOCHS} epochs")
-        logger.info(f"📦 Blocks per Round: {int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)}")
+        logger.info("📊 Mode: %s", "TESTING" if settings.TESTING else "PRODUCTION")
+        logger.info("🔢 MINIMUM_START_BLOCK: %s", format(settings.MINIMUM_START_BLOCK, ","))
+        logger.info("⏱️  Round Size: %s epochs", settings.ROUND_SIZE_EPOCHS)
+        logger.info("📦 Blocks per Round: %s", int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH))
         logger.info("=" * 80)
 
-        logger.info(f"API server ready on {settings.HOST}:{settings.PORT}")
+        logger.info("API server ready on %s:%s", settings.HOST, settings.PORT)
         logger.info("API documentation available at /docs")
         # NOTE: Background updaters (metagraph, price, block) are now run as a separate PM2 process
         # See background_updater.py and ecosystem.config.js
@@ -272,8 +273,8 @@ async def on_startup():
         # Overview cache warmer is also disabled - use external cron/PM2 if needed
         logger.info("ℹ️  Overview cache warmer disabled (use external process if needed)")
 
-    except Exception as e:
-        logger.error(f"Failed to initialize application: {e}", exc_info=True)
+    except Exception as e:  # noqa: BLE001 - catch-all at startup, log and re-raise
+        logger.error("Failed to initialize application: %s", e, exc_info=True)
         raise
 
 
@@ -289,10 +290,7 @@ async def on_shutdown():
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-
-    # Get CORS origins from settings
-    from app.config import settings
+    logger.error("Unhandled exception: %s", exc, exc_info=True)
 
     origin = request.headers.get("origin")
     allowed_origins = settings.CORS_ORIGINS
