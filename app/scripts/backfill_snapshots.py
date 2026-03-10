@@ -10,7 +10,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -44,7 +43,7 @@ def backfill_agent_stats(_max_rounds: int | None = None):
     logger.warning("⚠️ Skipping agent stats backfill - functionality removed")
 
 
-async def main():
+def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Backfill snapshots and agent stats")
     parser.add_argument("--mode", choices=["snapshots", "stats", "both"], default="both", help="What to backfill: snapshots, stats, or both")
@@ -70,4 +69,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
