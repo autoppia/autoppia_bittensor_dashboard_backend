@@ -8,6 +8,23 @@ from sqlalchemy import text
 
 class UIOverviewServiceMixin:
     async def get_overview_metrics(self) -> Dict[str, Any]:
+        runtime_config = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                    SELECT minimum_validator_version
+                    FROM config_app_runtime
+                    WHERE id = 1
+                    LIMIT 1
+                    """
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
+        subnet_version = str(runtime_config["minimum_validator_version"]) if runtime_config and runtime_config.get("minimum_validator_version") else ""
         latest_any = (
             (
                 await self.session.execute(
@@ -47,28 +64,18 @@ class UIOverviewServiceMixin:
 
         if not latest_any:
             return {
-                "topMinerUid": None,
-                "topMinerName": None,
-                "topReward": 0.0,
-                "totalWebsites": 0,
-                "totalValidators": 0,
+                "leader": None,
+                "season": None,
+                "round": None,
                 "totalMiners": 0,
                 "tasksPerValidator": 0,
-                "totalTasksPerValidator": 0,
                 "minerList": [],
-                "currentRound": 0,
-                "currentSeason": None,
-                "currentRoundInSeason": None,
-                "metricsRound": 0,
-                "metricsSeason": None,
-                "metricsRoundInSeason": None,
-                "subnetVersion": "12.2.0",
+                "subnetVersion": subnet_version,
                 "lastUpdated": datetime.now(timezone.utc).isoformat(),
             }
 
         metrics_source = latest_finished or latest_any
         metrics_season = int(metrics_source["season_number"])
-        metrics_round_in_season = int(metrics_source["round_number_in_season"])
         metrics_round_id = int(metrics_source["round_id"])
 
         current_season = int(latest_any["season_number"])
@@ -103,7 +110,7 @@ class UIOverviewServiceMixin:
             .mappings()
             .first()
         )
-        if not leader:
+        if not leader or leader["leader_miner_uid"] is None:
             leader = (
                 (
                     await self.session.execute(
@@ -134,6 +141,117 @@ class UIOverviewServiceMixin:
                 .first()
             )
 
+        leader_uid = int(leader["leader_miner_uid"]) if leader and leader["leader_miner_uid"] is not None else None
+        leader_row = None
+        leader_summary = None
+        if leader_uid is None:
+            leader_row = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT
+                              rvm.round_id,
+                              rvm.miner_uid,
+                              rvm.miner_hotkey,
+                              rvm.image_url,
+                              rvm.github_url,
+                              COALESCE(NULLIF(TRIM(COALESCE(rvm.name, '')), ''), 'miner ' || rvm.miner_uid::text) AS name,
+                              COALESCE(rvm.best_local_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) AS reward,
+                              COALESCE(rvm.best_local_eval_cost, rvm.post_consensus_avg_eval_cost, rvm.local_avg_eval_cost) AS cost,
+                              COALESCE(rvm.best_local_eval_score, rvm.post_consensus_avg_eval_score, rvm.local_avg_eval_score) AS score,
+                              COALESCE(rvm.best_local_eval_time, rvm.post_consensus_avg_eval_time, rvm.local_avg_eval_time) AS time,
+                              COALESCE(rvm.best_local_tasks_received, rvm.post_consensus_tasks_received, rvm.local_tasks_received, 0) AS tasks_received,
+                              COALESCE(rvm.best_local_tasks_success, rvm.post_consensus_tasks_success, rvm.local_tasks_success, 0) AS tasks_success
+                            FROM round_validator_miners rvm
+                            JOIN rounds r ON r.round_id = rvm.round_id
+                            JOIN seasons s ON s.season_id = r.season_id
+                            WHERE s.season_number = :season
+                            ORDER BY
+                              COALESCE(rvm.best_local_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) DESC,
+                              COALESCE(rvm.best_local_rank, rvm.post_consensus_rank, 9999) ASC,
+                              r.round_number_in_season ASC,
+                              rvm.updated_at DESC NULLS LAST,
+                              rvm.created_at DESC NULLS LAST
+                            LIMIT 1
+                            """
+                        ),
+                        {"season": metrics_season},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            leader_uid = int(leader_row["miner_uid"]) if leader_row and leader_row.get("miner_uid") is not None else None
+        if leader_uid is not None:
+            if leader_row is None:
+                leader_row = (
+                    (
+                        await self.session.execute(
+                            text(
+                                """
+                                SELECT
+                                  rvm.round_id,
+                                  rvm.miner_uid,
+                                  rvm.miner_hotkey,
+                                  rvm.image_url,
+                                  rvm.github_url,
+                                  COALESCE(NULLIF(TRIM(COALESCE(rvm.name, '')), ''), 'miner ' || rvm.miner_uid::text) AS name,
+                                  COALESCE(rvm.best_local_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) AS reward,
+                                  COALESCE(rvm.best_local_eval_cost, rvm.post_consensus_avg_eval_cost, rvm.local_avg_eval_cost) AS cost,
+                                  COALESCE(rvm.best_local_eval_score, rvm.post_consensus_avg_eval_score, rvm.local_avg_eval_score) AS score,
+                                  COALESCE(rvm.best_local_eval_time, rvm.post_consensus_avg_eval_time, rvm.local_avg_eval_time) AS time,
+                                  COALESCE(rvm.best_local_tasks_received, rvm.post_consensus_tasks_received, rvm.local_tasks_received, 0) AS tasks_received,
+                                  COALESCE(rvm.best_local_tasks_success, rvm.post_consensus_tasks_success, rvm.local_tasks_success, 0) AS tasks_success
+                                FROM round_validator_miners rvm
+                                JOIN rounds r ON r.round_id = rvm.round_id
+                                JOIN seasons s ON s.season_id = r.season_id
+                                WHERE s.season_number = :season
+                                  AND rvm.miner_uid = :miner_uid
+                                ORDER BY
+                                  COALESCE(rvm.best_local_reward, rvm.post_consensus_avg_reward, rvm.local_avg_reward, 0) DESC,
+                                  COALESCE(rvm.best_local_rank, rvm.post_consensus_rank, 9999) ASC,
+                                  r.round_number_in_season ASC,
+                                  rvm.updated_at DESC NULLS LAST,
+                                  rvm.created_at DESC NULLS LAST
+                                LIMIT 1
+                                """
+                            ),
+                            {"season": metrics_season, "miner_uid": leader_uid},
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+            leader_summary = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT
+                              rs.leader_after_reward,
+                              rs.leader_after_eval_score,
+                              rs.leader_after_eval_time,
+                              rs.leader_after_eval_cost,
+                              (rs.post_consensus_json->'summary'->'leader_after_round'->>'score')::DOUBLE PRECISION AS leader_after_eval_score_json,
+                              (rs.post_consensus_json->'summary'->'leader_after_round'->>'time')::DOUBLE PRECISION AS leader_after_eval_time_json,
+                              (rs.post_consensus_json->'summary'->'leader_after_round'->>'cost')::DOUBLE PRECISION AS leader_after_eval_cost_json
+                            FROM round_summary rs
+                            JOIN rounds r ON r.round_id = rs.round_id
+                            JOIN seasons s ON s.season_id = r.season_id
+                            WHERE s.season_number = :season
+                              AND rs.leader_after_miner_uid = :miner_uid
+                            ORDER BY r.round_number_in_season DESC, rs.updated_at DESC NULLS LAST
+                            LIMIT 1
+                            """
+                        ),
+                        {"season": metrics_season, "miner_uid": leader_uid},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+
         total_validators = (
             await self.session.execute(
                 text(
@@ -150,52 +268,27 @@ class UIOverviewServiceMixin:
         ).scalar_one()
 
         total_websites = 0
-        if leader and leader["leader_miner_uid"] is not None:
-            leader_best_round = (
+        leader_round_id = int(leader_row["round_id"]) if leader_row and leader_row["round_id"] is not None else None
+        if leader_round_id is not None:
+            total_websites = int(
                 (
                     await self.session.execute(
                         text(
                             """
-                            SELECT r.round_id
-                            FROM round_validator_miners rvm
-                            JOIN rounds r ON r.round_id = rvm.round_id
-                            JOIN seasons s ON s.season_id = r.season_id
-                            WHERE s.season_number = :season
-                              AND rvm.miner_uid = :miner_uid
-                              AND rvm.post_consensus_avg_reward IS NOT NULL
-                            ORDER BY
-                              rvm.post_consensus_avg_reward DESC,
-                              COALESCE(r.round_number_in_season, 2147483647) ASC,
-                              r.round_id ASC
-                            LIMIT 1
+                            SELECT COUNT(DISTINCT t.web_project_id)
+                            FROM tasks t
+                            WHERE t.round_validator_id IN (
+                              SELECT rv.round_validator_id
+                              FROM round_validators rv
+                              WHERE rv.round_id = :round_id
+                            )
                             """
                         ),
-                        {"season": metrics_season, "miner_uid": int(leader["leader_miner_uid"])},
+                        {"round_id": leader_round_id},
                     )
-                )
-                .mappings()
-                .first()
+                ).scalar_one()
+                or 0
             )
-            if leader_best_round:
-                total_websites = int(
-                    (
-                        await self.session.execute(
-                            text(
-                                """
-                                SELECT COUNT(DISTINCT t.web_project_id)
-                                FROM tasks t
-                                WHERE t.round_validator_id IN (
-                                  SELECT rv.round_validator_id
-                                  FROM round_validators rv
-                                  WHERE rv.round_id = :round_id
-                                )
-                                """
-                            ),
-                            {"round_id": int(leader_best_round["round_id"])},
-                        )
-                    ).scalar_one()
-                    or 0
-                )
         miners = (
             (
                 await self.session.execute(
@@ -269,23 +362,68 @@ class UIOverviewServiceMixin:
                 {"rid": metrics_round_id},
             )
         ).scalar_one()
+        leader_payload = None
+        if leader_uid is not None:
+            leader_name = leader_row["name"] if leader_row and leader_row.get("name") else (leader["leader_name"] if leader else None)
+            leader_reward = (
+                float(leader_summary["leader_after_reward"])
+                if leader_summary and leader_summary.get("leader_after_reward") is not None
+                else float(leader_row["reward"])
+                if leader_row and leader_row.get("reward") is not None
+                else float(leader["leader_reward"] or 0.0)
+                if leader
+                else 0.0
+            )
+            leader_cost = (
+                float(leader_summary["leader_after_eval_cost"])
+                if leader_summary and leader_summary.get("leader_after_eval_cost") is not None
+                else float(leader_summary["leader_after_eval_cost_json"])
+                if leader_summary and leader_summary.get("leader_after_eval_cost_json") is not None
+                else float(leader_row["cost"])
+                if leader_row and leader_row.get("cost") is not None
+                else None
+            )
+            leader_score = (
+                float(leader_summary["leader_after_eval_score"])
+                if leader_summary and leader_summary.get("leader_after_eval_score") is not None
+                else float(leader_summary["leader_after_eval_score_json"])
+                if leader_summary and leader_summary.get("leader_after_eval_score_json") is not None
+                else float(leader_row["score"])
+                if leader_row and leader_row.get("score") is not None
+                else None
+            )
+            leader_time = (
+                float(leader_summary["leader_after_eval_time"])
+                if leader_summary and leader_summary.get("leader_after_eval_time") is not None
+                else float(leader_summary["leader_after_eval_time_json"])
+                if leader_summary and leader_summary.get("leader_after_eval_time_json") is not None
+                else float(leader_row["time"])
+                if leader_row and leader_row.get("time") is not None
+                else None
+            )
+            leader_payload = {
+                "minerUid": leader_uid,
+                "minerHotkey": (leader_row["miner_hotkey"] if leader_row else None),
+                "minerImage": (leader_row["image_url"] if leader_row else None),
+                "minerGithubUrl": (leader_row["github_url"] if leader_row else None),
+                "minerName": leader_name,
+                "reward": leader_reward,
+                "cost": leader_cost,
+                "score": leader_score,
+                "time": leader_time,
+                "validators": int(total_validators or 0),
+                "totalWebsitesEvaluated": total_websites,
+                "tasksReceived": int(leader_row["tasks_received"] or 0) if leader_row else 0,
+                "tasksSuccess": int(leader_row["tasks_success"] or 0) if leader_row else 0,
+            }
         return {
-            "topMinerUid": int(leader["leader_miner_uid"]) if leader and leader["leader_miner_uid"] is not None else None,
-            "topMinerName": leader["leader_name"] if leader else None,
-            "topReward": float(leader["leader_reward"] or 0.0) if leader else 0.0,
-            "totalWebsites": total_websites,
-            "totalValidators": int(total_validators or 0),
+            "leader": leader_payload,
+            "season": current_season,
+            "round": current_round_in_season,
             "totalMiners": len(miners),
             "tasksPerValidator": int(tasks_per_validator or 0),
-            "totalTasksPerValidator": int(tasks_per_validator or 0),
             "minerList": [dict(m) for m in miners],
-            "currentRound": int((current_season * 10000) + current_round_in_season),
-            "currentSeason": current_season,
-            "currentRoundInSeason": current_round_in_season,
-            "metricsRound": metrics_round_in_season,
-            "metricsSeason": metrics_season,
-            "metricsRoundInSeason": metrics_round_in_season,
-            "subnetVersion": "12.2.0",
+            "subnetVersion": subnet_version,
             "lastUpdated": datetime.now(timezone.utc).isoformat(),
         }
 
