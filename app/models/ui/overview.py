@@ -212,6 +212,8 @@ class NetworkStatus(BaseModel):
     lastChecked: str  # ISO timestamp
     activeValidators: int
     networkLatency: int
+    season: Optional[int] = None
+    round: Optional[int] = None
 
 
 class NetworkStatusResponse(BaseResponse):
