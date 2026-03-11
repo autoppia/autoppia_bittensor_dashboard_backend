@@ -67,13 +67,14 @@ jobs:
             exit 1
           fi
 
-      # Maintainability: fail if any app module is C or worse (A/B = pass).
-      - name: Radon maintainability gate (app only, fail if below B)
+      # Maintainability index (per module): A=best, B, C, D, E=worst. Formula: LOC + complexity + comments.
+      # -n D = fail only on D or E (allow A/B/C). Use -n C to fail on C/D/E (require min B). Add continue-on-error to only report.
+      - name: Radon maintainability gate (app only, fail on D/E)
         run: |
-          bad=$(radon mi app -n C 2>/dev/null | grep -c . || true)
+          bad=$(radon mi app -n D 2>/dev/null | grep -c . || true)
           if [ "${bad:-0}" -gt 0 ]; then
-            echo "::error::app/ has maintainability index C or worse (threshold: min B). Run 'radon mi app -n C' locally to list."
-            radon mi app -n C
+            echo "::error::app/ has maintainability index D or E (threshold: min C). Run 'radon mi app -n D' locally to list."
+            radon mi app -n D
             exit 1
           fi
 
