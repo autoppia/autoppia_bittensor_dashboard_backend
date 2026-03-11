@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections import Counter
@@ -721,9 +722,11 @@ class ValidatorStorageHelpersMixin:
         return await self.session.scalar(stmt)
 
     async def _resolve_reused_source_run(self, source_run_id: Optional[str]) -> Optional[AgentEvaluationRunORM]:
+        await asyncio.sleep(0)
         return None
 
     async def _propagate_source_metrics_to_reused_runs(self, source_run: AgentEvaluationRunORM) -> None:
+        await asyncio.sleep(0)
         return None
 
     async def _find_best_source_run_for_miner(
@@ -731,6 +734,7 @@ class ValidatorStorageHelpersMixin:
         miner_uid: Optional[int],
         exclude_validator_round_id: str,
     ) -> Optional[AgentEvaluationRunORM]:
+        await asyncio.sleep(0)
         return None
 
     async def _get_task_row(self, task_id: str) -> Optional[TaskORM]:
