@@ -205,11 +205,14 @@ async def get_miner_round_details(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.get("/{miner_uid}/historical")
+@router.get("/{miner_uid}/historical", responses=RESPONSES_404_500)
 async def get_miner_historical(
     miner_uid: int,
-    season: Optional[int] = Query(None, description="Optional season number to filter historical data"),
-    session: AsyncSession = Depends(get_session),
+    season: Annotated[
+        Optional[int],
+        Query(description="Optional season number to filter historical data"),
+    ] = None,
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """
     Get historical statistics for a miner across all rounds or for a specific season.
