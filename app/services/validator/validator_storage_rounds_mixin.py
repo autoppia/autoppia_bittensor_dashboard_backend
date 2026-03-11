@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import defer, selectinload
@@ -35,6 +35,7 @@ class ValidatorStorageRoundsMixin:
         round state so it can later be linked to the canonical round row.
         """
         started_at_sql = "to_timestamp(:started_at)" if validator_round.started_at else "NULL"
+        normalized_config = self._apply_runtime_config_defaults(validator_snapshot.config)
         await self.session.execute(
             text(
                 f"""
@@ -124,7 +125,7 @@ class ValidatorStorageRoundsMixin:
                 "version": validator_snapshot.version,
                 "stake": validator_snapshot.stake,
                 "vtrust": validator_snapshot.vtrust,
-                "config": json.dumps(validator_snapshot.config) if validator_snapshot.config is not None else None,
+                "config": json.dumps(normalized_config) if normalized_config is not None else None,
                 "started_at": float(validator_round.started_at) if validator_round.started_at is not None else None,
             },
         )
@@ -133,45 +134,42 @@ class ValidatorStorageRoundsMixin:
         self,
         *,
         season_number: int,
-        round_number_in_season: int,
+        round_number_in_season: int = 0,  # kept for call-site compatibility, not used in queries
     ) -> None:
         """
         Link shadow round_validators rows (round_id IS NULL) to canonical round_id
         once the canonical round exists.
+
+        Processes ALL pending shadow rows for the season (not just the current round)
+        so that rounds where the main validator was temporarily down get retroactively
+        linked when the next round starts.
         """
+        # Link shadow rows for the current round (primary case).
         await self.session.execute(
             text(
                 """
-                WITH canonical AS (
-                    SELECT r.round_id, r.start_block, r.end_block, r.start_epoch, r.end_epoch
-                    FROM rounds r
-                    JOIN seasons s ON s.season_id = r.season_id
-                    WHERE s.season_number = :season_number
-                      AND r.round_number_in_season = :round_number_in_season
-                    LIMIT 1
-                )
                 UPDATE round_validators rv
                 SET
-                    round_id = c.round_id,
+                    round_id = r.round_id,
                     pending_round_link = FALSE,
-                    start_block = COALESCE(rv.start_block, c.start_block),
-                    end_block = COALESCE(rv.end_block, c.end_block),
-                    start_epoch = COALESCE(rv.start_epoch, c.start_epoch),
-                    end_epoch = COALESCE(rv.end_epoch, c.end_epoch),
+                    start_block = COALESCE(rv.start_block, r.start_block),
+                    end_block = COALESCE(rv.end_block, r.end_block),
+                    start_epoch = COALESCE(rv.start_epoch, r.start_epoch),
+                    end_epoch = COALESCE(rv.end_epoch, r.end_epoch),
                     updated_at = NOW()
-                FROM canonical c
+                FROM rounds r
+                JOIN seasons s ON s.season_id = r.season_id
                 WHERE rv.round_id IS NULL
                   AND COALESCE(rv.pending_round_link, FALSE) = TRUE
                   AND rv.season_number = :season_number
-                  AND rv.round_number_in_season = :round_number_in_season
+                  AND s.season_number = :season_number
+                  AND r.round_number_in_season = rv.round_number_in_season
                 """
             ),
-            {
-                "season_number": int(season_number),
-                "round_number_in_season": int(round_number_in_season),
-            },
+            {"season_number": int(season_number)},
         )
-        # Backfill per-miner rows that were persisted before canonical linking.
+        # Backfill per-miner rows that were persisted before canonical linking,
+        # covering all rounds in the season that were just linked or previously missed.
         await self.session.execute(
             text(
                 """
@@ -184,54 +182,10 @@ class ValidatorStorageRoundsMixin:
                   AND rv.round_id IS NOT NULL
                   AND rvm.round_id IS NULL
                   AND rv.season_number = :season_number
-                  AND rv.round_number_in_season = :round_number_in_season
                 """
             ),
-            {
-                "season_number": int(season_number),
-                "round_number_in_season": int(round_number_in_season),
-            },
+            {"season_number": int(season_number)},
         )
-
-    async def _sync_round_validator_miner_reuse_flags(
-        self,
-        *,
-        validator_round_id: str,
-        miner_uid: int | None = None,
-    ) -> None:
-        """Keep round_validator_miners reuse flags aligned with miner_evaluation_runs."""
-        sql_base = """
-            UPDATE round_validator_miners rvm
-            SET
-                is_reused = COALESCE(mer.is_reused, FALSE),
-                reused_from_agent_run_id = CASE
-                    WHEN COALESCE(mer.is_reused, FALSE) THEN mer.reused_from_agent_run_id
-                    ELSE NULL
-                END,
-                reused_from_round_id = CASE
-                    WHEN COALESCE(mer.is_reused, FALSE) AND mer.reused_from_agent_run_id IS NOT NULL THEN (
-                        SELECT rv_src.round_id
-                        FROM miner_evaluation_runs mer_src
-                        JOIN round_validators rv_src
-                            ON rv_src.validator_round_id = mer_src.validator_round_id
-                        WHERE mer_src.agent_run_id = mer.reused_from_agent_run_id
-                        LIMIT 1
-                    )
-                    ELSE NULL
-                END,
-                updated_at = NOW()
-            FROM round_validators rv, miner_evaluation_runs mer
-            WHERE rv.round_validator_id = rvm.round_validator_id
-              AND rv.validator_round_id = :validator_round_id
-              AND mer.validator_round_id = rv.validator_round_id
-              AND mer.miner_uid = rvm.miner_uid
-        """
-        params: dict[str, Any] = {"validator_round_id": validator_round_id}
-        if miner_uid is not None:
-            sql_base += "\n  AND rvm.miner_uid = :miner_uid\n"
-            params["miner_uid"] = int(miner_uid)
-
-        await self.session.execute(text(sql_base), params)
 
     async def start_round(
         self,
@@ -240,6 +194,7 @@ class ValidatorStorageRoundsMixin:
         validator_snapshot: ValidatorRoundValidator,
     ) -> ValidatorRoundORM:
         """Create a new validator round and store the initial snapshot."""
+        validator_snapshot.config = self._apply_runtime_config_defaults(validator_snapshot.config)
         await self._assert_start_round_authority_and_state(
             validator_round,
             validator_snapshot.stake,
@@ -258,7 +213,7 @@ class ValidatorStorageRoundsMixin:
         if existing_round is not None:
             raise DuplicateIdentifierError(f"validator_round_id {validator_round.validator_round_id} is already registered")
 
-        round_kwargs = self._validator_round_kwargs(validator_round)
+        round_kwargs = await self._validator_round_kwargs(validator_round)
 
         round_row = ValidatorRoundORM(**round_kwargs)
         self.session.add(round_row)
@@ -274,7 +229,7 @@ class ValidatorStorageRoundsMixin:
                 end_block = round_row.end_block or round_row.start_block
                 round_row.end_epoch = int(block_to_epoch(end_block))
             await self.session.flush()
-        except Exception:  # noqa: BLE001
+        except Exception:
             # Keep start resilient; finish_round also has epoch backfill.
             pass
 
@@ -292,7 +247,7 @@ class ValidatorStorageRoundsMixin:
         validator_round_id: str,
         agent_run: AgentEvaluationRun,
         miner_snapshot: ValidatorRoundMiner,
-    ) -> AgentEvaluationRunORM:
+    ) -> Optional[AgentEvaluationRunORM]:
         """Persist the beginning of an agent evaluation run."""
         round_row = await self._ensure_round_exists(validator_round_id)
 
@@ -334,66 +289,9 @@ class ValidatorStorageRoundsMixin:
         await self._upsert_miner_snapshot(round_row, miner_snapshot)
 
         kwargs = self._agent_run_kwargs(agent_run)
-        resolved_reuse_source = None
-        requested_reuse_id = kwargs.get("reused_from_agent_run_id")
-        if kwargs.get("is_reused") and requested_reuse_id:
-            resolved_reuse_source = await self._resolve_reused_source_run(str(requested_reuse_id))
-            if resolved_reuse_source is None:
-                logger.warning(
-                    "start_agent_run: reused_from_agent_run_id=%s not found for validator_round_id=%s miner_uid=%s; downgrading to non-reused run to avoid FK failure.",
-                    requested_reuse_id,
-                    validator_round_id,
-                    kwargs.get("miner_uid"),
-                )
-                kwargs["is_reused"] = False
-                kwargs["reused_from_agent_run_id"] = None
-            else:
-                # Canonicalize chain reuse to the original source run id.
-                kwargs["reused_from_agent_run_id"] = resolved_reuse_source.agent_run_id
-
         row = AgentEvaluationRunORM(**kwargs)
         self.session.add(row)
         await self.session.flush()
-
-        # Reused runs: copy result metrics from source at creation time (instant, no evaluation).
-        # Do NOT copy ended_at/elapsed_sec: reused = 0s "evaluation" time (we didn't run anything).
-        is_reused = bool(kwargs.get("is_reused"))
-        reused_from_id = kwargs.get("reused_from_agent_run_id")
-        if is_reused and reused_from_id:
-            source = resolved_reuse_source or await self._resolve_reused_source_run(str(reused_from_id))
-            if source:
-                # Always anchor reused runs to the original source run.
-                row.reused_from_agent_run_id = source.agent_run_id
-                for attr in (
-                    "average_score",
-                    "average_execution_time",
-                    "average_reward",
-                    "total_tasks",
-                    "success_tasks",
-                    "failed_tasks",
-                    "zero_reason",
-                ):
-                    val = getattr(source, attr, None)
-                    if val is not None:
-                        setattr(row, attr, val)
-                if getattr(source, "meta", None) is not None and isinstance(source.meta, dict):
-                    row.meta = dict(source.meta)
-                # Reused run is "closed" immediately: no time spent evaluating
-                row.ended_at = row.started_at
-                row.elapsed_sec = 0.0
-                await self.session.flush()
-                logger.debug(
-                    "start_agent_run: copied metrics from source run %s to reused run %s (elapsed_sec=0)",
-                    reused_from_id,
-                    row.agent_run_id,
-                )
-
-        # Keep round-level miner reuse flags in sync for UI/analytics consistency.
-        if row.miner_uid is not None:
-            await self._sync_round_validator_miner_reuse_flags(
-                validator_round_id=validator_round_id,
-                miner_uid=int(row.miner_uid),
-            )
 
         return row
 
@@ -403,21 +301,20 @@ class ValidatorStorageRoundsMixin:
         validator_round_id: str,
         status: str,
         ended_at: float,
-        agent_runs: list[dict[str, Any]] | None = None,
-        round_metadata: dict[str, Any] | None = None,
-        validator_summary: dict[str, Any] | None = None,
-        local_evaluation: dict[str, Any] | None = None,
-        post_consensus_evaluation: dict[str, Any] | None = None,
-        ipfs_uploaded: dict[str, Any] | None = None,
-        ipfs_downloaded: dict[str, Any] | None = None,
-        s3_logs: dict[str, Any] | None = None,
-        validator_state: dict[str, Any] | None = None,
-        validator_iwap_prev_round_json: dict[str, Any] | None = None,
+        agent_runs: Optional[List[Dict[str, Any]]] = None,
+        round_metadata: Optional[Dict[str, Any]] = None,
+        validator_summary: Optional[Dict[str, Any]] = None,
+        local_evaluation: Optional[Dict[str, Any]] = None,
+        post_consensus_evaluation: Optional[Dict[str, Any]] = None,
+        ipfs_uploaded: Optional[Dict[str, Any]] = None,
+        ipfs_downloaded: Optional[Dict[str, Any]] = None,
+        s3_logs_url: Optional[str] = None,
+        validator_state: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Mark a validator round as completed."""
         round_row = await self._ensure_round_exists(validator_round_id)
         authoritative_finish = True
-        authority_conflict_reason: str | None = None
+        authority_conflict_reason: Optional[str] = None
         snapshot = getattr(round_row, "validator_snapshot", None)
         if snapshot is not None:
             try:
@@ -440,7 +337,8 @@ class ValidatorStorageRoundsMixin:
                 )
 
         # If round metadata was provided by the validator, persist boundary fields.
-        # This is the only place end_block/end_epoch are communicated back to the backend.
+        # Only authoritative finishes are allowed to mutate canonical boundaries/config.
+        # Non-authoritative finishes still persist validator-local artifacts.
         if round_metadata and isinstance(round_metadata, dict):
             # Keep summary round_number coherent with persisted round id fields.
             # Some validators can compute round_number from a later block during finish.
@@ -448,44 +346,95 @@ class ValidatorStorageRoundsMixin:
                 persisted_round_in_season = int(getattr(round_row, "round_number_in_season", 0) or 0)
                 if persisted_round_in_season > 0:
                     round_metadata["round_number"] = persisted_round_in_season
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-            try:
-                rb = round_metadata.get("start_block")
-                if rb is not None and int(rb) > 0 and (getattr(round_row, "start_block", None) in (None, 0)):
-                    round_row.start_block = int(rb)
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                rb = round_metadata.get("end_block")
-                if rb is not None and int(rb) > 0 and (getattr(round_row, "end_block", None) in (None, 0)):
-                    round_row.end_block = int(rb)
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                re = round_metadata.get("start_epoch")
-                if re is not None and int(re) > 0 and (getattr(round_row, "start_epoch", None) in (None, 0)):
-                    round_row.start_epoch = int(re)
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                re = round_metadata.get("end_epoch")
-                if re is not None and int(re) > 0 and (getattr(round_row, "end_epoch", None) in (None, 0)):
-                    round_row.end_epoch = int(re)
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                rs = round_metadata.get("started_at")
-                if rs is not None and (getattr(round_row, "started_at", None) in (None, 0)):
-                    round_row.started_at = float(rs)
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                ra = round_metadata.get("ended_at")
-                if ra is not None and (getattr(round_row, "ended_at", None) in (None, 0)):
-                    round_row.ended_at = float(ra)
-            except Exception:  # noqa: BLE001
-                pass
+
+            def _as_pos_int(value: Any) -> Optional[int]:
+                try:
+                    if value is None:
+                        return None
+                    parsed = int(value)
+                    return parsed if parsed > 0 else None
+                except Exception:
+                    return None
+
+            def _as_pos_float(value: Any) -> Optional[float]:
+                try:
+                    if value is None:
+                        return None
+                    parsed = float(value)
+                    return parsed if parsed > 0 else None
+                except Exception:
+                    return None
+
+            incoming_start_block = _as_pos_int(round_metadata.get("start_block"))
+            incoming_end_block = _as_pos_int(round_metadata.get("end_block"))
+            incoming_start_epoch = _as_pos_int(round_metadata.get("start_epoch"))
+            incoming_end_epoch = _as_pos_int(round_metadata.get("end_epoch"))
+            incoming_started_at = _as_pos_float(round_metadata.get("started_at"))
+            incoming_ended_at = _as_pos_float(round_metadata.get("ended_at"))
+
+            if incoming_start_block and incoming_end_block and incoming_end_block < incoming_start_block:
+                logger.warning(
+                    "finish_round ignored invalid round_metadata boundaries for %s (start_block=%s, end_block=%s)",
+                    validator_round_id,
+                    incoming_start_block,
+                    incoming_end_block,
+                )
+                incoming_end_block = None
+
+            if incoming_start_epoch and incoming_end_epoch and incoming_end_epoch < incoming_start_epoch:
+                logger.warning(
+                    "finish_round ignored invalid epoch boundaries for %s (start_epoch=%s, end_epoch=%s)",
+                    validator_round_id,
+                    incoming_start_epoch,
+                    incoming_end_epoch,
+                )
+                incoming_end_epoch = None
+
+            if incoming_started_at and incoming_ended_at and incoming_ended_at < incoming_started_at:
+                logger.warning(
+                    "finish_round ignored invalid time boundaries for %s (started_at=%s, ended_at=%s)",
+                    validator_round_id,
+                    incoming_started_at,
+                    incoming_ended_at,
+                )
+                incoming_ended_at = None
+
+            if authoritative_finish:
+                if incoming_start_block is not None and (getattr(round_row, "start_block", None) in (None, 0)):
+                    round_row.start_block = incoming_start_block
+                if incoming_end_block is not None and (getattr(round_row, "end_block", None) in (None, 0)):
+                    round_row.end_block = incoming_end_block
+                if incoming_start_epoch is not None and (getattr(round_row, "start_epoch", None) in (None, 0)):
+                    round_row.start_epoch = incoming_start_epoch
+                if incoming_end_epoch is not None and (getattr(round_row, "end_epoch", None) in (None, 0)):
+                    round_row.end_epoch = incoming_end_epoch
+                if incoming_started_at is not None and (getattr(round_row, "started_at", None) in (None, 0)):
+                    round_row.started_at = incoming_started_at
+                if incoming_ended_at is not None and (getattr(round_row, "ended_at", None) in (None, 0)):
+                    round_row.ended_at = incoming_ended_at
+
+            # Main validator can persist round/season config so backend uses it instead of .env
+            if authoritative_finish and snapshot is not None:
+                try:
+                    from app.services.round_config_service import upsert_config_season_round
+
+                    rse = round_metadata.get("round_size_epochs")
+                    sse = round_metadata.get("season_size_epochs")
+                    msb = round_metadata.get("minimum_start_block")
+                    bpe = round_metadata.get("blocks_per_epoch", 360)
+                    if rse is not None and sse is not None and msb is not None:
+                        await upsert_config_season_round(
+                            self.session,
+                            validator_uid=int(snapshot.validator_uid),
+                            round_size_epochs=float(rse),
+                            season_size_epochs=float(sse),
+                            minimum_start_block=int(msb),
+                            blocks_per_epoch=int(bpe) if bpe is not None else 360,
+                        )
+                except Exception:
+                    pass
         # Ensure start/end epoch are populated even when testing overrides bypassed chain-boundary fill
         try:
             if getattr(round_row, "start_epoch", None) is None or getattr(round_row, "end_epoch", None) is None:
@@ -496,14 +445,20 @@ class ValidatorStorageRoundsMixin:
                     round_row.start_epoch = int(block_to_epoch(round_row.start_block))
                 if getattr(round_row, "end_epoch", None) is None:
                     round_row.end_epoch = int(block_to_epoch(round_row.end_block or round_row.start_block))
-        except Exception:  # noqa: BLE001
+        except Exception:
             # If boundary computation fails, proceed without blocking finish
             pass
 
         # Normalize status to match ValidatorRound literal type
         normalized_status = status.lower()
-        allowed_statuses = {"active", "finished", "pending", "evaluating_finished"}
-        if normalized_status in {"completed", "complete"} or normalized_status not in allowed_statuses:
+        if normalized_status in {"completed", "complete"}:
+            normalized_status = "finished"
+        elif normalized_status not in {
+            "active",
+            "finished",
+            "pending",
+            "evaluating_finished",
+        }:
             normalized_status = "finished"
 
         round_row.status = normalized_status
@@ -517,7 +472,7 @@ class ValidatorStorageRoundsMixin:
             alpha_price = get_price(netuid=settings.VALIDATOR_NETUID)
             if alpha_price <= 0:
                 alpha_price = float(settings.SUBNET_PRICE_FALLBACK)
-        except Exception:  # noqa: BLE001
+        except Exception:
             alpha_price = float(settings.SUBNET_PRICE_FALLBACK)
 
         if round_metadata and isinstance(round_metadata, dict):
@@ -537,18 +492,14 @@ class ValidatorStorageRoundsMixin:
             round_with_emission = {"emission": emission_info}
 
         vs = validator_summary or {}
-        # IMPORTANT: keep local and post-consensus summaries fully separated.
-        # Local comes strictly from local_evaluation payload; post comes strictly
-        # from post_consensus_evaluation payload. Do not cross-populate.
-        local_summary_payload = local_evaluation.get("summary") if isinstance(local_evaluation, dict) else None
-        post_summary_payload = post_consensus_evaluation.get("summary") if isinstance(post_consensus_evaluation, dict) else None
+        # IMPORTANT: keep the full post-consensus object canonical and separate
+        # from the local validator snapshot/IPFS payloads.
+        post_summary_payload = self._normalize_post_consensus_payload(post_consensus_evaluation) if isinstance(post_consensus_evaluation, dict) else None
 
         merged = {
             "round": round_with_emission or vs.get("round"),
-            "s3_logs": s3_logs if s3_logs is not None else vs.get("s3_logs"),
             "ipfs_uploaded": ipfs_uploaded or vs.get("ipfs_uploaded"),
             "ipfs_downloaded": ipfs_downloaded or vs.get("ipfs_downloaded"),
-            "evaluation_pre_consensus": local_summary_payload if local_summary_payload is not None else vs.get("evaluation_pre_consensus"),
             "evaluation_post_consensus": post_summary_payload if post_summary_payload is not None else vs.get("evaluation_post_consensus"),
             "handshake_results": vs.get("handshake_results"),
         }
@@ -557,107 +508,59 @@ class ValidatorStorageRoundsMixin:
             "reason": authority_conflict_reason,
         }
 
-        # Normalize consensus summaries for stable UI/API shape
-        pre_summary = merged.get("evaluation_pre_consensus")
-        if isinstance(pre_summary, dict):
-            # Remove noisy internal key from pre-consensus summary.
-            pre_summary.pop("schema_version", None)
-            rs = pre_summary.get("round_summary") if isinstance(pre_summary.get("round_summary"), dict) else {}
-            winner_obj = rs.get("winner") if isinstance(rs.get("winner"), dict) else {}
-            miner_uid = winner_obj.get("miner_uid")
-            if miner_uid is None:
-                # Try to infer deterministically from round summary fields
-                decision = rs.get("decision") if isinstance(rs.get("decision"), dict) else {}
-                inferred_uid = winner_obj.get("uid") or decision.get("top_candidate_uid") or pre_summary.get("season_summary", {}).get("current_winner_uid")
-                if inferred_uid is None and isinstance(rs.get("miner_scores"), dict) and rs.get("miner_scores"):
-                    try:
-                        inferred_uid = max(
-                            rs.get("miner_scores").items(),
-                            key=lambda kv: float(kv[1] or 0.0),
-                        )[0]
-                    except Exception:  # noqa: BLE001
-                        inferred_uid = None
-                if inferred_uid is not None:
-                    try:
-                        winner_obj["miner_uid"] = int(inferred_uid)
-                    except Exception:  # noqa: BLE001
-                        pass
-                    rs["winner"] = winner_obj
-                    pre_summary["round_summary"] = rs
-            # Ensure season_summary carries explicit current winner uid
-            season_summary = pre_summary.get("season_summary") if isinstance(pre_summary.get("season_summary"), dict) else {}
-            season_current_uid = season_summary.get("current_winner_uid")
-            if season_current_uid is None:
-                inferred_season_uid = winner_obj.get("miner_uid") or winner_obj.get("uid")
-                if inferred_season_uid is not None:
-                    try:
-                        season_summary["current_winner_uid"] = int(inferred_season_uid)
-                    except Exception:  # noqa: BLE001
-                        pass
-            pre_summary["season_summary"] = season_summary
-            merged["evaluation_pre_consensus"] = pre_summary
+        post_consensus_json = self._normalize_post_consensus_payload(merged.get("evaluation_post_consensus"))
+        if isinstance(post_consensus_json, dict) and post_consensus_json:
+            merged["evaluation_post_consensus"] = post_consensus_json
 
-        post_summary = merged.get("evaluation_post_consensus")
-        if isinstance(post_summary, dict):
-            # Remove noisy internal key from post-consensus summary shown in UI payloads.
-            post_summary.pop("schema_version", None)
-            merged["evaluation_post_consensus"] = post_summary
+        resolved_s3_logs_url = (s3_logs_url or "").strip() or None
+        if resolved_s3_logs_url is None:
+            summary_s3_url = vs.get("s3_logs_url")
+            if isinstance(summary_s3_url, str) and summary_s3_url.strip():
+                resolved_s3_logs_url = summary_s3_url.strip()
 
         round_row.validator_summary = merged
-        if s3_logs is not None:
-            round_row.s3_logs = s3_logs
+        if resolved_s3_logs_url:
+            round_row.s3_logs_url = resolved_s3_logs_url
+            merged["s3_logs_url"] = resolved_s3_logs_url
 
         round_row.ended_at = ended_at
         # Keep canonical round_validators table aligned with finish payloads.
+        # round_validators stores only the canonical post-consensus JSON now.
         try:
-            local_summary_json = merged.get("evaluation_pre_consensus")
-            post_summary_json = merged.get("evaluation_post_consensus")
+            post_consensus_json = merged.get("evaluation_post_consensus")
             await self.session.execute(
                 text(
                     """
                     UPDATE round_validators
                     SET
-                        local_summary_json = COALESCE(CAST(:local_summary_json AS JSONB), local_summary_json),
                         post_consensus_json = COALESCE(CAST(:post_consensus_json AS JSONB), post_consensus_json),
-                        post_consensus_summary = COALESCE(CAST(:post_consensus_json AS JSONB), post_consensus_summary),
                         ipfs_uploaded = COALESCE(CAST(:ipfs_uploaded AS JSONB), ipfs_uploaded),
                         ipfs_downloaded = COALESCE(CAST(:ipfs_downloaded AS JSONB), ipfs_downloaded),
+                        s3_logs_url = COALESCE(:s3_logs_url, s3_logs_url),
                         validator_state = COALESCE(CAST(:validator_state AS JSONB), validator_state),
-                        validator_iwap_prev_round_json = COALESCE(CAST(:validator_iwap_prev_round_json AS JSONB), validator_iwap_prev_round_json),
                         updated_at = NOW()
                     WHERE validator_round_id = :validator_round_id
                     """
                 ),
                 {
                     "validator_round_id": validator_round_id,
-                    "local_summary_json": json.dumps(local_summary_json) if local_summary_json is not None else None,
-                    "post_consensus_json": json.dumps(post_summary_json) if post_summary_json is not None else None,
+                    "post_consensus_json": json.dumps(post_consensus_json) if post_consensus_json is not None else None,
                     "ipfs_uploaded": json.dumps(merged.get("ipfs_uploaded")) if merged.get("ipfs_uploaded") is not None else None,
                     "ipfs_downloaded": json.dumps(merged.get("ipfs_downloaded")) if merged.get("ipfs_downloaded") is not None else None,
+                    "s3_logs_url": resolved_s3_logs_url,
                     "validator_state": json.dumps(validator_state) if validator_state is not None else None,
-                    "validator_iwap_prev_round_json": json.dumps(validator_iwap_prev_round_json) if validator_iwap_prev_round_json is not None else None,
                 },
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("finish_round: failed to synchronize summaries into round_validators")
 
-        rank_map: dict[str, int | None] = {}
-        weight_map: dict[str, float | None] = {}
-        zero_reason_map: dict[str, str | None] = {}
-        is_reused_map: dict[str, bool] = {}
-        reused_from_map: dict[str, str | None] = {}
-        agent_runs_by_id: dict[str, dict[str, Any]] = {}
+        zero_reason_map: Dict[str, Optional[str]] = {}
         if agent_runs:
             for agent_run_data in agent_runs:
                 agent_run_id = agent_run_data.get("agent_run_id")
                 if not agent_run_id:
                     continue
-                rank_map[agent_run_id] = agent_run_data.get("rank")
-                weight_map[agent_run_id] = agent_run_data.get("weight")
                 zero_reason_map[agent_run_id] = agent_run_data.get("zero_reason")
-                is_reused_map[agent_run_id] = bool(agent_run_data.get("is_reused", False))
-                reused_from_map[agent_run_id] = agent_run_data.get("reused_from_agent_run_id")
-                agent_runs_by_id[agent_run_id] = agent_run_data
 
         stmt_runs = (
             select(AgentEvaluationRunORM)
@@ -676,129 +579,21 @@ class ValidatorStorageRoundsMixin:
         run_rows = list(run_rows_result)
 
         for run_row in run_rows:
-            is_reused = is_reused_map.get(run_row.agent_run_id, getattr(run_row, "is_reused", False))
-            # Do NOT set ended_at/elapsed_sec here: agent runs are per-miner and already closed
-            # - Reused: closed at start_agent_run (ended_at=started_at, elapsed_sec=0)
-            # - Evaluated: closed in add_evaluation when we received the last evaluation
-
-            if not is_reused:
-                metrics = self._compute_agent_run_stats(run_row)
-                run_row.total_tasks = metrics["total_tasks"]
-                run_row.success_tasks = metrics["success_tasks"]
-                run_row.failed_tasks = metrics["failed_tasks"]
-                run_row.average_score = metrics["average_score"]
-                run_row.average_execution_time = metrics["average_execution_time"]
-                run_row.average_reward = metrics["average_reward"]
-            else:
-                # Reused runs: source run is truth. Never overwrite with payload 0/0/0 — rounds are sequential, source always has metrics.
-                payload_data = agent_runs_by_id.get(run_row.agent_run_id) or {}
-                source_id = reused_from_map.get(run_row.agent_run_id) or getattr(run_row, "reused_from_agent_run_id", None)
-                source_run = await self._resolve_reused_source_run(source_id) if source_id else None
-                if source_run is not None:
-                    run_row.reused_from_agent_run_id = source_run.agent_run_id
-
-                payload_attempted = payload_data.get("tasks_attempted")
-                source_total = (getattr(source_run, "total_tasks", None) or 0) if source_run else 0
-                # Prefer source when payload would zero out (validator sometimes sends 0 for reused runs)
-                use_source_metrics = source_run is not None and source_total > 0 and (payload_attempted is None or int(payload_attempted or 0) == 0)
-
-                if use_source_metrics:
-                    run_row.total_tasks = int(source_run.total_tasks or 0)
-                    run_row.success_tasks = int(getattr(source_run, "success_tasks", 0) or 0)
-                    run_row.failed_tasks = int(getattr(source_run, "failed_tasks", 0) or 0)
-                    run_row.average_score = source_run.average_score
-                    run_row.average_execution_time = getattr(source_run, "average_execution_time", None)
-                    run_row.average_reward = getattr(source_run, "average_reward", None)
-                    if getattr(source_run, "zero_reason", None):
-                        run_row.zero_reason = source_run.zero_reason
-                else:
-                    if payload_attempted is not None:
-                        run_row.total_tasks = int(payload_attempted)
-                    elif source_run is not None:
-                        run_row.total_tasks = int(source_run.total_tasks or 0)
-                    if payload_data.get("tasks_completed") is not None:
-                        run_row.success_tasks = int(payload_data["tasks_completed"])
-                    elif source_run is not None:
-                        run_row.success_tasks = int(getattr(source_run, "success_tasks", 0) or 0)
-                    if payload_data.get("tasks_failed") is not None:
-                        run_row.failed_tasks = int(payload_data["tasks_failed"])
-                    elif source_run is not None:
-                        run_row.failed_tasks = int(getattr(source_run, "failed_tasks", 0) or 0)
-                    if payload_data.get("avg_reward") is not None:
-                        run_row.average_reward = float(payload_data["avg_reward"])
-                    elif source_run is not None and getattr(source_run, "average_reward", None) is not None:
-                        run_row.average_reward = float(source_run.average_reward)
-                    if payload_data.get("avg_evaluation_time") is not None:
-                        payload_avg_eval_time = float(payload_data["avg_evaluation_time"])
-                        if payload_avg_eval_time > 0.0:
-                            run_row.average_execution_time = payload_avg_eval_time
-                        elif source_run is not None and getattr(source_run, "average_execution_time", None) is not None:
-                            run_row.average_execution_time = float(source_run.average_execution_time)
-                        else:
-                            run_row.average_execution_time = payload_avg_eval_time
-                    elif source_run is not None and getattr(source_run, "average_execution_time", None) is not None:
-                        run_row.average_execution_time = float(source_run.average_execution_time)
-                    total = getattr(run_row, "total_tasks", 0) or 0
-                    success = getattr(run_row, "success_tasks", 0) or 0
-                    if total:
-                        run_row.average_score = success / total
-                    elif source_run is not None and getattr(source_run, "average_score", None) is not None:
-                        run_row.average_score = float(source_run.average_score)
-                    else:
-                        run_row.average_score = 0.0
+            metrics = self._compute_agent_run_stats(run_row)
+            run_row.total_tasks = metrics["total_tasks"]
+            run_row.success_tasks = metrics["success_tasks"]
+            run_row.failed_tasks = metrics["failed_tasks"]
+            run_row.average_score = metrics["average_score"]
+            run_row.average_execution_time = metrics["average_execution_time"]
+            run_row.average_reward = metrics["average_reward"]
 
             if run_row.agent_run_id in zero_reason_map:
                 run_row.zero_reason = zero_reason_map[run_row.agent_run_id]
-            if run_row.agent_run_id in is_reused_map:
-                run_row.is_reused = is_reused_map[run_row.agent_run_id]
-            if run_row.agent_run_id in reused_from_map:
-                # Do not downgrade an already-resolved root source to an intermediate reused run.
-                if not getattr(run_row, "reused_from_agent_run_id", None):
-                    run_row.reused_from_agent_run_id = reused_from_map[run_row.agent_run_id]
-
-            # If run has effective score 0 and no zero_reason: for reused runs use source run's zero_reason, else derive from evaluations
             if run_row.zero_reason is None and self._run_has_zero_score(run_row):
-                source_id = getattr(run_row, "reused_from_agent_run_id", None)
-                if source_id:
-                    source_run = await self._get_agent_run_row(source_id)
-                    if source_run and getattr(source_run, "zero_reason", None):
-                        run_row.zero_reason = source_run.zero_reason
-                if run_row.zero_reason is None:
-                    run_row.zero_reason = self._derive_run_zero_reason_from_evaluations(run_row)
+                run_row.zero_reason = self._derive_run_zero_reason_from_evaluations(run_row)
 
             # rank and weight removed from agent_evaluation_runs
             # They are now stored in validator_round_summary_miners and updated there
-
-        # Cascade: runs that reuse a run we just updated may have been processed in a
-        # finish_round that ran before this round (e.g. round 5 before round 4). Now that
-        # this run has total_tasks/failed_tasks/average_execution_time, copy them to all
-        # runs that have reused_from_agent_run_id = this run.
-        for run_row in run_rows:
-            source_id = getattr(run_row, "agent_run_id", None)
-            if not source_id:
-                continue
-            has_stats = (getattr(run_row, "total_tasks", None) or 0) > 0 or getattr(run_row, "average_execution_time", None) is not None
-            if not has_stats:
-                continue
-            stmt_reused = select(AgentEvaluationRunORM).where(
-                AgentEvaluationRunORM.reused_from_agent_run_id == source_id,
-            )
-            reused_rows_result = await self.session.scalars(stmt_reused)
-            for reused_row in reused_rows_result:
-                if (getattr(reused_row, "total_tasks", None) or 0) == 0 and getattr(reused_row, "average_execution_time", None) is None:
-                    reused_row.total_tasks = run_row.total_tasks or 0
-                    reused_row.success_tasks = run_row.success_tasks or 0
-                    reused_row.failed_tasks = run_row.failed_tasks or 0
-                    reused_row.average_score = run_row.average_score
-                    reused_row.average_execution_time = run_row.average_execution_time
-                    reused_row.average_reward = run_row.average_reward
-                    if getattr(run_row, "zero_reason", None) and getattr(reused_row, "zero_reason", None) is None:
-                        reused_row.zero_reason = run_row.zero_reason
-                    logger.debug(
-                        "finish_round: cascaded stats from source run %s to reused run %s",
-                        source_id,
-                        reused_row.agent_run_id,
-                    )
 
         canonical_round_id = await self.session.scalar(
             text("SELECT round_id FROM round_validators WHERE validator_round_id = :validator_round_id LIMIT 1"),
@@ -807,7 +602,7 @@ class ValidatorStorageRoundsMixin:
         is_shadow_only_round = canonical_round_id is None
         if is_shadow_only_round:
             logger.info(
-                "finish_round: shadow-only validator_round_id=%s (no canonical round_id yet); skipping round_summary/round_outcomes materialization and keeping validator-local JSON persisted.",
+                "finish_round: shadow-only validator_round_id=%s (no canonical round_id yet); skipping round_summary materialization and keeping validator-local JSON persisted.",
                 validator_round_id,
             )
             return
@@ -819,23 +614,19 @@ class ValidatorStorageRoundsMixin:
             post_consensus_evaluation=post_consensus_evaluation,
             subnet_price=alpha_price,
         )
-        # Ensure summary rows carry reuse provenance from agent runs.
-        await self._sync_round_validator_miner_reuse_flags(
-            validator_round_id=validator_round_id,
-        )
         await self._enrich_validator_summary_post_consensus_from_db(round_row)
         try:
             await self._sync_round_validators_post_consensus_json(round_row)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("finish_round: failed to sync enriched post-consensus summary into round_validators")
         if authoritative_finish:
             try:
-                await self._upsert_round_outcome_from_summary(round_row)
-            except Exception:  # noqa: BLE001
-                logger.exception("finish_round: failed to upsert round_outcomes from summary tables")
+                await self._upsert_round_summary_from_validator_summary(round_row)
+            except Exception:
+                logger.exception("finish_round: failed to upsert round_summary from summary tables")
         else:
             logger.info(
-                "finish_round: skipped round_outcomes upsert for non-authoritative validator_round_id=%s",
+                "finish_round: skipped round_summary upsert for non-authoritative validator_round_id=%s",
                 validator_round_id,
             )
 
@@ -851,7 +642,7 @@ class ValidatorStorageRoundsMixin:
         )
 
         existing_round = await self._get_round_row(validator_round.validator_round_id)
-        round_kwargs = self._validator_round_kwargs(validator_round)
+        round_kwargs = await self._validator_round_kwargs(validator_round)
 
         if existing_round:
             for key, value in round_kwargs.items():
@@ -863,7 +654,7 @@ class ValidatorStorageRoundsMixin:
         await self.session.flush()
 
         # Snapshots (1:1 relationship - only one snapshot per round)
-        validator_snapshot_ids: list[int] = []
+        validator_snapshot_ids: List[int] = []
         if payload.validator_snapshots:
             # Take the first snapshot (should only be one)
             snapshot = payload.validator_snapshots[0]
@@ -873,13 +664,13 @@ class ValidatorStorageRoundsMixin:
             )
             validator_snapshot_ids.append(row.id)
 
-        miner_snapshot_ids: list[int] = []
+        miner_snapshot_ids: List[int] = []
         for snapshot in payload.miner_snapshots:
             row = await self._upsert_miner_snapshot(round_row, snapshot)
             miner_snapshot_ids.append(row.id)
 
         # Agent runs
-        agent_run_ids: list[str] = []
+        agent_run_ids: List[str] = []
         for agent_run in payload.agent_evaluation_runs:
             kwargs = self._agent_run_kwargs(agent_run)
             stmt = select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == agent_run.agent_run_id)
@@ -894,7 +685,7 @@ class ValidatorStorageRoundsMixin:
         task_ids = [task.task_id for task in payload.tasks]
 
         # Task solutions
-        task_solution_ids: list[str] = []
+        task_solution_ids: List[str] = []
         for solution in payload.task_solutions:
             kwargs = self._task_solution_kwargs(solution)
             stmt = select(TaskSolutionORM).where(TaskSolutionORM.solution_id == solution.solution_id)
@@ -905,9 +696,9 @@ class ValidatorStorageRoundsMixin:
             task_solution_ids.append(solution.solution_id)
 
         # Evaluations
-        evaluation_ids: list[str] = []
-        evaluation_rows: dict[str, EvaluationORM] = {}
-        execution_histories: list[tuple[EvaluationORM, list]] = []  # Store for later creation
+        evaluation_ids: List[str] = []
+        evaluation_rows: Dict[str, EvaluationORM] = {}
+        execution_histories: List[tuple[EvaluationORM, list]] = []  # Store for later creation
 
         for evaluation in payload.evaluations:
             kwargs = self._evaluation_kwargs(evaluation)
@@ -997,12 +788,12 @@ class ValidatorStorageRoundsMixin:
     async def ensure_round_exists_or_create_minimal_for_round_log(
         self,
         validator_round_id: str,
-        season: int | None,
-        round_in_season: int | None,
-        validator_uid: int | None,
-        validator_hotkey: str | None,
+        season: Optional[int],
+        round_in_season: Optional[int],
+        validator_uid: Optional[int],
+        validator_hotkey: Optional[str],
         *,
-        owner_hotkey_from_request: str | None = None,
+        owner_hotkey_from_request: Optional[str] = None,
     ) -> ValidatorRoundORM:
         """
         Return the round row, creating a minimal round + validator snapshot if the round
@@ -1055,9 +846,9 @@ class ValidatorStorageRoundsMixin:
     async def ensure_unique_round_number(
         self,
         validator_uid: int,
-        round_number: int | None,
+        round_number: Optional[int],
         *,
-        exclude_round_id: str | None = None,
+        exclude_round_id: Optional[str] = None,
     ) -> None:
         """DEPRECATED: Public wrapper to guard against duplicate round numbers."""
         await self._ensure_unique_round_number(validator_uid, round_number, exclude_round_id=exclude_round_id)

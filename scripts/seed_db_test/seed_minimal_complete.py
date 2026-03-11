@@ -350,7 +350,6 @@ async def create_validator_round(session: AsyncSession, validator: dict, round_n
             validator_round_id=validator_round_id,
             miner_uid=miner["uid"],
             miner_hotkey=miner["hotkey"],
-            local_rank=local_rank,
             local_avg_reward=local_avg_reward,
             local_avg_eval_score=local_avg_eval_score,
             local_avg_eval_time=local_avg_eval_time,

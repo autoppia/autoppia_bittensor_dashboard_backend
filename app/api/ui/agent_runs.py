@@ -120,7 +120,7 @@ async def _fetch_run_or_404(
 
 
 @router.get("")
-@cache("agent_runs_list_v5", ttl=600)
+@cache("agent_runs_list_v7", ttl=600)
 async def list_agent_runs(
     session: Annotated[AsyncSession, Depends(get_session)],
     q: Annotated[AgentRunsListQuery, Depends(get_agent_runs_list_query)],

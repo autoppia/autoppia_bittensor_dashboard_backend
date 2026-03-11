@@ -406,7 +406,6 @@ async def create_validator_round(
             local_tasks_success = len({e.task_id for e in miner_evaluations if e.evaluation_score >= 0.5})
             local_rank = rank_map.get(miner["uid"], 1)
 
-            existing_summary.local_rank = local_rank
             existing_summary.local_avg_reward = local_avg_reward
             existing_summary.local_avg_eval_score = local_avg_eval_score
             existing_summary.local_avg_eval_time = local_avg_eval_time
@@ -432,7 +431,6 @@ async def create_validator_round(
                 validator_round_id=validator_round_id,
                 miner_uid=miner["uid"],
                 miner_hotkey=miner["hotkey"],
-                local_rank=local_rank,
                 local_avg_reward=local_avg_reward,
                 local_avg_eval_score=local_avg_eval_score,
                 local_avg_eval_time=local_avg_eval_time,

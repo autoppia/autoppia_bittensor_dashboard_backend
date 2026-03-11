@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any
+import time
+from collections import defaultdict
+from typing import Any, Dict
 
 from fastapi import Body, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,21 +12,69 @@ from app.api.validator.common import _ensure_request_matches_round_owner, _requi
 from app.api.validator.schemas import AddEvaluationRequest
 from app.config import settings
 from app.db.session import get_session
-from app.models.core import Action as CoreAction, Evaluation, TaskSolution as CoreTaskSolution
+from app.models.core import Evaluation
 from app.services.chain_state import get_current_block
-from app.services.round_calc import block_to_epoch, is_inside_window, _round_blocks
+from app.services.round_calc import is_inside_window
+from app.services.validator.validator_auth import VALIDATOR_HOTKEY_HEADER
 from app.services.validator.validator_storage import DuplicateIdentifierError, ValidatorRoundPersistenceService
 
 logger = logging.getLogger(__name__)
+_MISSING_ROUND_STATS: dict[str, dict[str, Any]] = defaultdict(dict)
+
+
+def _record_missing_round_alert(
+    *,
+    request: Request,
+    validator_round_id: str,
+    agent_run_id: str,
+    endpoint: str,
+    validator_uid: int | None,
+    batch_size: int = 1,
+) -> None:
+    hotkey = (request.headers.get(VALIDATOR_HOTKEY_HEADER) or "").strip()
+    uid_label = str(int(validator_uid)) if validator_uid is not None else "unknown"
+    key = f"{uid_label}:{hotkey or 'unknown'}"
+    now = float(time.time())
+    stats = _MISSING_ROUND_STATS.get(key) or {
+        "count": 0,
+        "first_seen": now,
+        "last_seen": now,
+        "last_round_id": validator_round_id,
+        "last_agent_run_id": agent_run_id,
+        "uid": validator_uid,
+        "hotkey": hotkey,
+    }
+    stats["count"] = int(stats.get("count", 0)) + 1
+    stats["last_seen"] = now
+    stats["last_round_id"] = validator_round_id
+    stats["last_agent_run_id"] = agent_run_id
+    stats["uid"] = validator_uid
+    stats["hotkey"] = hotkey
+    _MISSING_ROUND_STATS[key] = stats
+
+    # Alert on first hit and then every 10 hits for same validator identity.
+    count = int(stats["count"])
+    if count == 1 or count % 10 == 0:
+        logger.warning(
+            "ALERT validator_out_of_sync: endpoint=%s uid=%s hotkey=%s round_id=%s agent_run_id=%s batch_size=%s hits=%s window_sec=%.1f",
+            endpoint,
+            uid_label,
+            hotkey or "<missing>",
+            validator_round_id,
+            agent_run_id,
+            int(batch_size),
+            count,
+            float(stats["last_seen"]) - float(stats["first_seen"]),
+        )
 
 
 async def add_evaluations_batch(
     validator_round_id: str,
     agent_run_id: str,
     request: Request,
-    payload: Annotated[list[AddEvaluationRequest], Body(..., description="List of evaluation requests")],
-    _force: Annotated[bool, Query(False, description="TESTING-only override (reserved for future use)")] = False,
-    session: Annotated[AsyncSession, Depends(get_session)],
+    payload: list[AddEvaluationRequest] = Body(..., description="List of evaluation requests"),
+    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
+    session: AsyncSession = Depends(get_session),
 ):
     """Persist multiple evaluation data (tasks, solutions, and evaluations) in a single transaction."""
     service = ValidatorRoundPersistenceService(session)
@@ -36,14 +86,52 @@ async def add_evaluations_batch(
     # does not abort the whole transaction (InFailedSQLTransactionError on next query).
     evaluations_created = 0
     errors = []
+    inferred_uid = None
+    try:
+        first = payload[0]
+        inferred_uid = first.evaluation.validator_uid or first.task_solution.validator_uid
+        inferred_uid = int(inferred_uid) if inferred_uid is not None else None
+    except Exception:
+        inferred_uid = None
 
     try:
+        try:
+            round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+        except ValueError as exc:
+            _record_missing_round_alert(
+                request=request,
+                validator_round_id=validator_round_id,
+                agent_run_id=agent_run_id,
+                endpoint="add_evaluations_batch",
+                validator_uid=inferred_uid,
+                batch_size=len(payload),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "validator_round_not_found",
+                    "message": str(exc),
+                    "validator_round_id": validator_round_id,
+                    "agent_run_id": agent_run_id,
+                    "validator_uid": inferred_uid,
+                    "validator_hotkey": (request.headers.get(VALIDATOR_HOTKEY_HEADER) or "").strip() or None,
+                    "hint": "Validator appears out of sync (old round/version/config). Please sync and restart validator.",
+                },
+            ) from exc
+
+        _ensure_request_matches_round_owner(request, round_row)
+        if not round_row.validator_snapshot:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Validator snapshot not found for round",
+            )
+
         for idx, eval_request in enumerate(payload):
             try:
                 async with session.begin_nested():
                     # Merge evaluation_result (if provided) into evaluation so reward/time fields are not dropped
                     request_payload = eval_request
-                    eval_result_payload: dict[str, Any] | None = None
+                    eval_result_payload: Dict[str, Any] | None = None
                     if isinstance(getattr(request_payload, "evaluation_result", None), dict):
                         eval_result_payload = request_payload.evaluation_result  # type: ignore[assignment]
 
@@ -79,8 +167,6 @@ async def add_evaluations_batch(
                         f"[batch {idx}] evaluation.task_solution_id",
                     )
 
-                    round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
-                    _ensure_request_matches_round_owner(request, round_row)
                     check_pairs = [
                         (
                             task_solution.validator_uid,
@@ -89,11 +175,6 @@ async def add_evaluations_batch(
                         ),
                         (evaluation.validator_uid, evaluation.validator_hotkey, "evaluation"),
                     ]
-                    if not round_row.validator_snapshot:
-                        raise HTTPException(
-                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Validator snapshot not found for round",
-                        )
                     for uid_value, hotkey_value, label in check_pairs:
                         if uid_value is not None and int(uid_value) != int(round_row.validator_snapshot.validator_uid):
                             raise HTTPException(
@@ -117,12 +198,12 @@ async def add_evaluations_batch(
 
             except DuplicateIdentifierError as exc:
                 # Skip duplicates (idempotency); savepoint was rolled back, duplicate already in DB
-                logger.info("Batch evaluation %s already exists: %s", idx, exc)
+                logger.info(f"Batch evaluation {idx} already exists: {exc}")
                 evaluations_created += 1
                 continue
-            except Exception as exc:  # noqa: BLE001  # NOSONAR - per-item failure, collect and continue
-                error_msg = "Batch evaluation %s failed: %s" % (idx, exc)
-                logger.error("%s", error_msg, exc_info=True)
+            except Exception as exc:
+                error_msg = f"Batch evaluation {idx} failed: {str(exc)}"
+                logger.error(error_msg, exc_info=True)
                 errors.append(error_msg)
                 # Savepoint rolled back by begin_nested(); main transaction still valid, continue
 
@@ -138,7 +219,8 @@ async def add_evaluations_batch(
             if agent_run_row:
                 await session.refresh(agent_run_row, ["evaluations", "task_solutions"])
                 # Stats are already updated by add_evaluation(), but this ensures consistency
-        except Exception:  # noqa: BLE001  # NOSONAR - non-critical, stats already correct from add_evaluation
+        except Exception:
+            # Non-critical: stats should already be correct from add_evaluation()
             pass
 
         result = {
@@ -155,10 +237,10 @@ async def add_evaluations_batch(
 
     except HTTPException:
         raise
-    except Exception as exc:  # noqa: BLE001  # NOSONAR - catch-all at batch boundary, return 500
+    except Exception as exc:
         await session.rollback()
         logger.exception("Failed to process batch evaluations")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process batch evaluations: %s" % (exc,)) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to process batch evaluations: {str(exc)}") from exc
 
 
 async def add_evaluation(
@@ -166,21 +248,21 @@ async def add_evaluation(
     agent_run_id: str,
     payload: AddEvaluationRequest,
     request: Request,
-    force: Annotated[bool, Query(False, description="TESTING-only override to skip chain round/window checks")] = False,
-    session: Annotated[AsyncSession, Depends(get_session)],
+    force: bool = Query(False, description="TESTING-only override to skip chain round/window checks"),
+    session: AsyncSession = Depends(get_session),
 ):
     """Persist evaluation data (task, solution, and evaluation with artefacts)."""
     service = ValidatorRoundPersistenceService(session)
-    raw_json: dict[str, Any] | None = None
+    raw_json: Dict[str, Any] | None = None
     try:
         raw_json = await request.json()
-    except Exception:  # noqa: BLE001 - optional raw body for heuristic fallback
+    except Exception:
         raw_json = None
 
     try:
         request_payload = payload
         # Merge evaluation_result (if provided) into evaluation so reward/time fields are not dropped
-        eval_result_payload: dict[str, Any] | None = None
+        eval_result_payload: Dict[str, Any] | None = None
         if isinstance(getattr(request_payload, "evaluation_result", None), dict):
             eval_result_payload = request_payload.evaluation_result  # type: ignore[assignment]
         elif isinstance(raw_json, dict):
@@ -206,6 +288,12 @@ async def add_evaluation(
             raw_actions = raw_ts.get("actions") if isinstance(raw_ts, dict) else None
             ts = getattr(request_payload, "task_solution", None)
             if raw_actions and ts and isinstance(ts.actions, list):
+                from app.models.core import (
+                    Action as CoreAction,
+                )
+                from app.models.core import (
+                    TaskSolution as CoreTaskSolution,
+                )
 
                 def _norm_type(t: str) -> str:
                     key = (t or "other").lower().replace("action", "").replace("-", "_").strip() or "other"
@@ -235,7 +323,8 @@ async def add_evaluation(
                         evaluation=request_payload.evaluation,
                         evaluation_result=getattr(request_payload, "evaluation_result", None),
                     )
-        except Exception:  # noqa: BLE001 - non-fatal: fall back to original payload
+        except Exception:
+            # Non-fatal: fall back to original payload
             pass
 
         task = request_payload.task
@@ -260,8 +349,37 @@ async def add_evaluation(
             "evaluation.task_solution_id",
         )
 
-        # Cross-check validator identity on payloads matches the round
-        round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+        # Cross-check validator identity on payloads matches the round.
+        # Return explicit out-of-sync error when validator sends unknown round id.
+        try:
+            round_row = await service._ensure_round_exists(validator_round_id)  # type: ignore[attr-defined]
+        except ValueError as exc:
+            inferred_uid = None
+            try:
+                inferred_uid = int(evaluation.validator_uid) if evaluation.validator_uid is not None else None
+            except Exception:
+                inferred_uid = None
+            _record_missing_round_alert(
+                request=request,
+                validator_round_id=validator_round_id,
+                agent_run_id=agent_run_id,
+                endpoint="add_evaluation",
+                validator_uid=inferred_uid,
+                batch_size=1,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "validator_round_not_found",
+                    "message": str(exc),
+                    "validator_round_id": validator_round_id,
+                    "agent_run_id": agent_run_id,
+                    "validator_uid": inferred_uid,
+                    "validator_hotkey": (request.headers.get(VALIDATOR_HOTKEY_HEADER) or "").strip() or None,
+                    "hint": "Validator appears out of sync (old round/version/config). Please sync and restart validator.",
+                },
+            ) from exc
+
         _ensure_request_matches_round_owner(request, round_row)
         check_pairs = [
             (
@@ -293,7 +411,7 @@ async def add_evaluation(
         try:
             existing_solution = await service.get_task_solution_row(task_solution.solution_id)
             existing_eval = await service.get_evaluation_row(evaluation.evaluation_id)
-        except Exception:  # noqa: BLE001 - idempotency check: missing row -> None
+        except Exception:
             existing_solution = existing_eval = None
         if (
             existing_solution
@@ -329,6 +447,8 @@ async def add_evaluation(
                     detail="Chain state unavailable",
                 )
             # Calculate boundaries from start_block (no longer using round_number)
+            from app.services.round_calc import _round_blocks, block_to_epoch
+
             round_blocks = _round_blocks()
             calculated_start_block = round_row.start_block
             calculated_end_block = calculated_start_block + round_blocks

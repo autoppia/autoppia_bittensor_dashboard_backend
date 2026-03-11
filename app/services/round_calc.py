@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.config import settings
+from app.services.round_config_service import get_config_season_round
 
 
 @dataclass
@@ -15,11 +15,12 @@ class RoundBoundaries:
 
 
 def _round_blocks() -> int:
-    return int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
+    return get_config_season_round().round_blocks()
 
 
 def block_to_epoch(block: int) -> float:
-    return block / float(settings.BLOCKS_PER_EPOCH)
+    cfg = get_config_season_round()
+    return block / float(cfg.blocks_per_epoch)
 
 
 def compute_round_number(current_block: int) -> int:
@@ -27,19 +28,20 @@ def compute_round_number(current_block: int) -> int:
 
     Returns 0 when current_block is at or before the minimum start block.
     """
-    base = int(settings.MINIMUM_START_BLOCK)
+    cfg = get_config_season_round()
+    base = cfg.minimum_start_block
     if current_block <= base:
         return 0
-    length = _round_blocks()
+    length = cfg.round_blocks()
     idx = (current_block - base) // length
     return int(idx + 1)
 
 
 def compute_boundaries_for_round(round_number: int) -> RoundBoundaries:
+    cfg = get_config_season_round()
     if round_number <= 0:
-        # before first window
-        start_block = int(settings.MINIMUM_START_BLOCK)
-        end_block = start_block + _round_blocks()
+        start_block = cfg.minimum_start_block
+        end_block = start_block + cfg.round_blocks()
         return RoundBoundaries(
             round_number=0,
             start_block=start_block,
@@ -48,8 +50,8 @@ def compute_boundaries_for_round(round_number: int) -> RoundBoundaries:
             end_epoch=block_to_epoch(end_block),
         )
 
-    start_block = int(settings.MINIMUM_START_BLOCK) + (round_number - 1) * _round_blocks()
-    end_block = int(settings.MINIMUM_START_BLOCK) + round_number * _round_blocks()
+    start_block = cfg.minimum_start_block + (round_number - 1) * cfg.round_blocks()
+    end_block = cfg.minimum_start_block + round_number * cfg.round_blocks()
     return RoundBoundaries(
         round_number=round_number,
         start_block=start_block,
@@ -72,12 +74,13 @@ def is_inside_window(current_block: int, boundaries: RoundBoundaries) -> bool:
 def compute_season_number(start_block: int) -> int:
     """Compute 1-based season number from start_block.
 
-    Uses the same MINIMUM_START_BLOCK as rounds, but with SEASON_SIZE_EPOCHS.
+    Uses the same minimum_start_block as rounds, but with season_size_epochs.
     """
-    base = int(settings.MINIMUM_START_BLOCK)
+    cfg = get_config_season_round()
+    base = cfg.minimum_start_block
     if start_block < base:
         return 0
-    season_block_length = int(settings.SEASON_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
+    season_block_length = cfg.season_blocks()
     season_index = (start_block - base) // season_block_length
     return int(season_index + 1)
 
@@ -92,15 +95,14 @@ def compute_round_number_in_season(current_block: int, round_block_length: int) 
     Returns:
         1-based round number within the season (1, 2, 3, ...)
     """
-    base = int(settings.MINIMUM_START_BLOCK)
+    cfg = get_config_season_round()
+    base = cfg.minimum_start_block
     if current_block < base:
         return 0
 
-    # Calculate which season we're in
-    season_block_length = int(settings.SEASON_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
+    season_block_length = cfg.season_blocks()
     season_start_block = base + ((current_block - base) // season_block_length) * season_block_length
 
-    # Calculate round within the season
     blocks_into_season = current_block - season_start_block
     round_index = blocks_into_season // round_block_length
     return int(round_index + 1)

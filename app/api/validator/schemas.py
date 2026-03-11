@@ -61,6 +61,23 @@ class StartRoundRequest(BaseModel):
         return round_model
 
 
+class RuntimeConfigPayload(BaseModel):
+    """Runtime round/season configuration sent by validators."""
+
+    round_size_epochs: float
+    season_size_epochs: float
+    minimum_start_block: int
+    blocks_per_epoch: int = Field(default=360, ge=1)
+    minimum_validator_version: Optional[str] = None
+
+
+class SyncRuntimeConfigRequest(BaseModel):
+    """Bootstrap/sync request for DB config_season_round."""
+
+    validator_identity: Validator
+    runtime_config: RuntimeConfigPayload
+
+
 class SetTasksRequest(BaseModel):
     tasks: list[Task] = Field(default_factory=list)
 
@@ -84,18 +101,16 @@ class FinishRoundAgentRun(BaseModel):
     weight: float | None = None
     # FASE 1: Nuevos campos opcionales
     miner_name: str | None = None
-    avg_reward: float | None = None  # Average reward (evaluation_score + time_score)
+    avg_reward: float | None = None  # Local per-validator average reward used as consensus input
     avg_evaluation_time: float | None = None
     tasks_attempted: int | None = None
     tasks_completed: int | None = None
     tasks_failed: int | None = None
-    zero_reason: str | None = None  # Reason for score 0 (e.g. over_cost_limit, deploy_failed, all_tasks_failed)
-    is_reused: bool = False  # Same (repo, commit) already evaluated this season
-    reused_from_agent_run_id: str | None = None  # Source agent_run_id when is_reused
+    zero_reason: str | None = None  # Reason for score 0 (e.g. over_cost_limit, deploy_failed, task_failed)
 
 
 class RoundMetadata(BaseModel):
-    """Round timing and metadata."""
+    """Round timing and metadata. Optional round/season config is persisted to config_season_round by main validator only."""
 
     round_number: int
     started_at: float
@@ -108,6 +123,10 @@ class RoundMetadata(BaseModel):
     tasks_completed: int
     miners_responded_handshake: int  # miners that answered the round handshake
     miners_evaluated: int  # miners that had at least one task evaluated
+    round_size_epochs: float | None = None
+    season_size_epochs: float | None = None
+    minimum_start_block: int | None = None
+    blocks_per_epoch: int | None = None
 
 
 class FinishRoundRequest(BaseModel):
@@ -117,13 +136,19 @@ class FinishRoundRequest(BaseModel):
     round_metadata: RoundMetadata | None = Field(default=None, alias="round")
     validator_summary: Dict[str, Any] | None = None
     local_evaluation: Dict[str, Any] | None = None
-    post_consensus_evaluation: Dict[str, Any] | None = None
+    post_consensus_evaluation: Dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Stake-weighted post-consensus metrics across included validators. "
+            "`consensus_reward` is the reward used for ranking/weights; "
+            "`avg_eval_score`, `avg_eval_time`, and `avg_cost` are aggregated observability metrics."
+        ),
+    )
     # IPFS data
     ipfs_uploaded: Dict[str, Any] | None = None
     ipfs_downloaded: Dict[str, Any] | None = None
-    s3_logs: Dict[str, Any] | None = None
+    s3_logs_url: str | None = None
     validator_state: Dict[str, Any] | None = None
-    validator_iwap_prev_round_json: Dict[str, Any] | None = None
 
 
 class ValidatorRoundLogUploadRequest(BaseModel):

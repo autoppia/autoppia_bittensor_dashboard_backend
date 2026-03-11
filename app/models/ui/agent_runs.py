@@ -60,7 +60,7 @@ class Website(BaseModel):
     tasks: int
     successful: int
     failed: int
-    score: float
+    reward: float
 
 
 class Action(BaseModel):
@@ -113,9 +113,8 @@ class AgentRun(BaseModel):
     successfulTasks: int
     failedTasks: int
     score: float
-    ranking: int
     duration: int
-    overallScore: float
+    overallReward: float
     averageEvaluationTime: Optional[float] = Field(
         default=None,
         description="Average evaluation duration recorded for the run (seconds)",
@@ -130,7 +129,7 @@ class AgentRun(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     zeroReason: Optional[str] = Field(
         default=None,
-        description="Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, all_tasks_failed)",
+        description="Reason for reward 0 when applicable (e.g. over_cost_limit, deploy_failed, task_failed)",
     )
 
 
@@ -209,7 +208,7 @@ class Statistics(BaseModel):
     """Detailed statistics for an agent run."""
 
     runId: str
-    overallScore: float
+    overallReward: float
     totalTasks: int
     successfulTasks: int
     failedTasks: int
@@ -224,7 +223,7 @@ class TopPerformingWebsite(BaseModel):
     """Top performing website data."""
 
     website: str
-    score: float
+    averageEvalScore: float
     tasks: int
 
 
@@ -232,7 +231,7 @@ class TopPerformingUseCase(BaseModel):
     """Top performing use case data."""
 
     useCase: str
-    score: float
+    averageEvalScore: float
     tasks: int
 
 
@@ -257,12 +256,11 @@ class Summary(BaseModel):
     startTime: str
     endTime: Optional[str] = None
     status: RunStatus
-    overallScore: float
+    overallReward: float
     totalTasks: int
     successfulTasks: int
     failedTasks: int
     duration: int
-    ranking: int
     topPerformingWebsite: TopPerformingWebsite
     topPerformingUseCase: TopPerformingUseCase
     recentActivity: List[RecentActivity]
@@ -309,7 +307,7 @@ class Metrics(BaseModel):
 class Comparison(BaseModel):
     """Agent run comparison data."""
 
-    bestScore: str
+    bestReward: str
     fastest: str
     mostTasks: str
     bestSuccessRate: str

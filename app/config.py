@@ -31,8 +31,7 @@ if ENVIRONMENT not in ("local", "development", "production"):
     raise ValueError(f"Invalid ENVIRONMENT: {ENVIRONMENT}. Must be 'local', 'development', or 'production'")
 
 # TESTING mode: Independent of ENVIRONMENT
-# TESTING=true → use testing round config (ROUND_SIZE_EPOCHS=0.347)
-# TESTING=false → use production round config (ROUND_SIZE_EPOCHS=3.0)
+# TESTING=true/false use defaults equivalent to 30-minute rounds (0.4166667 epochs)
 # This allows running in production environment but with testing round sizes
 _legacy_testing = os.getenv("TESTING")
 if _legacy_testing is not None:
@@ -98,23 +97,20 @@ class Settings(BaseSettings):
     ASSET_BASE_URL: str = IWA_PROD_URL
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # ROUND CONFIGURATION (chain-derived, matches subnet validator/config.py)
+    # ROUND CONFIGURATION (DB source of truth)
+    # Runtime round timing is read from config_season_round table.
+    # These env values are retained only for compatibility/testing and are not used
+    # as runtime fallback for round timing.
     # ═══════════════════════════════════════════════════════════════════════════
-    # Reads from .env with environment suffix:
-    # ROUND_SIZE_EPOCHS_LOCAL, ROUND_SIZE_EPOCHS_DEVELOPMENT, etc.
-    #
-    # TESTING mode: align defaults with validator/config.py
-    # TESTING=true  -> ROUND=0.5,  MIN_START=7586110, SEASON=2
-    # TESTING=false -> ROUND=4.0, MIN_START=7586110, SEASON=280
     if TESTING_MODE:
         # Validator TESTING defaults
-        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.5"))
-        MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7586110"))
+        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.2778"))
+        MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7702861"))
         SEASON_SIZE_EPOCHS: float = float(_env_var("SEASON_SIZE_EPOCHS", "2.0"))
     else:
         # Validator production defaults
-        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "4.0"))
-        MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7586110"))
+        ROUND_SIZE_EPOCHS: float = float(_env_var("ROUND_SIZE_EPOCHS", "0.2778"))
+        MINIMUM_START_BLOCK: int = int(_env_var("MINIMUM_START_BLOCK", "7702861"))
         SEASON_SIZE_EPOCHS: float = float(_env_var("SEASON_SIZE_EPOCHS", "280.0"))
     BLOCKS_PER_EPOCH: int = int(_env_var("BLOCKS_PER_EPOCH", "360"))
 
@@ -211,6 +207,7 @@ class Settings(BaseSettings):
     # If set, only this validator drives canonical round/season outcomes in DB rollups.
     MAIN_VALIDATOR_UID: Optional[int] = int(_env_var("MAIN_VALIDATOR_UID")) if _env_var("MAIN_VALIDATOR_UID") not in (None, "") else None
     MAIN_VALIDATOR_HOTKEY: Optional[str] = _env_var("MAIN_VALIDATOR_HOTKEY", None)
+    VALIDATOR_SKIP_ROUND_STARTED_AFTER_FRACTION_DEFAULT: float = float(_env_var("VALIDATOR_SKIP_ROUND_STARTED_AFTER_FRACTION_DEFAULT", "0.6"))
 
     # CORS Configuration
     # Prefer explicit origins to support credentials; fallback to wildcard in local env

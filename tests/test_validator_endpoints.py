@@ -1150,6 +1150,31 @@ async def test_overview_metrics_uses_previous_round_when_current_active(client):
 
 
 @pytest.mark.asyncio
+async def test_overview_metrics_does_not_encode_round_with_season_prefix(client):
+    payload_round_8 = _make_submission_payload("008")
+    response_round_8 = await submit_round_via_validator_endpoints(client, payload_round_8)
+    assert response_round_8.status_code == 200
+
+    payload_round_9 = _make_submission_payload("009")
+    payload_round_9["round"]["ended_at"] = None
+    payload_round_9["round"]["status"] = "active"
+    payload_round_9["agent_evaluation_runs"][0]["ended_at"] = None
+    response_round_9 = await submit_round_via_validator_endpoints(client, payload_round_9)
+    assert response_round_9.status_code == 200
+
+    metrics_response = await client.get("/api/v1/overview")
+    assert metrics_response.status_code == 200
+    metrics_payload = metrics_response.json()
+    assert metrics_payload["success"] is True
+
+    metrics = metrics_payload["data"]["metrics"]
+    assert metrics["currentSeason"] == 2
+    assert metrics["currentRound"] == 1
+    assert metrics["currentRoundInSeason"] == 1
+    assert metrics["currentRound"] != 20001
+
+
+@pytest.mark.asyncio
 async def test_miner_list_endpoints(client):
     payload = _make_submission_payload("1111")
     submit_response = await submit_round_via_validator_endpoints(client, payload)

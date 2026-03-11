@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.validator.common import _ensure_request_matches_round_owner
@@ -78,6 +79,35 @@ async def upload_round_log(
         ) from exc
 
     payload_url = build_public_url(object_key)
+    try:
+        # Persist S3 URL immediately so operator can inspect logs before round finish.
+        round_row.s3_logs_url = payload_url
+        if isinstance(round_row.validator_summary, dict):
+            summary = dict(round_row.validator_summary)
+            summary["s3_logs_url"] = payload_url
+            round_row.validator_summary = summary
+
+        # Keep canonical table aligned during active rounds.
+        await session.execute(
+            text(
+                """
+                UPDATE round_validators
+                SET s3_logs_url = :s3_logs_url, updated_at = NOW()
+                WHERE validator_round_id = :validator_round_id
+                """
+            ),
+            {
+                "validator_round_id": validator_round_id,
+                "s3_logs_url": payload_url,
+            },
+        )
+        await session.commit()
+    except Exception:
+        logger.exception(
+            "Round log uploaded to S3 but failed to persist s3_logs_url for validator_round_id=%s",
+            validator_round_id,
+        )
+        await session.rollback()
 
     return ValidatorRoundLogUploadResponse(
         success=True,

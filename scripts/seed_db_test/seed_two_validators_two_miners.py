@@ -81,11 +81,11 @@ async def seed_new_schema() -> tuple[int, int, list[int]]:
                     """
                     INSERT INTO round_validators (
                         round_id, validator_uid, validator_hotkey, validator_coldkey, name, image_url, version, stake, vtrust,
-                        started_at, finished_at, config, local_summary_json, post_consensus_summary, ipfs_uploaded, ipfs_downloaded, is_main_validator
+                        started_at, finished_at, config, post_consensus_json, ipfs_uploaded, ipfs_downloaded, is_main_validator
                     )
                     VALUES (
                         :round_id, :uid, :hotkey, :coldkey, :name, '/validators/Other.png', '1.0.0', 1000, 0.95,
-                        :now, :now, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, :is_main
+                        :now, :now, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, :is_main
                     )
                     RETURNING round_validator_id
                     """,
@@ -130,14 +130,14 @@ async def seed_new_schema() -> tuple[int, int, list[int]]:
                     INSERT INTO round_validator_miners (
                         round_validator_id, round_id, miner_uid, miner_hotkey, miner_coldkey, name, image_url, github_url, is_sota, version,
                         is_reused, reused_from_agent_run_id, reused_from_round_id,
-                        local_rank, local_avg_reward, local_avg_eval_score, local_avg_eval_time, local_tasks_received, local_tasks_success,
+                        local_avg_reward, local_avg_eval_score, local_avg_eval_time, local_tasks_received, local_tasks_success,
                         post_consensus_rank, post_consensus_avg_reward, post_consensus_avg_eval_score, post_consensus_avg_eval_time, post_consensus_tasks_received, post_consensus_tasks_success,
-                        weight, subnet_price, effective_rank, effective_reward, effective_eval_score, effective_eval_time, local_avg_eval_cost, post_consensus_avg_eval_cost, effective_eval_cost
+                        weight, subnet_price, best_local_rank, best_local_reward, best_local_eval_score, best_local_eval_time, local_avg_eval_cost, post_consensus_avg_eval_cost, best_local_eval_cost
                     )
                     VALUES (
                         :rvid, :round_id, :m_uid, :m_hotkey, :m_coldkey, :m_name, :img, :github, false, '1.0.0',
                         :is_reused, :reused_run, :reused_round,
-                        :local_rank, :local_reward, :local_score, :local_time, 3, :local_success,
+                        :local_reward, :local_score, :local_time, 3, :local_success,
                         :post_rank, :post_reward, :post_score, :post_time, 3, :post_success,
                         :weight, 0.00416, :eff_rank, :eff_reward, :eff_score, :eff_time, 0.0012, 0.0012, 0.0012
                     )
@@ -154,7 +154,6 @@ async def seed_new_schema() -> tuple[int, int, list[int]]:
                         "is_reused": is_reused,
                         "reused_run": f"agent_run_{m_uid}_{round_id}_{round_validator_ids[0]}" if is_reused else None,
                         "reused_round": round_id if is_reused else None,
-                        "local_rank": 1 if m_uid == 120 else 2,
                         "local_reward": 0.81 if m_uid == 120 else 0.62,
                         "local_score": 0.8 if m_uid == 120 else 0.6,
                         "local_time": 180.0 if m_uid == 120 else 210.0,
@@ -269,7 +268,7 @@ async def seed_new_schema() -> tuple[int, int, list[int]]:
                 round_id, winner_miner_uid, winner_score, reigning_miner_uid_before_round, reigning_score_before_round,
                 top_candidate_miner_uid, top_candidate_score, required_improvement_pct, dethroned,
                 validators_count, miners_evaluated, tasks_evaluated, tasks_success, avg_reward, avg_eval_score, avg_eval_time,
-                computed_at, summary_json, source_round_validator_id, created_at, updated_at
+                computed_at, post_consensus_summary, source_round_validator_id, created_at, updated_at
             )
             VALUES (:round_id, 120, 0.81, 120, 0.79, 121, 0.62, 0.05, false, 2, 2, 6, 4, 0.715, 0.7, 200.0, :now, '{}'::jsonb, :source_rv_id, :now, :now)
             """,

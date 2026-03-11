@@ -104,12 +104,6 @@ class EvaluationsDomainServiceMixin:
 
         skip = (page - 1) * limit
 
-        # Reused runs have no evaluations; resolve to the run they reference
-        if run_id:
-            run_row = await self.session.scalar(select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == run_id))
-            if run_row and getattr(run_row, "is_reused", False) and getattr(run_row, "reused_from_agent_run_id", None):
-                run_id = run_row.reused_from_agent_run_id
-
         # Construir query base con filtros en SQL
         stmt = select(EvaluationORM)
 
@@ -561,9 +555,7 @@ class EvaluationsDomainServiceMixin:
             total_tasks=int(agent_run_row.total_tasks or 0),
             success_tasks=int(agent_run_row.success_tasks or 0),
             failed_tasks=int(agent_run_row.failed_tasks or 0),
-            metadata=dict(agent_run_row.meta or {}),
-            is_reused=bool(getattr(agent_run_row, "is_reused", False)),
-            reused_from_agent_run_id=getattr(agent_run_row, "reused_from_agent_run_id", None),
+            metadata={},
             zero_reason=getattr(agent_run_row, "zero_reason", None),
             miner_info=miner_info,
         )

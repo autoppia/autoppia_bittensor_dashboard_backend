@@ -12,7 +12,6 @@ logger, log_level = init_logging(settings)
 import os
 import re
 import time
-from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,7 +32,7 @@ from app.api.ui.tasks import router as tasks_router
 from app.api.ui.validators import router as validators_router
 from app.api.validator.task_logs import router as task_logs_router
 from app.api.validator.validator_round import router as validator_rounds_router
-from app.db.session import get_session, init_db
+from app.db.session import AsyncSessionLocal, get_session, init_db
 from app.middleware.logging_middleware import DetailedLoggingMiddleware
 from app.services.idempotency import get_cache_stats
 
@@ -69,7 +68,9 @@ cors_kwargs = {
 if settings.CORS_ALLOW_ORIGIN_REGEX:
     cors_kwargs["allow_origin_regex"] = settings.CORS_ALLOW_ORIGIN_REGEX
 
-# Detailed logging middleware (optional, configured via env) - add before CORS so CORS is last
+app.add_middleware(CORSMiddleware, **cors_kwargs)
+
+# Detailed logging middleware (optional, configured via env)
 if settings.LOG_REQUEST_BODY or settings.LOG_RESPONSE_BODY:
     app.add_middleware(
         DetailedLoggingMiddleware,
@@ -77,18 +78,15 @@ if settings.LOG_REQUEST_BODY or settings.LOG_RESPONSE_BODY:
         log_response_body=settings.LOG_RESPONSE_BODY,
     )
 
-# CORS last in chain (outermost middleware, runs first on request)
-app.add_middleware(CORSMiddleware, **cors_kwargs)
-
 # Static files
 images_path = os.path.join(os.path.dirname(__file__), "..", "images")
 try:
     os.makedirs(images_path, exist_ok=True)
 except OSError as exc:
-    logger.warning("Unable to prepare images directory at %s: %s", images_path, exc)
+    logger.warning(f"Unable to prepare images directory at {images_path}: {exc}")
 else:
     app.mount("/images", StaticFiles(directory=images_path), name="images")
-    logger.info("Mounted static files from %s", images_path)
+    logger.info(f"Mounted static files from {images_path}")
 
 
 # Request logging (compact)
@@ -96,10 +94,10 @@ else:
 async def log_requests(request: Request, call_next):
     start = time.time()
     client = request.client.host if request.client else "unknown"
-    logger.info("%s %s - %s", request.method, request.url.path, client)
+    logger.info(f"{request.method} {request.url.path} - {client}")
     resp = await call_next(request)
     elapsed = time.time() - start
-    logger.info("%s %s - %s - %.3fs", request.method, request.url.path, resp.status_code, elapsed)
+    logger.info(f"{request.method} {request.url.path} - {resp.status_code} - {elapsed:.3f}s")
     return resp
 
 
@@ -163,12 +161,12 @@ async def clear_cache():
     from app.services.redis_cache import redis_cache
 
     cleared = redis_cache.clear_pattern("*")
-    return {"message": "Cleared %s Redis cache entries" % (cleared,), "cleared": cleared}
+    return {"message": f"Cleared {cleared} Redis cache entries", "cleared": cleared}
 
 
 @app.post("/admin/warm/agents")
 async def admin_warm_agents(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: AsyncSession = Depends(get_session),
 ):
     """
     DEPRECATED: Agent aggregates are now materialized incrementally when rounds finish.
@@ -254,17 +252,30 @@ async def on_startup():
         await init_db()
         logger.info("SQL schema ready")
 
-        # Log round configuration (matches validator config)
-        logger.info("=" * 80)
-        logger.info("🔧 BACKEND ROUND CONFIGURATION")
-        logger.info("=" * 80)
-        logger.info("📊 Mode: %s", "TESTING" if settings.TESTING else "PRODUCTION")
-        logger.info("🔢 MINIMUM_START_BLOCK: %s", format(settings.MINIMUM_START_BLOCK, ","))
-        logger.info("⏱️  Round Size: %s epochs", settings.ROUND_SIZE_EPOCHS)
-        logger.info("📦 Blocks per Round: %s", int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH))
-        logger.info("=" * 80)
+        # Load round config from DB (required; no .env fallback for round timing)
+        from app.services.round_config_service import get_config_season_round, refresh_config_season_round_cache, set_config_season_round_cache
 
-        logger.info("API server ready on %s:%s", settings.HOST, settings.PORT)
+        cfg = None
+        async with AsyncSessionLocal() as session:
+            try:
+                await refresh_config_season_round_cache(session)
+                cfg = get_config_season_round()
+            except RuntimeError as exc:
+                # Allow API startup even if config_season_round is not initialized yet.
+                # Main validator can bootstrap it through /api/v1/validator-rounds/runtime-config.
+                set_config_season_round_cache(None)
+                logger.warning("config_season_round not initialized yet: %s", exc)
+                logger.warning("Waiting for main validator runtime-config sync. Endpoints requiring round boundaries may fail until config is set.")
+        if cfg is not None:
+            logger.info("=" * 80)
+            logger.info("🔧 ROUND CONFIG (DB source of truth)")
+            logger.info("=" * 80)
+            logger.info(f"🔢 MINIMUM_START_BLOCK: {cfg.minimum_start_block:,}")
+            logger.info(f"⏱️  Round size: {cfg.round_size_epochs} epochs")
+            logger.info(f"📦 Blocks per round: {cfg.round_blocks()}")
+            logger.info("=" * 80)
+
+        logger.info(f"API server ready on {settings.HOST}:{settings.PORT}")
         logger.info("API documentation available at /docs")
         # NOTE: Background updaters (metagraph, price, block) are now run as a separate PM2 process
         # See background_updater.py and ecosystem.config.js
@@ -274,8 +285,8 @@ async def on_startup():
         # Overview cache warmer is also disabled - use external cron/PM2 if needed
         logger.info("ℹ️  Overview cache warmer disabled (use external process if needed)")
 
-    except Exception as e:  # noqa: BLE001  # NOSONAR - catch-all at startup, log and re-raise
-        logger.error("Failed to initialize application: %s", e, exc_info=True)
+    except Exception as e:
+        logger.error(f"Failed to initialize application: {e}", exc_info=True)
         raise
 
 
@@ -291,7 +302,10 @@ async def on_shutdown():
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error("Unhandled exception: %s", exc, exc_info=True)
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+
+    # Get CORS origins from settings
+    from app.config import settings
 
     origin = request.headers.get("origin")
     allowed_origins = settings.CORS_ORIGINS

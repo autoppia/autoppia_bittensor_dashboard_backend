@@ -136,19 +136,7 @@ async def get_validator_details(
         filtered_round_ids = [str(rid) for (rid,) in filtered_round_ids_result.all() if rid]
 
         if filtered_round_ids:
-            reused_source_query = (
-                select(AgentEvaluationRunORM.reused_from_agent_run_id)
-                .where(
-                    and_(
-                        AgentEvaluationRunORM.validator_round_id.in_(filtered_round_ids),
-                        AgentEvaluationRunORM.is_reused.is_(True),
-                        AgentEvaluationRunORM.reused_from_agent_run_id.isnot(None),
-                    )
-                )
-                .distinct()
-            )
-            reused_source_result = await session.execute(reused_source_query)
-            reused_source_run_ids = [str(run_id) for (run_id,) in reused_source_result.all() if run_id]
+            reused_source_run_ids = []
 
     # Get validator information from the most recent validator snapshot
     validator_snapshot_query = (
@@ -525,8 +513,8 @@ async def get_validator_details(
                     },
                     "context": {
                         "lastRoundWinner": last_round_winner,
-                        "lastRoundWinnerReward": float(last_round_winner_reward) if last_round_winner_reward else None,
-                        "lastRoundWinnerWeight": float(last_round_winner_weight) if last_round_winner_weight else None,
+                        "lastRoundWinnerReward": float(last_round_winner_reward) if last_round_winner_reward is not None else None,
+                        "lastRoundWinnerWeight": float(last_round_winner_weight) if last_round_winner_weight is not None else None,
                         "lastRoundWinnerName": last_round_winner_name,
                         "lastRoundWinnerImage": last_round_winner_image,
                         "lastRoundWinnerHotkey": last_round_winner_hotkey,
@@ -711,8 +699,8 @@ async def get_validator_details(
             "globalStats": global_stats,
             "context": {
                 "lastRoundWinner": last_round_winner,
-                "lastRoundWinnerReward": float(last_round_winner_reward) if last_round_winner_reward else None,
-                "lastRoundWinnerWeight": float(last_round_winner_weight) if last_round_winner_weight else None,
+                "lastRoundWinnerReward": float(last_round_winner_reward) if last_round_winner_reward is not None else None,
+                "lastRoundWinnerWeight": float(last_round_winner_weight) if last_round_winner_weight is not None else None,
                 "lastRoundWinnerName": last_round_winner_name,
                 "lastRoundWinnerImage": last_round_winner_image,
                 "lastRoundWinnerHotkey": last_round_winner_hotkey,

@@ -12,6 +12,7 @@ from app.utils.validation import validate_miner_image_url
 DESC_MINER_UID = "Miner UID"
 DESC_MINER_NAME = "Miner name"
 DESC_TIME_RANGE = "Time range"
+DESC_CURRENT_PAGE = "Current page"
 DESC_ITEMS_PER_PAGE = "Items per page"
 
 
@@ -331,7 +332,7 @@ class MinerCompareRequest(BaseModel):
 class Pagination(BaseModel):
     """Pagination model."""
 
-    page: int = Field(..., description="Current page")
+    page: int = Field(..., description=DESC_CURRENT_PAGE)
     limit: int = Field(..., description=DESC_ITEMS_PER_PAGE)
     total: int = Field(..., description="Total number of items")
     totalPages: int = Field(..., description="Total number of pages")

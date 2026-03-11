@@ -26,26 +26,35 @@ class MinerSummary(BaseModel):
     name: Optional[str] = None
 
 
+class OverviewLeader(BaseModel):
+    """Current season leader details for the overview payload."""
+
+    minerUid: Optional[int] = None
+    minerHotkey: Optional[str] = None
+    minerImage: Optional[str] = None
+    minerGithubUrl: Optional[str] = None
+    minerName: Optional[str] = None
+    reward: float = 0.0
+    cost: Optional[float] = None
+    score: Optional[float] = None
+    time: Optional[float] = None
+    validators: int = 0
+    totalWebsitesEvaluated: int = 0
+    tasksReceived: int = 0
+    tasksSuccess: int = 0
+
+
 class OverviewMetrics(BaseModel):
     """Overview dashboard metrics."""
 
     model_config = {"extra": "allow"}
 
-    topMinerUid: Optional[int] = None
-    topMinerName: Optional[str] = None
-    topReward: float = 0.0  # post_consensus_avg_reward of the top miner
-    totalWebsites: int
-    totalValidators: int
+    leader: Optional[OverviewLeader] = None
+    season: Optional[int] = None
+    round: Optional[int] = None
     totalMiners: int
     tasksPerValidator: Optional[int] = None  # Tasks in latest round for Autoppia validator
-    totalTasksPerValidator: Optional[int] = None  # Alias explícito para clientes que esperan este nombre
     minerList: Optional[List[MinerSummary]] = None  # UIDs and names for the metrics round
-    currentRound: int
-    currentSeason: Optional[int] = None
-    currentRoundInSeason: Optional[int] = None
-    metricsRound: int
-    metricsSeason: Optional[int] = None
-    metricsRoundInSeason: Optional[int] = None
     subnetVersion: str
     lastUpdated: str  # ISO timestamp
 
@@ -151,10 +160,11 @@ class RoundDetailResponse(BaseResponse):
 class LeaderboardEntry(BaseModel):
     """Leaderboard entry for performance comparison."""
 
-    round: int  # round_number_in_season (for compatibility)
+    round: int  # round_number_in_season
     season: Optional[int] = None  # season_number
-    subnet36: float  # post_consensus_avg_reward (mantener por compatibilidad)
+    subnet36: float  # Compatibility mirror of post_consensus_reward
     post_consensus_reward: float  # post_consensus_avg_reward
+    reward: float  # post_consensus_avg_reward
     winnerUid: Optional[int] = None
     winnerName: Optional[str] = None
     openai_cua: Optional[float] = None
@@ -163,9 +173,7 @@ class LeaderboardEntry(BaseModel):
     timestamp: str  # ISO timestamp
     post_consensus_eval_score: Optional[float] = None  # post_consensus_avg_eval_score
     post_consensus_eval_time: Optional[float] = None  # post_consensus_avg_eval_time
-    # Campos legacy (mantener por compatibilidad)
-    score: Optional[float] = None  # post_consensus_avg_eval_score (alias)
-    time: Optional[float] = None  # post_consensus_avg_eval_time (alias)
+    time: Optional[float] = None  # Alias for post_consensus_eval_time
 
 
 class LeaderboardResponse(BaseResponse):

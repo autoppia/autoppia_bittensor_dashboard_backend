@@ -45,6 +45,9 @@ POSTGRES_PASSWORD=$(_get_var "POSTGRES_PASSWORD") || POSTGRES_PASSWORD=""
 POSTGRES_HOST=$(_get_var "POSTGRES_HOST") || POSTGRES_HOST="127.0.0.1"
 POSTGRES_PORT=$(_get_var "POSTGRES_PORT") || POSTGRES_PORT="5432"
 POSTGRES_DB=$(_get_var "POSTGRES_DB") || POSTGRES_DB=""
+MAIN_VALIDATOR_UID=$(_get_var "MAIN_VALIDATOR_UID") || MAIN_VALIDATOR_UID="${MAIN_VALIDATOR_UID:-83}"
+MAIN_VALIDATOR_HOTKEY=$(_get_var "MAIN_VALIDATOR_HOTKEY") || MAIN_VALIDATOR_HOTKEY="${MAIN_VALIDATOR_HOTKEY:-}"
+MINIMUM_VALIDATOR_VERSION=$(_get_var "MINIMUM_VALIDATOR_VERSION") || MINIMUM_VALIDATOR_VERSION="${MINIMUM_VALIDATOR_VERSION:-}"
 
 # --- Validate required vars ---
 : "${POSTGRES_USER:?POSTGRES_USER or POSTGRES_USER_${ENV_SUFFIX} is missing}"
@@ -52,6 +55,10 @@ POSTGRES_DB=$(_get_var "POSTGRES_DB") || POSTGRES_DB=""
 : "${POSTGRES_HOST:?POSTGRES_HOST or POSTGRES_HOST_${ENV_SUFFIX} is missing}"
 : "${POSTGRES_PORT:?POSTGRES_PORT or POSTGRES_PORT_${ENV_SUFFIX} is missing}"
 : "${POSTGRES_DB:?POSTGRES_DB or POSTGRES_DB_${ENV_SUFFIX} is missing}"
+if [[ ! "${MAIN_VALIDATOR_UID}" =~ ^[0-9]+$ ]]; then
+  echo "❌ MAIN_VALIDATOR_UID must be a positive integer. Got: '${MAIN_VALIDATOR_UID}'"
+  exit 1
+fi
 
 export PGPASSWORD="${POSTGRES_PASSWORD}"
 
@@ -96,3 +103,38 @@ END $$;
 SQL
 
 echo "✅ All user tables truncated successfully in '${POSTGRES_DB}'."
+psql \
+  --host="${POSTGRES_HOST}" \
+  --port="${POSTGRES_PORT}" \
+  --username="${POSTGRES_USER}" \
+  --dbname="${POSTGRES_DB}" \
+  --set=ON_ERROR_STOP=1 \
+  --set=main_uid="${MAIN_VALIDATOR_UID}" \
+  --set=main_hotkey="${MAIN_VALIDATOR_HOTKEY}" \
+  --set=min_validator_version="${MINIMUM_VALIDATOR_VERSION}" \
+<<'SQL'
+INSERT INTO config_app_runtime (
+  id,
+  main_validator_uid,
+  main_validator_hotkey,
+  minimum_validator_version,
+  created_at,
+  updated_at
+)
+VALUES (
+  1,
+  :main_uid,
+  NULLIF(:'main_hotkey', ''),
+  NULLIF(:'min_validator_version', ''),
+  NOW(),
+  NOW()
+)
+ON CONFLICT (id) DO UPDATE SET
+  main_validator_uid = EXCLUDED.main_validator_uid,
+  main_validator_hotkey = COALESCE(EXCLUDED.main_validator_hotkey, config_app_runtime.main_validator_hotkey),
+  minimum_validator_version = COALESCE(EXCLUDED.minimum_validator_version, config_app_runtime.minimum_validator_version),
+  updated_at = NOW();
+SQL
+
+echo "✅ config_app_runtime bootstrapped (main_uid=${MAIN_VALIDATOR_UID})."
+echo "ℹ️  config_season_round is intentionally left empty; main validator will sync it via /api/v1/validator-rounds/runtime-config."

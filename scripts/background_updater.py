@@ -10,8 +10,6 @@ This script runs as a separate PM2 process and updates:
 This replaces the background threads that were running inside the FastAPI process.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -92,12 +90,12 @@ def fetch_and_cache_block() -> bool:
     try:
         block = refresh_block_now()
         if block is not None:
-            logger.info("✅ Current block updated: %s", block)
+            logger.info(f"✅ Current block updated: {block}")
             return True
         logger.warning("⚠️  Could not fetch current block")
         return False
-    except Exception as exc:  # noqa: BLE001
-        logger.error("❌ Failed to update block: %s", exc)
+    except Exception as exc:
+        logger.error(f"❌ Failed to update block: {exc}")
         return False
 
 
@@ -116,15 +114,15 @@ def fetch_and_cache_price() -> bool:
             # Fallback to env if blockchain fetch fails
             price = _env_fallback(netuid)
             source = "env-fallback"
-            logger.warning("⚠️  Could not fetch price from blockchain, using env fallback: %.6f TAO", price)
+            logger.warning(f"⚠️  Could not fetch price from blockchain, using env fallback: {price:.6f} TAO")
 
         # Store in Redis (either from chain or fallback)
         redis_cache.set(REDIS_KEY_SUBNET_PRICE, float(price), ttl=PRICE_UPDATE_INTERVAL * 2)
         redis_cache.set(REDIS_KEY_PRICE_LAST_UPDATE, float(time.time()), ttl=PRICE_UPDATE_INTERVAL * 2)
-        logger.info("✅ Subnet price updated: %.6f TAO (source: %s)", price, source)
+        logger.info(f"✅ Subnet price updated: {price:.6f} TAO (source: {source})")
         return True
-    except Exception as exc:  # noqa: BLE001
-        logger.error("❌ Failed to update subnet price: %s", exc)
+    except Exception as exc:
+        logger.error(f"❌ Failed to update subnet price: {exc}")
         return False
 
 
@@ -136,57 +134,80 @@ def perform_metagraph_update() -> bool:
         logger.info("✅ Metagraph data refreshed successfully")
         return True
     except MetagraphError as exc:
-        logger.error("❌ Metagraph update failed: %s", exc)
+        logger.error(f"❌ Metagraph update failed: {exc}")
         return False
-    except Exception as exc:  # noqa: BLE001
-        logger.error("❌ Unexpected error during metagraph update: %s", exc, exc_info=True)
+    except Exception as exc:
+        logger.error(f"❌ Unexpected error during metagraph update: {exc}", exc_info=True)
         return False
+
+
+async def _cache_recent_rounds_async(current_block: int) -> bool:
+    """
+    Prefer round IDs from DB (last validator round containing current_block, then previous 3).
+    Fall back to config-based compute_round_number when no round in DB.
+    """
+    import requests
+
+    from app.services.round_config_from_db import (
+        get_previous_round_ids,
+        get_round_containing_block,
+    )
+
+    async with AsyncSessionLocal() as session:
+        round_row = await get_round_containing_block(session, current_block)
+        if round_row and round_row.get("round_id") is not None:
+            current_round_id = int(round_row["round_id"])
+            round_ids_to_cache = await get_previous_round_ids(session, current_round_id, limit=3)
+        else:
+            from app.services.round_calc import compute_round_number
+
+            current_round = compute_round_number(current_block)
+            # Fallback: API accepts round_id; if DB round_id matches global index, use it
+            round_ids_to_cache = [
+                current_round - 1,
+                current_round - 2,
+                current_round - 3,
+            ]
+
+    cached_count = 0
+    for round_id in round_ids_to_cache:
+        if round_id <= 0:
+            continue
+        try:
+            response = requests.get(
+                f"http://localhost:8080/api/v1/rounds/{round_id}",
+                timeout=60,
+            )
+            if response.status_code == 200:
+                logger.info(f"✅ Cached round {round_id}")
+                cached_count += 1
+            else:
+                logger.warning(f"⚠️  Failed to cache round {round_id}: HTTP {response.status_code}")
+        except Exception as e:
+            logger.error(f"❌ Error caching round {round_id}: {e}")
+
+    if cached_count > 0:
+        logger.info(f"✅ Cached {cached_count} rounds successfully")
+        return True
+    return False
 
 
 def cache_recent_rounds() -> bool:
     """
     Cache recent completed rounds by calling the API endpoint.
-    This pre-warms the round_snapshots table for faster frontend loading.
+    Uses last validator round from DB when available; else env-based round number.
     """
     try:
-        import requests
-
         from app.services.chain_state import get_current_block_estimate
-        from app.services.round_calc import compute_round_number
 
-        # Get current round number
         current_block = get_current_block_estimate()
         if not current_block:
             logger.warning("⚠️  Could not get current block for round caching")
             return False
 
-        current_round = compute_round_number(current_block)
-
-        # Cache last 3 completed rounds
-        rounds_to_cache = [current_round - 1, current_round - 2, current_round - 3]
-
-        cached_count = 0
-        for round_num in rounds_to_cache:
-            if round_num <= 0:
-                continue
-
-            try:
-                # Call the API endpoint which will create the snapshot if missing
-                response = requests.get(f"http://localhost:8080/api/v1/rounds/{round_num}", timeout=60)
-                if response.status_code == 200:
-                    logger.info("✅ Cached round %s", round_num)
-                    cached_count += 1
-                else:
-                    logger.warning("⚠️  Failed to cache round %s: HTTP %s", round_num, response.status_code)
-            except Exception as e:  # noqa: BLE001
-                logger.error("❌ Error caching round %s: %s", round_num, e)
-
-        if cached_count > 0:
-            logger.info("✅ Cached %s rounds successfully", cached_count)
-            return True
-        return False
-    except Exception as exc:  # noqa: BLE001
-        logger.error("❌ Failed to cache rounds: %s", exc)
+        return asyncio.run(_cache_recent_rounds_async(current_block))
+    except Exception as exc:
+        logger.error(f"❌ Failed to cache rounds: {exc}")
         return False
 
 
@@ -233,8 +254,8 @@ def reconcile_rounds_and_seasons(current_block: int) -> bool:
                 current_block,
             )
         return True
-    except Exception as exc:  # noqa: BLE001
-        logger.error("❌ Failed round/season reconciliation: %s", exc, exc_info=True)
+    except Exception as exc:
+        logger.error(f"❌ Failed round/season reconciliation: {exc}", exc_info=True)
         return False
 
 
@@ -242,12 +263,12 @@ def main():
     """Main loop for background updates."""
     logger.info("=" * 80)
     logger.info("🚀 Background Data Updater Starting (Standalone Process)")
-    logger.info("   - Metagraph update interval: %s minutes", METAGRAPH_UPDATE_INTERVAL / 60)
-    logger.info("   - Price update interval: %s minutes", PRICE_UPDATE_INTERVAL / 60)
-    logger.info("   - Block update interval: %s seconds", BLOCK_UPDATE_INTERVAL)
-    logger.info("   - Round/Season reconcile interval: %s seconds", ROUND_RECONCILE_INTERVAL)
-    logger.info("   - Round cache interval: %s hours", ROUND_CACHE_INTERVAL / 3600)
-    logger.info("   - Metagraph cache TTL: %s minutes", METAGRAPH_CACHE_TTL / 60)
+    logger.info(f"   - Metagraph update interval: {METAGRAPH_UPDATE_INTERVAL / 60:.0f} minutes")
+    logger.info(f"   - Price update interval: {PRICE_UPDATE_INTERVAL / 60:.0f} minutes")
+    logger.info(f"   - Block update interval: {BLOCK_UPDATE_INTERVAL} seconds")
+    logger.info(f"   - Round/Season reconcile interval: {ROUND_RECONCILE_INTERVAL} seconds")
+    logger.info(f"   - Round cache interval: {ROUND_CACHE_INTERVAL / 3600:.0f} hours")
+    logger.info(f"   - Metagraph cache TTL: {METAGRAPH_CACHE_TTL / 60:.0f} minutes")
     logger.info("=" * 80)
 
     # Wait for Redis to be available
@@ -258,7 +279,7 @@ def main():
             logger.info("✅ Redis is available, starting updates")
             break
         retry_count += 1
-        logger.warning("⏳ Waiting for Redis (%s/%s), retrying in 5 seconds...", retry_count, max_retries)
+        logger.warning(f"⏳ Waiting for Redis ({retry_count}/{max_retries}), retrying in 5 seconds...")
         time.sleep(5)
 
     if not redis_cache.is_available():
@@ -272,12 +293,12 @@ def main():
 
     if last_update:
         age_minutes = (time.time() - last_update) / 60
-        logger.info("📊 Found existing metagraph data in Redis (age: %.1f minutes)", age_minutes)
+        logger.info(f"📊 Found existing metagraph data in Redis (age: {age_minutes:.1f} minutes)")
 
         if age_minutes < METAGRAPH_CACHE_TTL / 60:
             should_update_immediately = False
             time_until_next = METAGRAPH_CACHE_TTL - (age_minutes * 60)
-            logger.info("⏭️  Existing data is fresh, next update in %.1f minutes", time_until_next / 60)
+            logger.info(f"⏭️  Existing data is fresh, next update in {time_until_next / 60:.1f} minutes")
 
     # Perform initial update if needed
     if should_update_immediately:
@@ -297,7 +318,7 @@ def main():
                 price_age,
             )
     except Exception as exc:  # noqa: BLE001
-        logger.error("Failed initial price update check: %s", exc)
+        logger.error(f"Failed initial price update check: {exc}")
 
     try:
         last_block_update_cached = redis_cache.get(REDIS_KEY_BLOCK_LAST_UPDATE)
@@ -311,7 +332,7 @@ def main():
                 block_age,
             )
     except Exception as exc:  # noqa: BLE001
-        logger.error("Failed initial block update check: %s", exc)
+        logger.error(f"Failed initial block update check: {exc}")
 
     # Initialize counters and timestamps
     metagraph_update_count = 0
@@ -382,8 +403,8 @@ def main():
                     current_block = refresh_block_now()
                     if current_block is not None:
                         reconcile_rounds_and_seasons(int(current_block))
-                except Exception as exc:  # noqa: BLE001
-                    logger.error("❌ Reconcile run failed: %s", exc, exc_info=True)
+                except Exception as exc:
+                    logger.error(f"❌ Reconcile run failed: {exc}", exc_info=True)
                 last_reconcile = now
 
             # Calculate next wakeup time (whichever comes first)
@@ -411,16 +432,16 @@ def main():
 
     except KeyboardInterrupt:
         logger.info("🛑 Received shutdown signal")
-    except Exception as exc:  # noqa: BLE001
-        logger.error("❌ Fatal error in updater loop: %s", exc, exc_info=True)
+    except Exception as exc:
+        logger.error(f"❌ Fatal error in updater loop: {exc}", exc_info=True)
     finally:
         logger.info("=" * 80)
         logger.info("🛑 Background Data Updater Stopped")
-        logger.info("   - Metagraph updates performed: %s", metagraph_update_count)
-        logger.info("   - Price updates performed: %s", price_update_count)
-        logger.info("   - Block updates performed: %s", block_update_count)
-        logger.info("   - Round cache updates performed: %s", round_cache_count)
-        logger.info("   - Reconcile updates performed: %s", reconcile_count)
+        logger.info(f"   - Metagraph updates performed: {metagraph_update_count}")
+        logger.info(f"   - Price updates performed: {price_update_count}")
+        logger.info(f"   - Block updates performed: {block_update_count}")
+        logger.info(f"   - Round cache updates performed: {round_cache_count}")
+        logger.info(f"   - Reconcile updates performed: {reconcile_count}")
         logger.info("=" * 80)
 
 
