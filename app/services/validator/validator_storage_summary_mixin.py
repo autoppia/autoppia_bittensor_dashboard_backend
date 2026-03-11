@@ -1093,10 +1093,6 @@ class ValidatorStorageSummaryMixin:
         except Exception:
             pass  # Non-critical: cost data stays NULL for this round
 
-        # If no evaluation data provided, create basic summaries from agent_runs
-        if not local_evaluation and not post_consensus_evaluation:
-            pass
-
         # Process local_evaluation
         if local_evaluation and isinstance(local_evaluation, dict):
             local_miners = local_evaluation.get("miners", [])
