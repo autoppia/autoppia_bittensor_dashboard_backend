@@ -294,9 +294,7 @@ class Settings(BaseSettings):
         if self.AWS_S3_TASK_LOG_PREFIX:
             self.AWS_S3_TASK_LOG_PREFIX = self.AWS_S3_TASK_LOG_PREFIX.strip("/") or "task-logs"
         if self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX:
-            self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX = (
-                self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX.strip("/") or "validator-round-logs"
-            )
+            self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX = self.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX.strip("/") or "validator-round-logs"
 
     def _normalize_log_levels(self) -> None:
         """Normalize log level strings to uppercase."""

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 # Sonar S1192: shared Field description literals
 DESC_AGENT_IDENTIFIER = "Agent identifier"
 
+
 # --- Enums ---
 class AgentType(str, Enum):
     """Agent type enumeration."""

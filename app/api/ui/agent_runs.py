@@ -69,9 +69,7 @@ def get_agent_runs_list_query(
     status: Annotated[str | None, Query(None)] = None,
     start_date: Annotated[datetime | None, Query(None, alias="startDate")] = None,
     end_date: Annotated[datetime | None, Query(None, alias="endDate")] = None,
-    include_unfinished: Annotated[
-        bool, Query(False, description="Include runs from active/non-finalized rounds", alias="includeUnfinished")
-    ] = False,
+    include_unfinished: Annotated[bool, Query(False, description="Include runs from active/non-finalized rounds", alias="includeUnfinished")] = False,
     sort_by: Annotated[str, Query("startTime", alias="sortBy")] = "startTime",
     sort_order: Annotated[str, Query("desc", alias="sortOrder")] = "desc",
 ) -> AgentRunsListQuery:

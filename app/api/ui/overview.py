@@ -182,9 +182,7 @@ async def list_rounds(
     q: Annotated[RoundsListQuery, Depends(get_rounds_list_query)],
 ) -> RoundsListResponse:
     service = _service(session)
-    rounds, current, total = await service.get_overview_rounds_list(
-        page=q.page, limit=q.limit, status=q.status
-    )
+    rounds, current, total = await service.get_overview_rounds_list(page=q.page, limit=q.limit, status=q.status)
     return RoundsListResponse(
         success=True,
         data={

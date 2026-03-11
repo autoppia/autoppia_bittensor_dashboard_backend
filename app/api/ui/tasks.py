@@ -232,9 +232,7 @@ async def get_task_actions(
     actions = service.build_actions(context)
     total = len(actions)
     success_count = sum(1 for action in actions if getattr(action, "success", False))
-    fail_count = sum(
-        1 for action in actions if getattr(action, "error", False) or not getattr(action, "success", False)
-    )
+    fail_count = sum(1 for action in actions if getattr(action, "error", False) or not getattr(action, "success", False))
     start = (page - 1) * limit
     end = start + limit
     paginated = actions[start:end]
