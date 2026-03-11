@@ -2,8 +2,6 @@
 Backoffice endpoint to store per-task execution logs in S3 and metadata in DB.
 """
 
-from __future__ import annotations
-
 import gzip
 import json
 import logging

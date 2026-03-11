@@ -1,7 +1,5 @@
 """Progressive validator round ingestion endpoints aligned with normalized models."""
 
-from __future__ import annotations
-
 from fastapi import APIRouter, Depends
 
 from app.api.validator.validator_round_handlers_auth import validator_auth_check
