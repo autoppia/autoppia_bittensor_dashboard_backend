@@ -333,20 +333,20 @@ async def start_round(
             existing_round = await service._get_round_row(validator_round.validator_round_id)  # type: ignore[attr-defined]
         except Exception:
             existing_round = None
-        if existing_round is not None:
-            if (
-                existing_round.validator_snapshot
-                and existing_round.validator_snapshot.validator_uid == validator_round.validator_uid
-                and existing_round.validator_snapshot.validator_hotkey == validator_round.validator_hotkey
-            ):
-                logger.info(
-                    "Validator round %s already registered; treating as idempotent",
-                    validator_round.validator_round_id,
-                )
-                return {
-                    "message": "Validator round created",
-                    "validator_round_id": validator_round.validator_round_id,
-                }
+        if (
+            existing_round is not None
+            and existing_round.validator_snapshot
+            and existing_round.validator_snapshot.validator_uid == validator_round.validator_uid
+            and existing_round.validator_snapshot.validator_hotkey == validator_round.validator_hotkey
+        ):
+            logger.info(
+                "Validator round %s already registered; treating as idempotent",
+                validator_round.validator_round_id,
+            )
+            return {
+                "message": "Validator round created",
+                "validator_round_id": validator_round.validator_round_id,
+            }
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except RoundConflictError as exc:
         detail = str(exc)
@@ -906,14 +906,8 @@ async def finish_round(
 
         # Normalize status to match ValidatorRound literal type
         normalized_status = payload.status.lower()
-        if normalized_status in {"completed", "complete"}:
-            normalized_status = "finished"
-        elif normalized_status not in {
-            "active",
-            "finished",
-            "pending",
-            "evaluating_finished",
-        }:
+        valid_statuses = {"active", "finished", "pending", "evaluating_finished"}
+        if normalized_status in {"completed", "complete"} or normalized_status not in valid_statuses:
             normalized_status = "finished"
 
         # Call the service method
