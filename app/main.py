@@ -12,6 +12,7 @@ logger, log_level = init_logging(settings)
 import os
 import re
 import time
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,15 +69,15 @@ cors_kwargs = {
 if settings.CORS_ALLOW_ORIGIN_REGEX:
     cors_kwargs["allow_origin_regex"] = settings.CORS_ALLOW_ORIGIN_REGEX
 
-app.add_middleware(CORSMiddleware, **cors_kwargs)
-
-# Detailed logging middleware (optional, configured via env)
+# Detailed logging middleware (optional, configured via env) — add before CORS so CORS is last in the chain
 if settings.LOG_REQUEST_BODY or settings.LOG_RESPONSE_BODY:
     app.add_middleware(
         DetailedLoggingMiddleware,
         log_request_body=settings.LOG_REQUEST_BODY,
         log_response_body=settings.LOG_RESPONSE_BODY,
     )
+
+app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 # Static files
 images_path = os.path.join(os.path.dirname(__file__), "..", "images")
@@ -166,7 +167,7 @@ async def clear_cache():
 
 @app.post("/admin/warm/agents")
 async def admin_warm_agents(
-    session: AsyncSession = Depends(get_session),
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """
     DEPRECATED: Agent aggregates are now materialized incrementally when rounds finish.
