@@ -721,12 +721,31 @@ class UIOverviewServiceMixin:
 
     async def get_overview_network_status(self) -> Dict[str, Any]:
         validators, _ = await self.get_overview_validators_list(1, 1000, None, "lastSeen", "desc")
+        latest_round = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT s.season_number, r.round_number_in_season
+                        FROM rounds r
+                        JOIN seasons s ON s.season_id = r.season_id
+                        ORDER BY s.season_number DESC, r.round_number_in_season DESC
+                        LIMIT 1
+                        """
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
         return {
             "status": "healthy",
             "message": "Network operational",
             "lastChecked": datetime.now(timezone.utc).isoformat(),
             "activeValidators": len(validators),
             "networkLatency": 0,
+            "season": int(latest_round["season_number"]) if latest_round and latest_round.get("season_number") is not None else None,
+            "round": int(latest_round["round_number_in_season"]) if latest_round and latest_round.get("round_number_in_season") is not None else None,
         }
 
     async def get_overview_recent_activity(self, limit: int) -> List[Dict[str, Any]]:
