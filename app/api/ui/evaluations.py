@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from typing import Annotated, Any, Awaitable, Callable
 
@@ -61,13 +63,13 @@ class EvaluationListQuery(BaseModel):
 
 
 def get_evaluation_list_query(
-    page: Annotated[int, Query(ge=1)] = 1,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
-    run_id: Annotated[str | None, Query(alias="runId")] = None,
-    agent_id: Annotated[str | None, Query(alias="agentId")] = None,
-    validator_id: Annotated[str | None, Query(alias="validatorId")] = None,
-    task_id: Annotated[str | None, Query(alias="taskId")] = None,
-    round_id: Annotated[int | None, Query(alias="roundId")] = None,
+    page: Annotated[int, Query(1, ge=1)] = 1,
+    limit: Annotated[int, Query(20, ge=1, le=100)] = 20,
+    run_id: Annotated[str | None, Query(None, alias="runId")] = None,
+    agent_id: Annotated[str | None, Query(None, alias="agentId")] = None,
+    validator_id: Annotated[str | None, Query(None, alias="validatorId")] = None,
+    task_id: Annotated[str | None, Query(None, alias="taskId")] = None,
+    round_id: Annotated[int | None, Query(None, alias="roundId")] = None,
 ) -> EvaluationListQuery:
     return EvaluationListQuery(
         page=page,
@@ -202,8 +204,8 @@ async def get_evaluation_results(
 async def get_evaluation_actions(
     evaluation_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
-    page: Annotated[int, Query(ge=1)] = 1,
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    page: Annotated[int, Query(1, ge=1)] = 1,
+    limit: Annotated[int, Query(50, ge=1, le=200)] = 50,
 ):
     """Get actions for an evaluation (same format as task actions)."""
     task_context = await _fetch_or_404(session, evaluation_id, lambda s, eid: s.get_task_by_evaluation_id(eid))

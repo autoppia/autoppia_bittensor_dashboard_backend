@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from typing import Annotated
 
@@ -50,11 +52,11 @@ class ValidatorsListQuery(BaseModel):
 
 
 def get_validators_list_query(
-    page: Annotated[int, Query(ge=1)] = 1,
-    limit: Annotated[int, Query(ge=1, le=100)] = 10,
-    status: Annotated[str | None, Query()] = None,
-    sort_by: Annotated[str, Query(alias="sortBy")] = "weight",
-    sort_order: Annotated[str, Query(alias="sortOrder")] = "desc",
+    page: Annotated[int, Query(1, ge=1)] = 1,
+    limit: Annotated[int, Query(10, ge=1, le=100)] = 10,
+    status: Annotated[str | None, Query(None)] = None,
+    sort_by: Annotated[str, Query("weight", alias="sortBy")] = "weight",
+    sort_order: Annotated[str, Query("desc", alias="sortOrder")] = "desc",
 ) -> ValidatorsListQuery:
     return ValidatorsListQuery(page=page, limit=limit, status=status, sort_by=sort_by, sort_order=sort_order)
 
@@ -70,9 +72,9 @@ class RoundsListQuery(BaseModel):
 
 
 def get_rounds_list_query(
-    page: Annotated[int, Query(ge=1)] = 1,
-    limit: Annotated[int, Query(ge=1, le=100)] = 10,
-    status: Annotated[str | None, Query()] = None,
+    page: Annotated[int, Query(1, ge=1)] = 1,
+    limit: Annotated[int, Query(10, ge=1, le=100)] = 10,
+    status: Annotated[str | None, Query(None)] = None,
 ) -> RoundsListQuery:
     return RoundsListQuery(page=page, limit=limit, status=status)
 
@@ -87,8 +89,8 @@ class LeaderboardQuery(BaseModel):
 
 
 def get_leaderboard_query(
-    time_range: Annotated[str | None, Query(alias="timeRange")] = None,
-    limit: Annotated[int | None, Query(ge=1, le=365)] = None,
+    time_range: Annotated[str | None, Query(None, alias="timeRange")] = None,
+    limit: Annotated[int | None, Query(None, ge=1, le=365)] = None,
 ) -> LeaderboardQuery:
     return LeaderboardQuery(time_range=time_range, limit=limit)
 
@@ -245,7 +247,7 @@ async def get_network_status(
 @router.get("/recent-activity")
 async def get_recent_activity(
     session: Annotated[AsyncSession, Depends(get_session)],
-    limit: Annotated[int, Query(ge=1, le=100)] = 10,
+    limit: Annotated[int, Query(10, ge=1, le=100)] = 10,
 ) -> RecentActivityResponse:
     service = _service(session)
     activities = await service.get_overview_recent_activity(limit)
@@ -261,7 +263,7 @@ async def get_recent_activity(
 @router.get("/performance-trends")
 async def get_performance_trends(
     session: Annotated[AsyncSession, Depends(get_session)],
-    days: Annotated[int, Query(ge=1, le=30)] = 7,
+    days: Annotated[int, Query(7, ge=1, le=30)] = 7,
 ) -> PerformanceTrendsResponse:
     service = _service(session)
     trends = await service.get_overview_performance_trends(days)

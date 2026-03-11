@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from datetime import datetime
 from typing import Annotated, Any, Awaitable, Callable
@@ -47,25 +49,25 @@ class TasksListQuery(BaseModel):
 
 
 def get_tasks_list_query(
-    page: Annotated[int, Query(ge=1)] = 1,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    page: Annotated[int, Query(1, ge=1)] = 1,
+    limit: Annotated[int, Query(20, ge=1, le=100)] = 20,
     include_details: Annotated[
         bool,
-        Query(description="Include full task details (actions/screenshots/logs). Set false for lightweight listing.", alias="includeDetails"),
+        Query(True, description="Include full task details (actions/screenshots/logs). Set false for lightweight listing.", alias="includeDetails"),
     ] = True,
-    agent_run_id: Annotated[str | None, Query(alias="agentRunId")] = None,
-    agent_id: Annotated[str | None, Query(alias="agentId")] = None,
-    validator_id: Annotated[str | None, Query(alias="validatorId")] = None,
-    website: Annotated[str | None, Query()] = None,
-    use_case: Annotated[str | None, Query(alias="useCase")] = None,
-    status: Annotated[str | None, Query()] = None,
-    query: Annotated[str | None, Query()] = None,
-    min_score: Annotated[float | None, Query(alias="minScore")] = None,
-    max_score: Annotated[float | None, Query(alias="maxScore")] = None,
-    start_date: Annotated[datetime | None, Query(alias="startDate")] = None,
-    end_date: Annotated[datetime | None, Query(alias="endDate")] = None,
-    sort_by: Annotated[str, Query(alias="sortBy")] = "startTime",
-    sort_order: Annotated[str, Query(alias="sortOrder")] = "desc",
+    agent_run_id: Annotated[str | None, Query(None, alias="agentRunId")] = None,
+    agent_id: Annotated[str | None, Query(None, alias="agentId")] = None,
+    validator_id: Annotated[str | None, Query(None, alias="validatorId")] = None,
+    website: Annotated[str | None, Query(None)] = None,
+    use_case: Annotated[str | None, Query(None, alias="useCase")] = None,
+    status: Annotated[str | None, Query(None)] = None,
+    query: Annotated[str | None, Query(None)] = None,
+    min_score: Annotated[float | None, Query(None, alias="minScore")] = None,
+    max_score: Annotated[float | None, Query(None, alias="maxScore")] = None,
+    start_date: Annotated[datetime | None, Query(None, alias="startDate")] = None,
+    end_date: Annotated[datetime | None, Query(None, alias="endDate")] = None,
+    sort_by: Annotated[str, Query("startTime", alias="sortBy")] = "startTime",
+    sort_order: Annotated[str, Query("desc", alias="sortOrder")] = "desc",
 ) -> TasksListQuery:
     return TasksListQuery(
         page=page,
@@ -222,8 +224,8 @@ async def get_task_statistics(
 async def get_task_actions(
     task_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
-    page: Annotated[int, Query(ge=1)] = 1,
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    page: Annotated[int, Query(1, ge=1)] = 1,
+    limit: Annotated[int, Query(50, ge=1, le=200)] = 50,
 ):
     context = await _fetch_task_or_404(session, task_id, lambda s, tid: s.get_task(tid))
     service = _service(session)

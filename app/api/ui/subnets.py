@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
@@ -34,19 +36,19 @@ class SubnetTimelineQuery(BaseModel):
 def get_subnet_timeline_query(
     rounds: Annotated[
         int | None,
-        Query(ge=1, le=MAX_ROUND_COUNT, description="Number of rounds to return (defaults to last 90 rounds)"),
+        Query(None, ge=1, le=MAX_ROUND_COUNT, description="Number of rounds to return (defaults to last 90 rounds)"),
     ] = None,
     end_round: Annotated[
         int | None,
-        Query(ge=1, description="Ending round number (defaults to most recent inferred round)"),
+        Query(None, ge=1, description="Ending round number (defaults to most recent inferred round)"),
     ] = None,
     seconds_back: Annotated[
         int | None,
-        Query(ge=1, description="Alternative to 'rounds'; converts seconds to round count"),
+        Query(None, ge=1, description="Alternative to 'rounds'; converts seconds to round count"),
     ] = None,
     miners: Annotated[
         int | None,
-        Query(ge=1, le=MAX_ROSTER_SIZE, description="Roster size to return (defaults to 8)"),
+        Query(None, ge=1, le=MAX_ROSTER_SIZE, description="Roster size to return (defaults to 8)"),
     ] = None,
 ) -> SubnetTimelineQuery:
     return SubnetTimelineQuery(

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from collections import defaultdict
 from typing import Annotated, Any, Dict
@@ -49,19 +51,20 @@ class ValidatorDetailsQuery(BaseModel):
 def get_validator_details_query(
     round_filter: Annotated[
         str | None,
-        Query(alias="round", description="Filter by round (format: 'season/round', e.g., '1/1')"),
+        Query(None, alias="round", description="Filter by round (format: 'season/round', e.g., '1/1')"),
     ] = None,
     website: Annotated[
         str | None,
-        Query(description="Filter evaluations table by website (e.g., 'AutoCinema')"),
+        Query(None, description="Filter evaluations table by website (e.g., 'AutoCinema')"),
     ] = None,
     use_case: Annotated[
         str | None,
-        Query(alias="useCase", description="Filter evaluations table by use case (e.g., 'SEARCH_FILM')"),
+        Query(None, alias="useCase", description="Filter evaluations table by use case (e.g., 'SEARCH_FILM')"),
     ] = None,
     limit: Annotated[
         int | None,
         Query(
+            DEFAULT_EVALUATIONS_LIMIT,
             ge=1,
             le=MAX_EVALUATIONS_LIMIT,
             description="Limit number of evaluations to process. Default: 500000, Max: 500000",

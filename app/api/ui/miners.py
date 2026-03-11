@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from datetime import datetime
 from typing import Annotated
@@ -39,13 +41,13 @@ class MinersListQuery(BaseModel):
 
 
 def get_miners_list_query(
-    page: Annotated[int, Query(ge=1)] = 1,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
-    is_sota: Annotated[bool | None, Query(alias="isSota")] = None,
-    status: Annotated[MinerStatus | None, Query()] = None,
-    sort_by: Annotated[str, Query(alias="sortBy")] = "averageScore",
-    sort_order: Annotated[str, Query(alias="sortOrder")] = "desc",
-    search: Annotated[str | None, Query()] = None,
+    page: Annotated[int, Query(1, ge=1)] = 1,
+    limit: Annotated[int, Query(20, ge=1, le=100)] = 20,
+    is_sota: Annotated[bool | None, Query(None, alias="isSota")] = None,
+    status: Annotated[MinerStatus | None, Query(None)] = None,
+    sort_by: Annotated[str, Query("averageScore", alias="sortBy")] = "averageScore",
+    sort_order: Annotated[str, Query("desc", alias="sortOrder")] = "desc",
+    search: Annotated[str | None, Query(None)] = None,
 ) -> MinersListQuery:
     return MinersListQuery(
         page=page,
@@ -70,10 +72,10 @@ class MinerPerformanceQuery(BaseModel):
 
 
 def get_miner_performance_query(
-    time_range: Annotated[TimeRange, Query(alias="timeRange")] = TimeRange.SEVEN_DAYS,
-    start_date: Annotated[datetime | None, Query(alias="startDate")] = None,
-    end_date: Annotated[datetime | None, Query(alias="endDate")] = None,
-    granularity: Annotated[Granularity, Query()] = Granularity.DAY,
+    time_range: Annotated[TimeRange, Query(TimeRange.SEVEN_DAYS, alias="timeRange")] = TimeRange.SEVEN_DAYS,
+    start_date: Annotated[datetime | None, Query(None, alias="startDate")] = None,
+    end_date: Annotated[datetime | None, Query(None, alias="endDate")] = None,
+    granularity: Annotated[Granularity, Query(Granularity.DAY)] = Granularity.DAY,
 ) -> MinerPerformanceQuery:
     return MinerPerformanceQuery(
         time_range=time_range,

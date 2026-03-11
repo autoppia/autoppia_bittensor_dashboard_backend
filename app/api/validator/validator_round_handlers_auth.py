@@ -2,6 +2,8 @@
 Auth-check endpoint handler for validator round API.
 """
 
+from __future__ import annotations
+
 from pydantic import BaseModel
 
 
