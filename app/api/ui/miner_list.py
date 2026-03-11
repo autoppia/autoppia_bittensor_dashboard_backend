@@ -38,11 +38,11 @@ class MinerListQuery(BaseModel):
 
 
 def get_miner_list_query(
-    page: Annotated[int, Query(1, ge=1)] = 1,
-    limit: Annotated[int, Query(50, ge=1, le=100)] = 50,
-    is_sota: Annotated[bool | None, Query(None, alias="isSota")] = None,
-    search: Annotated[str | None, Query(None)] = None,
-    round_num: Annotated[int | None, Query(None, alias="round")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    is_sota: Annotated[bool | None, Query(alias="isSota")] = None,
+    search: Annotated[str | None, Query()] = None,
+    round_num: Annotated[int | None, Query(alias="round")] = None,
 ) -> MinerListQuery:
     return MinerListQuery(page=page, limit=limit, is_sota=is_sota, search=search, round_num=round_num)
 
