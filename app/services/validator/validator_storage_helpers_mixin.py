@@ -726,16 +726,14 @@ class ValidatorStorageHelpersMixin:
         return None
 
     async def _propagate_source_metrics_to_reused_runs(self, source_run: AgentEvaluationRunORM) -> None:
-        await asyncio.sleep(0)
-        return None
+        await self._resolve_reused_source_run(None)
 
     async def _find_best_source_run_for_miner(
         self,
         miner_uid: Optional[int],
         exclude_validator_round_id: str,
     ) -> Optional[AgentEvaluationRunORM]:
-        await asyncio.sleep(0)
-        return None
+        return await self._resolve_reused_source_run(None)
 
     async def _get_task_row(self, task_id: str) -> Optional[TaskORM]:
         stmt = select(TaskORM).where(TaskORM.task_id == task_id)
