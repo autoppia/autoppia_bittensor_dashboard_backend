@@ -77,7 +77,17 @@ select = [
     "F",   # Pyflakes (F401 = unused imports, etc.)
     "I",   # isort (import sorting)
 ]
+# Optional: add to extend-select to enforce maintainability (C901, PLR0913, PLR0915). CI runs them as report-only.
 ignore = []
+
+[tool.ruff.lint.mccabe]
+# Used when running ruff with --select C901 (maintainability report). Harden over time.
+max-complexity = 25
+
+[tool.ruff.lint.pylint]
+# Used when running maintainability rules. Harden over time.
+max-args = 12
+max-statements = 100
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]

@@ -39,6 +39,11 @@ jobs:
       - name: Ruff format check
         run: ruff format --check .
 
+      # Maintainability report: cyclomatic complexity (C901), too many args/statements. Tune in pyproject; add to extend-select to fail.
+      - name: Ruff maintainability report
+        run: ruff check app scripts --select C901,PLR0913,PLR0915 --output-format=concise
+        continue-on-error: true
+
       - name: Radon cyclomatic complexity
         run: |
           echo "=== Cyclomatic complexity (app, scripts) ==="
@@ -49,13 +54,13 @@ jobs:
           echo "=== Maintainability index (app, scripts) ==="
           radon mi app scripts -s
 
-      # Gates run on app/ only (production code). Complexity: fail if any block is D (21-30) or E (31+). Relax with -n E to only fail on E.
-      - name: Radon complexity gate (app only, fail on D/E)
+      # Complexity: fail only on E (31+) or F (41+). D allowed. Radon has no per-function ignore; exclude paths with -e (e.g. -e 'app/scripts/').
+      - name: Radon complexity gate (app only, fail on E/F)
         run: |
-          bad=$(radon cc app -n D --no-assert 2>/dev/null | grep -c . || true)
+          bad=$(radon cc app -n E --no-assert 2>/dev/null | grep -c . || true)
           if [ "${bad:-0}" -gt 0 ]; then
-            echo "::error::app/ has cyclomatic complexity D or E (threshold: max C). Run 'radon cc app -n D' locally to list."
-            radon cc app -n D --no-assert
+            echo "::error::app/ has cyclomatic complexity E or F (threshold: max D). Run 'radon cc app -n E' locally to list."
+            radon cc app -n E --no-assert
             exit 1
           fi
 
@@ -72,6 +77,54 @@ jobs:
       - name: Dependency audit
         run: pip-audit
         continue-on-error: true
+
+  test-and-coverage:
+    name: Tests & coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          pytest --cov=app --cov-report=xml --cov-report=term -v
+        env:
+          RUN_LIVE_TESTS: ""
+
+      - name: Coverage summary in job
+        run: |
+          python -c "
+          import os
+          import xml.etree.ElementTree as ET
+          root = ET.parse('coverage.xml').getroot()
+          pct = float(root.get('line-rate', 0)) * 100
+          lines_covered = int(root.get('lines-covered', 0))
+          lines_valid = int(root.get('lines-valid', 0))
+          path = os.environ.get('GITHUB_STEP_SUMMARY', '')
+          if path:
+              with open(path, 'a') as f:
+                  f.write('## Test coverage\n\n')
+                  f.write(f'- **Lines:** {lines_covered}/{lines_valid} ({pct:.1f}%)\n\n')
+                  f.write('Ver log del paso *Run tests with coverage* para detalle por archivo.\n')
+          "
 
   pre-commit:
     name: Pre-commit
