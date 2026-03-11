@@ -451,14 +451,8 @@ class ValidatorStorageRoundsMixin:
 
         # Normalize status to match ValidatorRound literal type
         normalized_status = status.lower()
-        if normalized_status in {"completed", "complete"}:
-            normalized_status = "finished"
-        elif normalized_status not in {
-            "active",
-            "finished",
-            "pending",
-            "evaluating_finished",
-        }:
+        valid_statuses = {"active", "finished", "pending", "evaluating_finished"}
+        if normalized_status in {"completed", "complete"} or normalized_status not in valid_statuses:
             normalized_status = "finished"
 
         round_row.status = normalized_status
