@@ -146,7 +146,7 @@ async def _cache_recent_rounds_async(current_block: int) -> bool:
     Prefer round IDs from DB (last validator round containing current_block, then previous 3).
     Fall back to config-based compute_round_number when no round in DB.
     """
-    import requests
+    import httpx
 
     from app.services.round_config_from_db import (
         get_previous_round_ids,
@@ -170,21 +170,21 @@ async def _cache_recent_rounds_async(current_block: int) -> bool:
             ]
 
     cached_count = 0
-    for round_id in round_ids_to_cache:
-        if round_id <= 0:
-            continue
-        try:
-            response = requests.get(
-                f"http://localhost:8080/api/v1/rounds/{round_id}",
-                timeout=60,
-            )
-            if response.status_code == 200:
-                logger.info(f"✅ Cached round {round_id}")
-                cached_count += 1
-            else:
-                logger.warning(f"⚠️  Failed to cache round {round_id}: HTTP {response.status_code}")
-        except Exception as e:
-            logger.error(f"❌ Error caching round {round_id}: {e}")
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for round_id in round_ids_to_cache:
+            if round_id <= 0:
+                continue
+            try:
+                response = await client.get(
+                    f"http://localhost:8080/api/v1/rounds/{round_id}",
+                )
+                if response.status_code == 200:
+                    logger.info(f"✅ Cached round {round_id}")
+                    cached_count += 1
+                else:
+                    logger.warning(f"⚠️  Failed to cache round {round_id}: HTTP {response.status_code}")
+            except Exception as e:
+                logger.error(f"❌ Error caching round {round_id}: {e}")
 
     if cached_count > 0:
         logger.info(f"✅ Cached {cached_count} rounds successfully")
