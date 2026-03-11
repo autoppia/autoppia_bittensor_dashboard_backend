@@ -5,6 +5,19 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import text
 
+from app.services.metagraph_service import MetagraphError, get_validator_data
+
+
+def _normalize_stake_to_rao(stake: Any) -> float:
+    if stake is None:
+        return 0.0
+    value = float(stake or 0.0)
+    if value <= 0:
+        return 0.0
+    if value < 1.0:
+        return value * 1_000_000_000
+    return value
+
 
 class UIOverviewServiceMixin:
     async def get_overview_metrics(self) -> Dict[str, Any]:
@@ -462,6 +475,14 @@ class UIOverviewServiceMixin:
             uid = int(r["validator_uid"])
             if uid in by_validator:
                 continue
+            normalized_stake = _normalize_stake_to_rao(r.get("stake"))
+            if normalized_stake <= 0:
+                try:
+                    fresh_data = get_validator_data(uid=uid)
+                except MetagraphError:
+                    fresh_data = None
+                if fresh_data and fresh_data.get("stake") is not None:
+                    normalized_stake = _normalize_stake_to_rao(fresh_data.get("stake"))
             total_tasks = (
                 await self.session.execute(
                     text("SELECT COUNT(*) FROM tasks WHERE round_validator_id=:rvid"),
@@ -515,7 +536,7 @@ class UIOverviewServiceMixin:
                 "version": r["version"],
                 "lastSeen": (r["finished_at"] or r["started_at"] or datetime.now(timezone.utc)).isoformat(),
                 "uptime": 1.0,
-                "stake": float(r["stake"] or 0.0),
+                "stake": normalized_stake,
                 "emission": 0,
                 "validatorRoundId": f"validator_round_{int(r['round_validator_id'])}",
                 "roundNumber": int(r["season_number"]) * 10000 + int(r["round_number_in_season"]),
