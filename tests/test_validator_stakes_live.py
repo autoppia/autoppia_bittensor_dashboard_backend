@@ -10,8 +10,6 @@ from app.services.validator.validator_auth import ValidatorAuthService
 
 # Skip live stake tests unless explicitly enabled (they hit the chain)
 if os.getenv("RUN_LIVE_TESTS", "0").lower() not in ("1", "true", "yes", "on"):
-    import pytest  # noqa: WPS433
-
     pytest.skip("Skipping live stake tests (set RUN_LIVE_TESTS=1 to run)", allow_module_level=True)
 
 

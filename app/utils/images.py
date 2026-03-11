@@ -387,11 +387,9 @@ def resolve_validator_image(name: str | None, existing: str | None = None) -> st
             return override
 
         # Check for roundtable/rt21 variations (case-insensitive)
-        # This handles: "RoundTable21", "RT21", "rt21", "roundtable", etc.
-        # Also check for "rt" followed by numbers (like "RT21", "rt21", etc.)
-        import re
-
-        rt_pattern = re.compile(r"rt\s*-?\s*21", re.IGNORECASE)
+        # This handles: "RoundTable21", "RT21", "rt21", "roundtable", "rt 21", "rt-21", etc.
+        # Avoid regex to prevent ReDoS; use string normalization for "rt" + spaces/dashes + "21"
+        name_normalized = name_lower.replace(" ", "").replace("-", "").replace("_", "")
         if (
             "roundtable" in name_lower
             or "rt21" in name_lower
@@ -399,7 +397,7 @@ def resolve_validator_image(name: str | None, existing: str | None = None) -> st
             or name_lower == "rt21"
             or name_lower.startswith("rt21")
             or name_lower.endswith("rt21")
-            or rt_pattern.search(name_lower)
+            or "rt21" in name_normalized
         ):
             override = _ensure_absolute_url(VALIDATOR_IMAGE_OVERRIDES["roundtable"], fallback=default_url)
             logger.debug("[resolve_validator_image] Using aggressive override for RoundTable (name='%s', contains 'roundtable' or 'rt21'): %s", name, override)

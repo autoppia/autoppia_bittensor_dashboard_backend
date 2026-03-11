@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.services.ui.external_tasks_query import (
-    get_tasks_with_solutions,
     TaskSolutionsQueryParams,
+    get_tasks_with_solutions,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,9 +48,7 @@ def get_tasks_query(
     task_id: Annotated[str | None, Query(None, alias="taskId")] = None,
     website: Annotated[str | None, Query(None)] = None,
     use_case: Annotated[str | None, Query(None, alias="useCase")] = None,
-    web_version: Annotated[
-        str | None, Query(None, alias="webVersion", description="Filter by web demo version (e.g., '0.1.0+d2e4029e')")
-    ] = None,
+    web_version: Annotated[str | None, Query(None, alias="webVersion", description="Filter by web demo version (e.g., '0.1.0+d2e4029e')")] = None,
     miner_uid: Annotated[int | None, Query(None, alias="minerUid")] = None,
     agent_id: Annotated[str | None, Query(None, alias="agentId")] = None,
     validator_id: Annotated[str | None, Query(None, alias="validatorId")] = None,

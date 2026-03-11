@@ -253,17 +253,17 @@ async def get_tasks_with_solutions(
             RoundORM,
             AgentEvaluationRunORM.validator_round_id == RoundORM.validator_round_id,
         )
-        filters.append(RoundORM.round_number == round_id)
+        filters.append(RoundORM.round_number == params.round_id)
 
     # Filter by score range
-    if min_score is not None:
-        filters.append(EvaluationORM.evaluation_score >= (min_score / 100.0))
-    if max_score is not None:
-        filters.append(EvaluationORM.evaluation_score <= (max_score / 100.0))
+    if params.min_score is not None:
+        filters.append(EvaluationORM.evaluation_score >= (params.min_score / 100.0))
+    if params.max_score is not None:
+        filters.append(EvaluationORM.evaluation_score <= (params.max_score / 100.0))
 
     # Filter by status
-    if status:
-        status_lower = status.lower()
+    if params.status:
+        status_lower = params.status.lower()
         if status_lower == "completed":
             filters.append(EvaluationORM.evaluation_score >= 0.7)
         elif status_lower == "failed":
@@ -274,11 +274,7 @@ async def get_tasks_with_solutions(
     # Filter by success (true = score ≈ 1.0, false = score < 1.0); avoid float equality
     if params.success is not None:
         if params.success:
-            filters.append(
-                EvaluationORM.evaluation_score.between(
-                    1.0 - SCORE_ONE_TOLERANCE, 1.0 + SCORE_ONE_TOLERANCE
-                )
-            )
+            filters.append(EvaluationORM.evaluation_score.between(1.0 - SCORE_ONE_TOLERANCE, 1.0 + SCORE_ONE_TOLERANCE))
         else:
             filters.append(EvaluationORM.evaluation_score < 1.0)
 

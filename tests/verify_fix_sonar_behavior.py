@@ -3,6 +3,7 @@
 Verify that fix/sonar refactors preserve behavior (no DB/Redis required).
 Run: python -m tests.verify_fix_sonar_behavior
 """
+
 from __future__ import annotations
 
 import sys
@@ -32,12 +33,12 @@ def test_task_solutions_query_params():
 
 def test_seed_utils_builder_signatures():
     """Builders accept only (validator_round_id, record) and return correct types."""
+    import inspect
+
     from app.services.seed_utils import (
         _build_miner_identity_and_snapshot,
         _build_validator_identity_and_snapshot,
     )
-
-    import inspect
 
     sig_v = inspect.signature(_build_validator_identity_and_snapshot)
     assert list(sig_v.parameters.keys()) == ["validator_round_id", "record"], sig_v.parameters
@@ -71,15 +72,11 @@ def test_seed_utils_builder_returns():
         image = ""
         github = ""
 
-    v_identity, v_snapshot = _build_validator_identity_and_snapshot(
-        validator_round_id="vr-1", record=FakeValidatorRecord()
-    )
+    v_identity, v_snapshot = _build_validator_identity_and_snapshot(validator_round_id="vr-1", record=FakeValidatorRecord())
     assert v_identity.uid == 1 and v_identity.hotkey == "0xab"
     assert v_snapshot.validator_uid == 1 and v_snapshot.validator_hotkey == "0xab"
 
-    m_identity, m_snapshot = _build_miner_identity_and_snapshot(
-        validator_round_id="vr-1", record=FakeMinerRecord()
-    )
+    m_identity, m_snapshot = _build_miner_identity_and_snapshot(validator_round_id="vr-1", record=FakeMinerRecord())
     assert m_identity.uid == 2 and m_identity.hotkey == "0xef"
     assert m_snapshot.miner_uid == 2 and m_snapshot.miner_hotkey == "0xef"
     print("  seed_utils builder returns OK")

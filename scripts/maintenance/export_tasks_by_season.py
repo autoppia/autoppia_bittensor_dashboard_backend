@@ -17,17 +17,16 @@ import argparse
 import asyncio
 import json
 import sys
-
-import aiofiles
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Dict, Iterable
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
+import aiofiles
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.db.models import TaskORM, ValidatorRoundORM
 from app.db.session import AsyncSessionLocal
