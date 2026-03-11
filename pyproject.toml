@@ -8,9 +8,10 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    # FastAPI and ASGI server
-    "fastapi>=0.110.1,<0.111",
+    # FastAPI and ASGI server (0.116+ for Starlette 0.47+ CVE fixes)
+    "fastapi>=0.116.0,<0.117",
     "uvicorn[standard]>=0.30.0",
+    "starlette>=0.47.2",
     # Data validation and settings
     "pydantic==2.8.0",
     "pydantic-settings>=2.4.0",

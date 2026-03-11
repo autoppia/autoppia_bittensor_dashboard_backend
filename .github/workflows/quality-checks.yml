@@ -78,8 +78,9 @@ jobs:
             exit 1
           fi
 
+      # PYSEC-2022-42969: py has no fix version (unmaintained); vuln disputed. Others fixed via setuptools>=78.1.1, starlette>=0.47.2.
       - name: Dependency audit
-        run: pip-audit
+        run: pip-audit --ignore-vuln PYSEC-2022-42969
 
   pre-commit:
     name: Pre-commit
