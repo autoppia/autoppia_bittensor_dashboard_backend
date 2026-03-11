@@ -60,18 +60,18 @@ class AgentRunsListQuery(BaseModel):
 
 
 def get_agent_runs_list_query(
-    page: Annotated[int, Query(1, ge=1)] = 1,
-    limit: Annotated[int, Query(20, ge=1, le=100)] = 20,
-    round_id: Annotated[str | None, Query(None, alias="roundId")] = None,
-    validator_id: Annotated[str | None, Query(None, alias="validatorId")] = None,
-    agent_id: Annotated[str | None, Query(None, alias="agentId")] = None,
-    query: Annotated[str | None, Query(None)] = None,
-    status: Annotated[str | None, Query(None)] = None,
-    start_date: Annotated[datetime | None, Query(None, alias="startDate")] = None,
-    end_date: Annotated[datetime | None, Query(None, alias="endDate")] = None,
-    include_unfinished: Annotated[bool, Query(False, description="Include runs from active/non-finalized rounds", alias="includeUnfinished")] = False,
-    sort_by: Annotated[str, Query("startTime", alias="sortBy")] = "startTime",
-    sort_order: Annotated[str, Query("desc", alias="sortOrder")] = "desc",
+    page: Annotated[int, Query(ge=1)] = 1,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    round_id: Annotated[str | None, Query(alias="roundId")] = None,
+    validator_id: Annotated[str | None, Query(alias="validatorId")] = None,
+    agent_id: Annotated[str | None, Query(alias="agentId")] = None,
+    query: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    start_date: Annotated[datetime | None, Query(alias="startDate")] = None,
+    end_date: Annotated[datetime | None, Query(alias="endDate")] = None,
+    include_unfinished: Annotated[bool, Query(description="Include runs from active/non-finalized rounds", alias="includeUnfinished")] = False,
+    sort_by: Annotated[str, Query(alias="sortBy")] = "startTime",
+    sort_order: Annotated[str, Query(alias="sortOrder")] = "desc",
 ) -> AgentRunsListQuery:
     return AgentRunsListQuery(
         page=page,
@@ -117,7 +117,7 @@ async def _fetch_run_or_404(
 # ---------------------------------------------------------------------------
 
 
-@router.get("")
+@router.get("", response_model=AgentRunsListResponse)
 @cache("agent_runs_list_v7", ttl=600)
 async def list_agent_runs(
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -155,7 +155,7 @@ async def get_agent_run_complete(
     return {"success": True, "data": result}
 
 
-@router.get("/{run_id}", responses={404: {"description": "Agent run not found"}})
+@router.get("/{run_id}", response_model=AgentRunDetailResponse, responses={404: {"description": "Agent run not found"}})
 async def get_agent_run(
     run_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -164,7 +164,7 @@ async def get_agent_run(
     return AgentRunDetailResponse(success=True, data={"run": result})
 
 
-@router.get("/{run_id}/personas", responses={404: {"description": "Agent run not found"}})
+@router.get("/{run_id}/personas", response_model=PersonasResponse, responses={404: {"description": "Agent run not found"}})
 async def get_agent_run_personas(
     run_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -173,7 +173,7 @@ async def get_agent_run_personas(
     return PersonasResponse(success=True, data={"personas": result})
 
 
-@router.get("/{run_id}/stats", responses={404: {"description": "Agent run not found"}})
+@router.get("/{run_id}/stats", response_model=StatisticsResponse, responses={404: {"description": "Agent run not found"}})
 async def get_agent_run_statistics(
     run_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -182,7 +182,7 @@ async def get_agent_run_statistics(
     return StatisticsResponse(success=True, data={"stats": result})
 
 
-@router.get("/{run_id}/summary", responses={404: {"description": "Agent run not found"}})
+@router.get("/{run_id}/summary", response_model=SummaryResponse, responses={404: {"description": "Agent run not found"}})
 async def get_agent_run_summary(
     run_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -200,7 +200,7 @@ async def get_agent_run_tasks(
     return TasksResponse(success=True, data=result)
 
 
-@router.get("/{run_id}/timeline", responses={404: {"description": "Agent run not found"}})
+@router.get("/{run_id}/timeline", response_model=TimelineResponse, responses={404: {"description": "Agent run not found"}})
 async def get_agent_run_timeline(
     run_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -209,7 +209,7 @@ async def get_agent_run_timeline(
     return TimelineResponse(success=True, data={"timeline": result})
 
 
-@router.get("/{run_id}/logs", responses={404: {"description": "Agent run not found"}})
+@router.get("/{run_id}/logs", response_model=LogsResponse, responses={404: {"description": "Agent run not found"}})
 async def get_agent_run_logs(
     run_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -218,7 +218,7 @@ async def get_agent_run_logs(
     return LogsResponse(success=True, data={"logs": result})
 
 
-@router.get("/{run_id}/metrics", responses={404: {"description": "Agent run not found"}})
+@router.get("/{run_id}/metrics", response_model=MetricsResponse, responses={404: {"description": "Agent run not found"}})
 async def get_agent_run_metrics(
     run_id: str,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -232,7 +232,7 @@ async def get_agent_run_metrics(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/compare")
+@router.post("/compare", response_model=ComparisonResponse)
 async def compare_agent_runs(
     payload: CompareRunsRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
