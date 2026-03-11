@@ -7,7 +7,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -125,11 +125,11 @@ async def _upsert_task_log_metadata(
     )
 
 
-@router.post("", response_model=TaskExecutionLogUploadResponse)
+@router.post("")
 async def upload_task_execution_log(
     request: TaskExecutionLogUploadRequest,
-    session: AsyncSession = Depends(get_session),
-    _: dict = Depends(require_validator_auth),
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _: Annotated[dict, Depends(require_validator_auth)],
 ) -> TaskExecutionLogUploadResponse:
     """
     Store a per-task execution log in S3 (gzipped JSON) and save metadata in DB.
@@ -210,13 +210,7 @@ async def upload_task_execution_log(
         await session.commit()
     except Exception as exc:  # noqa: BLE001
         await session.rollback()
-        logger.error(
-            "Failed to persist task log metadata (task_id=%s, agent_run_id=%s, validator_round_id=%s): %s",
-            request.task_id,
-            request.agent_run_id,
-            request.validator_round_id,
-            exc,
-        )
+        logger.error("Failed to persist task log metadata (see exc_info)", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to persist task log metadata",
