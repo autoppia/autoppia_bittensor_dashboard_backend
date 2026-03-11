@@ -31,13 +31,43 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install "ruff==0.10.0" pip-audit
+          pip install "ruff==0.10.0" pip-audit radon
 
       - name: Ruff check
         run: ruff check .
 
       - name: Ruff format check
         run: ruff format --check .
+
+      - name: Radon cyclomatic complexity
+        run: |
+          echo "=== Cyclomatic complexity (app, scripts) ==="
+          radon cc app scripts -a -s --total-average
+
+      - name: Radon maintainability index
+        run: |
+          echo "=== Maintainability index (app, scripts) ==="
+          radon mi app scripts -s
+
+      # Gates run on app/ only (production code). Complexity: fail if any block is D (21-30) or E (31+). Relax with -n E to only fail on E.
+      - name: Radon complexity gate (app only, fail on D/E)
+        run: |
+          bad=$(radon cc app -n D --no-assert 2>/dev/null | grep -c . || true)
+          if [ "${bad:-0}" -gt 0 ]; then
+            echo "::error::app/ has cyclomatic complexity D or E (threshold: max C). Run 'radon cc app -n D' locally to list."
+            radon cc app -n D --no-assert
+            exit 1
+          fi
+
+      # Maintainability: fail if any app module is C or worse (A/B = pass).
+      - name: Radon maintainability gate (app only, fail if below B)
+        run: |
+          bad=$(radon mi app -n C 2>/dev/null | grep -c . || true)
+          if [ "${bad:-0}" -gt 0 ]; then
+            echo "::error::app/ has maintainability index C or worse (threshold: min B). Run 'radon mi app -n C' locally to list."
+            radon mi app -n C
+            exit 1
+          fi
 
       - name: Dependency audit
         run: pip-audit
