@@ -80,7 +80,6 @@ jobs:
 
       - name: Dependency audit
         run: pip-audit
-        continue-on-error: true
 
   pre-commit:
     name: Pre-commit
