@@ -8,10 +8,9 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    # FastAPI and ASGI server (0.116+ for Starlette 0.47+ CVE fixes)
-    "fastapi>=0.116.0,<0.117",
+    # FastAPI and ASGI server (bittensor pins 0.110.x; cannot upgrade for Starlette CVEs)
+    "fastapi>=0.110.1,<0.111",
     "uvicorn[standard]>=0.30.0",
-    "starlette>=0.47.2",
     # Data validation and settings
     "pydantic==2.8.0",
     "pydantic-settings>=2.4.0",
@@ -43,10 +42,9 @@ dev = [
     "flake8>=6.0.0"
 ]
 
+# Overrides omitted for starlette/setuptools: bittensor pins fastapi 0.110 & setuptools~=70.
 [tool.uv]
 override-dependencies = [
-    "starlette>=0.49.1",  # CVE-2025-62727 DoS (Range header)
-    "setuptools>=78.1.1",
     "urllib3>=2.6.0",     # CVE-2025-66418 decompression / resource limits
 ]
 
