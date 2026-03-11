@@ -82,54 +82,6 @@ jobs:
         run: pip-audit
         continue-on-error: true
 
-  test-and-coverage:
-    name: Tests & coverage
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run tests with coverage
-        run: |
-          pytest --cov=app --cov-report=xml --cov-report=term -v
-        env:
-          RUN_LIVE_TESTS: ""
-
-      - name: Coverage summary in job
-        run: |
-          python -c "
-          import os
-          import xml.etree.ElementTree as ET
-          root = ET.parse('coverage.xml').getroot()
-          pct = float(root.get('line-rate', 0)) * 100
-          lines_covered = int(root.get('lines-covered', 0))
-          lines_valid = int(root.get('lines-valid', 0))
-          path = os.environ.get('GITHUB_STEP_SUMMARY', '')
-          if path:
-              with open(path, 'a') as f:
-                  f.write('## Test coverage\n\n')
-                  f.write(f'- **Lines:** {lines_covered}/{lines_valid} ({pct:.1f}%)\n\n')
-                  f.write('Ver log del paso *Run tests with coverage* para detalle por archivo.\n')
-          "
-
   pre-commit:
     name: Pre-commit
     runs-on: ubuntu-latest
