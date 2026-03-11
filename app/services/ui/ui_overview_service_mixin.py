@@ -5,6 +5,19 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import text
 
+from app.services.metagraph_service import MetagraphError, get_validator_data
+
+
+def _normalize_stake_to_rao(stake: Any) -> float:
+    if stake is None:
+        return 0.0
+    value = float(stake or 0.0)
+    if value <= 0:
+        return 0.0
+    if value < 1.0:
+        return value * 1_000_000_000
+    return value
+
 
 class UIOverviewServiceMixin:
     async def get_overview_metrics(self) -> Dict[str, Any]:
@@ -462,6 +475,14 @@ class UIOverviewServiceMixin:
             uid = int(r["validator_uid"])
             if uid in by_validator:
                 continue
+            normalized_stake = _normalize_stake_to_rao(r.get("stake"))
+            if normalized_stake <= 0:
+                try:
+                    fresh_data = get_validator_data(uid=uid)
+                except MetagraphError:
+                    fresh_data = None
+                if fresh_data and fresh_data.get("stake") is not None:
+                    normalized_stake = _normalize_stake_to_rao(fresh_data.get("stake"))
             total_tasks = (
                 await self.session.execute(
                     text("SELECT COUNT(*) FROM tasks WHERE round_validator_id=:rvid"),
@@ -515,7 +536,7 @@ class UIOverviewServiceMixin:
                 "version": r["version"],
                 "lastSeen": (r["finished_at"] or r["started_at"] or datetime.now(timezone.utc)).isoformat(),
                 "uptime": 1.0,
-                "stake": float(r["stake"] or 0.0),
+                "stake": normalized_stake,
                 "emission": 0,
                 "validatorRoundId": f"validator_round_{int(r['round_validator_id'])}",
                 "roundNumber": int(r["season_number"]) * 10000 + int(r["round_number_in_season"]),
@@ -700,12 +721,31 @@ class UIOverviewServiceMixin:
 
     async def get_overview_network_status(self) -> Dict[str, Any]:
         validators, _ = await self.get_overview_validators_list(1, 1000, None, "lastSeen", "desc")
+        latest_round = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT s.season_number, r.round_number_in_season
+                        FROM rounds r
+                        JOIN seasons s ON s.season_id = r.season_id
+                        ORDER BY s.season_number DESC, r.round_number_in_season DESC
+                        LIMIT 1
+                        """
+                    )
+                )
+            )
+            .mappings()
+            .first()
+        )
         return {
             "status": "healthy",
             "message": "Network operational",
             "lastChecked": datetime.now(timezone.utc).isoformat(),
             "activeValidators": len(validators),
             "networkLatency": 0,
+            "season": int(latest_round["season_number"]) if latest_round and latest_round.get("season_number") is not None else None,
+            "round": int(latest_round["round_number_in_season"]) if latest_round and latest_round.get("round_number_in_season") is not None else None,
         }
 
     async def get_overview_recent_activity(self, limit: int) -> List[Dict[str, Any]]:

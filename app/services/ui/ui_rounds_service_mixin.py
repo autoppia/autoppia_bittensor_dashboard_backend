@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import text
 
 from app.config import settings
+from app.utils.images import resolve_validator_image
 
 
 class UIRoundsServiceMixin:
@@ -243,6 +244,26 @@ class UIRoundsServiceMixin:
         )
         return [int(row["season_number"]) for row in rows if row.get("season_number") is not None]
 
+    async def get_available_agents_seasons(self) -> List[int]:
+        rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT DISTINCT s.season_number
+                        FROM seasons s
+                        JOIN rounds r ON r.season_id = s.season_id
+                        WHERE lower(COALESCE(r.status, '')) IN ('finished', 'evaluating_finished')
+                        ORDER BY s.season_number DESC
+                        """
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return [int(row["season_number"]) for row in rows if row.get("season_number") is not None]
+
     async def get_round_miners(self, season: int, round_in_season: int) -> Dict[str, Any]:
         ref = await self._round_ref(season, round_in_season)
         if not ref:
@@ -418,12 +439,14 @@ class UIRoundsServiceMixin:
         }
 
     async def get_agents_season_rank(self, season_ref: str) -> Dict[str, Any]:
-        available_seasons = await self.get_available_seasons()
+        available_seasons = await self.get_available_agents_seasons()
         latest_season = available_seasons[0] if available_seasons else None
         if season_ref == "latest":
             season = latest_season
         else:
             season = int(season_ref)
+            if season not in available_seasons:
+                season = latest_season
         if season is None:
             return {
                 "season": None,
@@ -444,7 +467,8 @@ class UIRoundsServiceMixin:
         }
 
     async def get_latest_round_top_miner(self) -> Optional[Dict[str, Any]]:
-        latest_season = await self.get_latest_season_number()
+        available_seasons = await self.get_available_agents_seasons()
+        latest_season = available_seasons[0] if available_seasons else None
         if latest_season is None:
             return None
 
@@ -907,6 +931,7 @@ class UIRoundsServiceMixin:
                           validator_uid,
                           validator_hotkey,
                           name,
+                          image_url,
                           version,
                           stake,
                           vtrust,
@@ -1009,7 +1034,10 @@ class UIRoundsServiceMixin:
                     "validator_uid": int(validator["validator_uid"]),
                     "validator_name": validator.get("name") or f"Validator {int(validator['validator_uid'])}",
                     "validator_hotkey": validator.get("validator_hotkey"),
-                    "validator_image": "/validators/Other.png",
+                    "validator_image": resolve_validator_image(
+                        validator.get("name"),
+                        validator.get("image_url"),
+                    ),
                     "version": str(validator.get("version") or ""),
                     "stake": float(validator.get("stake") or 0.0),
                     "vtrust": float(validator.get("vtrust") or 0.0),
