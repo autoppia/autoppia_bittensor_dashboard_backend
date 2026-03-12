@@ -1286,12 +1286,18 @@ class ValidatorStorageSummaryMixin:
                     JOIN target_round tr ON tr.round_id = rv.round_id
                 ),
                 effective_per_validator_miner AS (
+                    -- Include all validators for task aggregates (eval_time, cost, tasks),
+                    -- but tag each row so reward/rank are taken only from the main validator.
+                    -- The main validator is our own node: its post_consensus values are exactly
+                    -- what was committed on-chain to Bittensor. If no main validator exists,
+                    -- fall back to the highest-stake validator for reward/rank.
                     SELECT
                         vrs.miner_uid,
                         vrs.post_consensus_rank,
                         vrs.post_consensus_avg_reward,
                         vrs.post_consensus_avg_eval_score,
                         vrs.weight,
+                        COALESCE(rv.is_main_validator, FALSE) AS is_main,
                         COALESCE(rv.stake, 0.0) AS validator_stake,
                         CASE
                             WHEN COALESCE(vrs.local_tasks_received, 0) > 0 THEN COALESCE(vrs.local_tasks_received, 0)
@@ -1316,19 +1322,28 @@ class ValidatorStorageSummaryMixin:
                 canonical_per_miner AS (
                     SELECT
                         epvm.miner_uid,
-                        MIN(epvm.post_consensus_rank) FILTER (WHERE epvm.post_consensus_rank IS NOT NULL) AS canonical_rank,
-                        CASE
-                            WHEN SUM(epvm.validator_stake) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL AND epvm.validator_stake > 0) > 0
-                            THEN SUM(epvm.post_consensus_avg_reward * epvm.validator_stake) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL AND epvm.validator_stake > 0)
-                                 / SUM(epvm.validator_stake) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL AND epvm.validator_stake > 0)
-                            ELSE AVG(epvm.post_consensus_avg_reward) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL)
-                        END AS canonical_reward,
-                        CASE
-                            WHEN SUM(epvm.validator_stake) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.validator_stake > 0) > 0
-                            THEN SUM(epvm.post_consensus_avg_eval_score * epvm.validator_stake) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.validator_stake > 0)
-                                 / SUM(epvm.validator_stake) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.validator_stake > 0)
-                            ELSE AVG(epvm.post_consensus_avg_eval_score) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL)
-                        END AS canonical_eval_score,
+                        -- Reward/rank come from the main validator (is_main=true) exclusively.
+                        -- That is the node that committed weights on-chain to Bittensor, so its
+                        -- post_consensus values are the authoritative source of truth.
+                        -- If no main validator row has data, fall back to highest-stake one
+                        -- (via MAX on validator_stake as tiebreaker), which is identical in
+                        -- normal operation since all aligned validators agree on the same value.
+                        COALESCE(
+                            MIN(epvm.post_consensus_rank) FILTER (WHERE epvm.is_main AND epvm.post_consensus_rank IS NOT NULL),
+                            MIN(epvm.post_consensus_rank) FILTER (WHERE epvm.post_consensus_rank IS NOT NULL)
+                        ) AS canonical_rank,
+                        COALESCE(
+                            MAX(epvm.post_consensus_avg_reward)
+                                FILTER (WHERE epvm.is_main AND epvm.post_consensus_avg_reward IS NOT NULL),
+                            MAX(epvm.post_consensus_avg_reward)
+                                FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL)
+                        ) AS canonical_reward,
+                        COALESCE(
+                            MAX(epvm.post_consensus_avg_eval_score)
+                                FILTER (WHERE epvm.is_main AND epvm.post_consensus_avg_eval_score IS NOT NULL),
+                            MAX(epvm.post_consensus_avg_eval_score)
+                                FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL)
+                        ) AS canonical_eval_score,
                         AVG(epvm.weight) FILTER (WHERE epvm.weight IS NOT NULL) AS canonical_weight,
                         SUM(COALESCE(epvm.effective_tasks_received, 0))::INTEGER AS canonical_tasks_received,
                         SUM(COALESCE(epvm.effective_tasks_success, 0))::INTEGER AS canonical_tasks_success,

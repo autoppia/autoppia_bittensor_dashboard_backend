@@ -465,60 +465,39 @@ async def init_db() -> None:
         await conn.execute(
             text(
                 """
-                WITH json_values AS (
-                    SELECT
-                        rs.round_id,
-                        NULLIF(rs.post_consensus_json->'summary'->'leader_before_round'->>'uid', '')::INTEGER AS lb_uid,
-                        NULLIF(rs.post_consensus_json->'summary'->'leader_before_round'->>'reward', '')::DOUBLE PRECISION AS lb_reward,
-                        NULLIF(rs.post_consensus_json->'summary'->'candidate_this_round'->>'uid', '')::INTEGER AS cand_uid,
-                        NULLIF(rs.post_consensus_json->'summary'->'candidate_this_round'->>'reward', '')::DOUBLE PRECISION AS cand_reward,
-                        NULLIF(rs.post_consensus_json->'summary'->'leader_after_round'->>'uid', '')::INTEGER AS la_uid_ipfs,
-                        NULLIF(rs.post_consensus_json->'summary'->'leader_after_round'->>'reward', '')::DOUBLE PRECISION AS la_reward_ipfs,
-                        COALESCE(
-                            NULLIF(rs.post_consensus_json->'summary'->>'percentage_to_dethrone', '')::DOUBLE PRECISION,
-                            rs.required_improvement_pct,
-                            0.05
-                        ) AS pct
-                    FROM round_summary rs
-                    WHERE rs.post_consensus_json IS NOT NULL AND rs.post_consensus_json ? 'summary'
-                ),
-                recomputed AS (
-                    SELECT
-                        jv.*,
-                        CASE
-                            WHEN jv.lb_uid IS NOT NULL AND jv.lb_reward IS NOT NULL AND jv.lb_reward > 0 AND jv.cand_reward IS NOT NULL
-                            THEN (jv.cand_reward > jv.lb_reward * (1.0 + jv.pct))
-                            ELSE FALSE
-                        END AS dethroned_recomputed,
-                        CASE
-                            WHEN jv.lb_uid IS NULL THEN jv.la_uid_ipfs
-                            WHEN jv.lb_reward IS NOT NULL AND jv.lb_reward > 0 AND jv.cand_reward IS NOT NULL
-                              AND jv.cand_reward > jv.lb_reward * (1.0 + jv.pct)
-                            THEN jv.cand_uid
-                            ELSE jv.lb_uid
-                        END AS la_uid_recomputed,
-                        CASE
-                            WHEN jv.lb_uid IS NULL THEN jv.la_reward_ipfs
-                            WHEN jv.lb_reward IS NOT NULL AND jv.lb_reward > 0 AND jv.cand_reward IS NOT NULL
-                              AND jv.cand_reward > jv.lb_reward * (1.0 + jv.pct)
-                            THEN jv.cand_reward
-                            ELSE jv.lb_reward
-                        END AS la_reward_recomputed
-                    FROM json_values jv
-                )
+                -- Only backfill round_summary rows whose scalar leadership columns are still
+                -- NULL (i.e. rounds written before this column existed or that were never
+                -- processed by _upsert_round_summary_from_validator_summary).
+                -- We intentionally do NOT overwrite existing non-NULL values so that corrected
+                -- data is never reverted by an API restart.
                 UPDATE round_summary rs
                 SET
-                    leader_before_miner_uid = r.lb_uid,
-                    leader_before_reward = r.lb_reward,
-                    candidate_miner_uid = r.cand_uid,
-                    candidate_reward = r.cand_reward,
-                    leader_after_miner_uid = r.la_uid_recomputed,
-                    leader_after_reward = r.la_reward_recomputed,
-                    required_improvement_pct = r.pct,
-                    dethroned = r.dethroned_recomputed,
+                    leader_before_miner_uid = COALESCE(rs.leader_before_miner_uid,
+                        NULLIF(rs.post_consensus_json->'summary'->'leader_before_round'->>'uid', '')::INTEGER),
+                    leader_before_reward = COALESCE(rs.leader_before_reward,
+                        NULLIF(rs.post_consensus_json->'summary'->'leader_before_round'->>'reward', '')::DOUBLE PRECISION),
+                    candidate_miner_uid = COALESCE(rs.candidate_miner_uid,
+                        NULLIF(rs.post_consensus_json->'summary'->'candidate_this_round'->>'uid', '')::INTEGER),
+                    candidate_reward = COALESCE(rs.candidate_reward,
+                        NULLIF(rs.post_consensus_json->'summary'->'candidate_this_round'->>'reward', '')::DOUBLE PRECISION),
+                    leader_after_miner_uid = COALESCE(rs.leader_after_miner_uid,
+                        NULLIF(rs.post_consensus_json->'summary'->'leader_after_round'->>'uid', '')::INTEGER),
+                    leader_after_reward = COALESCE(rs.leader_after_reward,
+                        NULLIF(rs.post_consensus_json->'summary'->'leader_after_round'->>'reward', '')::DOUBLE PRECISION),
+                    required_improvement_pct = COALESCE(rs.required_improvement_pct,
+                        NULLIF(rs.post_consensus_json->'summary'->>'percentage_to_dethrone', '')::DOUBLE PRECISION,
+                        0.05),
+                    dethroned = COALESCE(rs.dethroned,
+                        NULLIF(rs.post_consensus_json->'summary'->>'dethroned', '')::BOOLEAN,
+                        FALSE),
                     updated_at = NOW()
-                FROM recomputed r
-                WHERE r.round_id = rs.round_id
+                WHERE rs.post_consensus_json IS NOT NULL
+                  AND rs.post_consensus_json ? 'summary'
+                  AND (
+                    rs.leader_after_miner_uid IS NULL
+                    OR rs.candidate_miner_uid IS NULL
+                    OR rs.leader_after_reward IS NULL
+                  )
                 """
             )
         )
