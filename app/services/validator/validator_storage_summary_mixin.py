@@ -854,6 +854,20 @@ class ValidatorStorageSummaryMixin:
         candidate_reward = (
             float(candidate_row.get("reward", 0.0) or 0.0) if candidate_row is not None else (float(candidate_summary.get("reward")) if candidate_summary.get("reward") is not None else None)
         )
+
+        # Recompute dethroned and leader_after_uid from actual reward values.
+        # IPFS flags can be incorrect when validators ran buggy versions that used
+        # unweighted averages, causing artificially low candidate rewards and
+        # wrong dethrone decisions. Computing from the real rewards is always correct.
+        if leader_before_uid is not None and leader_before_reward is not None and leader_before_reward > 0 and candidate_reward is not None:
+            threshold = leader_before_reward * (1.0 + required_improvement_pct)
+            dethroned = bool(candidate_reward > threshold)
+            leader_after_uid = candidate_uid if dethroned else leader_before_uid
+        elif leader_before_uid is None:
+            dethroned = False
+            if leader_after_uid is None and winner_row is not None:
+                leader_after_uid = int(winner_row.get("uid"))
+
         leader_after_row = (
             next(
                 (row for row in competitive_rows if int(row.get("uid") or -1) == int(leader_after_uid)),
@@ -1278,6 +1292,7 @@ class ValidatorStorageSummaryMixin:
                         vrs.post_consensus_avg_reward,
                         vrs.post_consensus_avg_eval_score,
                         vrs.weight,
+                        COALESCE(rv.stake, 0.0) AS validator_stake,
                         CASE
                             WHEN COALESCE(vrs.local_tasks_received, 0) > 0 THEN COALESCE(vrs.local_tasks_received, 0)
                             ELSE COALESCE(vrs.post_consensus_tasks_received, 0)
@@ -1296,21 +1311,22 @@ class ValidatorStorageSummaryMixin:
                         END AS effective_eval_cost
                     FROM validator_round_summary_miners vrs
                     JOIN target_validator_rounds tvr ON tvr.validator_round_id = vrs.validator_round_id
+                    LEFT JOIN round_validators rv ON rv.validator_round_id = vrs.validator_round_id
                 ),
                 canonical_per_miner AS (
                     SELECT
                         epvm.miner_uid,
                         MIN(epvm.post_consensus_rank) FILTER (WHERE epvm.post_consensus_rank IS NOT NULL) AS canonical_rank,
                         CASE
-                            WHEN SUM(epvm.weight) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL AND epvm.weight IS NOT NULL) > 0
-                            THEN SUM(epvm.post_consensus_avg_reward * epvm.weight) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL AND epvm.weight IS NOT NULL)
-                                 / SUM(epvm.weight) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL AND epvm.weight IS NOT NULL)
+                            WHEN SUM(epvm.validator_stake) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL AND epvm.validator_stake > 0) > 0
+                            THEN SUM(epvm.post_consensus_avg_reward * epvm.validator_stake) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL AND epvm.validator_stake > 0)
+                                 / SUM(epvm.validator_stake) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL AND epvm.validator_stake > 0)
                             ELSE AVG(epvm.post_consensus_avg_reward) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL)
                         END AS canonical_reward,
                         CASE
-                            WHEN SUM(epvm.weight) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.weight IS NOT NULL) > 0
-                            THEN SUM(epvm.post_consensus_avg_eval_score * epvm.weight) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.weight IS NOT NULL)
-                                 / SUM(epvm.weight) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.weight IS NOT NULL)
+                            WHEN SUM(epvm.validator_stake) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.validator_stake > 0) > 0
+                            THEN SUM(epvm.post_consensus_avg_eval_score * epvm.validator_stake) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.validator_stake > 0)
+                                 / SUM(epvm.validator_stake) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.validator_stake > 0)
                             ELSE AVG(epvm.post_consensus_avg_eval_score) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL)
                         END AS canonical_eval_score,
                         AVG(epvm.weight) FILTER (WHERE epvm.weight IS NOT NULL) AS canonical_weight,
