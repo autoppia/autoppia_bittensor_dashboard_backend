@@ -1301,7 +1301,12 @@ class ValidatorStorageSummaryMixin:
                     SELECT
                         epvm.miner_uid,
                         MIN(epvm.post_consensus_rank) FILTER (WHERE epvm.post_consensus_rank IS NOT NULL) AS canonical_rank,
-                        AVG(epvm.post_consensus_avg_reward) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL) AS canonical_reward,
+                        CASE
+                            WHEN SUM(epvm.weight) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL AND epvm.weight IS NOT NULL) > 0
+                            THEN SUM(epvm.post_consensus_avg_reward * epvm.weight) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL AND epvm.weight IS NOT NULL)
+                                 / SUM(epvm.weight) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL AND epvm.weight IS NOT NULL)
+                            ELSE AVG(epvm.post_consensus_avg_reward) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL)
+                        END AS canonical_reward,
                         CASE
                             WHEN SUM(epvm.weight) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.weight IS NOT NULL) > 0
                             THEN SUM(epvm.post_consensus_avg_eval_score * epvm.weight) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.weight IS NOT NULL)
