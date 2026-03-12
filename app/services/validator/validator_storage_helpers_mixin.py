@@ -268,17 +268,14 @@ class ValidatorStorageHelpersMixin:
         task_solutions = list(getattr(run_row, "task_solutions", []) or [])
         evaluations = list(getattr(run_row, "evaluations", []) or [])
 
-        # CRITICAL: total_tasks should be the number of evaluations, because each task has one evaluation
-        # (even if the miner didn't respond, we create an evaluation with score 0.0)
-        # So total_tasks = len(evaluations) is correct
-        total_tasks = len(evaluations)
+        attempted_tasks = len(evaluations)
 
-        # If no evaluations yet, fall back to counting unique task_ids from solutions
-        if total_tasks == 0:
+        if attempted_tasks == 0:
             task_ids = {solution.task_id for solution in task_solutions if solution.task_id}
-            total_tasks = len(task_ids) if task_ids else (run_row.total_tasks or 0)
+            attempted_tasks = len(task_ids)
 
-        total_tasks = int(total_tasks or 0)
+        configured_total_tasks = int(getattr(run_row, "total_tasks", 0) or 0)
+        total_tasks = max(configured_total_tasks, int(attempted_tasks or 0))
 
         scores: List[float] = []
         for eval_obj in evaluations:
@@ -298,10 +295,8 @@ class ValidatorStorageHelpersMixin:
         # If there are evaluations, we should always have scores (even if all are 0.0)
         # If there are no evaluations, average_score can be None (round not finished yet)
         if total_tasks > 0:
-            # We have tasks (evaluations), so we must have scores
-            average_score = sum(scores) / len(scores) if scores else 0.0
+            average_score = sum(scores) / float(total_tasks) if scores else 0.0
         else:
-            # No tasks yet - average_score is None (round not finished)
             average_score = None
 
         # Binary scoring: evaluation_score is 1.0 if at least one test passed, 0.0 otherwise
@@ -331,7 +326,7 @@ class ValidatorStorageHelpersMixin:
             if value is not None:
                 reward_values.append(value)
 
-        average_reward = (sum(reward_values) / len(reward_values)) if reward_values and len(reward_values) > 0 else None
+        average_reward = (sum(reward_values) / float(total_tasks)) if reward_values and total_tasks > 0 else None
 
         return {
             "total_tasks": total_tasks,
