@@ -168,6 +168,7 @@ class TasksDomainServiceMixin:
         limit: int,
         agent_run_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        miner_uid: Optional[int] = None,
         validator_id: Optional[str] = None,
         website: Optional[str] = None,
         use_case: Optional[str] = None,
@@ -195,6 +196,7 @@ class TasksDomainServiceMixin:
                 limit=limit,
                 agent_run_id=agent_run_id,
                 agent_id=agent_id,
+                miner_uid=miner_uid,
                 validator_id=validator_id,
                 website=website,
                 use_case=use_case,
@@ -222,6 +224,7 @@ class TasksDomainServiceMixin:
                 limit=limit,
                 agent_run_id=agent_run_id,
                 agent_id=agent_id,
+                miner_uid=miner_uid,
                 validator_id=validator_id,
                 website=website,
                 use_case=use_case,
@@ -295,6 +298,9 @@ class TasksDomainServiceMixin:
                 miner_uid = _parse_identifier(agent_id)
                 if context.agent_run.miner_uid != miner_uid:
                     continue
+
+            if miner_uid is not None and context.agent_run.miner_uid != miner_uid:
+                continue
 
             if validator_id:
                 validator_uid = _parse_identifier(validator_id)
@@ -447,6 +453,7 @@ class TasksDomainServiceMixin:
         limit: int,
         agent_run_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        miner_uid: Optional[int] = None,
         validator_id: Optional[str] = None,
         website: Optional[str] = None,
         use_case: Optional[str] = None,
@@ -501,6 +508,9 @@ class TasksDomainServiceMixin:
             filters.append(EvaluationORM.evaluation_score >= min_score)
         if max_score is not None:
             filters.append(EvaluationORM.evaluation_score <= max_score)
+
+        if miner_uid is not None:
+            filters.append(EvaluationORM.miner_uid == miner_uid)
 
         if use_case:
             # Filter by use_case name in JSON field
@@ -643,9 +653,11 @@ class TasksDomainServiceMixin:
                 except Exception:
                     parsed_agent = None
                 if parsed_agent is not None:
-                    miner_uid = ev.miner_uid
-                    if miner_uid != parsed_agent:
+                    evaluation_miner_uid = ev.miner_uid
+                    if evaluation_miner_uid != parsed_agent:
                         continue
+            if miner_uid is not None and ev.miner_uid != miner_uid:
+                continue
             if validator_id:
                 try:
                     parsed_validator = _parse_identifier(validator_id)
