@@ -633,6 +633,12 @@ class UIOverviewServiceMixin:
                            r.ended_at,
                            rs.leader_after_miner_uid,
                            rs.leader_after_reward,
+                           -- Running max reward within each season so the graph never decreases
+                           MAX(rs.leader_after_reward) OVER (
+                               PARTITION BY s.season_id
+                               ORDER BY r.round_number_in_season
+                               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                           ) AS best_reward_so_far,
                            (
                              SELECT rvm.name
                              FROM round_validator_miners rvm
@@ -657,13 +663,16 @@ class UIOverviewServiceMixin:
         )
         entries = []
         for r in rows:
+            # Use the running-max reward so the graph is always non-decreasing within a season.
+            # Active rounds (no consensus yet) show the best achieved so far.
+            display_reward = float(r["best_reward_so_far"] or r["leader_after_reward"] or 0.0)
             entries.append(
                 {
                     "round": int(r["round_number_in_season"]),
                     "season": int(r["season_number"]),
-                    "subnet36": float(r["leader_after_reward"] or 0.0),
-                    "post_consensus_reward": float(r["leader_after_reward"] or 0.0),
-                    "reward": float(r["leader_after_reward"] or 0.0),
+                    "subnet36": display_reward,
+                    "post_consensus_reward": display_reward,
+                    "reward": display_reward,
                     "winnerUid": int(r["leader_after_miner_uid"]) if r["leader_after_miner_uid"] is not None else None,
                     "winnerName": r.get("leader_name"),
                     "timestamp": (r["ended_at"] or datetime.now(timezone.utc)).isoformat(),
