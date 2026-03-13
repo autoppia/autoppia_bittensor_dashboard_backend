@@ -90,6 +90,7 @@ class UIOverviewServiceMixin:
         metrics_source = latest_finished or latest_any
         metrics_season = int(metrics_source["season_number"])
         metrics_round_id = int(metrics_source["round_id"])
+        metrics_round_in_season = int(metrics_source["round_number_in_season"])
 
         current_season = int(latest_any["season_number"])
         current_round_in_season = int(latest_any["round_number_in_season"])
@@ -431,8 +432,10 @@ class UIOverviewServiceMixin:
             }
         return {
             "leader": leader_payload,
-            "season": current_season,
-            "round": current_round_in_season,
+            "season": metrics_season,
+            "round": metrics_round_in_season,
+            "currentSeason": current_season,
+            "currentRound": current_round_in_season,
             "totalMiners": len(miners),
             "tasksPerValidator": int(tasks_per_validator or 0),
             "minerList": [dict(m) for m in miners],
