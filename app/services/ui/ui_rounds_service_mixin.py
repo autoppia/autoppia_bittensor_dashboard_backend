@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -86,6 +87,103 @@ class UIRoundsServiceMixin:
             return []
         miners = post_consensus_json.get("miners")
         return [miner for miner in miners if isinstance(miner, dict)] if isinstance(miners, list) else []
+
+    @staticmethod
+    def _json_dict(value: Any) -> Dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except Exception:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
+
+    @classmethod
+    def _downloaded_payload_maps(cls, validators_raw: List[Dict[str, Any]]) -> Tuple[Dict[int, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+        by_uid: Dict[int, Dict[str, Any]] = {}
+        by_hotkey: Dict[str, Dict[str, Any]] = {}
+        for raw_validator in validators_raw:
+            ipfs_downloaded = cls._json_dict(raw_validator.get("ipfs_downloaded"))
+            payloads = ipfs_downloaded.get("payloads")
+            if not isinstance(payloads, list):
+                continue
+            for payload_entry in payloads:
+                if not isinstance(payload_entry, dict):
+                    continue
+                payload = cls._json_dict(payload_entry.get("payload"))
+                if not payload:
+                    continue
+                validator_uid = cls._coerce_int(payload_entry.get("validator_uid") or payload.get("validator_uid") or payload.get("uid"))
+                validator_hotkey = payload_entry.get("validator_hotkey") or payload.get("validator_hotkey") or payload.get("hk")
+                if validator_uid is not None and validator_uid not in by_uid:
+                    by_uid[validator_uid] = payload
+                if isinstance(validator_hotkey, str) and validator_hotkey and validator_hotkey not in by_hotkey:
+                    by_hotkey[validator_hotkey] = payload
+        return by_uid, by_hotkey
+
+    @classmethod
+    def _resolve_validator_round_payload(
+        cls,
+        validator_row: Dict[str, Any],
+        *,
+        downloaded_payloads_by_uid: Dict[int, Dict[str, Any]],
+        downloaded_payloads_by_hotkey: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        ipfs_uploaded = cls._json_dict(validator_row.get("ipfs_uploaded"))
+        payload = cls._json_dict(ipfs_uploaded.get("payload"))
+        if payload:
+            return payload
+
+        validator_uid = cls._coerce_int(validator_row.get("validator_uid"))
+        if validator_uid is not None and validator_uid in downloaded_payloads_by_uid:
+            return downloaded_payloads_by_uid[validator_uid]
+
+        validator_hotkey = validator_row.get("validator_hotkey")
+        if isinstance(validator_hotkey, str) and validator_hotkey:
+            return downloaded_payloads_by_hotkey.get(validator_hotkey, {})
+
+        return {}
+
+    @classmethod
+    def _local_miners_from_ipfs_payload(cls, payload: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
+        miners = payload.get("miners")
+        if not isinstance(miners, list):
+            return {}
+
+        parsed: Dict[int, Dict[str, Any]] = {}
+        for miner in miners:
+            if not isinstance(miner, dict):
+                continue
+            miner_uid = cls._coerce_int(miner.get("uid"))
+            if miner_uid is None:
+                continue
+            best_run = cls._json_dict(miner.get("best_run"))
+            current_run = cls._json_dict(miner.get("current_run"))
+            best_or_current = best_run or current_run
+            parsed[miner_uid] = {
+                "uid": miner_uid,
+                "name": miner.get("miner_name") or f"Miner {miner_uid}",
+                "hotkey": miner.get("hotkey"),
+                "github_url": best_or_current.get("github_url"),
+                "local_avg_reward": cls._coerce_float(current_run.get("reward")) if current_run else None,
+                "local_avg_eval_score": cls._coerce_float(current_run.get("score")) if current_run else None,
+                "local_avg_eval_time": cls._coerce_float(current_run.get("time")) if current_run else None,
+                "local_avg_eval_cost": cls._coerce_float(current_run.get("cost")) if current_run else None,
+                "best_local_reward": cls._coerce_float(best_or_current.get("reward")) or 0.0,
+                "best_local_eval_score": cls._coerce_float(best_or_current.get("score")) or 0.0,
+                "best_local_eval_time": cls._coerce_float(best_or_current.get("time")) or 0.0,
+                "best_local_eval_cost": cls._coerce_float(best_or_current.get("cost")),
+            }
+        return parsed
+
+    @staticmethod
+    def _competition_sort_key(miner: Dict[str, Any]) -> Tuple[float, float, int]:
+        best_reward = float(miner.get("best_local_reward") or 0.0)
+        local_reward = float(miner.get("local_avg_reward") or 0.0)
+        uid = int(miner.get("uid") or 0)
+        return (-best_reward, -local_reward, uid)
 
     @classmethod
     def _miner_identity_from_post_consensus(cls, miner: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Optional[float]]:
@@ -928,6 +1026,7 @@ class UIRoundsServiceMixin:
                         """
                         SELECT
                           round_validator_id,
+                          validator_round_id,
                           validator_uid,
                           validator_hotkey,
                           name,
@@ -951,6 +1050,7 @@ class UIRoundsServiceMixin:
             .mappings()
             .all()
         )
+        downloaded_payloads_by_uid, downloaded_payloads_by_hotkey = self._downloaded_payload_maps([dict(row) for row in validators_raw])
 
         validators: List[Dict[str, Any]] = []
         for raw_validator in validators_raw:
@@ -964,6 +1064,7 @@ class UIRoundsServiceMixin:
                 )
             ).scalar_one_or_none()
             tasks_total = int(tasks_total or 0)
+            validator_round_id = str(validator.get("validator_round_id") or "")
 
             miners = (
                 (
@@ -988,14 +1089,6 @@ class UIRoundsServiceMixin:
                               post_consensus_tasks_received
                             FROM round_validator_miners
                             WHERE round_validator_id = :rvid
-                              AND (
-                                COALESCE(post_consensus_tasks_received, 0) > 0
-                                OR NULLIF(TRIM(COALESCE(name, '')), '') IS NOT NULL
-                              )
-                            ORDER BY
-                              best_local_reward DESC NULLS LAST,
-                              best_local_rank ASC NULLS LAST,
-                              miner_uid ASC
                             """
                         ),
                         {"rvid": round_validator_id},
@@ -1005,27 +1098,114 @@ class UIRoundsServiceMixin:
                 .all()
             )
 
-            competition_miners: List[Dict[str, Any]] = []
-            for item in miners:
-                miner_uid = int(item["miner_uid"])
-                competition_miners.append(
-                    {
-                        "uid": miner_uid,
-                        "name": item.get("name") or f"Miner {miner_uid}",
-                        "hotkey": item.get("miner_hotkey"),
-                        "github_url": item.get("github_url"),
-                        "image": item.get("image_url") or f"/miners/{miner_uid % 100}.svg",
-                        "competition_rank": (int(item["best_local_rank"]) if item.get("best_local_rank") is not None else None),
-                        "local_avg_reward": (float(item["local_avg_reward"]) if item.get("local_avg_reward") is not None else None),
-                        "local_avg_eval_score": (float(item["local_avg_eval_score"]) if item.get("local_avg_eval_score") is not None else None),
-                        "local_avg_eval_time": (float(item["local_avg_eval_time"]) if item.get("local_avg_eval_time") is not None else None),
-                        "local_avg_eval_cost": (float(item["local_avg_eval_cost"]) if item.get("local_avg_eval_cost") is not None else None),
-                        "best_local_reward": float(item.get("best_local_reward") or 0.0),
-                        "best_local_eval_score": float(item.get("best_local_eval_score") or 0.0),
-                        "best_local_eval_time": float(item.get("best_local_eval_time") or 0.0),
-                        "best_local_eval_cost": (float(item["best_local_eval_cost"]) if item.get("best_local_eval_cost") is not None else None),
-                    }
+            fallback_local_runs: Dict[int, Dict[str, Any]] = {}
+            if validator_round_id:
+                fallback_run_rows = (
+                    (
+                        await self.session.execute(
+                            text(
+                                """
+                                SELECT
+                                  mer.miner_uid,
+                                  mer.average_reward,
+                                  mer.average_score,
+                                  mer.average_execution_time,
+                                  mer.total_tasks,
+                                  mer.success_tasks,
+                                  (
+                                    SELECT AVG(eval_total_cost)
+                                    FROM (
+                                      SELECT e.evaluation_id, SUM(COALESCE(elu.cost, 0)) AS eval_total_cost
+                                      FROM evaluations e
+                                      JOIN evaluation_llm_usage elu ON elu.evaluation_id = e.evaluation_id
+                                      WHERE e.validator_round_id = :vrid
+                                        AND e.miner_uid = mer.miner_uid
+                                      GROUP BY e.evaluation_id
+                                    ) c
+                                  ) AS average_cost
+                                FROM miner_evaluation_runs mer
+                                WHERE mer.validator_round_id = :vrid
+                                """
+                            ),
+                            {"vrid": validator_round_id},
+                        )
+                    )
+                    .mappings()
+                    .all()
                 )
+                fallback_local_runs = {
+                    int(row["miner_uid"]): {
+                        "reward": float(row["average_reward"] or 0.0),
+                        "score": float(row["average_score"] or 0.0),
+                        "time": float(row["average_execution_time"] or 0.0),
+                        "cost": (float(row["average_cost"]) if row.get("average_cost") is not None else None),
+                        "tasks_received": int(row["total_tasks"] or 0),
+                        "tasks_success": int(row["success_tasks"] or 0),
+                    }
+                    for row in fallback_run_rows
+                    if row.get("miner_uid") is not None
+                }
+
+            payload_for_validator = self._resolve_validator_round_payload(
+                validator,
+                downloaded_payloads_by_uid=downloaded_payloads_by_uid,
+                downloaded_payloads_by_hotkey=downloaded_payloads_by_hotkey,
+            )
+            fallback_ipfs_miners = self._local_miners_from_ipfs_payload(payload_for_validator)
+
+            miners_by_uid = {int(item["miner_uid"]): dict(item) for item in miners if item.get("miner_uid") is not None}
+            all_miner_uids = set(miners_by_uid) | set(fallback_local_runs) | set(fallback_ipfs_miners)
+
+            competition_miners: List[Dict[str, Any]] = []
+            for miner_uid in sorted(all_miner_uids):
+                item = miners_by_uid.get(miner_uid) or {}
+                fallback_local = fallback_local_runs.get(miner_uid) or {}
+                fallback_ipfs = fallback_ipfs_miners.get(miner_uid) or {}
+                local_avg_reward = float(item["local_avg_reward"]) if item.get("local_avg_reward") is not None else fallback_local.get("reward", fallback_ipfs.get("local_avg_reward"))
+                local_avg_eval_score = float(item["local_avg_eval_score"]) if item.get("local_avg_eval_score") is not None else fallback_local.get("score", fallback_ipfs.get("local_avg_eval_score"))
+                local_avg_eval_time = float(item["local_avg_eval_time"]) if item.get("local_avg_eval_time") is not None else fallback_local.get("time", fallback_ipfs.get("local_avg_eval_time"))
+                local_avg_eval_cost = float(item["local_avg_eval_cost"]) if item.get("local_avg_eval_cost") is not None else fallback_local.get("cost", fallback_ipfs.get("local_avg_eval_cost"))
+                best_local_reward = (
+                    float(item["best_local_reward"])
+                    if item.get("best_local_reward") is not None
+                    else float(fallback_ipfs.get("best_local_reward") if fallback_ipfs.get("best_local_reward") is not None else (fallback_local.get("reward") or 0.0))
+                )
+                best_local_eval_score = (
+                    float(item["best_local_eval_score"])
+                    if item.get("best_local_eval_score") is not None
+                    else float(fallback_ipfs.get("best_local_eval_score") if fallback_ipfs.get("best_local_eval_score") is not None else (fallback_local.get("score") or 0.0))
+                )
+                best_local_eval_time = (
+                    float(item["best_local_eval_time"])
+                    if item.get("best_local_eval_time") is not None
+                    else float(fallback_ipfs.get("best_local_eval_time") if fallback_ipfs.get("best_local_eval_time") is not None else (fallback_local.get("time") or 0.0))
+                )
+                best_local_eval_cost = (
+                    float(item["best_local_eval_cost"])
+                    if item.get("best_local_eval_cost") is not None
+                    else (fallback_ipfs.get("best_local_eval_cost") if fallback_ipfs.get("best_local_eval_cost") is not None else fallback_local.get("cost"))
+                )
+                miner_entry = {
+                    "uid": miner_uid,
+                    "name": item.get("name") or fallback_ipfs.get("name") or f"Miner {miner_uid}",
+                    "hotkey": item.get("miner_hotkey") or fallback_ipfs.get("hotkey"),
+                    "github_url": item.get("github_url") or fallback_ipfs.get("github_url"),
+                    "image": item.get("image_url") or f"/miners/{miner_uid % 100}.svg",
+                    "competition_rank": (int(item["best_local_rank"]) if item.get("best_local_rank") is not None else None),
+                    "local_avg_reward": local_avg_reward,
+                    "local_avg_eval_score": local_avg_eval_score,
+                    "local_avg_eval_time": local_avg_eval_time,
+                    "local_avg_eval_cost": local_avg_eval_cost,
+                    "best_local_reward": best_local_reward,
+                    "best_local_eval_score": best_local_eval_score,
+                    "best_local_eval_time": best_local_eval_time,
+                    "best_local_eval_cost": best_local_eval_cost,
+                }
+                has_signal = miner_entry["best_local_reward"] > 0.0 or (miner_entry["local_avg_reward"] or 0.0) > 0.0 or bool(miner_entry["github_url"]) or bool(miner_entry["hotkey"])
+                if has_signal:
+                    competition_miners.append(miner_entry)
+
+            competition_miners.sort(key=self._competition_sort_key)
 
             winner = competition_miners[0] if competition_miners else None
 
@@ -1414,70 +1594,35 @@ class UIRoundsServiceMixin:
 
     async def get_round_validators_data(self, round_identifier: str) -> Dict[str, Any]:
         ref = await self._resolve_round_identifier(round_identifier)
-        round_id = int(ref["round_id"])
-        rows = (
-            (
-                await self.session.execute(
-                    text(
-                        """
-                    SELECT
-                      rv.round_validator_id,
-                      rv.validator_uid,
-                      rv.validator_hotkey,
-                      rv.name,
-                      rv.version,
-                      rv.stake,
-                      rv.vtrust,
-                      rv.started_at,
-                      rv.finished_at,
-                      COALESCE(COUNT(DISTINCT t.task_id), 0) AS total_tasks,
-                      COALESCE(
-                        COUNT(
-                          DISTINCT CASE
-                            WHEN NULLIF(TRIM(COALESCE(rvm.name, '')), '') IS NOT NULL
-                              AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
-                            THEN rvm.miner_uid
-                          END
-                        ),
-                        0
-                      ) AS total_miners,
-                      COALESCE(AVG(COALESCE(rvm.local_avg_reward, rvm.best_local_reward)), 0) AS avg_reward,
-                      COALESCE(MAX(COALESCE(rvm.local_avg_reward, rvm.best_local_reward)), 0) AS top_score
-                    FROM round_validators rv
-                    LEFT JOIN tasks t ON t.round_validator_id = rv.round_validator_id
-                    LEFT JOIN round_validator_miners rvm ON rvm.round_validator_id = rv.round_validator_id
-                    WHERE rv.round_id = :rid
-                    GROUP BY rv.round_validator_id, rv.validator_uid, rv.validator_hotkey, rv.name, rv.version, rv.stake, rv.vtrust, rv.started_at, rv.finished_at
-                    ORDER BY rv.validator_uid ASC
-                    """
-                    ),
-                    {"rid": round_id},
-                )
-            )
-            .mappings()
-            .all()
-        )
+        round_view = await self.get_round_validators_view(int(ref["season_number"]), int(ref["round_number_in_season"]))
         validators = []
-        for r in rows:
+        for validator in round_view.get("validators", []):
+            competition_state = validator.get("competition_state") or {}
+            miners = [miner for miner in (competition_state.get("miners") or []) if isinstance(miner, dict)]
+            avg_reward = sum(float(miner.get("best_local_reward") or miner.get("local_avg_reward") or 0.0) for miner in miners) / len(miners) if miners else 0.0
             validators.append(
                 {
-                    "id": f"validator-{int(r['validator_uid'])}",
-                    "name": r["name"] or f"validator {int(r['validator_uid'])}",
-                    "hotkey": r["validator_hotkey"] or "",
+                    "id": f"validator-{int(validator['validator_uid'])}",
+                    "name": validator["validator_name"] or f"validator {int(validator['validator_uid'])}",
+                    "hotkey": validator["validator_hotkey"] or "",
                     "icon": "/validators/Other.png",
                     "status": "active",
-                    "totalTasks": int(r["total_tasks"] or 0),
-                    "completedTasks": int(r["total_tasks"] or 0),
-                    "totalMiners": int(r["total_miners"] or 0),
-                    "activeMiners": int(r["total_miners"] or 0),
-                    "averageReward": float(r["avg_reward"] or 0.0),
-                    "topReward": float(r["top_score"] or 0.0),
+                    "totalTasks": int(validator.get("tasks_total") or 0),
+                    "completedTasks": int(validator.get("tasks_total") or 0),
+                    "totalMiners": int(competition_state.get("miners_participated") or 0),
+                    "activeMiners": int(competition_state.get("miners_participated") or 0),
+                    "averageReward": float(avg_reward or 0.0),
+                    "topReward": float(competition_state.get("top_reward") or 0.0),
                     "weight": 1,
-                    "trust": float(r["vtrust"] or 0.0),
-                    "version": str(r["version"] or ""),
-                    "stake": int(r["stake"] or 0),
+                    "trust": float(validator.get("vtrust") or 0.0),
+                    "version": str(validator.get("version") or ""),
+                    "stake": int(validator.get("stake") or 0),
                     "emission": 0,
-                    "lastSeen": (r["finished_at"] or r["started_at"] or datetime.now(timezone.utc)).isoformat(),
+                    "lastSeen": (
+                        datetime.fromisoformat(validator["finished_at"])
+                        if validator.get("finished_at")
+                        else (datetime.fromisoformat(validator["started_at"]) if validator.get("started_at") else datetime.now(timezone.utc))
+                    ).isoformat(),
                     "uptime": 1.0,
                 }
             )
