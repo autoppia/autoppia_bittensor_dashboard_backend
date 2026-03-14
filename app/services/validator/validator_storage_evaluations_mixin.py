@@ -151,7 +151,8 @@ class ValidatorStorageEvaluationsMixin:
 
         # Reload agent_run with evaluations and task_solutions to recalc stats without lazy loads
         await self.session.refresh(agent_run_row, ["evaluations", "task_solutions"])
-        metrics = self._compute_agent_run_stats(agent_run_row)
+        total_tasks_override = await self._resolve_expected_total_tasks_for_round(agent_run_row.validator_round_id)
+        metrics = self._compute_agent_run_stats(agent_run_row, total_tasks_override=total_tasks_override)
         agent_run_row.total_tasks = metrics["total_tasks"]
         agent_run_row.success_tasks = metrics["success_tasks"]
         agent_run_row.failed_tasks = metrics["failed_tasks"]
@@ -292,7 +293,8 @@ class ValidatorStorageEvaluationsMixin:
             # This ensures average_score is NEVER NULL if there are evaluations
             # Only update if this was a new evaluation (not existing)
             await self.session.refresh(agent_run_row, ["evaluations", "task_solutions"])
-            metrics = self._compute_agent_run_stats(agent_run_row)
+            total_tasks_override = await self._resolve_expected_total_tasks_for_round(agent_run_row.validator_round_id)
+            metrics = self._compute_agent_run_stats(agent_run_row, total_tasks_override=total_tasks_override)
             agent_run_row.total_tasks = metrics["total_tasks"]
             agent_run_row.success_tasks = metrics["success_tasks"]
             agent_run_row.failed_tasks = metrics["failed_tasks"]

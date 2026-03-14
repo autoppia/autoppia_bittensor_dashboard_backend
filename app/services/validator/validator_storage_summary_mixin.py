@@ -355,6 +355,13 @@ class ValidatorStorageSummaryMixin:
         else:
             enriched_post = {"raw": validator_summary.get("evaluation_post_consensus")}
 
+        reported_validators_participated = 0
+        try:
+            reported_validators_participated = int(current_post.get("validators_participated") or 0)
+        except Exception:
+            reported_validators_participated = 0
+        effective_validators_participated = reported_validators_participated if reported_validators_participated > 0 else validators_count
+
         existing_miners_by_uid: Dict[int, Dict[str, Any]] = {}
         for miner_payload in enriched_post.get("miners", []) if isinstance(enriched_post.get("miners"), list) else []:
             if not isinstance(miner_payload, dict):
@@ -489,7 +496,7 @@ class ValidatorStorageSummaryMixin:
             normalized_miners_payload.append(normalized_payload)
 
         enriched_post["miners"] = normalized_miners_payload
-        enriched_post["validators_participated"] = validators_count
+        enriched_post["validators_participated"] = effective_validators_participated
         enriched_post["miners_evaluated"] = db_rollup["miners_evaluated"]
         enriched_post["tasks_evaluated"] = db_rollup["tasks_evaluated"]
         enriched_post["tasks_success"] = db_rollup["tasks_success"]

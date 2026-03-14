@@ -5,7 +5,9 @@ import json
 import pytest
 from sqlalchemy import text
 
+from app.db.models import ValidatorRoundORM, ValidatorRoundSummaryORM, ValidatorRoundValidatorORM
 from app.services.ui.ui_data_service import UIDataService
+from app.services.validator.validator_storage import ValidatorRoundPersistenceService
 
 
 @pytest.mark.asyncio
@@ -334,3 +336,95 @@ async def test_round_validators_views_reconstruct_local_state_from_runs_and_down
     compact_by_id = {item["id"]: item for item in compact["validators"]}
     assert compact_by_id["validator-20"]["topReward"] == pytest.approx(0.2604146231)
     assert compact_by_id["validator-55"]["topReward"] == pytest.approx(0.12)
+
+
+@pytest.mark.asyncio
+async def test_post_consensus_preserves_effective_validators_participated_from_payload(db_session):
+    """
+    Scenario:
+    A validator payload already reports that two validators participated in
+    consensus, but backend enrichment only sees one validator snapshot row for
+    this specific validator_round and would otherwise collapse the metadata to 1.
+
+    What this test proves:
+    backend preserves the effective `validators_participated` from the
+    consensus payload instead of overwriting it with the per-validator row
+    count fallback.
+    """
+
+    round_row = ValidatorRoundORM(
+        validator_round_id="validator_round_1_1_55hash",
+        season_number=1,
+        round_number_in_season=1,
+        start_block=7740561,
+        end_block=7742361,
+        start_epoch=21500,
+        end_epoch=21505,
+        started_at=1.0,
+        ended_at=2.0,
+        n_tasks=100,
+        status="finished",
+        validator_summary={
+            "evaluation_post_consensus": {
+                "season": 1,
+                "round": 1,
+                "consensus_type": "stake_weighted",
+                "validators_participated": 2,
+                "miners": [
+                    {
+                        "uid": 48,
+                        "hotkey": "miner-48-hotkey",
+                        "best_run_consensus": {
+                            "reward": 0.02752420449615931,
+                            "score": 0.03,
+                            "time": 79.0,
+                            "cost": 0.03,
+                            "tasks_received": 200,
+                            "tasks_success": 8,
+                            "rank": 1,
+                            "weight": 0.075,
+                        },
+                    }
+                ],
+                "summary": {
+                    "percentage_to_dethrone": 0.05,
+                    "dethroned": False,
+                    "leader_before_round": None,
+                    "candidate_this_round": {"uid": 48, "reward": 0.02752420449615931},
+                    "leader_after_round": {"uid": 48, "reward": 0.02752420449615931, "weight": 0.075},
+                },
+            }
+        },
+    )
+    db_session.add(round_row)
+    db_session.add(
+        ValidatorRoundValidatorORM(
+            validator_round_id=round_row.validator_round_id,
+            validator_uid=55,
+            validator_hotkey="validator-55-hotkey",
+            name="Yuma",
+            version="20.0.0",
+        )
+    )
+    db_session.add(
+        ValidatorRoundSummaryORM(
+            validator_round_id=round_row.validator_round_id,
+            miner_uid=48,
+            miner_hotkey="miner-48-hotkey",
+            post_consensus_rank=1,
+            post_consensus_avg_reward=0.02752420449615931,
+            post_consensus_avg_eval_score=0.03,
+            post_consensus_avg_eval_time=79.0,
+            post_consensus_avg_eval_cost=0.03,
+            post_consensus_tasks_received=200,
+            post_consensus_tasks_success=8,
+            weight=0.075,
+        )
+    )
+    await db_session.flush()
+
+    service = ValidatorRoundPersistenceService(db_session)
+    await service._enrich_validator_summary_post_consensus_from_db(round_row)
+
+    enriched = round_row.validator_summary["evaluation_post_consensus"]
+    assert enriched["validators_participated"] == 2

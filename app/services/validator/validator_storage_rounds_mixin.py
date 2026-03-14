@@ -288,6 +288,10 @@ class ValidatorStorageRoundsMixin:
 
         await self._upsert_miner_snapshot(round_row, miner_snapshot)
 
+        expected_total_tasks = await self._resolve_expected_total_tasks_for_round(validator_round_id)
+        if expected_total_tasks is not None:
+            agent_run.total_tasks = max(int(agent_run.total_tasks or 0), int(expected_total_tasks))
+
         kwargs = self._agent_run_kwargs(agent_run)
         row = AgentEvaluationRunORM(**kwargs)
         self.session.add(row)
@@ -562,6 +566,17 @@ class ValidatorStorageRoundsMixin:
                     continue
                 zero_reason_map[agent_run_id] = agent_run_data.get("zero_reason")
 
+        local_current_run_by_miner_uid: Dict[int, Dict[str, Any]] = {}
+        if isinstance(local_evaluation, dict):
+            for miner_data in local_evaluation.get("miners", []) or []:
+                if not isinstance(miner_data, dict):
+                    continue
+                miner_uid = self._coerce_non_negative_int(miner_data.get("miner_uid"))
+                current_run = miner_data.get("current_run")
+                if miner_uid is None or not isinstance(current_run, dict):
+                    continue
+                local_current_run_by_miner_uid[int(miner_uid)] = current_run
+
         stmt_runs = (
             select(AgentEvaluationRunORM)
             .options(
@@ -579,7 +594,29 @@ class ValidatorStorageRoundsMixin:
         run_rows = list(run_rows_result)
 
         for run_row in run_rows:
-            metrics = self._compute_agent_run_stats(run_row)
+            local_current_run = local_current_run_by_miner_uid.get(int(run_row.miner_uid)) if run_row.miner_uid is not None else None
+            total_tasks_override = await self._resolve_expected_total_tasks_for_round(
+                validator_round_id,
+                local_evaluation=local_evaluation,
+                miner_uid=run_row.miner_uid,
+            )
+            metrics = self._compute_agent_run_stats(run_row, total_tasks_override=total_tasks_override)
+            if local_current_run is not None:
+                local_tasks_received = self._coerce_positive_int(local_current_run.get("tasks_received"))
+                local_tasks_success = self._coerce_non_negative_int(local_current_run.get("tasks_success"))
+                if local_tasks_received is not None:
+                    metrics["total_tasks"] = local_tasks_received
+                    metrics["success_tasks"] = min(int(local_tasks_success or 0), local_tasks_received)
+                    metrics["failed_tasks"] = max(local_tasks_received - metrics["success_tasks"], 0)
+                local_score = self._coerce_non_negative_float(local_current_run.get("score"))
+                if local_score is not None:
+                    metrics["average_score"] = local_score
+                local_reward = self._coerce_non_negative_float(local_current_run.get("reward"))
+                if local_reward is not None:
+                    metrics["average_reward"] = local_reward
+                local_time = self._coerce_non_negative_float(local_current_run.get("time"))
+                if local_time is not None:
+                    metrics["average_execution_time"] = local_time
             run_row.total_tasks = metrics["total_tasks"]
             run_row.success_tasks = metrics["success_tasks"]
             run_row.failed_tasks = metrics["failed_tasks"]
@@ -759,7 +796,8 @@ class ValidatorStorageRoundsMixin:
             run_rows = list(run_rows_result)
 
             for run_row in run_rows:
-                metrics = self._compute_agent_run_stats(run_row)
+                total_tasks_override = await self._resolve_expected_total_tasks_for_round(run_row.validator_round_id)
+                metrics = self._compute_agent_run_stats(run_row, total_tasks_override=total_tasks_override)
                 run_row.total_tasks = metrics["total_tasks"]
                 run_row.success_tasks = metrics["success_tasks"]
                 run_row.failed_tasks = metrics["failed_tasks"]
