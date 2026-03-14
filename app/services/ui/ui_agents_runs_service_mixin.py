@@ -24,6 +24,72 @@ class UIAgentsRunsServiceMixin:
             return "failed"
         return "completed"
 
+    @staticmethod
+    def _extract_ipfs_payload(ipfs_blob: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(ipfs_blob, dict):
+            return None
+        payload = ipfs_blob.get("payload")
+        if isinstance(payload, dict):
+            return payload
+        return ipfs_blob
+
+    @classmethod
+    def _validator_snapshot_is_all_zero(cls, ipfs_blob: Any) -> bool:
+        payload = cls._extract_ipfs_payload(ipfs_blob)
+        if not isinstance(payload, dict):
+            return False
+        summary = payload.get("summary")
+        if isinstance(summary, dict) and isinstance(summary.get("validator_all_runs_zero"), bool):
+            return bool(summary.get("validator_all_runs_zero"))
+
+        miners = payload.get("miners")
+        if not isinstance(miners, list) or not miners:
+            return False
+
+        seen_best_run = False
+        for miner in miners:
+            if not isinstance(miner, dict):
+                continue
+            best_run = miner.get("best_run")
+            if not isinstance(best_run, dict):
+                continue
+            seen_best_run = True
+            if float(best_run.get("reward") or 0.0) > 0.0:
+                return False
+        return seen_best_run
+
+    @classmethod
+    def _derive_consensus_task_totals(cls, validator_rows: List[Dict[str, Any]]) -> tuple[Optional[int], Optional[int]]:
+        if not validator_rows:
+            return None, None
+
+        has_non_all_zero_validator = any(not cls._validator_snapshot_is_all_zero(row.get("ipfs_uploaded")) for row in validator_rows)
+        contributing_rows = [row for row in validator_rows if not (has_non_all_zero_validator and cls._validator_snapshot_is_all_zero(row.get("ipfs_uploaded")))]
+        if not contributing_rows:
+            contributing_rows = validator_rows
+
+        total_tasks = 0
+        success_tasks = 0
+        saw_any_metric = False
+        for row in contributing_rows:
+            row_total = row.get("run_total_tasks")
+            if row_total is None:
+                row_total = row.get("local_tasks_received")
+            row_success = row.get("run_success_tasks")
+            if row_success is None:
+                row_success = row.get("local_tasks_success")
+
+            if row_total is None and row_success is None:
+                continue
+
+            total_tasks += int(row_total or 0)
+            success_tasks += int(row_success or 0)
+            saw_any_metric = True
+
+        if not saw_any_metric:
+            return None, None
+        return total_tasks, success_tasks
+
     async def get_agent_detail(self, miner_uid: int, season: Optional[int], round_in_season: Optional[int]) -> Dict[str, Any]:
         requested_round_in_season = round_in_season
         if season is None:
@@ -371,6 +437,45 @@ class UIAgentsRunsServiceMixin:
             if vr.get("validator_uid") is not None
         ]
 
+        selected_round_validator_rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                          rv.validator_uid,
+                          rv.ipfs_uploaded,
+                          rvm.local_tasks_received,
+                          rvm.local_tasks_success,
+                          mer.total_tasks AS run_total_tasks,
+                          mer.success_tasks AS run_success_tasks
+                        FROM round_validator_miners rvm
+                        JOIN round_validators rv
+                          ON rv.round_validator_id = rvm.round_validator_id
+                        LEFT JOIN LATERAL (
+                            SELECT total_tasks, success_tasks
+                            FROM miner_evaluation_runs
+                            WHERE round_validator_id = rvm.round_validator_id
+                              AND miner_uid = rvm.miner_uid
+                            ORDER BY started_at DESC NULLS LAST, created_at DESC NULLS LAST
+                            LIMIT 1
+                        ) mer ON TRUE
+                        WHERE rvm.round_id = :round_id
+                          AND rvm.miner_uid = :miner_uid
+                        ORDER BY rv.validator_uid ASC
+                        """
+                    ),
+                    {
+                        "round_id": round_id,
+                        "miner_uid": miner_uid,
+                    },
+                )
+            )
+            .mappings()
+            .all()
+        )
+        derived_consensus_total_tasks, derived_consensus_success_tasks = self._derive_consensus_task_totals([dict(row) for row in selected_round_validator_rows])
+
         selected_round_history_row = next(
             (row for row in season_round_rows if int(row["round_number_in_season"]) == int(round_in_season)),
             None,
@@ -379,6 +484,10 @@ class UIAgentsRunsServiceMixin:
         local_success_tasks = int(sum(int(r["local_tasks_success"] or 0) for r in miner_rows))
         canonical_total_tasks = int(selected_round_history_row["tasks_received"]) if selected_round_history_row and selected_round_history_row.get("tasks_received") is not None else None
         canonical_success_tasks = int(selected_round_history_row["tasks_success"]) if selected_round_history_row and selected_round_history_row.get("tasks_success") is not None else None
+        if derived_consensus_total_tasks is not None:
+            canonical_total_tasks = int(derived_consensus_total_tasks)
+        if derived_consensus_success_tasks is not None:
+            canonical_success_tasks = int(derived_consensus_success_tasks)
         canonical_avg_time = float(selected_round_history_row["eval_time"]) if selected_round_history_row and selected_round_history_row.get("eval_time") is not None else None
         total_tasks = canonical_total_tasks if canonical_total_tasks is not None else local_total_tasks
         success_tasks = canonical_success_tasks if canonical_success_tasks is not None else local_success_tasks
@@ -722,8 +831,8 @@ class UIAgentsRunsServiceMixin:
 
         best_round_number = int(best_round_history_row["round_number_in_season"]) if best_round_history_row.get("round_number_in_season") is not None else round_in_season
         best_round_matches_selected = requested_round_in_season is None or int(round_in_season) == int(best_round_number)
-        best_round_tasks_received = derived_tasks_received if derived_tasks_received is not None else total_tasks
-        best_round_tasks_success = derived_tasks_success if derived_tasks_success is not None else success_tasks
+        best_round_tasks_received = total_tasks if canonical_total_tasks is not None else (derived_tasks_received if derived_tasks_received is not None else total_tasks)
+        best_round_tasks_success = success_tasks if canonical_success_tasks is not None else (derived_tasks_success if derived_tasks_success is not None else success_tasks)
         best_round_payload = (
             {
                 "round": int(best_round_number),
@@ -1680,6 +1789,7 @@ class UIAgentsRunsServiceMixin:
                             rv.name          AS validator_name,
                             rv.image_url     AS validator_image,
                             rv.validator_hotkey,
+                            rv.ipfs_uploaded,
                             rv.stake,
                             rvm.weight,
                             rvm.post_consensus_rank,
@@ -1793,13 +1903,10 @@ class UIAgentsRunsServiceMixin:
             weighted_score_sum = 0.0
             weighted_time_sum = 0.0
             weighted_cost_sum = 0.0
-            weighted_tasks_received_sum = 0.0
-            weighted_tasks_success_sum = 0.0
             stake_sum_reward = 0.0
             stake_sum_score = 0.0
             stake_sum_time = 0.0
             stake_sum_cost = 0.0
-            stake_sum_tasks = 0.0
             post_consensus_rank: Optional[int] = None
             post_consensus_time: Optional[float] = None
             post_consensus_tasks_received = 0
@@ -1826,15 +1933,6 @@ class UIAgentsRunsServiceMixin:
                 if run_cost is not None and stake > 0:
                     weighted_cost_sum += float(run_cost) * stake
                     stake_sum_cost += stake
-
-                # Tasks: post_consensus values already represent the consensus-agreed total
-                # across all validators — use stake-weighted average, not sum.
-                pc_tasks_received = vr["post_consensus_tasks_received"]
-                pc_tasks_success = vr["post_consensus_tasks_success"]
-                if pc_tasks_received is not None and stake > 0:
-                    weighted_tasks_received_sum += int(pc_tasks_received) * stake
-                    weighted_tasks_success_sum += int(pc_tasks_success or 0) * stake
-                    stake_sum_tasks += stake
 
                 # Only need rank for the consensus rank display
                 rk = vr["post_consensus_rank"]
@@ -1885,9 +1983,11 @@ class UIAgentsRunsServiceMixin:
             consensus_score = weighted_score_sum / stake_sum_score if stake_sum_score > 0 else None
             post_consensus_time = weighted_time_sum / stake_sum_time if stake_sum_time > 0 else None
             post_consensus_avg_cost = weighted_cost_sum / stake_sum_cost if stake_sum_cost > 0 else None
-            if stake_sum_tasks > 0:
-                post_consensus_tasks_received = round(weighted_tasks_received_sum / stake_sum_tasks)
-                post_consensus_tasks_success = round(weighted_tasks_success_sum / stake_sum_tasks)
+            derived_round_tasks_received, derived_round_tasks_success = self._derive_consensus_task_totals(validator_rows)
+            if derived_round_tasks_received is not None:
+                post_consensus_tasks_received = int(derived_round_tasks_received)
+            if derived_round_tasks_success is not None:
+                post_consensus_tasks_success = int(derived_round_tasks_success)
             post_consensus_available = post_consensus_rank is not None or consensus_reward is not None
 
             rounds_out.append(
