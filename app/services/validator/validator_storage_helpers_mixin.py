@@ -5,7 +5,7 @@ import logging
 from collections import Counter
 from typing import Any, Dict, Iterable, List, Optional
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
@@ -41,6 +41,39 @@ logger = logging.getLogger(__name__)
 
 
 class ValidatorStorageHelpersMixin:
+    @staticmethod
+    def _coerce_positive_int(value: Any) -> Optional[int]:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _coerce_non_negative_int(value: Any) -> Optional[int]:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
+
+    @staticmethod
+    def _coerce_non_negative_float(value: Any) -> Optional[float]:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0.0 else None
+
+    @staticmethod
+    def _tasks_per_season_from_config(config: Any) -> Optional[int]:
+        if not isinstance(config, dict):
+            return None
+        round_cfg = config.get("round")
+        if not isinstance(round_cfg, dict):
+            return None
+        return ValidatorStorageHelpersMixin._coerce_positive_int(round_cfg.get("tasks_per_season"))
+
     async def _close_stale_active_seasons_for_incoming(self, incoming_season_number: int) -> None:
         """
         Close older active seasons that no longer have active rounds.
@@ -264,7 +297,46 @@ class ValidatorStorageHelpersMixin:
         (reason, _) = Counter(zero_reasons).most_common(1)[0]
         return reason
 
-    def _compute_agent_run_stats(self, run_row: AgentEvaluationRunORM) -> Dict[str, Any]:
+    async def _resolve_expected_total_tasks_for_round(
+        self,
+        validator_round_id: str,
+        *,
+        local_evaluation: Optional[Dict[str, Any]] = None,
+        miner_uid: Optional[int] = None,
+    ) -> Optional[int]:
+        if isinstance(local_evaluation, dict) and miner_uid is not None:
+            for miner_data in local_evaluation.get("miners", []) or []:
+                if not isinstance(miner_data, dict):
+                    continue
+                if self._coerce_non_negative_int(miner_data.get("miner_uid")) != int(miner_uid):
+                    continue
+                current_run = miner_data.get("current_run")
+                if not isinstance(current_run, dict):
+                    continue
+                tasks_received = self._coerce_positive_int(current_run.get("tasks_received"))
+                if tasks_received is not None:
+                    return tasks_received
+
+        validator_cfg_row = await self.session.execute(select(ValidatorRoundValidatorORM.config).where(ValidatorRoundValidatorORM.validator_round_id == validator_round_id))
+        validator_cfg = validator_cfg_row.scalar_one_or_none()
+        config_total = self._tasks_per_season_from_config(validator_cfg)
+        if config_total is not None:
+            return config_total
+
+        round_row = await self.session.execute(select(ValidatorRoundORM.n_tasks).where(ValidatorRoundORM.validator_round_id == validator_round_id))
+        round_n_tasks = self._coerce_positive_int(round_row.scalar_one_or_none())
+        if round_n_tasks is not None:
+            return round_n_tasks
+
+        task_count = await self.session.scalar(select(func.count(TaskORM.id)).where(TaskORM.validator_round_id == validator_round_id))
+        return self._coerce_positive_int(task_count)
+
+    def _compute_agent_run_stats(
+        self,
+        run_row: AgentEvaluationRunORM,
+        *,
+        total_tasks_override: Optional[int] = None,
+    ) -> Dict[str, Any]:
         task_solutions = list(getattr(run_row, "task_solutions", []) or [])
         evaluations = list(getattr(run_row, "evaluations", []) or [])
 
@@ -274,7 +346,7 @@ class ValidatorStorageHelpersMixin:
             task_ids = {solution.task_id for solution in task_solutions if solution.task_id}
             attempted_tasks = len(task_ids)
 
-        configured_total_tasks = int(getattr(run_row, "total_tasks", 0) or 0)
+        configured_total_tasks = int(total_tasks_override or getattr(run_row, "total_tasks", 0) or 0)
         total_tasks = max(configured_total_tasks, int(attempted_tasks or 0))
 
         scores: List[float] = []

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from app.db.models import AgentEvaluationRunORM
+from app.db.models import AgentEvaluationRunORM, ValidatorRoundSummaryORM
 from app.services.validator.validator_auth import (
     VALIDATOR_HOTKEY_HEADER,
     VALIDATOR_SIGNATURE_HEADER,
@@ -62,6 +62,58 @@ async def _start_minimal_round(
         url = f"{url}?force=true"
     resp = await client.post(url, json=payload, headers=_headers())
     assert resp.status_code == 200
+
+
+async def _start_round_with_tasks_per_season(
+    client,
+    *,
+    round_id: str,
+    validator_uid: int = 1001,
+    tasks_per_season: int = 100,
+):
+    payload = {
+        "validator_identity": {
+            "uid": validator_uid,
+            "hotkey": "5FHeaderHotkey111111111111111111111111111111",
+            "coldkey": None,
+        },
+        "validator_round": {
+            "validator_round_id": round_id,
+            "season_number": 1,
+            "round_number_in_season": 1,
+            "validator_uid": validator_uid,
+            "validator_hotkey": "5FHeaderHotkey111111111111111111111111111111",
+            "validator_coldkey": None,
+            "start_block": 1,
+            "end_block": 360,
+            "start_epoch": 1,
+            "end_epoch": 2,
+            "started_at": 1_700_000_000.0,
+            "ended_at": None,
+            "n_tasks": 0,
+            "status": "active",
+            "metadata": {},
+        },
+        "validator_snapshot": {
+            "validator_round_id": round_id,
+            "validator_uid": validator_uid,
+            "validator_hotkey": "5FHeaderHotkey111111111111111111111111111111",
+            "validator_coldkey": None,
+            "name": "V",
+            "stake": 100.0,
+            "vtrust": 0.9,
+            "image_url": None,
+            "version": "0.0.1",
+            "config": {
+                "round": {
+                    "tasks_per_season": tasks_per_season,
+                    "blocks_per_epoch": 360,
+                }
+            },
+        },
+    }
+    resp = await client.post("/api/v1/validator-rounds/start?force=true", json=payload, headers=_headers())
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.asyncio
@@ -564,3 +616,200 @@ async def test_finish_round_persists_zero_reason(client, db_session, monkeypatch
     row = await db_session.scalar(select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == run_id))
     assert row is not None
     assert getattr(row, "zero_reason", None) == "over_cost_limit"
+
+
+@pytest.mark.asyncio
+async def test_start_agent_run_uses_tasks_per_season_as_local_total(client, db_session, monkeypatch):
+    from app.config import settings as _settings
+    from app.main import app
+
+    monkeypatch.setattr(_settings, "AUTH_DISABLED", False)
+    app.dependency_overrides[get_validator_auth_service] = lambda: _StubAuthService()
+
+    round_id = "season_total_start_run"
+    await _start_round_with_tasks_per_season(client, round_id=round_id, tasks_per_season=100)
+
+    payload = {
+        "agent_run": {
+            "agent_run_id": "season_total_run",
+            "validator_round_id": round_id,
+            "miner_uid": 501,
+            "miner_hotkey": "miner_hotkey_501",
+            "total_tasks": 0,
+        },
+        "miner_identity": {"uid": 501, "hotkey": "miner_hotkey_501"},
+        "miner_snapshot": {
+            "validator_round_id": round_id,
+            "miner_uid": 501,
+            "miner_hotkey": "miner_hotkey_501",
+            "agent_name": "M",
+        },
+    }
+    resp = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
+        json=payload,
+        headers=_headers(),
+    )
+    assert resp.status_code == 200
+
+    row = await db_session.scalar(select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == "season_total_run"))
+    assert row is not None
+    assert row.total_tasks == 100
+
+
+@pytest.mark.asyncio
+async def test_local_agent_run_metrics_stay_normalized_by_tasks_per_season(client, db_session, monkeypatch):
+    from app.config import settings as _settings
+    from app.main import app
+
+    monkeypatch.setattr(_settings, "AUTH_DISABLED", False)
+    app.dependency_overrides[get_validator_auth_service] = lambda: _StubAuthService()
+
+    round_id = "season_total_finish_round"
+    run_id = "season_total_finish_run"
+    await _start_round_with_tasks_per_season(client, round_id=round_id, tasks_per_season=100)
+
+    tasks = [
+        {
+            "task_id": f"task_{idx}",
+            "validator_round_id": round_id,
+            "is_web_real": False,
+            "web_project_id": None,
+            "url": f"https://example.com/{idx}",
+            "prompt": f"Task {idx}",
+            "specifications": {},
+            "tests": [],
+            "use_case": {"name": "X"},
+        }
+        for idx in range(1, 7)
+    ]
+    r_tasks = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/tasks?force=true",
+        json={"tasks": tasks},
+        headers=_headers(),
+    )
+    assert r_tasks.status_code == 200
+
+    start_run = {
+        "agent_run": {
+            "agent_run_id": run_id,
+            "validator_round_id": round_id,
+            "miner_uid": 501,
+            "miner_hotkey": "miner_hotkey_501",
+            "total_tasks": 0,
+        },
+        "miner_identity": {"uid": 501, "hotkey": "miner_hotkey_501"},
+        "miner_snapshot": {
+            "validator_round_id": round_id,
+            "miner_uid": 501,
+            "miner_hotkey": "miner_hotkey_501",
+            "agent_name": "M",
+        },
+    }
+    r_start = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/agent-runs/start?force=true",
+        json=start_run,
+        headers=_headers(),
+    )
+    assert r_start.status_code == 200
+
+    for idx, task in enumerate(tasks, start=1):
+        payload = {
+            "task": task,
+            "task_solution": {
+                "solution_id": f"sol_{idx}",
+                "task_id": task["task_id"],
+                "validator_round_id": round_id,
+                "agent_run_id": run_id,
+                "miner_uid": 501,
+                "validator_uid": 1001,
+                "validator_hotkey": "5FHeaderHotkey111111111111111111111111111111",
+                "actions": [],
+            },
+            "evaluation_result": {
+                "evaluation_id": f"eval_{idx}",
+                "task_id": task["task_id"],
+                "task_solution_id": f"sol_{idx}",
+                "validator_round_id": round_id,
+                "agent_run_id": run_id,
+                "miner_uid": 501,
+                "validator_uid": 1001,
+                "evaluation_score": 1.0,
+                "reward": 0.9,
+                "test_results_matrix": [[{"success": True}]],
+                "execution_history": [],
+                "feedback": None,
+                "web_agent_id": None,
+                "raw_score": 1.0,
+                "evaluation_time": 60.0,
+                "stats": None,
+                "gif_recording": None,
+            },
+        }
+        r_eval = await client.post(
+            f"/api/v1/validator-rounds/{round_id}/agent-runs/{run_id}/evaluations?force=true",
+            json=payload,
+            headers=_headers(),
+        )
+        assert r_eval.status_code == 200
+
+    row = await db_session.scalar(select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id == run_id))
+    assert row is not None
+    assert row.total_tasks == 100
+    assert row.success_tasks == 6
+    assert row.failed_tasks == 94
+    assert row.average_score == pytest.approx(0.06)
+    assert row.average_reward == pytest.approx(0.054)
+
+    r_finish = await client.post(
+        f"/api/v1/validator-rounds/{round_id}/finish?force=true",
+        json={
+            "status": "completed",
+            "ended_at": 1_700_000_999.0,
+            "local_evaluation": {
+                "miners": [
+                    {
+                        "miner_uid": 501,
+                        "miner_hotkey": "miner_hotkey_501",
+                        "current_run": {
+                            "reward": 0.054,
+                            "score": 0.06,
+                            "time": 60.0,
+                            "cost": 0.03,
+                            "tasks_success": 6,
+                            "tasks_received": 100,
+                        },
+                        "best_run": {
+                            "reward": 0.054,
+                            "score": 0.06,
+                            "time": 60.0,
+                            "cost": 0.03,
+                            "tasks_success": 6,
+                            "tasks_received": 100,
+                        },
+                    }
+                ]
+            },
+        },
+        headers=_headers(),
+    )
+    assert r_finish.status_code == 200, r_finish.text
+
+    await db_session.refresh(row)
+    assert row.total_tasks == 100
+    assert row.success_tasks == 6
+    assert row.failed_tasks == 94
+    assert row.average_score == pytest.approx(0.06)
+    assert row.average_reward == pytest.approx(0.054)
+
+    summary_row = await db_session.scalar(
+        select(ValidatorRoundSummaryORM).where(
+            ValidatorRoundSummaryORM.validator_round_id == round_id,
+            ValidatorRoundSummaryORM.miner_uid == 501,
+        )
+    )
+    assert summary_row is not None
+    assert summary_row.local_tasks_received == 100
+    assert summary_row.local_tasks_success == 6
+    assert summary_row.local_avg_eval_score == pytest.approx(0.06)
+    assert summary_row.local_avg_reward == pytest.approx(0.054)
