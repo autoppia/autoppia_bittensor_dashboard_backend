@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
@@ -17,7 +17,6 @@ router = APIRouter(prefix="/api/v1/tasks", tags=["external-tasks"])
 @router.get("/with-solutions")
 async def get_tasks_with_solutions_endpoint(
     session: AsyncSession = Depends(get_session),
-    key: str = Query(..., description="API key for authentication"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=500),
     taskId: Optional[str] = Query(None, alias="taskId"),
@@ -36,13 +35,7 @@ async def get_tasks_with_solutions_endpoint(
 ):
     """
     Get tasks with their solutions, applying multiple filters.
-
-    This endpoint requires an API key and supports pagination, filtering, and sorting.
     """
-    # Validate API key
-    if key != "AIagent2025":
-        raise HTTPException(status_code=422, detail="Invalid API key")
-
     # Parse sort parameter
     sort_by = "created_at"
     sort_order = "desc"
