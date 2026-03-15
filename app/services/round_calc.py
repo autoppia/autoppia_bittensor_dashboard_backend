@@ -68,7 +68,7 @@ def progress_for_block(current_block: int, boundaries: RoundBoundaries) -> float
 
 
 def is_inside_window(current_block: int, boundaries: RoundBoundaries) -> bool:
-    return current_block > boundaries.start_block and current_block <= boundaries.end_block
+    return current_block >= boundaries.start_block and current_block <= boundaries.end_block
 
 
 def compute_season_number(start_block: int) -> int:

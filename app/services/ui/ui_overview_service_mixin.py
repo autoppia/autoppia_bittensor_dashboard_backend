@@ -451,6 +451,19 @@ class UIOverviewServiceMixin:
         sort_by: str,
         sort_order: str,
     ) -> Tuple[List[Dict[str, Any]], int]:
+        current_round = await self.get_current_round()
+        current_season_number = None
+        current_round_in_season = None
+        if isinstance(current_round, dict):
+            try:
+                current_season_number = int(current_round.get("season"))
+            except Exception:
+                current_season_number = None
+            try:
+                current_round_in_season = int(current_round.get("round"))
+            except Exception:
+                current_round_in_season = None
+
         rows = (
             (
                 await self.session.execute(
@@ -520,7 +533,18 @@ class UIOverviewServiceMixin:
                     use_case = uc.get("name") or uc.get("event")
             round_status = str(r.get("round_status") or "").lower()
             is_active = round_status == "active"
-            status_label = "Evaluating" if is_active else "Waiting"
+            is_current_round = (
+                current_season_number is not None
+                and current_round_in_season is not None
+                and int(r["season_number"]) == current_season_number
+                and int(r["round_number_in_season"]) == current_round_in_season
+            )
+            if is_active:
+                status_label = "Evaluating"
+            elif is_current_round:
+                status_label = "Waiting"
+            else:
+                status_label = "Inactive"
             current_task = f"Round {int(r['round_number_in_season'])}" if is_active else "Idle"
 
             item = {

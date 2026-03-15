@@ -79,7 +79,7 @@ class ValidatorInfo(BaseModel):
     currentTask: str
     currentWebsite: Optional[str] = None
     currentUseCase: Optional[str] = None
-    status: str  # "Sending Tasks", "Evaluating", "Waiting", "Offline"
+    status: str  # "Sending Tasks", "Evaluating", "Waiting", "Inactive", "Offline"
     totalTasks: int
     weight: float
     trust: float
