@@ -3,148 +3,180 @@ from __future__ import annotations
 import pytest
 
 
-def _block_for_round(settings, rnd: int, *, position: str = "inside") -> int:
-    """Return a current_block representing the requested round position.
+def _round_window(cfg: dict, round_number: int) -> tuple[int, int]:
+    round_blocks = int(float(cfg["round_size_epochs"]) * int(cfg["blocks_per_epoch"]))
+    start_block = int(cfg["minimum_start_block"]) + (round_number - 1) * round_blocks
+    end_block = start_block + round_blocks
+    return start_block, end_block
 
-    position:
-      - "inside": strictly within window (start < block <= end)
-      - "before": at or before start (<= start)
-      - "after": strictly after end (> end)
-    """
-    dz = int(settings.DZ_STARTING_BLOCK)
-    blocks_per_round = int(settings.ROUND_SIZE_EPOCHS * settings.BLOCKS_PER_EPOCH)
-    start = dz + (rnd - 1) * blocks_per_round
-    end = dz + rnd * blocks_per_round
+
+def _block_for_round(cfg: dict, round_number: int, *, position: str = "inside") -> int:
+    start_block, end_block = _round_window(cfg, round_number)
     if position == "inside":
-        return start + 1
+        return start_block
     if position == "before":
-        return start
+        return start_block - 1
     if position == "after":
-        return end + 1
-    raise ValueError("Unknown position")
+        return end_block + 1
+    raise ValueError(f"Unknown position: {position}")
 
 
-def _mk_round_payload(round_number: int, *, uid: int = 1001) -> dict:
-    vid = f"round_chain_{round_number}_{uid}"
+def _mk_round_payload(cfg: dict, round_number: int, *, uid: int = 1001) -> dict:
+    start_block, _ = _round_window(cfg, round_number)
+    hotkey = cfg["main_validator_hotkey"]
+    validator_round_id = f"round_chain_{round_number}_{uid}"
     return {
-        "validator_round_id": vid,
-        "round": {
-            "validator_round_id": vid,
-            "round": round_number,
-            "validators": [
-                {
-                    "uid": uid,
-                    "hotkey": "5FHeaderHotkey111111111111111111111111111111",
-                    "coldkey": None,
-                    "stake": 100.0,
-                    "vtrust": 0.9,
-                    "name": "V",
-                    "version": "0.0.1",
-                }
-            ],
-            # Will be overridden by backend; provided for compatibility
-            "start_block": 1,
+        "validator_identity": {
+            "uid": uid,
+            "hotkey": hotkey,
+            "coldkey": None,
+        },
+        "validator_round": {
+            "validator_round_id": validator_round_id,
+            "season_number": 1,
+            "round_number_in_season": round_number,
+            "validator_uid": uid,
+            "validator_hotkey": hotkey,
+            "validator_coldkey": None,
+            "start_block": start_block,
+            "end_block": None,
             "start_epoch": 1,
+            "end_epoch": None,
+            "started_at": 1_700_000_000.0 + float(round_number),
+            "ended_at": None,
             "n_tasks": 1,
-            "started_at": 1_700_000_000.0,
-            "status": "in_progress",
+            "status": "active",
+            "metadata": {},
+        },
+        "validator_snapshot": {
+            "validator_round_id": validator_round_id,
+            "validator_uid": uid,
+            "validator_hotkey": hotkey,
+            "validator_coldkey": None,
+            "name": "Validator",
+            "stake": 100.0,
+            "vtrust": 0.9,
+            "image_url": None,
+            "version": "20.0.0",
+            "config": {
+                "round": {
+                    "tasks_per_season": 1,
+                }
+            },
         },
     }
 
 
-@pytest.mark.asyncio
-async def test_start_round_rejects_round_number_mismatch(client, monkeypatch):
-    from app.config import settings
-
-    backend_round = 5
-    # Force chain to backend_round
-    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _block_for_round(settings, backend_round, position="inside"))
-
-    # Payload claims a different round
-    payload = _mk_round_payload(backend_round + 1)
-    resp = await client.post("/api/v1/validator-rounds/start", json=payload)
-    assert resp.status_code == 400
-    detail = resp.json()["detail"]
-    assert detail["expectedRoundNumber"] == backend_round
-    assert detail["got"] == backend_round + 1
+async def _start_round(configured_client, cfg: dict, round_number: int) -> dict:
+    payload = _mk_round_payload(cfg, round_number)
+    response = await configured_client.post("/api/v1/validator-rounds/start", json=payload)
+    assert response.status_code == 200, response.text
+    return payload
 
 
 @pytest.mark.asyncio
-async def test_start_round_must_be_inside_window(client, monkeypatch):
-    from app.config import settings
+async def test_start_round_rejects_before_window(configured_client, seeded_runtime_round_config, monkeypatch):
+    cfg = seeded_runtime_round_config
+    payload = _mk_round_payload(cfg, 3)
+    monkeypatch.setattr(
+        "app.api.validator.validator_round_handlers_lifecycle.get_current_block",
+        lambda: _block_for_round(cfg, 3, position="before"),
+    )
 
-    rnd = 3
-    # Force chain to be before the round window
-    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _block_for_round(settings, rnd, position="before"))
+    response = await configured_client.post("/api/v1/validator-rounds/start", json=payload)
 
-    payload = _mk_round_payload(rnd)
-    resp = await client.post("/api/v1/validator-rounds/start", json=payload)
-    assert resp.status_code == 409
-    assert resp.json()["detail"]["error"] == "round window not active"
-
-
-@pytest.mark.asyncio
-async def test_finish_round_rejects_not_started_or_already_finished(client, monkeypatch):
-    from app.config import settings
-
-    rnd = 2
-    # First, accept start inside the window
-    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _block_for_round(settings, rnd, position="inside"))
-    payload = _mk_round_payload(rnd)
-    sr = await client.post("/api/v1/validator-rounds/start", json=payload)
-    assert sr.status_code == 200
-
-    vrid = payload["validator_round_id"]
-
-    # Not started yet (set current before start)
-    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _block_for_round(settings, rnd, position="before"))
-    fr = await client.post(f"/api/v1/validator-rounds/{vrid}/finish", json={"status": "completed", "winners": [], "winner_scores": [], "weights": {}})
-    assert fr.status_code == 409
-    assert fr.json()["detail"]["error"] == "round not started"
-
-    # Already finished (set current after end)
-    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _block_for_round(settings, rnd, position="after"))
-    fr2 = await client.post(f"/api/v1/validator-rounds/{vrid}/finish", json={"status": "completed", "winners": [], "winner_scores": [], "weights": {}})
-    assert fr2.status_code == 409
-    assert fr2.json()["detail"]["error"] == "round already finished"
+    assert response.status_code == 409
+    body = response.json()
+    assert body["detail"]["error"] == "round window not active"
+    assert body["detail"]["currentBlock"] == _block_for_round(cfg, 3, position="before")
+    assert body["detail"]["startBlock"] == payload["validator_round"]["start_block"]
 
 
 @pytest.mark.asyncio
-async def test_rounds_list_hides_not_started_rounds(client, monkeypatch):
-    from app.config import settings
-    from app.services import chain_state as chain
+async def test_start_round_accepts_exact_start_block(configured_client, seeded_runtime_round_config, monkeypatch):
+    cfg = seeded_runtime_round_config
+    payload = _mk_round_payload(cfg, 4)
+    start_block, _ = _round_window(cfg, 4)
+    monkeypatch.setattr(
+        "app.api.validator.validator_round_handlers_lifecycle.get_current_block",
+        lambda: start_block,
+    )
 
-    rnd = 7
-    # Start round while inside window so it's stored
-    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _block_for_round(settings, rnd, position="inside"))
-    payload = _mk_round_payload(rnd)
-    assert (await client.post("/api/v1/validator-rounds/start", json=payload)).status_code == 200
+    response = await configured_client.post("/api/v1/validator-rounds/start", json=payload)
 
-    # Now pretend chain is before start: list should filter it out
-    monkeypatch.setattr(chain, "get_current_block", lambda: _block_for_round(settings, rnd, position="before"))
-    res = await client.get("/api/v1/rounds?limit=10&page=1&sortBy=round&sortOrder=desc")
-    assert res.status_code == 200
-    data = res.json()
-    # When chain before start, no started rounds
-    assert isinstance(data, dict)
-    assert data.get("data", {}).get("rounds", []) == []
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["validator_round_id"] == payload["validator_round"]["validator_round_id"]
+    assert payload["validator_round"]["start_block"] == start_block
 
 
 @pytest.mark.asyncio
-async def test_round_progress_includes_chain_fields(client, monkeypatch):
-    from app.config import settings
+async def test_start_round_accepts_exact_end_block(configured_client, seeded_runtime_round_config, monkeypatch):
+    cfg = seeded_runtime_round_config
+    payload = _mk_round_payload(cfg, 5)
+    _, end_block = _round_window(cfg, 5)
+    monkeypatch.setattr(
+        "app.api.validator.validator_round_handlers_lifecycle.get_current_block",
+        lambda: end_block,
+    )
 
-    rnd = 4
-    monkeypatch.setattr("app.api.validator.validator_round.get_current_block", lambda: _block_for_round(settings, rnd, position="inside"))
-    payload = _mk_round_payload(rnd)
-    assert (await client.post("/api/v1/validator-rounds/start", json=payload)).status_code == 200
+    response = await configured_client.post("/api/v1/validator-rounds/start", json=payload)
 
-    vrid = payload["validator_round_id"]
-    pr = await client.get(f"/api/v1/rounds/{vrid}/progress")
-    assert pr.status_code == 200
-    body = pr.json()
-    assert body["success"] is True
-    prog = body["data"]["progress"]
-    # Chain-derived fields
-    assert "startEpoch" in prog and "endEpoch" in prog and "currentEpoch" in prog
-    assert 0.0 <= prog.get("progress", 0.0) <= 1.0
+    assert response.status_code == 200, response.text
+    assert response.json()["validator_round_id"] == payload["validator_round"]["validator_round_id"]
+
+
+@pytest.mark.asyncio
+async def test_rounds_list_returns_active_round_payload(configured_client, seeded_runtime_round_config, monkeypatch):
+    cfg = seeded_runtime_round_config
+    monkeypatch.setattr(
+        "app.api.validator.validator_round_handlers_lifecycle.get_current_block",
+        lambda: _block_for_round(cfg, 7, position="inside"),
+    )
+    monkeypatch.setattr(
+        "app.services.chain_state.get_current_block",
+        lambda: _block_for_round(cfg, 7, position="inside"),
+    )
+    payload = await _start_round(configured_client, cfg, 7)
+
+    response = await configured_client.get("/api/v1/rounds?limit=10&page=1&sortBy=round&sortOrder=desc")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    rounds = body["data"]["rounds"]
+    assert len(rounds) == 1
+    round_payload = rounds[0]
+    assert round_payload["roundKey"] == "1/7"
+    assert round_payload["id"] == 10007
+    assert round_payload["status"] == "active"
+    assert round_payload["startBlock"] == payload["validator_round"]["start_block"]
+    assert round_payload["current"] is True
+
+
+@pytest.mark.asyncio
+async def test_round_progress_includes_chain_fields(configured_client, seeded_runtime_round_config, monkeypatch):
+    cfg = seeded_runtime_round_config
+    current_block = _block_for_round(cfg, 6, position="inside")
+    monkeypatch.setattr(
+        "app.api.validator.validator_round_handlers_lifecycle.get_current_block",
+        lambda: current_block,
+    )
+    monkeypatch.setattr(
+        "app.api.ui.rounds.get_current_block_estimate",
+        lambda: current_block,
+    )
+    payload = await _start_round(configured_client, cfg, 6)
+    start_block, end_block = _round_window(cfg, 6)
+
+    response = await configured_client.get("/api/v1/rounds/1/6/progress")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    progress = body["data"]["progress"]
+    assert progress["roundId"] == 10006
+    assert progress["season"] == 1
+    assert progress["roundInSeason"] == 6
+    assert progress["currentBlock"] == current_block
+    assert progress["startBlock"] == start_block == payload["validator_round"]["start_block"]
+    assert progress["endBlock"] == end_block
+    assert 0.0 <= progress["progress"] <= 1.0

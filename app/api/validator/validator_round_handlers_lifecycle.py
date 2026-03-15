@@ -66,6 +66,56 @@ async def _ensure_config_season_round_cache_loaded(session: AsyncSession) -> Non
     await refresh_config_season_round_cache(session)
 
 
+async def _detect_shadow_attach_candidate(
+    *,
+    session: AsyncSession,
+    service: ValidatorRoundPersistenceService,
+    validator_round,
+) -> tuple[bool, int | None]:
+    """
+    Determine whether this start should be treated as a non-authoritative shadow attach.
+
+    Shadow attach means:
+    - the caller is not the configured main validator
+    - and the canonical round for the same season/round is already active
+    """
+
+    is_main = await service._is_main_validator_identity(  # type: ignore[attr-defined]
+        int(validator_round.validator_uid),
+        validator_round.validator_hotkey,
+    )
+    if is_main:
+        return False, None
+
+    existing_round = (
+        await session.execute(
+            text(
+                """
+                SELECT r.round_id, LOWER(COALESCE(r.status, '')) AS round_status
+                FROM rounds r
+                JOIN seasons s ON s.season_id = r.season_id
+                WHERE s.season_number = :season_number
+                  AND r.round_number_in_season = :round_number_in_season
+                LIMIT 1
+                """
+            ),
+            {
+                "season_number": int(validator_round.season_number),
+                "round_number_in_season": int(validator_round.round_number_in_season),
+            },
+        )
+    ).first()
+    if not existing_round:
+        return False, None
+
+    round_status = (existing_round[1] or "").strip().lower()
+    if round_status != "active":
+        return False, None
+
+    canonical_round_id = existing_round[0]
+    return True, int(canonical_round_id) if canonical_round_id is not None else None
+
+
 async def sync_runtime_config(
     payload: SyncRuntimeConfigRequest,
     request: Request,
@@ -277,7 +327,7 @@ async def start_round(
             validator_round.season_number,
             validator_round.round_number_in_season,
         )
-    elif not (calculated_start_block < current_block <= calculated_end_block):
+    elif not (calculated_start_block <= current_block <= calculated_end_block):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -319,6 +369,11 @@ async def start_round(
         validator_snapshot.validator_coldkey = validator_round.validator_coldkey
 
     service = ValidatorRoundPersistenceService(session)
+    attach_shadow_mode, canonical_round_id = await _detect_shadow_attach_candidate(
+        session=session,
+        service=service,
+        validator_round=validator_round,
+    )
 
     try:
         # Session already has transaction from get_session
@@ -463,6 +518,15 @@ async def start_round(
         validator_round.round_number_in_season,
         validator_round.validator_uid,
     )
+    if attach_shadow_mode:
+        response.status_code = status.HTTP_202_ACCEPTED
+        return {
+            "message": "Validator round attached in shadow mode",
+            "validator_round_id": validator_round.validator_round_id,
+            "shadow_mode": True,
+            "attach_mode": "attached_to_main_round",
+            "canonical_round_id": canonical_round_id,
+        }
     return {
         "message": "Validator round created",
         "validator_round_id": validator_round.validator_round_id,

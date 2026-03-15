@@ -85,3 +85,6 @@ known-first-party = ["app"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "no_db: run the test without resetting or connecting to the integration database",
+]
