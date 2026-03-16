@@ -562,7 +562,10 @@ class UIAgentsRunsServiceMixin:
                         """
                     SELECT
                       mer.agent_run_id,
-                      mer.zero_reason
+                      mer.zero_reason,
+                      mer.early_stop_reason,
+                      mer.early_stop_message,
+                      mer.tasks_attempted
                     FROM miner_evaluation_runs mer
                     WHERE mer.miner_uid = :uid
                       AND mer.round_validator_id = :round_validator_id
@@ -581,6 +584,9 @@ class UIAgentsRunsServiceMixin:
         run_ctx = run_ctx_rows[0] if run_ctx_rows else None
         run_agent_run_id = run_ctx["agent_run_id"] if run_ctx else None
         zero_reason = run_ctx["zero_reason"] if run_ctx else None
+        early_stop_reason = run_ctx["early_stop_reason"] if run_ctx else None
+        early_stop_message = run_ctx["early_stop_message"] if run_ctx else None
+        tasks_attempted = int(run_ctx["tasks_attempted"] or 0) if run_ctx and run_ctx.get("tasks_attempted") is not None else None
 
         performance_by_website: List[Dict[str, Any]] = []
         avg_cost_per_task: Optional[float] = None
@@ -887,6 +893,9 @@ class UIAgentsRunsServiceMixin:
             },
             "bestRound": best_round_payload,
             "zero_reason": zero_reason,
+            "early_stop_reason": early_stop_reason,
+            "early_stop_message": early_stop_message,
+            "tasks_attempted": tasks_attempted,
         }
 
     async def get_miner_historical(self, miner_uid: int, season: Optional[int]) -> Dict[str, Any]:
@@ -1419,8 +1428,8 @@ class UIAgentsRunsServiceMixin:
                     SELECT mer.agent_run_id, mer.validator_round_id, mer.round_validator_id, mer.miner_uid, mer.miner_hotkey,
                            mer.started_at, mer.ended_at, mer.elapsed_sec,
                            mer.average_score, mer.average_execution_time, mer.average_reward,
-                           mer.total_tasks, mer.success_tasks, mer.failed_tasks,
-                           mer.zero_reason
+                           mer.total_tasks, mer.tasks_attempted, mer.success_tasks, mer.failed_tasks,
+                           mer.zero_reason, mer.early_stop_reason, mer.early_stop_message
                     FROM miner_evaluation_runs mer
                     WHERE mer.round_validator_id IN (
                       SELECT rv.round_validator_id FROM round_validators rv WHERE rv.round_id = :rid
@@ -1446,8 +1455,8 @@ class UIAgentsRunsServiceMixin:
                     SELECT mer.agent_run_id, mer.validator_round_id, mer.round_validator_id, mer.miner_uid, mer.miner_hotkey,
                            mer.started_at, mer.ended_at, mer.elapsed_sec,
                            mer.average_score, mer.average_execution_time, mer.average_reward,
-                           mer.total_tasks, mer.success_tasks, mer.failed_tasks,
-                           mer.zero_reason
+                           mer.total_tasks, mer.tasks_attempted, mer.success_tasks, mer.failed_tasks,
+                           mer.zero_reason, mer.early_stop_reason, mer.early_stop_message
                     FROM miner_evaluation_runs mer
                     WHERE mer.agent_run_id = :run_id
                     LIMIT 1
@@ -1478,10 +1487,13 @@ class UIAgentsRunsServiceMixin:
             "average_execution_time": float(row["average_execution_time"] or 0.0),
             "average_reward": float(row["average_reward"] or 0.0),
             "total_tasks": int(row["total_tasks"] or 0),
+            "tasks_attempted": int(row["tasks_attempted"] or 0) if row["tasks_attempted"] is not None else None,
             "success_tasks": int(row["success_tasks"] or 0),
             "failed_tasks": int(row["failed_tasks"] or 0),
             "metadata": {},
             "zero_reason": row["zero_reason"],
+            "early_stop_reason": row["early_stop_reason"],
+            "early_stop_message": row["early_stop_message"],
             "tasks": [],
             "task_solutions": [],
             "evaluations": [],
@@ -1575,9 +1587,9 @@ class UIAgentsRunsServiceMixin:
                         """
                     SELECT
                            mer.agent_run_id, mer.started_at, mer.ended_at, mer.elapsed_sec,
-                           mer.total_tasks, mer.success_tasks, mer.failed_tasks,
+                           mer.total_tasks, mer.tasks_attempted, mer.success_tasks, mer.failed_tasks,
                            mer.average_reward, mer.average_score, mer.average_execution_time,
-                           mer.round_validator_id, mer.zero_reason,
+                           mer.round_validator_id, mer.zero_reason, mer.early_stop_reason, mer.early_stop_message,
                            rv.validator_uid, rv.name AS validator_name, rv.image_url AS validator_image,
                            websites.websites_count,
                            run_cost.avg_cost_per_task
@@ -1664,6 +1676,7 @@ class UIAgentsRunsServiceMixin:
                     "endTime": datetime.fromtimestamp(float(r["ended_at"]), tz=timezone.utc) if r["ended_at"] is not None else None,
                     "status": status,
                     "totalTasks": total_tasks,
+                    "tasksAttempted": int(r["tasks_attempted"] or 0) if r["tasks_attempted"] is not None else None,
                     "completedTasks": success_tasks,
                     "successfulTasks": success_tasks,
                     "failedTasks": int(r["failed_tasks"] or 0),
@@ -1677,6 +1690,9 @@ class UIAgentsRunsServiceMixin:
                     "validatorName": r["validator_name"] or "Validator",
                     "validatorImage": r["validator_image"] or "/validators/Other.png",
                     "duration": int(float(r["elapsed_sec"] or 0.0)),
+                    "zeroReason": r["zero_reason"],
+                    "earlyStopReason": r["early_stop_reason"],
+                    "earlyStopMessage": r["early_stop_message"],
                     "tasks": [],
                     "metadata": {},
                 }
@@ -1806,10 +1822,13 @@ class UIAgentsRunsServiceMixin:
                             mer.average_score     AS run_score,
                             mer.average_execution_time AS run_time,
                             mer.total_tasks       AS run_total_tasks,
+                            mer.tasks_attempted   AS run_tasks_attempted,
                             mer.success_tasks     AS run_success_tasks,
                             mer.failed_tasks      AS run_failed_tasks,
                             mer.elapsed_sec       AS run_elapsed_sec,
                             mer.zero_reason       AS run_zero_reason,
+                            mer.early_stop_reason AS run_early_stop_reason,
+                            mer.early_stop_message AS run_early_stop_message,
                             (
                                 SELECT AVG(sub_cost.task_cost)
                                 FROM (
@@ -1969,6 +1988,7 @@ class UIAgentsRunsServiceMixin:
                         "run_score": float(vr["run_score"] or 0.0) if vr["run_score"] is not None else None,
                         "run_time": float(vr["run_time"] or 0.0) if vr["run_time"] is not None else None,
                         "run_total_tasks": run_total,
+                        "run_tasks_attempted": int(vr["run_tasks_attempted"] or 0) if vr["run_tasks_attempted"] is not None else None,
                         "run_success_tasks": run_success,
                         "run_failed_tasks": int(vr["run_failed_tasks"] or 0),
                         "run_elapsed_sec": float(vr["run_elapsed_sec"] or 0.0) if vr["run_elapsed_sec"] is not None else None,
@@ -1976,6 +1996,9 @@ class UIAgentsRunsServiceMixin:
                         "run_websites_count": int(vr["run_websites_count"] or 0),
                         "run_started_at": datetime.fromtimestamp(float(vr["run_started_at"] or 0.0), tz=timezone.utc).isoformat() if vr["run_started_at"] else None,
                         "run_ended_at": datetime.fromtimestamp(float(vr["run_ended_at"]), tz=timezone.utc).isoformat() if vr["run_ended_at"] else None,
+                        "run_zero_reason": vr["run_zero_reason"],
+                        "run_early_stop_reason": vr["run_early_stop_reason"],
+                        "run_early_stop_message": vr["run_early_stop_message"],
                     }
                 )
 
@@ -2270,9 +2293,9 @@ class UIAgentsRunsServiceMixin:
                         """
                     SELECT
                       mer.agent_run_id, mer.miner_uid, mer.miner_hotkey, mer.started_at, mer.ended_at,
-                      mer.total_tasks, mer.success_tasks, mer.failed_tasks,
+                      mer.total_tasks, mer.tasks_attempted, mer.success_tasks, mer.failed_tasks,
                       mer.average_reward, mer.average_execution_time, mer.elapsed_sec,
-                      mer.zero_reason,
+                      mer.zero_reason, mer.early_stop_reason, mer.early_stop_message,
                       rv.round_validator_id, rv.validator_uid, rv.validator_hotkey,
                       rv.name AS validator_name, rv.image_url AS validator_image, rv.round_id,
                       rv.started_at AS vr_started_at, rv.finished_at AS vr_finished_at,
@@ -2313,6 +2336,11 @@ class UIAgentsRunsServiceMixin:
                     text(
                         """
                     SELECT e.evaluation_id, e.task_id, e.evaluation_score, e.evaluation_time, e.reward, e.zero_reason,
+                           COALESCE((
+                             SELECT SUM(COALESCE(lu.cost, 0.0))
+                             FROM evaluation_llm_usage lu
+                             WHERE lu.evaluation_id = e.evaluation_id
+                           ), 0.0) AS task_cost,
                            e.created_at, e.updated_at,
                            t.web_project_id, t.prompt, t.use_case
                     FROM evaluations e
@@ -2349,6 +2377,7 @@ class UIAgentsRunsServiceMixin:
                     "eval_score": score,
                     "eval_time": float(e["evaluation_time"] or 0.0),
                     "reward": float(e["reward"] or 0.0),
+                    "cost": float(e["task_cost"] or 0.0),
                     "startTime": start_ts,
                     "endTime": end_ts,
                     "zeroReason": e["zero_reason"],
@@ -2367,6 +2396,23 @@ class UIAgentsRunsServiceMixin:
                     "failed": 0,
                     "averageScore": 0.0,
                     "averageDuration": 0.0,
+                    "averageReward": 0.0,
+                    "averageCost": 0.0,
+                    "_use_case_map": {},
+                },
+            )
+            use_case = str(item["useCase"] or "UNKNOWN").strip() or "UNKNOWN"
+            use_case_entry = entry["_use_case_map"].setdefault(
+                use_case,
+                {
+                    "useCase": use_case,
+                    "tasks": 0,
+                    "successful": 0,
+                    "failed": 0,
+                    "avgScore": 0.0,
+                    "avgTime": 0.0,
+                    "avgReward": 0.0,
+                    "avgCost": 0.0,
                 },
             )
             entry["tasks"] += 1
@@ -2376,9 +2422,37 @@ class UIAgentsRunsServiceMixin:
                 entry["failed"] += 1
             entry["averageScore"] += float(item["eval_score"] or 0.0)
             entry["averageDuration"] += float(item["eval_time"] or 0.0)
+            entry["averageReward"] += float(item["reward"] or 0.0)
+            entry["averageCost"] += float(item["cost"] or 0.0)
+
+            use_case_entry["tasks"] += 1
+            if float(item["eval_score"] or 0.0) > 0:
+                use_case_entry["successful"] += 1
+            else:
+                use_case_entry["failed"] += 1
+            use_case_entry["avgScore"] += float(item["eval_score"] or 0.0)
+            use_case_entry["avgTime"] += float(item["eval_time"] or 0.0)
+            use_case_entry["avgReward"] += float(item["reward"] or 0.0)
+            use_case_entry["avgCost"] += float(item["cost"] or 0.0)
         performance = []
         for site, entry in by_website.items():
             tasks = int(entry["tasks"])
+            stats_by_usecase = []
+            for use_case_entry in entry.pop("_use_case_map", {}).values():
+                use_case_tasks = int(use_case_entry["tasks"] or 0)
+                stats_by_usecase.append(
+                    {
+                        "useCase": use_case_entry["useCase"],
+                        "total": use_case_tasks,
+                        "successful": int(use_case_entry["successful"] or 0),
+                        "failed": int(use_case_entry["failed"] or 0),
+                        "avgScore": (float(use_case_entry["avgScore"]) / use_case_tasks) if use_case_tasks > 0 else 0.0,
+                        "avgTime": (float(use_case_entry["avgTime"]) / use_case_tasks) if use_case_tasks > 0 else 0.0,
+                        "avgReward": (float(use_case_entry["avgReward"]) / use_case_tasks) if use_case_tasks > 0 else 0.0,
+                        "avgCost": (float(use_case_entry["avgCost"]) / use_case_tasks) if use_case_tasks > 0 else 0.0,
+                    }
+                )
+            stats_by_usecase.sort(key=lambda item: (-int(item["total"]), str(item["useCase"])))
             performance.append(
                 {
                     "website": site,
@@ -2387,10 +2461,14 @@ class UIAgentsRunsServiceMixin:
                     "failed": int(entry["failed"]),
                     "averageScore": (float(entry["averageScore"]) / tasks) if tasks > 0 else 0.0,
                     "averageDuration": (float(entry["averageDuration"]) / tasks) if tasks > 0 else 0.0,
+                    "averageReward": (float(entry["averageReward"]) / tasks) if tasks > 0 else 0.0,
+                    "averageCost": (float(entry["averageCost"]) / tasks) if tasks > 0 else 0.0,
+                    "statsByUsecase": stats_by_usecase,
                 }
             )
 
         total_tasks = int(run["total_tasks"] or 0)
+        tasks_attempted = int(run["tasks_attempted"] or 0) if run["tasks_attempted"] is not None else None
         successful_tasks = int(run["success_tasks"] or 0)
         failed_tasks = int(run["failed_tasks"] or max(total_tasks - successful_tasks, 0))
         run_status = "completed"
@@ -2423,6 +2501,7 @@ class UIAgentsRunsServiceMixin:
             "endTime": datetime.fromtimestamp(float(run["ended_at"]), tz=timezone.utc).isoformat() if run["ended_at"] is not None else "",
             "status": run_status,
             "totalTasks": total_tasks,
+            "tasksAttempted": tasks_attempted,
             "completedTasks": successful_tasks,
             "successfulTasks": successful_tasks,
             "failedTasks": failed_tasks,
@@ -2435,6 +2514,8 @@ class UIAgentsRunsServiceMixin:
             "tasks": [],
             "metadata": {},
             "zeroReason": run["zero_reason"],
+            "earlyStopReason": run["early_stop_reason"],
+            "earlyStopMessage": run["early_stop_message"],
         }
         personas = {
             "round": {
@@ -2473,12 +2554,18 @@ class UIAgentsRunsServiceMixin:
         }
         statistics = {
             "totalTasks": total_tasks,
+            "tasksAttempted": tasks_attempted,
             "websites": len(performance),
             "avg_reward": float(run["average_reward"] or 0.0),
+            "avg_score": float(run["average_score"] or 0.0),
             "avg_time": float(run["average_execution_time"] or 0.0),
+            "avg_cost": (float(run["avg_cost_per_task"]) if run["avg_cost_per_task"] is not None else None),
             "successfulTasks": successful_tasks,
             "failedTasks": failed_tasks,
             "performanceByWebsite": performance,
+            "zeroReason": run["zero_reason"],
+            "earlyStopReason": run["early_stop_reason"],
+            "earlyStopMessage": run["early_stop_message"],
         }
         summary = {
             "runId": run_data["runId"],
@@ -2584,6 +2671,9 @@ class UIAgentsRunsServiceMixin:
             "validator": personas["validator"],
             "miner": personas["agent"],
             "zeroReason": run_data.get("zeroReason"),
+            "earlyStopReason": run_data.get("earlyStopReason"),
+            "earlyStopMessage": run_data.get("earlyStopMessage"),
+            "tasksAttempted": run_data.get("tasksAttempted"),
             "isReused": run_data.get("isReused"),
             "reusedFromAgentRunId": run_data.get("reusedFromAgentRunId"),
             "reusedFrom": source_run_info,

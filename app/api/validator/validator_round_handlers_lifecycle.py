@@ -998,6 +998,8 @@ async def finish_round(
                         "tasks_completed": ar.tasks_completed,
                         "tasks_failed": ar.tasks_failed,
                         "zero_reason": ar.zero_reason,
+                        "early_stop_reason": ar.early_stop_reason,
+                        "early_stop_message": ar.early_stop_message,
                     }
                     for ar in payload.agent_runs
                 ]

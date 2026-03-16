@@ -559,12 +559,18 @@ class ValidatorStorageRoundsMixin:
             logger.exception("finish_round: failed to synchronize summaries into round_validators")
 
         zero_reason_map: Dict[str, Optional[str]] = {}
+        tasks_attempted_map: Dict[str, Optional[int]] = {}
+        early_stop_reason_map: Dict[str, Optional[str]] = {}
+        early_stop_message_map: Dict[str, Optional[str]] = {}
         if agent_runs:
             for agent_run_data in agent_runs:
                 agent_run_id = agent_run_data.get("agent_run_id")
                 if not agent_run_id:
                     continue
                 zero_reason_map[agent_run_id] = agent_run_data.get("zero_reason")
+                tasks_attempted_map[agent_run_id] = self._coerce_non_negative_int(agent_run_data.get("tasks_attempted"))
+                early_stop_reason_map[agent_run_id] = agent_run_data.get("early_stop_reason")
+                early_stop_message_map[agent_run_id] = agent_run_data.get("early_stop_message")
 
         local_current_run_by_miner_uid: Dict[int, Dict[str, Any]] = {}
         if isinstance(local_evaluation, dict):
@@ -618,6 +624,12 @@ class ValidatorStorageRoundsMixin:
                 if local_time is not None:
                     metrics["average_execution_time"] = local_time
             run_row.total_tasks = metrics["total_tasks"]
+            if run_row.agent_run_id in tasks_attempted_map:
+                run_row.tasks_attempted = tasks_attempted_map[run_row.agent_run_id]
+            elif local_current_run is not None:
+                run_row.tasks_attempted = self._coerce_non_negative_int(local_current_run.get("tasks_attempted"))
+            elif run_row.tasks_attempted is None:
+                run_row.tasks_attempted = metrics["total_tasks"]
             run_row.success_tasks = metrics["success_tasks"]
             run_row.failed_tasks = metrics["failed_tasks"]
             run_row.average_score = metrics["average_score"]
@@ -626,6 +638,10 @@ class ValidatorStorageRoundsMixin:
 
             if run_row.agent_run_id in zero_reason_map:
                 run_row.zero_reason = zero_reason_map[run_row.agent_run_id]
+            if run_row.agent_run_id in early_stop_reason_map:
+                run_row.early_stop_reason = early_stop_reason_map[run_row.agent_run_id]
+            if run_row.agent_run_id in early_stop_message_map:
+                run_row.early_stop_message = early_stop_message_map[run_row.agent_run_id]
             if run_row.zero_reason is None and self._run_has_zero_score(run_row):
                 run_row.zero_reason = self._derive_run_zero_reason_from_evaluations(run_row)
 

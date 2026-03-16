@@ -122,8 +122,18 @@ async def reset_database(request):
         joined = ", ".join(f'public."{name}"' for name in table_names)
         await conn.execute(text(f"TRUNCATE TABLE {joined} RESTART IDENTITY CASCADE"))
 
+    async def _ensure_run_early_stop_columns(conn) -> None:
+        statements = [
+            "ALTER TABLE miner_evaluation_runs ADD COLUMN IF NOT EXISTS tasks_attempted INTEGER NULL",
+            "ALTER TABLE miner_evaluation_runs ADD COLUMN IF NOT EXISTS early_stop_reason VARCHAR(128) NULL",
+            "ALTER TABLE miner_evaluation_runs ADD COLUMN IF NOT EXISTS early_stop_message TEXT NULL",
+        ]
+        for sql in statements:
+            await conn.execute(text(sql))
+
     async def _reset(conn) -> None:
         if await _canonical_schema_present(conn):
+            await _ensure_run_early_stop_columns(conn)
             await _truncate_public_tables(conn)
             return
         await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
