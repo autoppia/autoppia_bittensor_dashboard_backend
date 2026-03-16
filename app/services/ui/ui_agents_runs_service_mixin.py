@@ -1829,6 +1829,7 @@ class UIAgentsRunsServiceMixin:
                             mer.zero_reason       AS run_zero_reason,
                             mer.early_stop_reason AS run_early_stop_reason,
                             mer.early_stop_message AS run_early_stop_message,
+                            NULLIF(rvm.github_url, '') AS github_url,
                             (
                                 SELECT AVG(sub_cost.task_cost)
                                 FROM (
@@ -1999,6 +2000,7 @@ class UIAgentsRunsServiceMixin:
                         "run_zero_reason": vr["run_zero_reason"],
                         "run_early_stop_reason": vr["run_early_stop_reason"],
                         "run_early_stop_message": vr["run_early_stop_message"],
+                        "github_url": vr["github_url"],
                     }
                 )
 
