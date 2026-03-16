@@ -784,7 +784,7 @@ class UIRoundsServiceMixin:
                 await self.session.execute(
                     text(
                         """
-                    SELECT round_validator_id, validator_uid, validator_hotkey, name, started_at, finished_at
+                    SELECT round_validator_id, validator_uid, validator_hotkey, name, started_at, finished_at, config
                     FROM round_validators
                     WHERE round_id = :round_id
                     ORDER BY validator_uid ASC
@@ -804,6 +804,10 @@ class UIRoundsServiceMixin:
                     {"rvid": int(v["round_validator_id"])},
                 )
             ).scalar_one()
+            tasks_count = int(tasks or 0)
+            if tasks_count == 0:
+                config = self._json_dict(v.get("config"))
+                tasks_count = self._coerce_int(config.get("round", {}).get("tasks_per_season")) or 0
             validator_rounds.append(
                 {
                     "validatorRoundId": f"validator_round_{round_id}_{int(v['validator_uid'])}",
@@ -813,8 +817,8 @@ class UIRoundsServiceMixin:
                     "status": "finished",
                     "startTime": v["started_at"].isoformat() if v["started_at"] else None,
                     "endTime": v["finished_at"].isoformat() if v["finished_at"] else None,
-                    "totalTasks": int(tasks or 0),
-                    "completedTasks": int(tasks or 0),
+                    "totalTasks": tasks_count,
+                    "completedTasks": tasks_count,
                     "icon": "/validators/Other.png",
                     "agentEvaluationRuns": None,
                     "roundData": None,
