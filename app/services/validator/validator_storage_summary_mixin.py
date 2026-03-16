@@ -1137,22 +1137,57 @@ class ValidatorStorageSummaryMixin:
                     current_run = None
 
                 if current_run is not None:
-                    summary_map[miner_uid]["local_avg_reward"] = current_run.get("reward")
-                    summary_map[miner_uid]["local_avg_eval_score"] = current_run.get("score")
-                    summary_map[miner_uid]["local_avg_eval_time"] = current_run.get("time")
-                    summary_map[miner_uid]["local_avg_eval_cost"] = current_run.get("cost")
-                    summary_map[miner_uid]["local_tasks_received"] = current_run.get("tasks_received")
-                    summary_map[miner_uid]["local_tasks_success"] = current_run.get("tasks_success")
+                    persisted_local = run_metrics_map.get(int(miner_uid), {})
+                    current_tasks_received = current_run.get("tasks_received")
+                    current_tasks_success = current_run.get("tasks_success")
+                    try:
+                        current_tasks_received_int = int(current_tasks_received or 0)
+                    except Exception:
+                        current_tasks_received_int = 0
+                    try:
+                        persisted_tasks_received_int = int(persisted_local.get("local_tasks_received") or 0)
+                    except Exception:
+                        persisted_tasks_received_int = 0
+                    use_persisted_local = persisted_tasks_received_int > 0 and current_tasks_received_int <= 0
+
+                    # Persisted agent_run rows are the source of truth. The
+                    # local_evaluation.current_run payload can legitimately be
+                    # empty/zero for failed or partially-saved runs, so never
+                    # clobber a non-zero persisted run with zeros from the
+                    # transient payload.
+                    summary_map[miner_uid]["local_avg_reward"] = persisted_local.get("local_avg_reward") if use_persisted_local else current_run.get("reward")
+                    summary_map[miner_uid]["local_avg_eval_score"] = persisted_local.get("local_avg_eval_score") if use_persisted_local else current_run.get("score")
+                    summary_map[miner_uid]["local_avg_eval_time"] = persisted_local.get("local_avg_eval_time") if use_persisted_local else current_run.get("time")
+                    summary_map[miner_uid]["local_avg_eval_cost"] = persisted_local.get("local_avg_eval_cost") if use_persisted_local else current_run.get("cost")
+                    summary_map[miner_uid]["local_tasks_received"] = persisted_local.get("local_tasks_received") if use_persisted_local else current_tasks_received
+                    summary_map[miner_uid]["local_tasks_success"] = persisted_local.get("local_tasks_success") if use_persisted_local else current_tasks_success
                 else:
-                    # No current_run means no local execution happened in this round.
-                    # Keep the round-local fields empty instead of leaking
-                    # best historical values or persisted run history.
-                    summary_map[miner_uid]["local_avg_reward"] = None
-                    summary_map[miner_uid]["local_avg_eval_score"] = None
-                    summary_map[miner_uid]["local_avg_eval_time"] = None
-                    summary_map[miner_uid]["local_avg_eval_cost"] = None
-                    summary_map[miner_uid]["local_tasks_received"] = None
-                    summary_map[miner_uid]["local_tasks_success"] = None
+                    persisted_local = run_metrics_map.get(int(miner_uid), {})
+                    persisted_tasks_received = persisted_local.get("local_tasks_received")
+                    try:
+                        persisted_tasks_received_int = int(persisted_tasks_received or 0)
+                    except Exception:
+                        persisted_tasks_received_int = 0
+
+                    if persisted_tasks_received_int > 0:
+                        # If the agent run for this validator/round was already
+                        # persisted, preserve that row as the source of truth
+                        # even when local_evaluation omitted current_run.
+                        summary_map[miner_uid]["local_avg_reward"] = persisted_local.get("local_avg_reward")
+                        summary_map[miner_uid]["local_avg_eval_score"] = persisted_local.get("local_avg_eval_score")
+                        summary_map[miner_uid]["local_avg_eval_time"] = persisted_local.get("local_avg_eval_time")
+                        summary_map[miner_uid]["local_avg_eval_cost"] = persisted_local.get("local_avg_eval_cost")
+                        summary_map[miner_uid]["local_tasks_received"] = persisted_local.get("local_tasks_received")
+                        summary_map[miner_uid]["local_tasks_success"] = persisted_local.get("local_tasks_success")
+                    else:
+                        # No current_run and no persisted agent_run means no
+                        # local execution happened in this round.
+                        summary_map[miner_uid]["local_avg_reward"] = None
+                        summary_map[miner_uid]["local_avg_eval_score"] = None
+                        summary_map[miner_uid]["local_avg_eval_time"] = None
+                        summary_map[miner_uid]["local_avg_eval_cost"] = None
+                        summary_map[miner_uid]["local_tasks_received"] = None
+                        summary_map[miner_uid]["local_tasks_success"] = None
 
         # Process post_consensus_evaluation
         if post_consensus_evaluation and isinstance(post_consensus_evaluation, dict):

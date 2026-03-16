@@ -92,6 +92,8 @@ async def _start_round_with_tasks_per_season(
     validator_uid: int = 1001,
     tasks_per_season: int = 100,
 ):
+    start_block = int(settings.MINIMUM_START_BLOCK)
+    blocks_per_round = max(1, int(round(float(settings.ROUND_SIZE_EPOCHS) * int(settings.BLOCKS_PER_EPOCH))))
     payload = {
         "validator_identity": {
             "uid": validator_uid,
@@ -105,8 +107,8 @@ async def _start_round_with_tasks_per_season(
             "validator_uid": validator_uid,
             "validator_hotkey": "5FHeaderHotkey111111111111111111111111111111",
             "validator_coldkey": None,
-            "start_block": 1,
-            "end_block": 360,
+            "start_block": start_block,
+            "end_block": start_block + blocks_per_round - 1,
             "start_epoch": 1,
             "end_epoch": 2,
             "started_at": 1_700_000_000.0,
