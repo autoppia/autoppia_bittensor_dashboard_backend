@@ -630,6 +630,8 @@ class ValidatorStorageRoundsMixin:
                 run_row.tasks_attempted = self._coerce_non_negative_int(local_current_run.get("tasks_attempted"))
             elif run_row.tasks_attempted is None:
                 run_row.tasks_attempted = metrics["total_tasks"]
+            if (run_row.tasks_attempted is None or int(run_row.tasks_attempted or 0) == 0) and (metrics["success_tasks"] > 0 or metrics["failed_tasks"] > 0):
+                run_row.tasks_attempted = metrics["success_tasks"] + metrics["failed_tasks"]
             run_row.success_tasks = metrics["success_tasks"]
             run_row.failed_tasks = metrics["failed_tasks"]
             run_row.average_score = metrics["average_score"]

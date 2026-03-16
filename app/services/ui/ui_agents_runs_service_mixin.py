@@ -12,6 +12,15 @@ from app.services.media_storage import build_public_url
 
 class UIAgentsRunsServiceMixin:
     @staticmethod
+    def _normalize_tasks_attempted(tasks_attempted: Any, success_tasks: Any, failed_tasks: Any) -> Optional[int]:
+        if tasks_attempted is not None:
+            normalized = int(tasks_attempted or 0)
+            if normalized > 0:
+                return normalized
+        derived = int(success_tasks or 0) + int(failed_tasks or 0)
+        return derived if derived > 0 else (int(tasks_attempted or 0) if tasks_attempted is not None else None)
+
+    @staticmethod
     def _derive_agent_run_status(*, ended_at: Any, zero_reason: Any, total_tasks: int, successful_tasks: int) -> str:
         zero_reason_text = str(zero_reason or "").strip().lower()
         if zero_reason_text == "task_timeout":
@@ -1969,6 +1978,12 @@ class UIAgentsRunsServiceMixin:
 
                 run_total = int(vr["run_total_tasks"] or 0)
                 run_success = int(vr["run_success_tasks"] or 0)
+                run_failed = int(vr["run_failed_tasks"] or 0)
+                run_tasks_attempted = self._normalize_tasks_attempted(
+                    vr["run_tasks_attempted"],
+                    run_success,
+                    run_failed,
+                )
                 run_status = self._derive_agent_run_status(
                     ended_at=vr["run_ended_at"],
                     zero_reason=vr["run_zero_reason"],
@@ -1996,12 +2011,14 @@ class UIAgentsRunsServiceMixin:
                         "run_score": float(vr["run_score"] or 0.0) if vr["run_score"] is not None else None,
                         "run_time": float(vr["run_time"] or 0.0) if vr["run_time"] is not None else None,
                         "run_total_tasks": run_total,
-                        "run_tasks_attempted": int(vr["run_tasks_attempted"] or 0) if vr["run_tasks_attempted"] is not None else None,
+                        "run_tasks_attempted": run_tasks_attempted,
                         "run_success_tasks": run_success,
-                        "run_failed_tasks": int(vr["run_failed_tasks"] or 0),
+                        "run_failed_tasks": run_failed,
                         "run_elapsed_sec": float(vr["run_elapsed_sec"] or 0.0) if vr["run_elapsed_sec"] is not None else None,
                         "run_avg_cost": float(vr["run_avg_cost"]) if vr["run_avg_cost"] is not None else None,
-                        "run_websites_count": int(vr["run_websites_count"] or 0),
+                        "run_websites_count": int(vr["run_websites_count"] or 0)
+                        if int(vr["run_websites_count"] or 0) > 0
+                        else (int(vr["round_websites_count"] or 0) if run_tasks_attempted and run_tasks_attempted > 0 else 0),
                         "run_started_at": datetime.fromtimestamp(float(vr["run_started_at"] or 0.0), tz=timezone.utc).isoformat() if vr["run_started_at"] else None,
                         "run_ended_at": datetime.fromtimestamp(float(vr["run_ended_at"]), tz=timezone.utc).isoformat() if vr["run_ended_at"] else None,
                         "run_zero_reason": vr["run_zero_reason"],
