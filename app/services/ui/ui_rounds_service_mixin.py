@@ -671,13 +671,7 @@ class UIRoundsServiceMixin:
                       r.end_block,
                       r.started_at,
                       r.ended_at,
-                      r.status,
-                      COALESCE((
-                        SELECT COUNT(t.task_id)
-                        FROM round_validators rv
-                        LEFT JOIN tasks t ON t.round_validator_id = rv.round_validator_id
-                        WHERE rv.round_id = r.round_id
-                      ), 0) AS total_tasks
+                      r.status
                     FROM rounds r
                     JOIN seasons s ON s.season_id = r.season_id
                     ORDER BY s.season_number DESC, r.round_number_in_season DESC
@@ -691,14 +685,17 @@ class UIRoundsServiceMixin:
             .all()
         )
         total = (await self.session.execute(text("SELECT COUNT(*) FROM rounds"))).scalar_one()
-        entries = [
-            self._round_row_to_payload(
-                r,
-                is_current=(current_round_id is not None and int(r["round_id"]) == current_round_id),
-                total_tasks=int(r.get("total_tasks") or 0),
+        entries = []
+        for r in rows:
+            round_id = int(r["round_id"])
+            total_tasks = await self._count_round_tasks(round_id)
+            entries.append(
+                self._round_row_to_payload(
+                    r,
+                    is_current=(current_round_id is not None and round_id == current_round_id),
+                    total_tasks=total_tasks,
+                )
             )
-            for r in rows
-        ]
         return entries, int(total or 0)
 
     async def get_current_round(self) -> Optional[Dict[str, Any]]:
@@ -779,8 +776,9 @@ class UIRoundsServiceMixin:
         )
         if not row:
             raise ValueError(f"Round {season}/{round_in_season} not found")
-        payload = self._round_row_to_payload(row)
         round_id = int(row["round_id"])
+        total_tasks = await self._count_round_tasks(round_id)
+        payload = self._round_row_to_payload(row, total_tasks=total_tasks)
         validators = (
             (
                 await self.session.execute(
