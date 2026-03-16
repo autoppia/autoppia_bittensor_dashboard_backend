@@ -2294,7 +2294,7 @@ class UIAgentsRunsServiceMixin:
                     SELECT
                       mer.agent_run_id, mer.miner_uid, mer.miner_hotkey, mer.started_at, mer.ended_at,
                       mer.total_tasks, mer.tasks_attempted, mer.success_tasks, mer.failed_tasks,
-                      mer.average_reward, mer.average_execution_time, mer.elapsed_sec,
+                      mer.average_reward, mer.average_score, mer.average_execution_time, mer.avg_cost_per_task, mer.elapsed_sec,
                       mer.zero_reason, mer.early_stop_reason, mer.early_stop_message,
                       rv.round_validator_id, rv.validator_uid, rv.validator_hotkey,
                       rv.name AS validator_name, rv.image_url AS validator_image, rv.round_id,
