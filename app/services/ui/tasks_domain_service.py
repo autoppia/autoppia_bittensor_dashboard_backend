@@ -177,6 +177,7 @@ class TasksDomainServiceMixin:
         min_score: Optional[float] = None,
         max_score: Optional[float] = None,
         success_only: Optional[bool] = None,
+        success_mode: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         sort_by: str = "startTime",
@@ -206,6 +207,7 @@ class TasksDomainServiceMixin:
                 min_score=min_score,
                 max_score=max_score,
                 success_only=success_only,
+                success_mode=success_mode,
                 start_date=start_date.isoformat() if start_date else None,
                 end_date=end_date.isoformat() if end_date else None,
                 sort_by=sort_by,
@@ -235,6 +237,7 @@ class TasksDomainServiceMixin:
                 min_score=min_score,
                 max_score=max_score,
                 success_only=success_only,
+                success_mode=success_mode,
                 start_date=start_date,
                 end_date=end_date,
                 sort_by=sort_by,
@@ -465,6 +468,7 @@ class TasksDomainServiceMixin:
         min_score: Optional[float] = None,
         max_score: Optional[float] = None,
         success_only: Optional[bool] = None,
+        success_mode: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         sort_by: str = "startTime",
@@ -512,7 +516,11 @@ class TasksDomainServiceMixin:
             filters.append(EvaluationORM.evaluation_score >= min_score)
         if max_score is not None:
             filters.append(EvaluationORM.evaluation_score <= max_score)
-        if success_only:
+        if success_mode == "successful":
+            filters.append(EvaluationORM.reward > 0)
+        elif success_mode == "non_successful":
+            filters.append(EvaluationORM.reward <= 0)
+        elif success_only:
             filters.append(EvaluationORM.reward > 0)
 
         if miner_uid is not None:
