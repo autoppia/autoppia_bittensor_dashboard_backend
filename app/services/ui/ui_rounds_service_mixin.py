@@ -58,7 +58,36 @@ class UIRoundsServiceMixin:
                 {"rid": round_id},
             )
         ).scalar_one_or_none()
-        return int(value or 0)
+        count = int(value or 0)
+        if count > 0:
+            return count
+
+        fallback = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                          COUNT(*) AS validator_count,
+                          MAX((config->'round'->>'tasks_per_season')::int) AS tasks_per_validator
+                        FROM round_validators
+                        WHERE round_id = :rid
+                          AND config IS NOT NULL
+                          AND config->'round'->>'tasks_per_season' IS NOT NULL
+                        """
+                    ),
+                    {"rid": round_id},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if not fallback:
+            return 0
+
+        validator_count = int(fallback.get("validator_count") or 0)
+        tasks_per_validator = int(fallback.get("tasks_per_validator") or 0)
+        return validator_count * tasks_per_validator
 
     @staticmethod
     def _coerce_int(value: Any) -> Optional[int]:
