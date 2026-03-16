@@ -1163,7 +1163,8 @@ class UIRoundsServiceMixin:
             fallback_ipfs_miners = self._local_miners_from_ipfs_payload(payload_for_validator)
 
             miners_by_uid = {int(item["miner_uid"]): dict(item) for item in miners if item.get("miner_uid") is not None}
-            all_miner_uids = set(miners_by_uid) | set(fallback_local_runs) | set(fallback_ipfs_miners)
+            burn_uid = int(settings.BURN_UID)
+            all_miner_uids = {int(uid) for uid in (set(miners_by_uid) | set(fallback_local_runs) | set(fallback_ipfs_miners)) if int(uid) != burn_uid}
 
             competition_miners: List[Dict[str, Any]] = []
             for miner_uid in sorted(all_miner_uids):
