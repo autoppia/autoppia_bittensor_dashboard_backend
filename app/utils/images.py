@@ -102,6 +102,29 @@ def _normalize_relative_path(value: str) -> str:
     return f"/{normalized}" if normalized else "/"
 
 
+def _s3_path_matches_allowed_prefixes(path: str, allowed_folders: tuple[str, ...]) -> bool:
+    """
+    Allow S3 asset paths with or without an environment prefix.
+
+    Supported examples:
+    - /images-miners/foo.png
+    - /images-miner/foo.png
+    - /production/images-miners/foo.png
+    - /development/images-miners/foo.png
+    """
+    normalized = path if path.startswith("/") else f"/{path}"
+    for folder in allowed_folders:
+        if normalized.startswith(folder):
+            return True
+
+    stripped = normalized.lstrip("/")
+    if "/" not in stripped:
+        return False
+    _, remainder = stripped.split("/", 1)
+    remainder_path = f"/{remainder}"
+    return any(remainder_path.startswith(folder) for folder in allowed_folders)
+
+
 def _sanitize_url(candidate: Optional[str]) -> str:
     if not candidate:
         return ""
@@ -241,9 +264,9 @@ def sanitize_miner_image(candidate: Optional[str]) -> str:
             ):
                 return ""  # ❌ Reject external URLs
 
-            # MUST be in /images-miner/ or /images-miners/ folder
-            # Accept both singular and plural for backwards compatibility
-            if not (path.startswith("/images-miner/") or path.startswith("/images-miners/")):
+            # MUST be in /images-miner/ or /images-miners/ folder.
+            # Accept an optional environment prefix such as /production/ or /development/.
+            if not _s3_path_matches_allowed_prefixes(path, ("/images-miner/", "/images-miners/")):
                 return ""  # ❌ Reject other S3 folders
 
             # ✅ Valid S3 miner image - return full URL
@@ -332,9 +355,9 @@ def _validate_validator_image_url(url: Optional[str]) -> Optional[str]:
                 logger.debug(f"[_validate_validator_image_url] Rejecting external hostname: {hostname}")
                 return None  # ❌ Reject external URLs
 
-            # MUST be in /images-validator/ or /images-validators/ folder
-            # Accept both singular and plural for backwards compatibility
-            if not (path.startswith("/images-validator/") or path.startswith("/images-validators/")):
+            # MUST be in /images-validator/ or /images-validators/ folder.
+            # Accept an optional environment prefix such as /production/ or /development/.
+            if not _s3_path_matches_allowed_prefixes(path, ("/images-validator/", "/images-validators/")):
                 logger.debug(f"[_validate_validator_image_url] Rejecting non-validator path: {path}")
                 return None  # ❌ Reject other S3 folders
 

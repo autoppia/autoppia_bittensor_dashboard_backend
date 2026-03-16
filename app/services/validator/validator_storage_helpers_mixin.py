@@ -1075,10 +1075,13 @@ class ValidatorStorageHelpersMixin:
             "average_reward": model.average_reward,
             # total_reward removed - no longer stored in agent_evaluation_runs
             "total_tasks": model.total_tasks,
+            "tasks_attempted": getattr(model, "tasks_attempted", None),
             "success_tasks": getattr(model, "success_tasks", getattr(model, "completed_tasks", 0)),
             "failed_tasks": model.failed_tasks,
             # rank and weight removed - obtain via validator_round_summary_miners
             "zero_reason": getattr(model, "zero_reason", None),
+            "early_stop_reason": getattr(model, "early_stop_reason", None),
+            "early_stop_message": getattr(model, "early_stop_message", None),
         }
 
     def _task_kwargs(self, model: Task) -> Dict[str, Any]:
