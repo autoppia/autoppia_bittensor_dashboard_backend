@@ -2078,7 +2078,7 @@ class UIAgentsRunsServiceMixin:
                         "tasks_success": post_consensus_tasks_success,
                         "avg_cost": post_consensus_avg_cost,
                     },
-                    "validators": validators_out,
+                    "validators": validators_out if round_is_finalized else [],
                 }
             )
 
