@@ -1800,6 +1800,8 @@ class UIAgentsRunsServiceMixin:
                             rv.round_id,
                             s.season_number,
                             r.round_number_in_season,
+                            r.status        AS round_status,
+                            r.consensus_status AS round_consensus_status,
                             rv.round_validator_id,
                             rv.validator_uid,
                             rv.name          AS validator_name,
@@ -1889,6 +1891,8 @@ class UIAgentsRunsServiceMixin:
                     "round_label": f"Season {int(r['season_number'])} · Round {int(r['round_number_in_season'])}",
                     "season": int(r["season_number"]),
                     "round_in_season": int(r["round_number_in_season"]),
+                    "round_status": str(r["round_status"] or "").strip().lower() or None,
+                    "round_consensus_status": str(r["round_consensus_status"] or "").strip().lower() or None,
                     "validators_count": 0,
                     "websites_count": 0,
                     "_validators_raw": [],
@@ -1913,6 +1917,9 @@ class UIAgentsRunsServiceMixin:
             if not has_real_run:
                 continue
             validator_rows = rd.pop("_validators_raw")
+            round_status = str(rd.get("round_status") or "").strip().lower()
+            round_consensus_status = str(rd.get("round_consensus_status") or "").strip().lower()
+            round_is_finalized = round_status == "finished" and round_consensus_status in {"finalized", "finished", "completed"}
 
             # Build per-validator entries and collect values for consensus.
             # All metrics (reward, score, time, cost) are stake-weighted averages of
@@ -2004,16 +2011,23 @@ class UIAgentsRunsServiceMixin:
                     }
                 )
 
-            consensus_reward = weighted_reward_sum / stake_sum_reward if stake_sum_reward > 0 else None
-            consensus_score = weighted_score_sum / stake_sum_score if stake_sum_score > 0 else None
-            post_consensus_time = weighted_time_sum / stake_sum_time if stake_sum_time > 0 else None
-            post_consensus_avg_cost = weighted_cost_sum / stake_sum_cost if stake_sum_cost > 0 else None
-            derived_round_tasks_received, derived_round_tasks_success = self._derive_consensus_task_totals(validator_rows)
-            if derived_round_tasks_received is not None:
-                post_consensus_tasks_received = int(derived_round_tasks_received)
-            if derived_round_tasks_success is not None:
-                post_consensus_tasks_success = int(derived_round_tasks_success)
-            post_consensus_available = post_consensus_rank is not None or consensus_reward is not None
+            consensus_reward = None
+            consensus_score = None
+            post_consensus_time = None
+            post_consensus_avg_cost = None
+            post_consensus_available = False
+
+            if round_is_finalized:
+                consensus_reward = weighted_reward_sum / stake_sum_reward if stake_sum_reward > 0 else None
+                consensus_score = weighted_score_sum / stake_sum_score if stake_sum_score > 0 else None
+                post_consensus_time = weighted_time_sum / stake_sum_time if stake_sum_time > 0 else None
+                post_consensus_avg_cost = weighted_cost_sum / stake_sum_cost if stake_sum_cost > 0 else None
+                derived_round_tasks_received, derived_round_tasks_success = self._derive_consensus_task_totals(validator_rows)
+                if derived_round_tasks_received is not None:
+                    post_consensus_tasks_received = int(derived_round_tasks_received)
+                if derived_round_tasks_success is not None:
+                    post_consensus_tasks_success = int(derived_round_tasks_success)
+                post_consensus_available = post_consensus_rank is not None or consensus_reward is not None
 
             rounds_out.append(
                 {
@@ -2022,6 +2036,8 @@ class UIAgentsRunsServiceMixin:
                     "round_label": rd["round_label"],
                     "season": rd["season"],
                     "round_in_season": rd["round_in_season"],
+                    "round_status": rd["round_status"],
+                    "round_consensus_status": rd["round_consensus_status"],
                     "validators_count": rd["validators_count"],
                     "websites_count": rd["websites_count"],
                     "post_consensus_available": post_consensus_available,
