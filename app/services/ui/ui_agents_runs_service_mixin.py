@@ -2295,7 +2295,7 @@ class UIAgentsRunsServiceMixin:
                       mer.agent_run_id, mer.miner_uid, mer.miner_hotkey, mer.started_at, mer.ended_at,
                       mer.total_tasks, mer.tasks_attempted, mer.success_tasks, mer.failed_tasks,
                       mer.average_reward, mer.average_score, mer.average_execution_time,
-                      mer.average_cost_per_task AS avg_cost_per_task, mer.elapsed_sec,
+                      run_cost.avg_cost_per_task, mer.elapsed_sec,
                       mer.zero_reason, mer.early_stop_reason, mer.early_stop_message,
                       rv.round_validator_id, rv.validator_uid, rv.validator_hotkey,
                       rv.name AS validator_name, rv.image_url AS validator_image, rv.round_id,
@@ -2303,6 +2303,16 @@ class UIAgentsRunsServiceMixin:
                       rr.round_number_in_season, rr.status AS round_status, s.season_number,
                       rvm.name AS miner_name, rvm.image_url AS miner_image
                     FROM miner_evaluation_runs mer
+                    LEFT JOIN LATERAL (
+                      SELECT AVG(task_cost) AS avg_cost_per_task
+                      FROM (
+                        SELECT COALESCE(SUM(COALESCE(lu.cost, 0.0)), 0.0) AS task_cost
+                        FROM evaluations e
+                        LEFT JOIN evaluation_llm_usage lu ON lu.evaluation_id = e.evaluation_id
+                        WHERE e.agent_run_id = mer.agent_run_id
+                        GROUP BY e.evaluation_id
+                      ) task_costs
+                    ) run_cost ON TRUE
                     LEFT JOIN round_validators rv ON rv.round_validator_id = mer.round_validator_id
                     LEFT JOIN rounds rr ON rr.round_id = rv.round_id
                     LEFT JOIN seasons s ON s.season_id = rr.season_id
