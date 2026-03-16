@@ -109,6 +109,7 @@ class AgentRun(BaseModel):
     endTime: Optional[str] = ""
     status: RunStatus
     totalTasks: int
+    tasksAttempted: Optional[int] = None
     completedTasks: int
     successfulTasks: int
     failedTasks: int
@@ -131,6 +132,8 @@ class AgentRun(BaseModel):
         default=None,
         description="Reason for reward 0 when applicable (e.g. over_cost_limit, deploy_failed, task_failed)",
     )
+    earlyStopReason: Optional[str] = Field(default=None)
+    earlyStopMessage: Optional[str] = Field(default=None)
 
 
 class RoundInfo(BaseModel):
@@ -210,11 +213,14 @@ class Statistics(BaseModel):
     runId: str
     overallReward: float
     totalTasks: int
+    tasksAttempted: Optional[int] = None
     successfulTasks: int
     failedTasks: int
     websites: int
     averageTaskDuration: float
     successRate: float
+    earlyStopReason: Optional[str] = None
+    earlyStopMessage: Optional[str] = None
     scoreDistribution: ScoreDistribution
     performanceByWebsite: List[PerformanceByWebsite]
 
