@@ -712,7 +712,14 @@ class UIRoundsServiceMixin:
             current_block = get_current_block()
         except Exception:
             current_block = None
-        return self._round_row_to_payload(row, is_current=True, current_block=current_block)
+        round_id = int(row["round_id"])
+        total_tasks = await self._count_round_tasks(round_id)
+        return self._round_row_to_payload(
+            row,
+            is_current=True,
+            current_block=current_block,
+            total_tasks=total_tasks,
+        )
 
     async def get_round_detail(self, season: int, round_in_season: int) -> Dict[str, Any]:
         row = (
