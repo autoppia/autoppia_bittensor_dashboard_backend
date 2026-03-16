@@ -1942,23 +1942,23 @@ class UIAgentsRunsServiceMixin:
 
             for vr in validator_rows:
                 stake = float(vr["stake"] or 0.0)
-                run_rew = vr["run_reward"]
-                run_score = vr["run_score"]
-                run_time = vr["run_time"]
-                run_cost = vr["run_avg_cost"]
+                aggregate_reward = vr["post_consensus_avg_reward"] if round_is_finalized else vr["run_reward"]
+                aggregate_score = vr["post_consensus_avg_eval_score"] if round_is_finalized else vr["run_score"]
+                aggregate_time = vr["post_consensus_avg_eval_time"] if round_is_finalized else vr["run_time"]
+                aggregate_cost = vr["post_consensus_avg_eval_cost"] if round_is_finalized else vr["run_avg_cost"]
 
                 # Stake-weighted consensus metrics from each validator's run values.
-                if run_rew is not None and stake > 0:
-                    weighted_reward_sum += float(run_rew) * stake
+                if aggregate_reward is not None and stake > 0:
+                    weighted_reward_sum += float(aggregate_reward) * stake
                     stake_sum_reward += stake
-                if run_score is not None and stake > 0:
-                    weighted_score_sum += float(run_score) * stake
+                if aggregate_score is not None and stake > 0:
+                    weighted_score_sum += float(aggregate_score) * stake
                     stake_sum_score += stake
-                if run_time is not None and stake > 0:
-                    weighted_time_sum += float(run_time) * stake
+                if aggregate_time is not None and stake > 0:
+                    weighted_time_sum += float(aggregate_time) * stake
                     stake_sum_time += stake
-                if run_cost is not None and stake > 0:
-                    weighted_cost_sum += float(run_cost) * stake
+                if aggregate_cost is not None and stake > 0:
+                    weighted_cost_sum += float(aggregate_cost) * stake
                     stake_sum_cost += stake
 
                 # Only need rank for the consensus rank display
@@ -2022,11 +2022,22 @@ class UIAgentsRunsServiceMixin:
                 consensus_score = weighted_score_sum / stake_sum_score if stake_sum_score > 0 else None
                 post_consensus_time = weighted_time_sum / stake_sum_time if stake_sum_time > 0 else None
                 post_consensus_avg_cost = weighted_cost_sum / stake_sum_cost if stake_sum_cost > 0 else None
-                derived_round_tasks_received, derived_round_tasks_success = self._derive_consensus_task_totals(validator_rows)
-                if derived_round_tasks_received is not None:
-                    post_consensus_tasks_received = int(derived_round_tasks_received)
-                if derived_round_tasks_success is not None:
-                    post_consensus_tasks_success = int(derived_round_tasks_success)
+                weighted_tasks_received_sum = 0.0
+                weighted_tasks_success_sum = 0.0
+                stake_sum_tasks_received = 0.0
+                stake_sum_tasks_success = 0.0
+                for vr in validator_rows:
+                    stake = float(vr["stake"] or 0.0)
+                    if vr["post_consensus_tasks_received"] is not None and stake > 0:
+                        weighted_tasks_received_sum += float(vr["post_consensus_tasks_received"] or 0.0) * stake
+                        stake_sum_tasks_received += stake
+                    if vr["post_consensus_tasks_success"] is not None and stake > 0:
+                        weighted_tasks_success_sum += float(vr["post_consensus_tasks_success"] or 0.0) * stake
+                        stake_sum_tasks_success += stake
+                if stake_sum_tasks_received > 0:
+                    post_consensus_tasks_received = int(round(weighted_tasks_received_sum / stake_sum_tasks_received))
+                if stake_sum_tasks_success > 0:
+                    post_consensus_tasks_success = int(round(weighted_tasks_success_sum / stake_sum_tasks_success))
                 post_consensus_available = post_consensus_rank is not None or consensus_reward is not None
 
             rounds_out.append(
