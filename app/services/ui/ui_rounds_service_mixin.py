@@ -913,6 +913,15 @@ class UIRoundsServiceMixin:
             candidate_github_url = candidate_github_url or summary_candidate.get("github_url")
             candidate_reward = candidate_reward if candidate_reward is not None else self._coerce_float(summary_candidate.get("reward"))
 
+        # A challenger cannot be the same miner as the reigning leader.
+        # If the stored summary is corrupted in that way, discard it and
+        # recalculate the candidate from the post-consensus miner list.
+        if leader_before_uid is not None and candidate_uid is not None and int(candidate_uid) == int(leader_before_uid):
+            candidate_uid = None
+            candidate_hotkey = None
+            candidate_github_url = None
+            candidate_reward = None
+
         summary_leader_after = summary.get("leader_after_round")
         if leader_after_uid is None and isinstance(summary_leader_after, dict):
             leader_after_uid = self._coerce_int(summary_leader_after.get("uid"))
