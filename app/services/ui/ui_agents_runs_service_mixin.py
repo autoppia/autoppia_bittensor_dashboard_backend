@@ -2481,7 +2481,7 @@ class UIAgentsRunsServiceMixin:
         total_tasks = int(run["total_tasks"] or 0)
         tasks_attempted = int(run["tasks_attempted"] or 0) if run["tasks_attempted"] is not None else None
         successful_tasks = int(run["success_tasks"] or 0)
-        failed_tasks = int(run["failed_tasks"] or max(total_tasks - successful_tasks, 0))
+        failed_tasks = max(tasks_attempted - successful_tasks, 0) if tasks_attempted is not None else int(run["failed_tasks"] or max(total_tasks - successful_tasks, 0))
         run_status = "completed"
         if run["ended_at"] is None:
             run_status = "running"
