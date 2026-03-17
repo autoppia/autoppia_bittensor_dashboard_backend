@@ -282,11 +282,14 @@ class AgentEvaluationRunORM(TimestampMixin, Base):
     average_execution_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     average_reward: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     total_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tasks_attempted: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     success_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # rank and weight removed - obtain via validator_round_summary_miners
     # Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, task_failed)
     zero_reason: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    early_stop_reason: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    early_stop_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     validator_round: Mapped["ValidatorRoundORM"] = relationship(back_populates="agent_runs")
     task_solutions: Mapped[list["TaskSolutionORM"]] = relationship(back_populates="agent_run", cascade="all, delete-orphan")

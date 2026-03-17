@@ -6,7 +6,7 @@ import logging
 from collections import Counter
 from typing import Any, Dict, Iterable, List, Optional
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
@@ -42,6 +42,39 @@ logger = logging.getLogger(__name__)
 
 
 class ValidatorStorageHelpersMixin:
+    @staticmethod
+    def _coerce_positive_int(value: Any) -> Optional[int]:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _coerce_non_negative_int(value: Any) -> Optional[int]:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
+
+    @staticmethod
+    def _coerce_non_negative_float(value: Any) -> Optional[float]:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0.0 else None
+
+    @staticmethod
+    def _tasks_per_season_from_config(config: Any) -> Optional[int]:
+        if not isinstance(config, dict):
+            return None
+        round_cfg = config.get("round")
+        if not isinstance(round_cfg, dict):
+            return None
+        return ValidatorStorageHelpersMixin._coerce_positive_int(round_cfg.get("tasks_per_season"))
+
     async def _close_stale_active_seasons_for_incoming(self, incoming_season_number: int) -> None:
         """
         Close older active seasons that no longer have active rounds.
@@ -265,21 +298,57 @@ class ValidatorStorageHelpersMixin:
         (reason, _) = Counter(zero_reasons).most_common(1)[0]
         return reason
 
-    def _compute_agent_run_stats(self, run_row: AgentEvaluationRunORM) -> Dict[str, Any]:
+    async def _resolve_expected_total_tasks_for_round(
+        self,
+        validator_round_id: str,
+        *,
+        local_evaluation: Optional[Dict[str, Any]] = None,
+        miner_uid: Optional[int] = None,
+    ) -> Optional[int]:
+        if isinstance(local_evaluation, dict) and miner_uid is not None:
+            for miner_data in local_evaluation.get("miners", []) or []:
+                if not isinstance(miner_data, dict):
+                    continue
+                if self._coerce_non_negative_int(miner_data.get("miner_uid")) != int(miner_uid):
+                    continue
+                current_run = miner_data.get("current_run")
+                if not isinstance(current_run, dict):
+                    continue
+                tasks_received = self._coerce_positive_int(current_run.get("tasks_received"))
+                if tasks_received is not None:
+                    return tasks_received
+
+        validator_cfg_row = await self.session.execute(select(ValidatorRoundValidatorORM.config).where(ValidatorRoundValidatorORM.validator_round_id == validator_round_id))
+        validator_cfg = validator_cfg_row.scalar_one_or_none()
+        config_total = self._tasks_per_season_from_config(validator_cfg)
+        if config_total is not None:
+            return config_total
+
+        round_row = await self.session.execute(select(ValidatorRoundORM.n_tasks).where(ValidatorRoundORM.validator_round_id == validator_round_id))
+        round_n_tasks = self._coerce_positive_int(round_row.scalar_one_or_none())
+        if round_n_tasks is not None:
+            return round_n_tasks
+
+        task_count = await self.session.scalar(select(func.count(TaskORM.id)).where(TaskORM.validator_round_id == validator_round_id))
+        return self._coerce_positive_int(task_count)
+
+    def _compute_agent_run_stats(
+        self,
+        run_row: AgentEvaluationRunORM,
+        *,
+        total_tasks_override: Optional[int] = None,
+    ) -> Dict[str, Any]:
         task_solutions = list(getattr(run_row, "task_solutions", []) or [])
         evaluations = list(getattr(run_row, "evaluations", []) or [])
 
-        # CRITICAL: total_tasks should be the number of evaluations, because each task has one evaluation
-        # (even if the miner didn't respond, we create an evaluation with score 0.0)
-        # So total_tasks = len(evaluations) is correct
-        total_tasks = len(evaluations)
+        attempted_tasks = len(evaluations)
 
-        # If no evaluations yet, fall back to counting unique task_ids from solutions
-        if total_tasks == 0:
+        if attempted_tasks == 0:
             task_ids = {solution.task_id for solution in task_solutions if solution.task_id}
-            total_tasks = len(task_ids) if task_ids else (run_row.total_tasks or 0)
+            attempted_tasks = len(task_ids)
 
-        total_tasks = int(total_tasks or 0)
+        configured_total_tasks = int(total_tasks_override or getattr(run_row, "total_tasks", 0) or 0)
+        total_tasks = max(configured_total_tasks, int(attempted_tasks or 0))
 
         scores: List[float] = []
         for eval_obj in evaluations:
@@ -299,10 +368,8 @@ class ValidatorStorageHelpersMixin:
         # If there are evaluations, we should always have scores (even if all are 0.0)
         # If there are no evaluations, average_score can be None (round not finished yet)
         if total_tasks > 0:
-            # We have tasks (evaluations), so we must have scores
-            average_score = sum(scores) / len(scores) if scores else 0.0
+            average_score = sum(scores) / float(total_tasks) if scores else 0.0
         else:
-            # No tasks yet - average_score is None (round not finished)
             average_score = None
 
         # Binary scoring: evaluation_score is 1.0 if at least one test passed, 0.0 otherwise
@@ -332,7 +399,7 @@ class ValidatorStorageHelpersMixin:
             if value is not None:
                 reward_values.append(value)
 
-        average_reward = (sum(reward_values) / len(reward_values)) if reward_values and len(reward_values) > 0 else None
+        average_reward = (sum(reward_values) / float(total_tasks)) if reward_values and total_tasks > 0 else None
 
         return {
             "total_tasks": total_tasks,
@@ -1010,10 +1077,13 @@ class ValidatorStorageHelpersMixin:
             "average_reward": model.average_reward,
             # total_reward removed - no longer stored in agent_evaluation_runs
             "total_tasks": model.total_tasks,
+            "tasks_attempted": getattr(model, "tasks_attempted", None),
             "success_tasks": getattr(model, "success_tasks", getattr(model, "completed_tasks", 0)),
             "failed_tasks": model.failed_tasks,
             # rank and weight removed - obtain via validator_round_summary_miners
             "zero_reason": getattr(model, "zero_reason", None),
+            "early_stop_reason": getattr(model, "early_stop_reason", None),
+            "early_stop_message": getattr(model, "early_stop_message", None),
         }
 
     def _task_kwargs(self, model: Task) -> Dict[str, Any]:

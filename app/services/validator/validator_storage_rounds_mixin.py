@@ -288,6 +288,10 @@ class ValidatorStorageRoundsMixin:
 
         await self._upsert_miner_snapshot(round_row, miner_snapshot)
 
+        expected_total_tasks = await self._resolve_expected_total_tasks_for_round(validator_round_id)
+        if expected_total_tasks is not None:
+            agent_run.total_tasks = max(int(agent_run.total_tasks or 0), int(expected_total_tasks))
+
         kwargs = self._agent_run_kwargs(agent_run)
         row = AgentEvaluationRunORM(**kwargs)
         self.session.add(row)
@@ -549,12 +553,29 @@ class ValidatorStorageRoundsMixin:
             logger.exception("finish_round: failed to synchronize summaries into round_validators")
 
         zero_reason_map: Dict[str, Optional[str]] = {}
+        tasks_attempted_map: Dict[str, Optional[int]] = {}
+        early_stop_reason_map: Dict[str, Optional[str]] = {}
+        early_stop_message_map: Dict[str, Optional[str]] = {}
         if agent_runs:
             for agent_run_data in agent_runs:
                 agent_run_id = agent_run_data.get("agent_run_id")
                 if not agent_run_id:
                     continue
                 zero_reason_map[agent_run_id] = agent_run_data.get("zero_reason")
+                tasks_attempted_map[agent_run_id] = self._coerce_non_negative_int(agent_run_data.get("tasks_attempted"))
+                early_stop_reason_map[agent_run_id] = agent_run_data.get("early_stop_reason")
+                early_stop_message_map[agent_run_id] = agent_run_data.get("early_stop_message")
+
+        local_current_run_by_miner_uid: Dict[int, Dict[str, Any]] = {}
+        if isinstance(local_evaluation, dict):
+            for miner_data in local_evaluation.get("miners", []) or []:
+                if not isinstance(miner_data, dict):
+                    continue
+                miner_uid = self._coerce_non_negative_int(miner_data.get("miner_uid"))
+                current_run = miner_data.get("current_run")
+                if miner_uid is None or not isinstance(current_run, dict):
+                    continue
+                local_current_run_by_miner_uid[int(miner_uid)] = current_run
 
         stmt_runs = (
             select(AgentEvaluationRunORM)
@@ -573,8 +594,38 @@ class ValidatorStorageRoundsMixin:
         run_rows = list(run_rows_result)
 
         for run_row in run_rows:
-            metrics = self._compute_agent_run_stats(run_row)
+            local_current_run = local_current_run_by_miner_uid.get(int(run_row.miner_uid)) if run_row.miner_uid is not None else None
+            total_tasks_override = await self._resolve_expected_total_tasks_for_round(
+                validator_round_id,
+                local_evaluation=local_evaluation,
+                miner_uid=run_row.miner_uid,
+            )
+            metrics = self._compute_agent_run_stats(run_row, total_tasks_override=total_tasks_override)
+            if local_current_run is not None:
+                local_tasks_received = self._coerce_positive_int(local_current_run.get("tasks_received"))
+                local_tasks_success = self._coerce_non_negative_int(local_current_run.get("tasks_success"))
+                if local_tasks_received is not None:
+                    metrics["total_tasks"] = local_tasks_received
+                    metrics["success_tasks"] = min(int(local_tasks_success or 0), local_tasks_received)
+                    metrics["failed_tasks"] = max(local_tasks_received - metrics["success_tasks"], 0)
+                local_score = self._coerce_non_negative_float(local_current_run.get("score"))
+                if local_score is not None:
+                    metrics["average_score"] = local_score
+                local_reward = self._coerce_non_negative_float(local_current_run.get("reward"))
+                if local_reward is not None:
+                    metrics["average_reward"] = local_reward
+                local_time = self._coerce_non_negative_float(local_current_run.get("time"))
+                if local_time is not None:
+                    metrics["average_execution_time"] = local_time
             run_row.total_tasks = metrics["total_tasks"]
+            if run_row.agent_run_id in tasks_attempted_map:
+                run_row.tasks_attempted = tasks_attempted_map[run_row.agent_run_id]
+            elif local_current_run is not None:
+                run_row.tasks_attempted = self._coerce_non_negative_int(local_current_run.get("tasks_attempted"))
+            elif run_row.tasks_attempted is None:
+                run_row.tasks_attempted = metrics["total_tasks"]
+            if (run_row.tasks_attempted is None or int(run_row.tasks_attempted or 0) == 0) and (metrics["success_tasks"] > 0 or metrics["failed_tasks"] > 0):
+                run_row.tasks_attempted = metrics["success_tasks"] + metrics["failed_tasks"]
             run_row.success_tasks = metrics["success_tasks"]
             run_row.failed_tasks = metrics["failed_tasks"]
             run_row.average_score = metrics["average_score"]
@@ -583,6 +634,10 @@ class ValidatorStorageRoundsMixin:
 
             if run_row.agent_run_id in zero_reason_map:
                 run_row.zero_reason = zero_reason_map[run_row.agent_run_id]
+            if run_row.agent_run_id in early_stop_reason_map:
+                run_row.early_stop_reason = early_stop_reason_map[run_row.agent_run_id]
+            if run_row.agent_run_id in early_stop_message_map:
+                run_row.early_stop_message = early_stop_message_map[run_row.agent_run_id]
             if run_row.zero_reason is None and self._run_has_zero_score(run_row):
                 run_row.zero_reason = self._derive_run_zero_reason_from_evaluations(run_row)
 
@@ -753,7 +808,8 @@ class ValidatorStorageRoundsMixin:
             run_rows = list(run_rows_result)
 
             for run_row in run_rows:
-                metrics = self._compute_agent_run_stats(run_row)
+                total_tasks_override = await self._resolve_expected_total_tasks_for_round(run_row.validator_round_id)
+                metrics = self._compute_agent_run_stats(run_row, total_tasks_override=total_tasks_override)
                 run_row.total_tasks = metrics["total_tasks"]
                 run_row.success_tasks = metrics["success_tasks"]
                 run_row.failed_tasks = metrics["failed_tasks"]

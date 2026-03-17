@@ -355,6 +355,13 @@ class ValidatorStorageSummaryMixin:
         else:
             enriched_post = {"raw": validator_summary.get("evaluation_post_consensus")}
 
+        reported_validators_participated = 0
+        try:
+            reported_validators_participated = int(current_post.get("validators_participated") or 0)
+        except Exception:
+            reported_validators_participated = 0
+        effective_validators_participated = reported_validators_participated if reported_validators_participated > 0 else validators_count
+
         existing_miners_by_uid: Dict[int, Dict[str, Any]] = {}
         for miner_payload in enriched_post.get("miners", []) if isinstance(enriched_post.get("miners"), list) else []:
             if not isinstance(miner_payload, dict):
@@ -489,7 +496,7 @@ class ValidatorStorageSummaryMixin:
             normalized_miners_payload.append(normalized_payload)
 
         enriched_post["miners"] = normalized_miners_payload
-        enriched_post["validators_participated"] = validators_count
+        enriched_post["validators_participated"] = effective_validators_participated
         enriched_post["miners_evaluated"] = db_rollup["miners_evaluated"]
         enriched_post["tasks_evaluated"] = db_rollup["tasks_evaluated"]
         enriched_post["tasks_success"] = db_rollup["tasks_success"]
@@ -854,6 +861,20 @@ class ValidatorStorageSummaryMixin:
         candidate_reward = (
             float(candidate_row.get("reward", 0.0) or 0.0) if candidate_row is not None else (float(candidate_summary.get("reward")) if candidate_summary.get("reward") is not None else None)
         )
+
+        # Recompute dethroned and leader_after_uid from actual reward values.
+        # IPFS flags can be incorrect when validators ran buggy versions that used
+        # unweighted averages, causing artificially low candidate rewards and
+        # wrong dethrone decisions. Computing from the real rewards is always correct.
+        if leader_before_uid is not None and leader_before_reward is not None and leader_before_reward > 0 and candidate_reward is not None:
+            threshold = leader_before_reward * (1.0 + required_improvement_pct)
+            dethroned = bool(candidate_reward > threshold)
+            leader_after_uid = candidate_uid if dethroned else leader_before_uid
+        elif leader_before_uid is None:
+            dethroned = False
+            if leader_after_uid is None and winner_row is not None:
+                leader_after_uid = int(winner_row.get("uid"))
+
         leader_after_row = (
             next(
                 (row for row in competitive_rows if int(row.get("uid") or -1) == int(leader_after_uid)),
@@ -1112,22 +1133,57 @@ class ValidatorStorageSummaryMixin:
                     current_run = None
 
                 if current_run is not None:
-                    summary_map[miner_uid]["local_avg_reward"] = current_run.get("reward")
-                    summary_map[miner_uid]["local_avg_eval_score"] = current_run.get("score")
-                    summary_map[miner_uid]["local_avg_eval_time"] = current_run.get("time")
-                    summary_map[miner_uid]["local_avg_eval_cost"] = current_run.get("cost")
-                    summary_map[miner_uid]["local_tasks_received"] = current_run.get("tasks_received")
-                    summary_map[miner_uid]["local_tasks_success"] = current_run.get("tasks_success")
+                    persisted_local = run_metrics_map.get(int(miner_uid), {})
+                    current_tasks_received = current_run.get("tasks_received")
+                    current_tasks_success = current_run.get("tasks_success")
+                    try:
+                        current_tasks_received_int = int(current_tasks_received or 0)
+                    except Exception:
+                        current_tasks_received_int = 0
+                    try:
+                        persisted_tasks_received_int = int(persisted_local.get("local_tasks_received") or 0)
+                    except Exception:
+                        persisted_tasks_received_int = 0
+                    use_persisted_local = persisted_tasks_received_int > 0 and current_tasks_received_int <= 0
+
+                    # Persisted agent_run rows are the source of truth. The
+                    # local_evaluation.current_run payload can legitimately be
+                    # empty/zero for failed or partially-saved runs, so never
+                    # clobber a non-zero persisted run with zeros from the
+                    # transient payload.
+                    summary_map[miner_uid]["local_avg_reward"] = persisted_local.get("local_avg_reward") if use_persisted_local else current_run.get("reward")
+                    summary_map[miner_uid]["local_avg_eval_score"] = persisted_local.get("local_avg_eval_score") if use_persisted_local else current_run.get("score")
+                    summary_map[miner_uid]["local_avg_eval_time"] = persisted_local.get("local_avg_eval_time") if use_persisted_local else current_run.get("time")
+                    summary_map[miner_uid]["local_avg_eval_cost"] = persisted_local.get("local_avg_eval_cost") if use_persisted_local else current_run.get("cost")
+                    summary_map[miner_uid]["local_tasks_received"] = persisted_local.get("local_tasks_received") if use_persisted_local else current_tasks_received
+                    summary_map[miner_uid]["local_tasks_success"] = persisted_local.get("local_tasks_success") if use_persisted_local else current_tasks_success
                 else:
-                    # No current_run means no local execution happened in this round.
-                    # Keep the round-local fields empty instead of leaking
-                    # best historical values or persisted run history.
-                    summary_map[miner_uid]["local_avg_reward"] = None
-                    summary_map[miner_uid]["local_avg_eval_score"] = None
-                    summary_map[miner_uid]["local_avg_eval_time"] = None
-                    summary_map[miner_uid]["local_avg_eval_cost"] = None
-                    summary_map[miner_uid]["local_tasks_received"] = None
-                    summary_map[miner_uid]["local_tasks_success"] = None
+                    persisted_local = run_metrics_map.get(int(miner_uid), {})
+                    persisted_tasks_received = persisted_local.get("local_tasks_received")
+                    try:
+                        persisted_tasks_received_int = int(persisted_tasks_received or 0)
+                    except Exception:
+                        persisted_tasks_received_int = 0
+
+                    if persisted_tasks_received_int > 0:
+                        # If the agent run for this validator/round was already
+                        # persisted, preserve that row as the source of truth
+                        # even when local_evaluation omitted current_run.
+                        summary_map[miner_uid]["local_avg_reward"] = persisted_local.get("local_avg_reward")
+                        summary_map[miner_uid]["local_avg_eval_score"] = persisted_local.get("local_avg_eval_score")
+                        summary_map[miner_uid]["local_avg_eval_time"] = persisted_local.get("local_avg_eval_time")
+                        summary_map[miner_uid]["local_avg_eval_cost"] = persisted_local.get("local_avg_eval_cost")
+                        summary_map[miner_uid]["local_tasks_received"] = persisted_local.get("local_tasks_received")
+                        summary_map[miner_uid]["local_tasks_success"] = persisted_local.get("local_tasks_success")
+                    else:
+                        # No current_run and no persisted agent_run means no
+                        # local execution happened in this round.
+                        summary_map[miner_uid]["local_avg_reward"] = None
+                        summary_map[miner_uid]["local_avg_eval_score"] = None
+                        summary_map[miner_uid]["local_avg_eval_time"] = None
+                        summary_map[miner_uid]["local_avg_eval_cost"] = None
+                        summary_map[miner_uid]["local_tasks_received"] = None
+                        summary_map[miner_uid]["local_tasks_success"] = None
 
         # Process post_consensus_evaluation
         if post_consensus_evaluation and isinstance(post_consensus_evaluation, dict):
@@ -1268,12 +1324,19 @@ class ValidatorStorageSummaryMixin:
                     JOIN target_round tr ON tr.round_id = rv.round_id
                 ),
                 effective_per_validator_miner AS (
+                    -- Include all validators for task aggregates (eval_time, cost, tasks),
+                    -- but tag each row so reward/rank are taken only from the main validator.
+                    -- The main validator is our own node: its post_consensus values are exactly
+                    -- what was committed on-chain to Bittensor. If no main validator exists,
+                    -- fall back to the highest-stake validator for reward/rank.
                     SELECT
                         vrs.miner_uid,
                         vrs.post_consensus_rank,
                         vrs.post_consensus_avg_reward,
                         vrs.post_consensus_avg_eval_score,
                         vrs.weight,
+                        COALESCE(rv.is_main_validator, FALSE) AS is_main,
+                        COALESCE(rv.stake, 0.0) AS validator_stake,
                         CASE
                             WHEN COALESCE(vrs.local_tasks_received, 0) > 0 THEN COALESCE(vrs.local_tasks_received, 0)
                             ELSE COALESCE(vrs.post_consensus_tasks_received, 0)
@@ -1292,18 +1355,33 @@ class ValidatorStorageSummaryMixin:
                         END AS effective_eval_cost
                     FROM validator_round_summary_miners vrs
                     JOIN target_validator_rounds tvr ON tvr.validator_round_id = vrs.validator_round_id
+                    LEFT JOIN round_validators rv ON rv.validator_round_id = vrs.validator_round_id
                 ),
                 canonical_per_miner AS (
                     SELECT
                         epvm.miner_uid,
-                        MIN(epvm.post_consensus_rank) FILTER (WHERE epvm.post_consensus_rank IS NOT NULL) AS canonical_rank,
-                        AVG(epvm.post_consensus_avg_reward) FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL) AS canonical_reward,
-                        CASE
-                            WHEN SUM(epvm.weight) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.weight IS NOT NULL) > 0
-                            THEN SUM(epvm.post_consensus_avg_eval_score * epvm.weight) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.weight IS NOT NULL)
-                                 / SUM(epvm.weight) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL AND epvm.weight IS NOT NULL)
-                            ELSE AVG(epvm.post_consensus_avg_eval_score) FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL)
-                        END AS canonical_eval_score,
+                        -- Reward/rank come from the main validator (is_main=true) exclusively.
+                        -- That is the node that committed weights on-chain to Bittensor, so its
+                        -- post_consensus values are the authoritative source of truth.
+                        -- If no main validator row has data, fall back to highest-stake one
+                        -- (via MAX on validator_stake as tiebreaker), which is identical in
+                        -- normal operation since all aligned validators agree on the same value.
+                        COALESCE(
+                            MIN(epvm.post_consensus_rank) FILTER (WHERE epvm.is_main AND epvm.post_consensus_rank IS NOT NULL),
+                            MIN(epvm.post_consensus_rank) FILTER (WHERE epvm.post_consensus_rank IS NOT NULL)
+                        ) AS canonical_rank,
+                        COALESCE(
+                            MAX(epvm.post_consensus_avg_reward)
+                                FILTER (WHERE epvm.is_main AND epvm.post_consensus_avg_reward IS NOT NULL),
+                            MAX(epvm.post_consensus_avg_reward)
+                                FILTER (WHERE epvm.post_consensus_avg_reward IS NOT NULL)
+                        ) AS canonical_reward,
+                        COALESCE(
+                            MAX(epvm.post_consensus_avg_eval_score)
+                                FILTER (WHERE epvm.is_main AND epvm.post_consensus_avg_eval_score IS NOT NULL),
+                            MAX(epvm.post_consensus_avg_eval_score)
+                                FILTER (WHERE epvm.post_consensus_avg_eval_score IS NOT NULL)
+                        ) AS canonical_eval_score,
                         AVG(epvm.weight) FILTER (WHERE epvm.weight IS NOT NULL) AS canonical_weight,
                         SUM(COALESCE(epvm.effective_tasks_received, 0))::INTEGER AS canonical_tasks_received,
                         SUM(COALESCE(epvm.effective_tasks_success, 0))::INTEGER AS canonical_tasks_success,

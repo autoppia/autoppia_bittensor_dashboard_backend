@@ -50,8 +50,10 @@ class OverviewMetrics(BaseModel):
     model_config = {"extra": "allow"}
 
     leader: Optional[OverviewLeader] = None
-    season: Optional[int] = None
-    round: Optional[int] = None
+    season: Optional[int] = None  # Last FINISHED round's season number
+    round: Optional[int] = None  # Last FINISHED round's round number
+    currentSeason: Optional[int] = None  # Currently active round's season number
+    currentRound: Optional[int] = None  # Currently active round's round number
     totalMiners: int
     tasksPerValidator: Optional[int] = None  # Tasks in latest round for Autoppia validator
     minerList: Optional[List[MinerSummary]] = None  # UIDs and names for the metrics round
@@ -77,7 +79,7 @@ class ValidatorInfo(BaseModel):
     currentTask: str
     currentWebsite: Optional[str] = None
     currentUseCase: Optional[str] = None
-    status: str  # "Sending Tasks", "Evaluating", "Waiting", "Offline"
+    status: str  # "Sending Tasks", "Evaluating", "Waiting", "Inactive", "Offline"
     totalTasks: int
     weight: float
     trust: float

@@ -277,12 +277,15 @@ class AgentEvaluationRun(BaseModel):
     average_execution_time: Optional[float] = Field(default=None, description="Average execution time per task")
     average_reward: Optional[float] = Field(default=None, description="Average final reward across tasks for this validator run")
     total_tasks: int = Field(default=0, description="Total tasks attempted")
+    tasks_attempted: Optional[int] = Field(default=None, description="Tasks actually attempted before any early stop")
     success_tasks: int = Field(default=0, alias="completed_tasks", description="Tasks completed successfully (evaluation_score >= 0.5)")
     failed_tasks: int = Field(default=0, description="Tasks that failed (evaluation_score < 0.5)")
     # rank and weight removed - obtain via validator_round_summary_miners
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Extensible metadata for the run")
 
     zero_reason: Optional[str] = Field(default=None, description="Reason for score 0 when applicable (e.g. over_cost_limit, deploy_failed, task_failed)")
+    early_stop_reason: Optional[str] = Field(default=None, description="Reason why the run stopped before attempting all expected tasks")
+    early_stop_message: Optional[str] = Field(default=None, description="Human-readable description of the early stop condition")
 
     @model_validator(mode="after")  # type: ignore[misc]
     def _validate_identity(  # type: ignore[override]

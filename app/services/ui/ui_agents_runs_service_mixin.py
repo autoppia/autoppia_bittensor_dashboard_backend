@@ -15,6 +15,15 @@ _SQL_WHERE_MINER_UID = "WHERE miner_uid = :uid"
 
 class UIAgentsRunsServiceMixin:
     @staticmethod
+    def _normalize_tasks_attempted(tasks_attempted: Any, success_tasks: Any, failed_tasks: Any) -> Optional[int]:
+        if tasks_attempted is not None:
+            normalized = int(tasks_attempted or 0)
+            if normalized > 0:
+                return normalized
+        derived = int(success_tasks or 0) + int(failed_tasks or 0)
+        return derived if derived > 0 else (int(tasks_attempted or 0) if tasks_attempted is not None else None)
+
+    @staticmethod
     def _derive_agent_run_status(*, ended_at: Any, zero_reason: Any, total_tasks: int, successful_tasks: int) -> str:
         zero_reason_text = str(zero_reason or "").strip().lower()
         if zero_reason_text == "task_timeout":
@@ -26,6 +35,72 @@ class UIAgentsRunsServiceMixin:
         if successful_tasks == 0 and total_tasks > 0:
             return "failed"
         return "completed"
+
+    @staticmethod
+    def _extract_ipfs_payload(ipfs_blob: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(ipfs_blob, dict):
+            return None
+        payload = ipfs_blob.get("payload")
+        if isinstance(payload, dict):
+            return payload
+        return ipfs_blob
+
+    @classmethod
+    def _validator_snapshot_is_all_zero(cls, ipfs_blob: Any) -> bool:
+        payload = cls._extract_ipfs_payload(ipfs_blob)
+        if not isinstance(payload, dict):
+            return False
+        summary = payload.get("summary")
+        if isinstance(summary, dict) and isinstance(summary.get("validator_all_runs_zero"), bool):
+            return bool(summary.get("validator_all_runs_zero"))
+
+        miners = payload.get("miners")
+        if not isinstance(miners, list) or not miners:
+            return False
+
+        seen_best_run = False
+        for miner in miners:
+            if not isinstance(miner, dict):
+                continue
+            best_run = miner.get("best_run")
+            if not isinstance(best_run, dict):
+                continue
+            seen_best_run = True
+            if float(best_run.get("reward") or 0.0) > 0.0:
+                return False
+        return seen_best_run
+
+    @classmethod
+    def _derive_consensus_task_totals(cls, validator_rows: List[Dict[str, Any]]) -> tuple[Optional[int], Optional[int]]:
+        if not validator_rows:
+            return None, None
+
+        has_non_all_zero_validator = any(not cls._validator_snapshot_is_all_zero(row.get("ipfs_uploaded")) for row in validator_rows)
+        contributing_rows = [row for row in validator_rows if not (has_non_all_zero_validator and cls._validator_snapshot_is_all_zero(row.get("ipfs_uploaded")))]
+        if not contributing_rows:
+            contributing_rows = validator_rows
+
+        total_tasks = 0
+        success_tasks = 0
+        saw_any_metric = False
+        for row in contributing_rows:
+            row_total = row.get("run_total_tasks")
+            if row_total is None:
+                row_total = row.get("local_tasks_received")
+            row_success = row.get("run_success_tasks")
+            if row_success is None:
+                row_success = row.get("local_tasks_success")
+
+            if row_total is None and row_success is None:
+                continue
+
+            total_tasks += int(row_total or 0)
+            success_tasks += int(row_success or 0)
+            saw_any_metric = True
+
+        if not saw_any_metric:
+            return None, None
+        return total_tasks, success_tasks
 
     async def get_agent_detail(self, miner_uid: int, season: Optional[int], round_in_season: Optional[int]) -> Dict[str, Any]:
         requested_round_in_season = round_in_season
@@ -374,6 +449,45 @@ class UIAgentsRunsServiceMixin:
             if vr.get("validator_uid") is not None
         ]
 
+        selected_round_validator_rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                          rv.validator_uid,
+                          rv.ipfs_uploaded,
+                          rvm.local_tasks_received,
+                          rvm.local_tasks_success,
+                          mer.total_tasks AS run_total_tasks,
+                          mer.success_tasks AS run_success_tasks
+                        FROM round_validator_miners rvm
+                        JOIN round_validators rv
+                          ON rv.round_validator_id = rvm.round_validator_id
+                        LEFT JOIN LATERAL (
+                            SELECT total_tasks, success_tasks
+                            FROM miner_evaluation_runs
+                            WHERE round_validator_id = rvm.round_validator_id
+                              AND miner_uid = rvm.miner_uid
+                            ORDER BY started_at DESC NULLS LAST, created_at DESC NULLS LAST
+                            LIMIT 1
+                        ) mer ON TRUE
+                        WHERE rvm.round_id = :round_id
+                          AND rvm.miner_uid = :miner_uid
+                        ORDER BY rv.validator_uid ASC
+                        """
+                    ),
+                    {
+                        "round_id": round_id,
+                        "miner_uid": miner_uid,
+                    },
+                )
+            )
+            .mappings()
+            .all()
+        )
+        derived_consensus_total_tasks, derived_consensus_success_tasks = self._derive_consensus_task_totals([dict(row) for row in selected_round_validator_rows])
+
         selected_round_history_row = next(
             (row for row in season_round_rows if int(row["round_number_in_season"]) == int(round_in_season)),
             None,
@@ -382,6 +496,10 @@ class UIAgentsRunsServiceMixin:
         local_success_tasks = int(sum(int(r["local_tasks_success"] or 0) for r in miner_rows))
         canonical_total_tasks = int(selected_round_history_row["tasks_received"]) if selected_round_history_row and selected_round_history_row.get("tasks_received") is not None else None
         canonical_success_tasks = int(selected_round_history_row["tasks_success"]) if selected_round_history_row and selected_round_history_row.get("tasks_success") is not None else None
+        if derived_consensus_total_tasks is not None:
+            canonical_total_tasks = int(derived_consensus_total_tasks)
+        if derived_consensus_success_tasks is not None:
+            canonical_success_tasks = int(derived_consensus_success_tasks)
         canonical_avg_time = float(selected_round_history_row["eval_time"]) if selected_round_history_row and selected_round_history_row.get("eval_time") is not None else None
         total_tasks = canonical_total_tasks if canonical_total_tasks is not None else local_total_tasks
         success_tasks = canonical_success_tasks if canonical_success_tasks is not None else local_success_tasks
@@ -456,7 +574,10 @@ class UIAgentsRunsServiceMixin:
                         """
                     SELECT
                       mer.agent_run_id,
-                      mer.zero_reason
+                      mer.zero_reason,
+                      mer.early_stop_reason,
+                      mer.early_stop_message,
+                      mer.tasks_attempted
                     FROM miner_evaluation_runs mer
                     WHERE mer.miner_uid = :uid
                       AND mer.round_validator_id = :round_validator_id
@@ -475,6 +596,9 @@ class UIAgentsRunsServiceMixin:
         run_ctx = run_ctx_rows[0] if run_ctx_rows else None
         run_agent_run_id = run_ctx["agent_run_id"] if run_ctx else None
         zero_reason = run_ctx["zero_reason"] if run_ctx else None
+        early_stop_reason = run_ctx["early_stop_reason"] if run_ctx else None
+        early_stop_message = run_ctx["early_stop_message"] if run_ctx else None
+        tasks_attempted = int(run_ctx["tasks_attempted"] or 0) if run_ctx and run_ctx.get("tasks_attempted") is not None else None
 
         performance_by_website: List[Dict[str, Any]] = []
         avg_cost_per_task: Optional[float] = None
@@ -725,8 +849,8 @@ class UIAgentsRunsServiceMixin:
 
         best_round_number = int(best_round_history_row["round_number_in_season"]) if best_round_history_row.get("round_number_in_season") is not None else round_in_season
         best_round_matches_selected = requested_round_in_season is None or int(round_in_season) == int(best_round_number)
-        best_round_tasks_received = derived_tasks_received if derived_tasks_received is not None else total_tasks
-        best_round_tasks_success = derived_tasks_success if derived_tasks_success is not None else success_tasks
+        best_round_tasks_received = total_tasks if canonical_total_tasks is not None else (derived_tasks_received if derived_tasks_received is not None else total_tasks)
+        best_round_tasks_success = success_tasks if canonical_success_tasks is not None else (derived_tasks_success if derived_tasks_success is not None else success_tasks)
         best_round_payload = (
             {
                 "round": int(best_round_number),
@@ -781,6 +905,9 @@ class UIAgentsRunsServiceMixin:
             },
             "bestRound": best_round_payload,
             "zero_reason": zero_reason,
+            "early_stop_reason": early_stop_reason,
+            "early_stop_message": early_stop_message,
+            "tasks_attempted": tasks_attempted,
         }
 
     async def get_miner_historical(self, miner_uid: int, season: Optional[int]) -> Dict[str, Any]:
@@ -1313,8 +1440,8 @@ class UIAgentsRunsServiceMixin:
                     SELECT mer.agent_run_id, mer.validator_round_id, mer.round_validator_id, mer.miner_uid, mer.miner_hotkey,
                            mer.started_at, mer.ended_at, mer.elapsed_sec,
                            mer.average_score, mer.average_execution_time, mer.average_reward,
-                           mer.total_tasks, mer.success_tasks, mer.failed_tasks,
-                           mer.zero_reason
+                           mer.total_tasks, mer.tasks_attempted, mer.success_tasks, mer.failed_tasks,
+                           mer.zero_reason, mer.early_stop_reason, mer.early_stop_message
                     FROM miner_evaluation_runs mer
                     WHERE mer.round_validator_id IN (
                       SELECT rv.round_validator_id FROM round_validators rv WHERE rv.round_id = :rid
@@ -1340,8 +1467,8 @@ class UIAgentsRunsServiceMixin:
                     SELECT mer.agent_run_id, mer.validator_round_id, mer.round_validator_id, mer.miner_uid, mer.miner_hotkey,
                            mer.started_at, mer.ended_at, mer.elapsed_sec,
                            mer.average_score, mer.average_execution_time, mer.average_reward,
-                           mer.total_tasks, mer.success_tasks, mer.failed_tasks,
-                           mer.zero_reason
+                           mer.total_tasks, mer.tasks_attempted, mer.success_tasks, mer.failed_tasks,
+                           mer.zero_reason, mer.early_stop_reason, mer.early_stop_message
                     FROM miner_evaluation_runs mer
                     WHERE mer.agent_run_id = :run_id
                     LIMIT 1
@@ -1372,10 +1499,13 @@ class UIAgentsRunsServiceMixin:
             "average_execution_time": float(row["average_execution_time"] or 0.0),
             "average_reward": float(row["average_reward"] or 0.0),
             "total_tasks": int(row["total_tasks"] or 0),
+            "tasks_attempted": int(row["tasks_attempted"] or 0) if row["tasks_attempted"] is not None else None,
             "success_tasks": int(row["success_tasks"] or 0),
             "failed_tasks": int(row["failed_tasks"] or 0),
             "metadata": {},
             "zero_reason": row["zero_reason"],
+            "early_stop_reason": row["early_stop_reason"],
+            "early_stop_message": row["early_stop_message"],
             "tasks": [],
             "task_solutions": [],
             "evaluations": [],
@@ -1469,9 +1599,9 @@ class UIAgentsRunsServiceMixin:
                         """
                     SELECT
                            mer.agent_run_id, mer.started_at, mer.ended_at, mer.elapsed_sec,
-                           mer.total_tasks, mer.success_tasks, mer.failed_tasks,
+                           mer.total_tasks, mer.tasks_attempted, mer.success_tasks, mer.failed_tasks,
                            mer.average_reward, mer.average_score, mer.average_execution_time,
-                           mer.round_validator_id, mer.zero_reason,
+                           mer.round_validator_id, mer.zero_reason, mer.early_stop_reason, mer.early_stop_message,
                            rv.validator_uid, rv.name AS validator_name, rv.image_url AS validator_image,
                            websites.websites_count,
                            run_cost.avg_cost_per_task
@@ -1558,6 +1688,7 @@ class UIAgentsRunsServiceMixin:
                     "endTime": datetime.fromtimestamp(float(r["ended_at"]), tz=timezone.utc) if r["ended_at"] is not None else None,
                     "status": status,
                     "totalTasks": total_tasks,
+                    "tasksAttempted": int(r["tasks_attempted"] or 0) if r["tasks_attempted"] is not None else None,
                     "completedTasks": success_tasks,
                     "successfulTasks": success_tasks,
                     "failedTasks": int(r["failed_tasks"] or 0),
@@ -1571,6 +1702,9 @@ class UIAgentsRunsServiceMixin:
                     "validatorName": r["validator_name"] or "Validator",
                     "validatorImage": r["validator_image"] or "/validators/Other.png",
                     "duration": int(float(r["elapsed_sec"] or 0.0)),
+                    "zeroReason": r["zero_reason"],
+                    "earlyStopReason": r["early_stop_reason"],
+                    "earlyStopMessage": r["early_stop_message"],
                     "tasks": [],
                     "metadata": {},
                 }
@@ -1678,11 +1812,14 @@ class UIAgentsRunsServiceMixin:
                             rv.round_id,
                             s.season_number,
                             r.round_number_in_season,
+                            r.status        AS round_status,
+                            r.consensus_status AS round_consensus_status,
                             rv.round_validator_id,
                             rv.validator_uid,
                             rv.name          AS validator_name,
                             rv.image_url     AS validator_image,
                             rv.validator_hotkey,
+                            rv.ipfs_uploaded,
                             rv.stake,
                             rvm.weight,
                             rvm.post_consensus_rank,
@@ -1699,10 +1836,14 @@ class UIAgentsRunsServiceMixin:
                             mer.average_score     AS run_score,
                             mer.average_execution_time AS run_time,
                             mer.total_tasks       AS run_total_tasks,
+                            mer.tasks_attempted   AS run_tasks_attempted,
                             mer.success_tasks     AS run_success_tasks,
                             mer.failed_tasks      AS run_failed_tasks,
                             mer.elapsed_sec       AS run_elapsed_sec,
                             mer.zero_reason       AS run_zero_reason,
+                            mer.early_stop_reason AS run_early_stop_reason,
+                            mer.early_stop_message AS run_early_stop_message,
+                            NULLIF(rvm.github_url, '') AS github_url,
                             (
                                 SELECT AVG(sub_cost.task_cost)
                                 FROM (
@@ -1762,6 +1903,8 @@ class UIAgentsRunsServiceMixin:
                     "round_label": f"Season {int(r['season_number'])} · Round {int(r['round_number_in_season'])}",
                     "season": int(r["season_number"]),
                     "round_in_season": int(r["round_number_in_season"]),
+                    "round_status": str(r["round_status"] or "").strip().lower() or None,
+                    "round_consensus_status": str(r["round_consensus_status"] or "").strip().lower() or None,
                     "validators_count": 0,
                     "websites_count": 0,
                     "_validators_raw": [],
@@ -1786,6 +1929,9 @@ class UIAgentsRunsServiceMixin:
             if not has_real_run:
                 continue
             validator_rows = rd.pop("_validators_raw")
+            round_status = str(rd.get("round_status") or "").strip().lower()
+            round_consensus_status = str(rd.get("round_consensus_status") or "").strip().lower()
+            round_is_finalized = round_status == "finished" and round_consensus_status in {"finalized", "finished", "completed"}
 
             # Build per-validator entries and collect values for consensus.
             # All metrics (reward, score, time, cost) are stake-weighted averages of
@@ -1796,13 +1942,10 @@ class UIAgentsRunsServiceMixin:
             weighted_score_sum = 0.0
             weighted_time_sum = 0.0
             weighted_cost_sum = 0.0
-            weighted_tasks_received_sum = 0.0
-            weighted_tasks_success_sum = 0.0
             stake_sum_reward = 0.0
             stake_sum_score = 0.0
             stake_sum_time = 0.0
             stake_sum_cost = 0.0
-            stake_sum_tasks = 0.0
             post_consensus_rank: Optional[int] = None
             post_consensus_time: Optional[float] = None
             post_consensus_tasks_received = 0
@@ -1811,33 +1954,24 @@ class UIAgentsRunsServiceMixin:
 
             for vr in validator_rows:
                 stake = float(vr["stake"] or 0.0)
-                run_rew = vr["run_reward"]
-                run_score = vr["run_score"]
-                run_time = vr["run_time"]
-                run_cost = vr["run_avg_cost"]
+                aggregate_reward = vr["post_consensus_avg_reward"] if round_is_finalized else vr["run_reward"]
+                aggregate_score = vr["post_consensus_avg_eval_score"] if round_is_finalized else vr["run_score"]
+                aggregate_time = vr["post_consensus_avg_eval_time"] if round_is_finalized else vr["run_time"]
+                aggregate_cost = vr["post_consensus_avg_eval_cost"] if round_is_finalized else vr["run_avg_cost"]
 
                 # Stake-weighted consensus metrics from each validator's run values.
-                if run_rew is not None and stake > 0:
-                    weighted_reward_sum += float(run_rew) * stake
+                if aggregate_reward is not None and stake > 0:
+                    weighted_reward_sum += float(aggregate_reward) * stake
                     stake_sum_reward += stake
-                if run_score is not None and stake > 0:
-                    weighted_score_sum += float(run_score) * stake
+                if aggregate_score is not None and stake > 0:
+                    weighted_score_sum += float(aggregate_score) * stake
                     stake_sum_score += stake
-                if run_time is not None and stake > 0:
-                    weighted_time_sum += float(run_time) * stake
+                if aggregate_time is not None and stake > 0:
+                    weighted_time_sum += float(aggregate_time) * stake
                     stake_sum_time += stake
-                if run_cost is not None and stake > 0:
-                    weighted_cost_sum += float(run_cost) * stake
+                if aggregate_cost is not None and stake > 0:
+                    weighted_cost_sum += float(aggregate_cost) * stake
                     stake_sum_cost += stake
-
-                # Tasks: post_consensus values already represent the consensus-agreed total
-                # across all validators — use stake-weighted average, not sum.
-                pc_tasks_received = vr["post_consensus_tasks_received"]
-                pc_tasks_success = vr["post_consensus_tasks_success"]
-                if pc_tasks_received is not None and stake > 0:
-                    weighted_tasks_received_sum += int(pc_tasks_received) * stake
-                    weighted_tasks_success_sum += int(pc_tasks_success or 0) * stake
-                    stake_sum_tasks += stake
 
                 # Only need rank for the consensus rank display
                 rk = vr["post_consensus_rank"]
@@ -1847,6 +1981,12 @@ class UIAgentsRunsServiceMixin:
 
                 run_total = int(vr["run_total_tasks"] or 0)
                 run_success = int(vr["run_success_tasks"] or 0)
+                run_failed = int(vr["run_failed_tasks"] or 0)
+                run_tasks_attempted = self._normalize_tasks_attempted(
+                    vr["run_tasks_attempted"],
+                    run_success,
+                    run_failed,
+                )
                 run_status = self._derive_agent_run_status(
                     ended_at=vr["run_ended_at"],
                     zero_reason=vr["run_zero_reason"],
@@ -1874,24 +2014,51 @@ class UIAgentsRunsServiceMixin:
                         "run_score": float(vr["run_score"] or 0.0) if vr["run_score"] is not None else None,
                         "run_time": float(vr["run_time"] or 0.0) if vr["run_time"] is not None else None,
                         "run_total_tasks": run_total,
+                        "run_tasks_attempted": run_tasks_attempted,
                         "run_success_tasks": run_success,
-                        "run_failed_tasks": int(vr["run_failed_tasks"] or 0),
+                        "run_failed_tasks": run_failed,
                         "run_elapsed_sec": float(vr["run_elapsed_sec"] or 0.0) if vr["run_elapsed_sec"] is not None else None,
                         "run_avg_cost": float(vr["run_avg_cost"]) if vr["run_avg_cost"] is not None else None,
-                        "run_websites_count": int(vr["run_websites_count"] or 0),
+                        "run_websites_count": int(vr["run_websites_count"] or 0)
+                        if int(vr["run_websites_count"] or 0) > 0
+                        else (int(vr["round_websites_count"] or 0) if run_tasks_attempted and run_tasks_attempted > 0 else 0),
                         "run_started_at": datetime.fromtimestamp(float(vr["run_started_at"] or 0.0), tz=timezone.utc).isoformat() if vr["run_started_at"] else None,
                         "run_ended_at": datetime.fromtimestamp(float(vr["run_ended_at"]), tz=timezone.utc).isoformat() if vr["run_ended_at"] else None,
+                        "run_zero_reason": vr["run_zero_reason"],
+                        "run_early_stop_reason": vr["run_early_stop_reason"],
+                        "run_early_stop_message": vr["run_early_stop_message"],
+                        "github_url": vr["github_url"],
                     }
                 )
 
-            consensus_reward = weighted_reward_sum / stake_sum_reward if stake_sum_reward > 0 else None
-            consensus_score = weighted_score_sum / stake_sum_score if stake_sum_score > 0 else None
-            post_consensus_time = weighted_time_sum / stake_sum_time if stake_sum_time > 0 else None
-            post_consensus_avg_cost = weighted_cost_sum / stake_sum_cost if stake_sum_cost > 0 else None
-            if stake_sum_tasks > 0:
-                post_consensus_tasks_received = round(weighted_tasks_received_sum / stake_sum_tasks)
-                post_consensus_tasks_success = round(weighted_tasks_success_sum / stake_sum_tasks)
-            post_consensus_available = post_consensus_rank is not None or consensus_reward is not None
+            consensus_reward = None
+            consensus_score = None
+            post_consensus_time = None
+            post_consensus_avg_cost = None
+            post_consensus_available = False
+
+            if round_is_finalized:
+                consensus_reward = weighted_reward_sum / stake_sum_reward if stake_sum_reward > 0 else None
+                consensus_score = weighted_score_sum / stake_sum_score if stake_sum_score > 0 else None
+                post_consensus_time = weighted_time_sum / stake_sum_time if stake_sum_time > 0 else None
+                post_consensus_avg_cost = weighted_cost_sum / stake_sum_cost if stake_sum_cost > 0 else None
+                weighted_tasks_received_sum = 0.0
+                weighted_tasks_success_sum = 0.0
+                stake_sum_tasks_received = 0.0
+                stake_sum_tasks_success = 0.0
+                for vr in validator_rows:
+                    stake = float(vr["stake"] or 0.0)
+                    if vr["post_consensus_tasks_received"] is not None and stake > 0:
+                        weighted_tasks_received_sum += float(vr["post_consensus_tasks_received"] or 0.0) * stake
+                        stake_sum_tasks_received += stake
+                    if vr["post_consensus_tasks_success"] is not None and stake > 0:
+                        weighted_tasks_success_sum += float(vr["post_consensus_tasks_success"] or 0.0) * stake
+                        stake_sum_tasks_success += stake
+                if stake_sum_tasks_received > 0:
+                    post_consensus_tasks_received = int(round(weighted_tasks_received_sum / stake_sum_tasks_received))
+                if stake_sum_tasks_success > 0:
+                    post_consensus_tasks_success = int(round(weighted_tasks_success_sum / stake_sum_tasks_success))
+                post_consensus_available = post_consensus_rank is not None or consensus_reward is not None
 
             rounds_out.append(
                 {
@@ -1900,6 +2067,8 @@ class UIAgentsRunsServiceMixin:
                     "round_label": rd["round_label"],
                     "season": rd["season"],
                     "round_in_season": rd["round_in_season"],
+                    "round_status": rd["round_status"],
+                    "round_consensus_status": rd["round_consensus_status"],
                     "validators_count": rd["validators_count"],
                     "websites_count": rd["websites_count"],
                     "post_consensus_available": post_consensus_available,
@@ -1912,7 +2081,7 @@ class UIAgentsRunsServiceMixin:
                         "tasks_success": post_consensus_tasks_success,
                         "avg_cost": post_consensus_avg_cost,
                     },
-                    "validators": validators_out,
+                    "validators": validators_out if round_is_finalized else [],
                 }
             )
 
@@ -2173,15 +2342,26 @@ class UIAgentsRunsServiceMixin:
                         """
                     SELECT
                       mer.agent_run_id, mer.miner_uid, mer.miner_hotkey, mer.started_at, mer.ended_at,
-                      mer.total_tasks, mer.success_tasks, mer.failed_tasks,
-                      mer.average_reward, mer.average_execution_time, mer.elapsed_sec,
-                      mer.zero_reason,
+                      mer.total_tasks, mer.tasks_attempted, mer.success_tasks, mer.failed_tasks,
+                      mer.average_reward, mer.average_score, mer.average_execution_time,
+                      run_cost.avg_cost_per_task, mer.elapsed_sec,
+                      mer.zero_reason, mer.early_stop_reason, mer.early_stop_message,
                       rv.round_validator_id, rv.validator_uid, rv.validator_hotkey,
                       rv.name AS validator_name, rv.image_url AS validator_image, rv.round_id,
                       rv.started_at AS vr_started_at, rv.finished_at AS vr_finished_at,
                       rr.round_number_in_season, rr.status AS round_status, s.season_number,
                       rvm.name AS miner_name, rvm.image_url AS miner_image
                     FROM miner_evaluation_runs mer
+                    LEFT JOIN LATERAL (
+                      SELECT AVG(task_cost) AS avg_cost_per_task
+                      FROM (
+                        SELECT COALESCE(SUM(COALESCE(lu.cost, 0.0)), 0.0) AS task_cost
+                        FROM evaluations e
+                        LEFT JOIN evaluation_llm_usage lu ON lu.evaluation_id = e.evaluation_id
+                        WHERE e.agent_run_id = mer.agent_run_id
+                        GROUP BY e.evaluation_id
+                      ) task_costs
+                    ) run_cost ON TRUE
                     LEFT JOIN round_validators rv ON rv.round_validator_id = mer.round_validator_id
                     LEFT JOIN rounds rr ON rr.round_id = rv.round_id
                     LEFT JOIN seasons s ON s.season_id = rr.season_id
@@ -2216,6 +2396,11 @@ class UIAgentsRunsServiceMixin:
                     text(
                         """
                     SELECT e.evaluation_id, e.task_id, e.evaluation_score, e.evaluation_time, e.reward, e.zero_reason,
+                           COALESCE((
+                             SELECT SUM(COALESCE(lu.cost, 0.0))
+                             FROM evaluation_llm_usage lu
+                             WHERE lu.evaluation_id = e.evaluation_id
+                           ), 0.0) AS task_cost,
                            e.created_at, e.updated_at,
                            t.web_project_id, t.prompt, t.use_case
                     FROM evaluations e
@@ -2252,6 +2437,7 @@ class UIAgentsRunsServiceMixin:
                     "eval_score": score,
                     "eval_time": float(e["evaluation_time"] or 0.0),
                     "reward": float(e["reward"] or 0.0),
+                    "cost": float(e["task_cost"] or 0.0),
                     "startTime": start_ts,
                     "endTime": end_ts,
                     "zeroReason": e["zero_reason"],
@@ -2270,6 +2456,23 @@ class UIAgentsRunsServiceMixin:
                     "failed": 0,
                     "averageScore": 0.0,
                     "averageDuration": 0.0,
+                    "averageReward": 0.0,
+                    "averageCost": 0.0,
+                    "_use_case_map": {},
+                },
+            )
+            use_case = str(item["useCase"] or "UNKNOWN").strip() or "UNKNOWN"
+            use_case_entry = entry["_use_case_map"].setdefault(
+                use_case,
+                {
+                    "useCase": use_case,
+                    "tasks": 0,
+                    "successful": 0,
+                    "failed": 0,
+                    "avgScore": 0.0,
+                    "avgTime": 0.0,
+                    "avgReward": 0.0,
+                    "avgCost": 0.0,
                 },
             )
             entry["tasks"] += 1
@@ -2279,9 +2482,37 @@ class UIAgentsRunsServiceMixin:
                 entry["failed"] += 1
             entry["averageScore"] += float(item["eval_score"] or 0.0)
             entry["averageDuration"] += float(item["eval_time"] or 0.0)
+            entry["averageReward"] += float(item["reward"] or 0.0)
+            entry["averageCost"] += float(item["cost"] or 0.0)
+
+            use_case_entry["tasks"] += 1
+            if float(item["eval_score"] or 0.0) > 0:
+                use_case_entry["successful"] += 1
+            else:
+                use_case_entry["failed"] += 1
+            use_case_entry["avgScore"] += float(item["eval_score"] or 0.0)
+            use_case_entry["avgTime"] += float(item["eval_time"] or 0.0)
+            use_case_entry["avgReward"] += float(item["reward"] or 0.0)
+            use_case_entry["avgCost"] += float(item["cost"] or 0.0)
         performance = []
         for site, entry in by_website.items():
             tasks = int(entry["tasks"])
+            stats_by_usecase = []
+            for use_case_entry in entry.pop("_use_case_map", {}).values():
+                use_case_tasks = int(use_case_entry["tasks"] or 0)
+                stats_by_usecase.append(
+                    {
+                        "useCase": use_case_entry["useCase"],
+                        "total": use_case_tasks,
+                        "successful": int(use_case_entry["successful"] or 0),
+                        "failed": int(use_case_entry["failed"] or 0),
+                        "avgScore": (float(use_case_entry["avgScore"]) / use_case_tasks) if use_case_tasks > 0 else 0.0,
+                        "avgTime": (float(use_case_entry["avgTime"]) / use_case_tasks) if use_case_tasks > 0 else 0.0,
+                        "avgReward": (float(use_case_entry["avgReward"]) / use_case_tasks) if use_case_tasks > 0 else 0.0,
+                        "avgCost": (float(use_case_entry["avgCost"]) / use_case_tasks) if use_case_tasks > 0 else 0.0,
+                    }
+                )
+            stats_by_usecase.sort(key=lambda item: (-int(item["total"]), str(item["useCase"])))
             performance.append(
                 {
                     "website": site,
@@ -2290,12 +2521,16 @@ class UIAgentsRunsServiceMixin:
                     "failed": int(entry["failed"]),
                     "averageScore": (float(entry["averageScore"]) / tasks) if tasks > 0 else 0.0,
                     "averageDuration": (float(entry["averageDuration"]) / tasks) if tasks > 0 else 0.0,
+                    "averageReward": (float(entry["averageReward"]) / tasks) if tasks > 0 else 0.0,
+                    "averageCost": (float(entry["averageCost"]) / tasks) if tasks > 0 else 0.0,
+                    "statsByUsecase": stats_by_usecase,
                 }
             )
 
         total_tasks = int(run["total_tasks"] or 0)
+        tasks_attempted = int(run["tasks_attempted"] or 0) if run["tasks_attempted"] is not None else len(eval_items)
         successful_tasks = int(run["success_tasks"] or 0)
-        failed_tasks = int(run["failed_tasks"] or max(total_tasks - successful_tasks, 0))
+        failed_tasks = max(tasks_attempted - successful_tasks, 0) if tasks_attempted is not None else int(run["failed_tasks"] or max(total_tasks - successful_tasks, 0))
         run_status = "completed"
         if run["ended_at"] is None:
             run_status = "running"
@@ -2326,18 +2561,23 @@ class UIAgentsRunsServiceMixin:
             "endTime": datetime.fromtimestamp(float(run["ended_at"]), tz=timezone.utc).isoformat() if run["ended_at"] is not None else "",
             "status": run_status,
             "totalTasks": total_tasks,
+            "tasksAttempted": tasks_attempted,
             "completedTasks": successful_tasks,
             "successfulTasks": successful_tasks,
             "failedTasks": failed_tasks,
+            "score": float(run["average_score"] or 0.0),
             "reward": float(run["average_reward"] or 0.0),
             "duration": int(float(run["elapsed_sec"] or 0.0)),
             "overallReward": float(run["average_reward"] or 0.0),
             "averageEvaluationTime": float(run["average_execution_time"] or 0.0),
+            "avgCostPerTask": (float(run["avg_cost_per_task"]) if run["avg_cost_per_task"] is not None else None),
             "totalWebsites": len(performance),
             "websites": [],
             "tasks": [],
             "metadata": {},
             "zeroReason": run["zero_reason"],
+            "earlyStopReason": run["early_stop_reason"],
+            "earlyStopMessage": run["early_stop_message"],
         }
         personas = {
             "round": {
@@ -2376,12 +2616,18 @@ class UIAgentsRunsServiceMixin:
         }
         statistics = {
             "totalTasks": total_tasks,
+            "tasksAttempted": tasks_attempted,
             "websites": len(performance),
             "avg_reward": float(run["average_reward"] or 0.0),
+            "avg_score": float(run["average_score"] or 0.0),
             "avg_time": float(run["average_execution_time"] or 0.0),
+            "avg_cost": (float(run["avg_cost_per_task"]) if run["avg_cost_per_task"] is not None else None),
             "successfulTasks": successful_tasks,
             "failedTasks": failed_tasks,
             "performanceByWebsite": performance,
+            "zeroReason": run["zero_reason"],
+            "earlyStopReason": run["early_stop_reason"],
+            "earlyStopMessage": run["early_stop_message"],
         }
         summary = {
             "runId": run_data["runId"],
@@ -2487,6 +2733,9 @@ class UIAgentsRunsServiceMixin:
             "validator": personas["validator"],
             "miner": personas["agent"],
             "zeroReason": run_data.get("zeroReason"),
+            "earlyStopReason": run_data.get("earlyStopReason"),
+            "earlyStopMessage": run_data.get("earlyStopMessage"),
+            "tasksAttempted": run_data.get("tasksAttempted"),
             "isReused": run_data.get("isReused"),
             "reusedFromAgentRunId": run_data.get("reusedFromAgentRunId"),
             "reusedFrom": source_run_info,

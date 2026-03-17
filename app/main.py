@@ -35,6 +35,7 @@ from app.api.validator.task_logs import router as task_logs_router
 from app.api.validator.validator_round import router as validator_rounds_router
 from app.db.session import AsyncSessionLocal, get_session, init_db
 from app.middleware.logging_middleware import DetailedLoggingMiddleware
+from app.openapi import OPENAPI_TAGS, apply_route_docs, install_custom_openapi
 from app.services.idempotency import get_cache_stats
 
 app = FastAPI(
@@ -43,6 +44,14 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    openapi_tags=OPENAPI_TAGS,
+    swagger_ui_parameters={
+        "defaultModelsExpandDepth": 1,
+        "displayRequestDuration": True,
+        "docExpansion": "list",
+        "filter": True,
+        "persistAuthorization": True,
+    },
 )
 
 # CORS - Configuración completa para permitir requests desde todos los subdominios
@@ -326,6 +335,10 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
         headers=headers,
     )
+
+
+apply_route_docs(app)
+install_custom_openapi(app)
 
 
 if __name__ == "__main__":

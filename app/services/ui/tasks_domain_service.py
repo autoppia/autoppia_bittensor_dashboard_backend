@@ -4,7 +4,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
 from sqlalchemy import select
@@ -87,7 +87,7 @@ from app.utils.images import resolve_agent_image, resolve_validator_image
 logger = logging.getLogger(__name__)
 
 
-def _ts_to_iso(ts: float | None) -> str | None:
+def _ts_to_iso(ts: Optional[float]) -> Optional[str]:
     if ts is None:
         return None
     try:
@@ -96,13 +96,13 @@ def _ts_to_iso(ts: float | None) -> str | None:
         return None
 
 
-def _safe_int(value: float | None) -> int:
+def _safe_int(value: Optional[float]) -> int:
     if value is None:
         return 0
     return int(round(value))
 
 
-def _to_timestamp(value: datetime | None) -> float | None:
+def _to_timestamp(value: Optional[datetime]) -> Optional[float]:
     if value is None:
         return None
     if value.tzinfo is None:
@@ -110,15 +110,15 @@ def _to_timestamp(value: datetime | None) -> float | None:
     return value.timestamp()
 
 
-def _get_validator_uid_from_context(context: "AgentRunContext") -> int | None:
+def _get_validator_uid_from_context(context: "AgentRunContext") -> Optional[int]:
     if hasattr(context.round, "validator_info") and context.round.validator_info:
         return context.round.validator_info.uid
     if hasattr(context.round, "validators") and context.round.validators:
-        return context.round.validators[0].uid
+        return context.round.validators[0].uid if context.round.validators else None
     return None
 
 
-def _normalize_media_url(value: str | None, mime: str = "image/gif") -> str | None:
+def _normalize_media_url(value: Optional[str], mime: str = "image/gif") -> Optional[str]:
     if not value:
         return None
     candidate = str(value).strip()
@@ -145,17 +145,17 @@ class TaskContext:
     round: ValidatorRound
     agent_run: AgentEvaluationRun
     task: Task
-    solution: TaskSolution | None
-    evaluation: Evaluation | None
+    solution: Optional[TaskSolution]
+    evaluation: Optional[Evaluation]
 
 
 @dataclass
 class AgentRunContext:
     round: ValidatorRound
     run: AgentEvaluationRun
-    tasks: list[Task]
-    task_solutions: list[TaskSolution]
-    evaluations: list[Evaluation]
+    tasks: List[Task]
+    task_solutions: List[TaskSolution]
+    evaluations: List[Evaluation]
 
 
 class TasksDomainServiceMixin:
@@ -166,22 +166,25 @@ class TasksDomainServiceMixin:
         self,
         page: int,
         limit: int,
-        agent_run_id: str | None = None,
-        agent_id: str | None = None,
-        validator_id: str | None = None,
-        website: str | None = None,
-        use_case: str | None = None,
-        status: str | None = None,
-        query: str | None = None,
-        min_score: float | None = None,
-        max_score: float | None = None,
-        start_date: datetime | None = None,
-        end_date: datetime | None = None,
+        agent_run_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        miner_uid: Optional[int] = None,
+        validator_id: Optional[str] = None,
+        website: Optional[str] = None,
+        use_case: Optional[str] = None,
+        status: Optional[str] = None,
+        query: Optional[str] = None,
+        min_score: Optional[float] = None,
+        max_score: Optional[float] = None,
+        success_only: Optional[bool] = None,
+        success_mode: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
         sort_by: str = "startTime",
         sort_order: str = "desc",
         include_facets: bool = False,
         include_details: bool = True,
-    ) -> dict[str, object]:
+    ) -> Dict[str, object]:
         """
         When include_details is False, return a lightweight listing that avoids loading
         actions/screenshots/logs for every task. This path uses SQL pagination to keep
@@ -195,6 +198,7 @@ class TasksDomainServiceMixin:
                 limit=limit,
                 agent_run_id=agent_run_id,
                 agent_id=agent_id,
+                miner_uid=miner_uid,
                 validator_id=validator_id,
                 website=website,
                 use_case=use_case,
@@ -202,6 +206,8 @@ class TasksDomainServiceMixin:
                 query=query,
                 min_score=min_score,
                 max_score=max_score,
+                success_only=success_only,
+                success_mode=success_mode,
                 start_date=start_date.isoformat() if start_date else None,
                 end_date=end_date.isoformat() if end_date else None,
                 sort_by=sort_by,
@@ -212,16 +218,17 @@ class TasksDomainServiceMixin:
             # Try to get from cache
             cached_result = redis_cache.get(cache_key)
             if cached_result is not None:
-                logger.debug("Cache hit for tasks_search_light: %s", cache_key)
+                logger.debug(f"Cache hit for tasks_search_light: {cache_key}")
                 return cached_result
 
             # Execute query
-            logger.debug("Cache miss for tasks_search_light: %s", cache_key)
+            logger.debug(f"Cache miss for tasks_search_light: {cache_key}")
             result = await self._list_tasks_light(
                 page=page,
                 limit=limit,
                 agent_run_id=agent_run_id,
                 agent_id=agent_id,
+                miner_uid=miner_uid,
                 validator_id=validator_id,
                 website=website,
                 use_case=use_case,
@@ -229,6 +236,8 @@ class TasksDomainServiceMixin:
                 query=query,
                 min_score=min_score,
                 max_score=max_score,
+                success_only=success_only,
+                success_mode=success_mode,
                 start_date=start_date,
                 end_date=end_date,
                 sort_by=sort_by,
@@ -267,10 +276,10 @@ class TasksDomainServiceMixin:
         start_ts = _to_timestamp(start_date)
         end_ts = _to_timestamp(end_date)
 
-        website_counts: dict[str, int] = defaultdict(int)
-        use_case_counts: dict[str, int] = defaultdict(int)
-        status_counts: dict[str, int] = defaultdict(int)
-        score_buckets: dict[str, int] = defaultdict(int)
+        website_counts: Dict[str, int] = defaultdict(int)
+        use_case_counts: Dict[str, int] = defaultdict(int)
+        status_counts: Dict[str, int] = defaultdict(int)
+        score_buckets: Dict[str, int] = defaultdict(int)
 
         score_ranges = [
             ("0.0-0.25", 0.0, 0.25),
@@ -279,8 +288,8 @@ class TasksDomainServiceMixin:
             ("0.75-1.0", 0.75, 1.01),
         ]
 
-        context_cache: dict[str, AgentRunContext] = {}
-        items: list[UITask] = []
+        context_cache: Dict[str, AgentRunContext] = {}
+        items: List[UITask] = []
         for task_row in task_rows:
             try:
                 context = await self._build_context(task_row, context_cache)
@@ -295,6 +304,9 @@ class TasksDomainServiceMixin:
                 miner_uid = _parse_identifier(agent_id)
                 if context.agent_run.miner_uid != miner_uid:
                     continue
+
+            if miner_uid is not None and context.agent_run.miner_uid != miner_uid:
+                continue
 
             if validator_id:
                 validator_uid = _parse_identifier(validator_id)
@@ -351,7 +363,7 @@ class TasksDomainServiceMixin:
         end_index = start_index + limit
         paginated = items[start_index:end_index]
 
-        result: dict[str, Any] = {
+        result: Dict[str, Any] = {
             "tasks": [task.model_dump() for task in paginated],
             "total": total,
             "page": page,
@@ -373,7 +385,7 @@ class TasksDomainServiceMixin:
         page: int,
         limit: int,
         **filters: Any,
-    ) -> dict[str, object]:
+    ) -> Dict[str, object]:
         return await self.list_tasks(
             page=page,
             limit=limit,
@@ -386,7 +398,7 @@ class TasksDomainServiceMixin:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _get_validator_name(run: AgentEvaluationRunORM | None, round_row: ValidatorRoundORM | None) -> str | None:
+    def _get_validator_name(run: Optional[AgentEvaluationRunORM], round_row: Optional[ValidatorRoundORM]) -> Optional[str]:
         """Extract validator name from agent_run or round snapshots."""
         if not run:
             return None
@@ -399,7 +411,7 @@ class TasksDomainServiceMixin:
         return None
 
     @staticmethod
-    def _get_validator_image(run: AgentEvaluationRunORM | None, round_row: ValidatorRoundORM | None) -> str | None:
+    def _get_validator_image(run: Optional[AgentEvaluationRunORM], round_row: Optional[ValidatorRoundORM]) -> Optional[str]:
         """Extract validator image from agent_run or round snapshots."""
         if not run:
             return None
@@ -412,7 +424,7 @@ class TasksDomainServiceMixin:
         return None
 
     @staticmethod
-    def _get_miner_name(run: AgentEvaluationRunORM | None, round_row: ValidatorRoundORM | None) -> str | None:
+    def _get_miner_name(run: Optional[AgentEvaluationRunORM], round_row: Optional[ValidatorRoundORM]) -> Optional[str]:
         """Extract miner name from agent_run or round snapshots."""
         if not run:
             return None
@@ -425,7 +437,7 @@ class TasksDomainServiceMixin:
         return None
 
     @staticmethod
-    def _get_miner_image(run: AgentEvaluationRunORM | None, round_row: ValidatorRoundORM | None) -> str | None:
+    def _get_miner_image(run: Optional[AgentEvaluationRunORM], round_row: Optional[ValidatorRoundORM]) -> Optional[str]:
         """Extract miner image from agent_run or round snapshots."""
         if not run:
             return None
@@ -445,21 +457,24 @@ class TasksDomainServiceMixin:
         self,
         page: int,
         limit: int,
-        agent_run_id: str | None = None,
-        agent_id: str | None = None,
-        validator_id: str | None = None,
-        website: str | None = None,
-        use_case: str | None = None,
-        status: str | None = None,
-        query: str | None = None,
-        min_score: float | None = None,
-        max_score: float | None = None,
-        start_date: datetime | None = None,
-        end_date: datetime | None = None,
+        agent_run_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        miner_uid: Optional[int] = None,
+        validator_id: Optional[str] = None,
+        website: Optional[str] = None,
+        use_case: Optional[str] = None,
+        status: Optional[str] = None,
+        query: Optional[str] = None,
+        min_score: Optional[float] = None,
+        max_score: Optional[float] = None,
+        success_only: Optional[bool] = None,
+        success_mode: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
         sort_by: str = "startTime",
         sort_order: str = "desc",
         include_facets: bool = False,
-    ) -> dict[str, object]:
+    ) -> Dict[str, object]:
         from sqlalchemy import func
 
         # Start from EVALUATIONS (one row per task+miner) instead of tasks
@@ -501,6 +516,15 @@ class TasksDomainServiceMixin:
             filters.append(EvaluationORM.evaluation_score >= min_score)
         if max_score is not None:
             filters.append(EvaluationORM.evaluation_score <= max_score)
+        if success_mode == "successful":
+            filters.append(EvaluationORM.reward > 0)
+        elif success_mode == "non_successful":
+            filters.append(EvaluationORM.reward <= 0)
+        elif success_only:
+            filters.append(EvaluationORM.reward > 0)
+
+        if miner_uid is not None:
+            filters.append(EvaluationORM.miner_uid == miner_uid)
 
         if use_case:
             # Filter by use_case name in JSON field
@@ -557,30 +581,30 @@ class TasksDomainServiceMixin:
             }
 
         # Get unique task_ids and agent_run_ids from the paginated evaluations
-        task_ids = list({ev.task_id for ev in eval_rows})
-        agent_run_ids_from_evals = list({ev.agent_run_id for ev in eval_rows})
+        task_ids = list(set(ev.task_id for ev in eval_rows))
+        agent_run_ids_from_evals = list(set(ev.agent_run_id for ev in eval_rows))
 
         # Fetch tasks for these evaluations
         task_stmt = select(TaskORM).where(TaskORM.task_id.in_(task_ids))
         task_rows_list = await self.session.scalars(task_stmt)
-        tasks_by_id: dict[str, TaskORM] = {t.task_id: t for t in task_rows_list}
+        tasks_by_id: Dict[str, TaskORM] = {t.task_id: t for t in task_rows_list}
 
         # Fetch solutions for these evaluations
         solution_stmt = select(TaskSolutionORM).where(TaskSolutionORM.task_id.in_(task_ids), TaskSolutionORM.agent_run_id.in_(agent_run_ids_from_evals))
         solution_rows_list = await self.session.scalars(solution_stmt)
-        solutions_by_key: dict[tuple[str, str], TaskSolutionORM] = {(sol.task_id, sol.agent_run_id): sol for sol in solution_rows_list}
+        solutions_by_key: Dict[tuple[str, str], TaskSolutionORM] = {(sol.task_id, sol.agent_run_id): sol for sol in solution_rows_list}
 
         # Fetch agent runs for these evaluations with validator and miner info
         from sqlalchemy.orm import selectinload
 
-        agent_runs_by_id: dict[str, AgentEvaluationRunORM] = {}
+        agent_runs_by_id: Dict[str, AgentEvaluationRunORM] = {}
         if agent_run_ids_from_evals:
             run_rows = await self.session.scalars(select(AgentEvaluationRunORM).where(AgentEvaluationRunORM.agent_run_id.in_(agent_run_ids_from_evals)))
             agent_runs_by_id = {run.agent_run_id: run for run in run_rows}
 
         # Fetch round info for these evaluations
-        round_ids = list({ev.validator_round_id for ev in eval_rows})
-        round_map: dict[str, ValidatorRoundORM] = {}
+        round_ids = list(set(ev.validator_round_id for ev in eval_rows))
+        round_map: Dict[str, ValidatorRoundORM] = {}
         if round_ids:
             round_rows = await self.session.scalars(
                 select(ValidatorRoundORM)
@@ -594,7 +618,7 @@ class TasksDomainServiceMixin:
 
         # Sum LLM cost per evaluation for task list cards
         eval_ids = [ev.evaluation_id for ev in eval_rows if ev.evaluation_id]
-        costs_by_eval: dict[str, float] = {}
+        costs_by_eval: Dict[str, float] = {}
         if eval_ids:
             cost_stmt = (
                 select(EvaluationLLMUsageORM.evaluation_id, func.coalesce(func.sum(EvaluationLLMUsageORM.cost), 0.0))
@@ -611,15 +635,15 @@ class TasksDomainServiceMixin:
                 return "Unknown"
             return str(raw)
 
-        def _ts(ts: float | None) -> datetime | None:
+        def _ts(ts: Optional[float]) -> Optional[datetime]:
             if ts is None:
                 return None
             try:
                 return datetime.fromtimestamp(ts, tz=timezone.utc)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 return None
 
-        items: list[UITask] = []
+        items: List[UITask] = []
         # Iterate over paginated evaluations
         for ev in eval_rows:
             task_row = tasks_by_id.get(ev.task_id)
@@ -631,18 +655,8 @@ class TasksDomainServiceMixin:
             round_row = round_map.get(ev.validator_round_id)
 
             score = getattr(ev, "evaluation_score", 0.0) if ev else 0.0
-            if ev and ev.evaluation_time is not None:
-                duration = ev.evaluation_time
-            elif run:
-                duration = run.elapsed_sec
-            else:
-                duration = 0.0
-            if ev and score >= 0.5:
-                status_val = TaskStatus.COMPLETED
-            elif ev:
-                status_val = TaskStatus.FAILED
-            else:
-                status_val = TaskStatus.PENDING
+            duration = ev.evaluation_time if ev and ev.evaluation_time is not None else (run.elapsed_sec if run else 0.0)
+            status_val = TaskStatus.COMPLETED if ev and score >= 0.5 else (TaskStatus.FAILED if ev else TaskStatus.PENDING)
 
             # Filters that depend on run/eval info (applied after enrichment)
             if agent_run_id and ev.agent_run_id != agent_run_id:
@@ -650,16 +664,18 @@ class TasksDomainServiceMixin:
             if agent_id:
                 try:
                     parsed_agent = _parse_identifier(agent_id)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     parsed_agent = None
                 if parsed_agent is not None:
-                    miner_uid = ev.miner_uid
-                    if miner_uid != parsed_agent:
+                    evaluation_miner_uid = ev.miner_uid
+                    if evaluation_miner_uid != parsed_agent:
                         continue
+            if miner_uid is not None and ev.miner_uid != miner_uid:
+                continue
             if validator_id:
                 try:
                     parsed_validator = _parse_identifier(validator_id)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     parsed_validator = None
                 if parsed_validator is not None:
                     validator_uid = ev.validator_uid
@@ -670,25 +686,11 @@ class TasksDomainServiceMixin:
 
             eval_cost = costs_by_eval.get(ev.evaluation_id) if ev and ev.evaluation_id else None
 
-            if run:
-                agent_run_id_val = run.agent_run_id
-            elif ev:
-                agent_run_id_val = ev.agent_run_id
-            elif sol:
-                agent_run_id_val = sol.agent_run_id
-            else:
-                agent_run_id_val = ""
-
-            start_ts = _ts(run.started_at if run else None) or _ts(round_row.start_epoch if round_row else None)
-            if start_ts is None:
-                start_ts = _ts(task_row.created_at.timestamp())
-            end_ts = _ts(run.ended_at if run else None)
-
             items.append(
                 UITask(
                     taskId=task_row.task_id,
                     evaluationId=ev.evaluation_id if ev else None,
-                    agentRunId=agent_run_id_val,
+                    agentRunId=(run.agent_run_id if run else (ev.agent_run_id if ev else sol.agent_run_id if sol else "")),
                     roundNumber=getattr(round_row, "round_number_in_season", None),
                     season=getattr(round_row, "season_number", None),
                     website=task_row.url,
@@ -700,8 +702,8 @@ class TasksDomainServiceMixin:
                     score=score,
                     successRate=int(score * 100),
                     duration=int(duration or 0),
-                    startTime=start_ts,
-                    endTime=end_ts,
+                    startTime=_ts(run.started_at if run else None) or _ts(round_row.start_epoch if round_row else None) or _ts(task_row.created_at.timestamp()),
+                    endTime=_ts(run.ended_at if run else None),
                     createdAt=task_row.created_at,
                     updatedAt=task_row.updated_at,
                     actions=None,
@@ -722,7 +724,7 @@ class TasksDomainServiceMixin:
             reverse = sort_order.lower() == "desc"
             items.sort(key=lambda t: t.score, reverse=reverse)
 
-        result: dict[str, Any] = {
+        result: Dict[str, Any] = {
             "tasks": [task.model_dump() for task in items],
             "total": total,  # Use SQL count (total evaluations in DB matching filters)
             "page": page,
@@ -730,10 +732,10 @@ class TasksDomainServiceMixin:
         }
 
         if include_facets:
-            status_counts: dict[str, int] = defaultdict(int)
-            website_counts: dict[str, int] = defaultdict(int)
-            use_case_counts: dict[str, int] = defaultdict(int)
-            score_buckets: dict[str, int] = defaultdict(int)
+            status_counts: Dict[str, int] = defaultdict(int)
+            website_counts: Dict[str, int] = defaultdict(int)
+            use_case_counts: Dict[str, int] = defaultdict(int)
+            score_buckets: Dict[str, int] = defaultdict(int)
             score_ranges = [
                 ("0.0-0.25", 0.0, 0.25),
                 ("0.25-0.5", 0.25, 0.5),
@@ -778,7 +780,7 @@ class TasksDomainServiceMixin:
         task_row = await self.session.scalar(stmt)
         if not task_row:
             raise ValueError(f"Task {task_id} not found")
-        context_cache: dict[str, AgentRunContext] = {}
+        context_cache: Dict[str, AgentRunContext] = {}
         return await self._build_context(task_row, context_cache)
 
     async def get_task_by_evaluation_id(self, evaluation_id: str) -> TaskContext:
@@ -857,8 +859,8 @@ class TasksDomainServiceMixin:
         )
         rows = await self.session.scalars(stmt)
 
-        context_cache: dict[str, AgentRunContext] = {}
-        contexts: list[TaskContext] = []
+        context_cache: Dict[str, AgentRunContext] = {}
+        contexts: List[TaskContext] = []
         for row in rows:
             try:
                 contexts.append(await self._build_context(row, context_cache))
@@ -876,7 +878,7 @@ class TasksDomainServiceMixin:
         average_duration = sum(durations) / len(durations) if durations else 0.0
         success_rate = (completed / total * 100.0) if total else 0.0
 
-        website_stats: dict[str, dict[str, float]] = defaultdict(
+        website_stats: Dict[str, Dict[str, float]] = defaultdict(
             lambda: {
                 "tasks": 0,
                 "successful": 0,
@@ -885,7 +887,7 @@ class TasksDomainServiceMixin:
                 "duration": 0.0,
             }
         )
-        use_case_stats: dict[str, dict[str, float]] = defaultdict(
+        use_case_stats: Dict[str, Dict[str, float]] = defaultdict(
             lambda: {
                 "tasks": 0,
                 "successful": 0,
@@ -895,7 +897,7 @@ class TasksDomainServiceMixin:
             }
         )
 
-        performance_over_time: list[dict[str, Any]] = []
+        performance_over_time: List[Dict[str, Any]] = []
         for context in contexts:
             evaluation_score = getattr(context.evaluation, "evaluation_score", 0.0) if context.evaluation else 0.0
             evaluation_duration = context.evaluation.evaluation_time if context.evaluation else 0.0
@@ -967,8 +969,8 @@ class TasksDomainServiceMixin:
             performanceOverTime=performance_over_time,
         )
 
-    async def compare_tasks(self, task_ids: list[str]) -> CompareTasksResponse:
-        contexts: list[TaskContext] = []
+    async def compare_tasks(self, task_ids: List[str]) -> CompareTasksResponse:
+        contexts: List[TaskContext] = []
         for task_id in task_ids:
             try:
                 context = await self.get_task(task_id)
@@ -1047,7 +1049,7 @@ class TasksDomainServiceMixin:
             endEpoch=end_epoch_val,
         )
 
-        validator_model: CoreValidatorInfo | None = None
+        validator_model: Optional[CoreValidatorInfo] = None
         validator_uid = _get_validator_uid_from_context(context)
         if context.round.validators:
             validator_model = next(
@@ -1142,7 +1144,7 @@ class TasksDomainServiceMixin:
             averageScore=average_score,
         )
 
-        evaluation_summary: TaskEvaluationSummary | None = None
+        evaluation_summary: Optional[TaskEvaluationSummary] = None
         if context.evaluation:
             evaluation_score = getattr(context.evaluation, "evaluation_score", 0.0)
             eval_meta = getattr(context.evaluation, "metadata", None) or {}
@@ -1150,7 +1152,7 @@ class TasksDomainServiceMixin:
             llm_usage = getattr(context.evaluation, "llm_usage", None) or []
             try:
                 llm_usage_list = list(llm_usage)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 llm_usage_list = []
             total_tokens = sum(int(u.get("tokens") or 0) for u in llm_usage_list) if llm_usage_list else None
             total_cost = sum(float(u.get("cost") or 0.0) for u in llm_usage_list) if llm_usage_list else None
@@ -1174,7 +1176,7 @@ class TasksDomainServiceMixin:
                 llmUsage=llm_usage_list or None,
             )
 
-        solution_summary: TaskSolutionSummary | None = None
+        solution_summary: Optional[TaskSolutionSummary] = None
         if context.solution:
             solution_summary = TaskSolutionSummary(
                 solutionId=context.solution.solution_id,
@@ -1217,15 +1219,9 @@ class TasksDomainServiceMixin:
             )
 
         validator_uid = _get_validator_uid_from_context(context)
-        if validator and validator.name:
-            validator_display_name = validator.name
-        elif validator_uid:
-            validator_display_name = _format_validator_id(validator_uid)
-        else:
-            validator_display_name = "unknown"
         validator_info = UITaskValidatorInfo(
             id=_format_validator_id(validator_uid) if validator_uid else "unknown",
-            name=validator_display_name,
+            name=(validator.name if validator and validator.name else _format_validator_id(validator_uid) if validator_uid else "unknown"),
             image="https://placehold.co/64x64?text=V",
             description="",
             website="",
@@ -1287,7 +1283,7 @@ class TasksDomainServiceMixin:
         ]
 
         base_ts = context.agent_run.started_at or context.round.started_at or 0.0
-        recent_activity: list[RecentActivity] = [
+        recent_activity: List[RecentActivity] = [
             RecentActivity(
                 timestamp=_parse_iso(base_ts),
                 action="task_started",
@@ -1323,7 +1319,7 @@ class TasksDomainServiceMixin:
         total_actions = len(action_models)
         successful_actions = len([action for action in action_models if action.success])
         failed_actions = total_actions - successful_actions
-        action_type_counts: dict[str, int] = defaultdict(int)
+        action_type_counts: Dict[str, int] = defaultdict(int)
         for action in action_models:
             action_type_counts[action.type] += 1
 
@@ -1346,8 +1342,8 @@ class TasksDomainServiceMixin:
             timeline=[],
         )
 
-    def build_actions(self, context: TaskContext) -> list[TaskAction]:
-        actions: list[TaskAction] = []
+    def build_actions(self, context: TaskContext) -> List[TaskAction]:
+        actions: List[TaskAction] = []
         if not context.solution or not context.solution.actions:
             return actions
 
@@ -1363,7 +1359,7 @@ class TasksDomainServiceMixin:
                 action_dict = {}
 
             # Get attributes
-            attributes: dict[str, Any] = {}
+            attributes: Dict[str, Any] = {}
             if hasattr(action, "attributes"):
                 attributes = dict(getattr(action, "attributes", {}) or {})
             elif isinstance(action, dict):
@@ -1555,8 +1551,8 @@ class TasksDomainServiceMixin:
             )
         return actions
 
-    def build_screenshots(self, context: TaskContext) -> list[TaskScreenshot]:
-        screenshots: list[TaskScreenshot] = []
+    def build_screenshots(self, context: TaskContext) -> List[TaskScreenshot]:
+        screenshots: List[TaskScreenshot] = []
         base_ts = context.agent_run.started_at or context.round.started_at or 0.0
         timestamp = _parse_iso(base_ts)
 
@@ -1590,8 +1586,8 @@ class TasksDomainServiceMixin:
 
         return screenshots
 
-    def build_logs(self, context: TaskContext) -> list[TaskLog]:
-        logs: list[TaskLog] = []
+    def build_logs(self, context: TaskContext) -> List[TaskLog]:
+        logs: List[TaskLog] = []
         if context.evaluation and context.evaluation.execution_history:
             base_ts = context.agent_run.started_at or context.round.started_at or 0.0
             for index, entry in enumerate(context.evaluation.execution_history):
@@ -1607,7 +1603,7 @@ class TasksDomainServiceMixin:
         llm_calls = None
         try:
             llm_calls = (context.evaluation.metadata or {}).get("llm_calls") if context.evaluation else None
-        except Exception:  # noqa: BLE001
+        except Exception:
             llm_calls = None
         if isinstance(llm_calls, list) and llm_calls:
             base_ts = context.agent_run.started_at or context.round.started_at or 0.0
@@ -1636,8 +1632,8 @@ class TasksDomainServiceMixin:
                 )
         return logs
 
-    def build_timeline(self, context: TaskContext) -> list[TaskTimeline]:
-        timeline: list[TaskTimeline] = []
+    def build_timeline(self, context: TaskContext) -> List[TaskTimeline]:
+        timeline: List[TaskTimeline] = []
         if context.solution and context.solution.actions:
             base_ts = context.agent_run.started_at or context.round.started_at or 0.0
             for index, action in enumerate(context.solution.actions):
@@ -1652,7 +1648,7 @@ class TasksDomainServiceMixin:
                 )
         return timeline
 
-    def build_metrics(self, context: TaskContext) -> dict[str, object]:
+    def build_metrics(self, context: TaskContext) -> Dict[str, object]:
         return {
             "duration": _safe_int(getattr(context.evaluation, "evaluation_time", 0.0)),
             "actionsPerSecond": 0.0,
@@ -1668,7 +1664,7 @@ class TasksDomainServiceMixin:
         base_ts = context.agent_run.started_at or context.round.started_at or 0.0
         return datetime.fromtimestamp(base_ts + offset, tz=timezone.utc)
 
-    def _resolve_agent_run_id(self, task_row: TaskORM) -> str | None:
+    def _resolve_agent_run_id(self, task_row: TaskORM) -> Optional[str]:
         for evaluation_row in task_row.evaluations or []:
             if evaluation_row.agent_run_id:
                 return evaluation_row.agent_run_id
@@ -1684,7 +1680,7 @@ class TasksDomainServiceMixin:
     async def _build_context(
         self,
         task_row: TaskORM,
-        cache: dict[str, AgentRunContext] | None = None,
+        cache: Optional[Dict[str, AgentRunContext]] = None,
     ) -> TaskContext:
         if cache is None:
             cache = {}
@@ -1747,7 +1743,7 @@ class TasksDomainServiceMixin:
         end_time = context.agent_run.ended_at or start_time
 
         # Extract seed from URL if present
-        seed_val: str | None = None
+        seed_val: Optional[str] = None
         try:
             parsed = urlparse(context.task.url or "")
             if parsed and parsed.query:
@@ -1756,7 +1752,7 @@ class TasksDomainServiceMixin:
                     seed_val = q.get("seed")[0]
                 elif q.get("seed"):
                     seed_val = str(q.get("seed"))
-        except Exception:  # noqa: BLE001
+        except Exception:
             seed_val = None
 
         # Get validator info
@@ -1816,14 +1812,14 @@ class TasksDomainServiceMixin:
         )
 
     @staticmethod
-    def _average_action_duration(actions: list[TaskAction] | None) -> float:
+    def _average_action_duration(actions: Optional[List[TaskAction]]) -> float:
         if not actions:
             return 0.0
         durations = [action.duration for action in actions]
         return sum(durations) / len(durations)
 
     @staticmethod
-    def _extract_use_case(task: Task) -> str | None:
+    def _extract_use_case(task: Task) -> Optional[str]:
         if isinstance(task.use_case, dict):
             return task.use_case.get("name")
         if isinstance(task.use_case, str):
@@ -1913,7 +1909,7 @@ class TasksDomainServiceMixin:
     @staticmethod
     def _deserialize_agent_run(
         agent_run_row: AgentEvaluationRunORM,
-        round_row: ValidatorRoundORM | None,
+        round_row: Optional[ValidatorRoundORM],
     ) -> AgentEvaluationRun:
         miner_snapshot = None
         if round_row is not None:
@@ -1980,7 +1976,7 @@ class TasksDomainServiceMixin:
             if row.task_id:
                 task_ids.add(row.task_id)
 
-        tasks: list[Task] = []
+        tasks: List[Task] = []
         for task_row in round_row.tasks or []:
             if task_row.task_id in task_ids:
                 tasks.append(self._deserialize_task(task_row))
@@ -1995,7 +1991,7 @@ class TasksDomainServiceMixin:
             evaluations=evaluations,
         )
 
-    async def get_evaluation_complete(self, evaluation_id: str) -> dict[str, Any]:
+    async def get_evaluation_complete(self, evaluation_id: str) -> Dict[str, Any]:
         """
         Get all evaluation data in a single call, similar to get-round.
         Returns: actions, screenshots, task_details, results, info
@@ -2010,7 +2006,7 @@ class TasksDomainServiceMixin:
         task_details = self._build_task_details_clean(context)
 
         # Build results without actions, screenshots, logs
-        results = self._build_results_clean(context)
+        results = self._build_results_clean(context, actions)
 
         # Build info object
         info = self._build_info(context)
@@ -2023,7 +2019,7 @@ class TasksDomainServiceMixin:
             "info": info,
         }
 
-    def _build_task_details_clean(self, context: TaskContext) -> dict[str, Any]:
+    def _build_task_details_clean(self, context: TaskContext) -> Dict[str, Any]:
         """Build task details without actions, screenshots, logs."""
         task_details = self.build_task_detail(context)
         task_dict = task_details.model_dump()
@@ -2033,7 +2029,7 @@ class TasksDomainServiceMixin:
         task_dict.pop("logs", None)
         return task_dict
 
-    def _build_results_clean(self, context: TaskContext) -> dict[str, Any]:
+    def _build_results_clean(self, context: TaskContext, actions: List[TaskAction]) -> Dict[str, Any]:
         """Build result (singular) without actions, screenshots, logs, summary, taskId."""
         # Get evaluation score and convert to binary (0 or 1)
         eval_score_raw = getattr(context.evaluation, "evaluation_score", 0.0) if context.evaluation else 0.0
@@ -2053,7 +2049,7 @@ class TasksDomainServiceMixin:
             "zero_reason": zero_reason,
         }
 
-    def _build_info(self, context: TaskContext) -> dict[str, Any]:
+    def _build_info(self, context: TaskContext) -> Dict[str, Any]:
         """Build info object with evaluationId, taskId, miner_run_id, round, validator, miner."""
         # Get evaluation ID
         evaluation_id = context.evaluation.evaluation_id if context.evaluation else None
@@ -2095,7 +2091,7 @@ class TasksDomainServiceMixin:
 
         # Build validator info
         validator_uid = _get_validator_uid_from_context(context)
-        validator_model: CoreValidatorInfo | None = None
+        validator_model: Optional[CoreValidatorInfo] = None
         if context.round.validators:
             validator_model = next(
                 (val for val in context.round.validators if val.uid == validator_uid),
@@ -2151,7 +2147,7 @@ class TasksDomainServiceMixin:
         }
 
     @staticmethod
-    def _sort_tasks(tasks: list[UITask], sort_by: str, sort_order: str) -> list[UITask]:
+    def _sort_tasks(tasks: List[UITask], sort_by: str, sort_order: str) -> List[UITask]:
         reverse = sort_order.lower() == "desc"
         try:
             return sorted(tasks, key=lambda task: getattr(task, sort_by), reverse=reverse)
@@ -2159,7 +2155,7 @@ class TasksDomainServiceMixin:
             return tasks
 
 
-def _parse_iso(value: float | None) -> datetime:
+def _parse_iso(value: Optional[float]) -> datetime:
     if value is None:
         return datetime.fromtimestamp(0, tz=timezone.utc)
     try:
