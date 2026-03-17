@@ -505,6 +505,8 @@ class ValidatorStorageHelpersMixin:
             if current_block is None:
                 raise RoundConflictError("Chain state unavailable: non-main validator cannot trigger fallback start")
             planned_start_block = int(getattr(validator_round, "start_block", 0) or 0)
+            if planned_start_block <= 0:
+                raise RoundConflictError("Fallback start denied: validator payload is missing a valid start_block")
             grace_blocks = int(getattr(settings, "MAIN_VALIDATOR_START_GRACE_BLOCKS", 25))
             if current_block <= (planned_start_block + grace_blocks):
                 raise RoundConflictError(
