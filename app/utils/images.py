@@ -91,6 +91,26 @@ def _is_allowed_host(hostname: Optional[str]) -> bool:
     return False
 
 
+def _is_s3_hostname(hostname: Optional[str]) -> bool:
+    """
+    Return True when the hostname represents an AWS S3 endpoint we trust.
+
+    This checks for exact matches to the global/regional S3 endpoints and the
+    usual virtual-host style bucket forms, while avoiding generic substring
+    checks that can be abused (e.g. attacker-s3.amazonaws.com.evil.com).
+    """
+    if not hostname:
+        return False
+    host = hostname.lower()
+    exact_allowed = {
+        "s3.amazonaws.com",
+        "s3.eu-west-1.amazonaws.com",
+    }
+    if host in exact_allowed:
+        return True
+    return host.endswith(".s3.amazonaws.com") or host.endswith(".s3.eu-west-1.amazonaws.com")
+
+
 def _rewrite_github_blob(url: str) -> str:
     if url.startswith("https://github.com/") and "/blob/" in url:
         return url.replace("https://github.com/", "https://raw.githubusercontent.com/").replace("/blob/", "/")
@@ -152,7 +172,7 @@ def _sanitize_url(candidate: Optional[str]) -> str:
             # For S3 URLs, return the FULL URL (not relative path)
             # This allows Next.js Image component to load from S3
             hostname_lower = (parsed.hostname or "").lower()
-            if "s3.amazonaws.com" in hostname_lower or "s3.eu-west-1.amazonaws.com" in hostname_lower:
+            if _is_s3_hostname(hostname_lower):
                 return rewritten  # Return full S3 URL
             # For other allowed hosts, convert to relative path
             query = f"?{parsed.query}" if parsed.query else ""
