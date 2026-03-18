@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import text
 
 from app.services.metagraph_service import MetagraphError, get_validator_data
+from app.services.round_config_service import get_config_season_round
 
 
 def _normalize_stake_to_rao(stake: Any) -> float:
@@ -143,6 +144,193 @@ class UIOverviewServiceMixin:
                 {"round_id": current_round_id},
             )
         ).scalar_one()
+        configured_tasks_per_validator = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT MAX((rv.config->'round'->>'tasks_per_season')::INTEGER)
+                    FROM round_validators rv
+                    WHERE rv.round_id = :round_id
+                      AND rv.config IS NOT NULL
+                      AND rv.config->'round'->>'tasks_per_season' IS NOT NULL
+                    """
+                ),
+                {"round_id": current_round_id},
+            )
+        ).scalar_one()
+        effective_tasks_per_validator = int(configured_tasks_per_validator or current_tasks_per_validator or 0)
+
+        round_duration_minutes = None
+        season_duration_minutes = None
+        season_rounds = None
+        try:
+            cfg = get_config_season_round()
+            round_duration_minutes = int(round(cfg.round_blocks() * 12 / 60))
+            season_duration_minutes = int(round(cfg.season_blocks() * 12 / 60))
+            if cfg.round_size_epochs > 0:
+                season_rounds = int(round(cfg.season_size_epochs / cfg.round_size_epochs))
+        except Exception:
+            cfg = None
+
+        season_task_volume = (
+            effective_tasks_per_validator * int(current_validators or 0) * int(season_rounds or 0)
+            if effective_tasks_per_validator > 0 and int(current_validators or 0) > 0 and int(season_rounds or 0) > 0
+            else None
+        )
+
+        previous_round_ref = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT r.round_id, r.round_number_in_season
+                        FROM rounds r
+                        JOIN seasons s ON s.season_id = r.season_id
+                        WHERE s.season_number = :season
+                          AND r.round_number_in_season < :round
+                        ORDER BY r.round_number_in_season DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {
+                        "season": current_season,
+                        "round": current_round_in_season,
+                    },
+                )
+            )
+            .mappings()
+            .first()
+        )
+        previous_round_id = int(previous_round_ref["round_id"]) if previous_round_ref and previous_round_ref.get("round_id") is not None else None
+
+        miner_updates_this_round = 0
+        if previous_round_id is not None:
+            miner_updates_this_round = int(
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            WITH current_urls AS (
+                              SELECT miner_uid, github_url
+                              FROM (
+                                SELECT
+                                  rvm.miner_uid,
+                                  NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') AS github_url,
+                                  ROW_NUMBER() OVER (
+                                    PARTITION BY rvm.miner_uid
+                                    ORDER BY rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
+                                  ) AS rn
+                                FROM round_validator_miners rvm
+                                WHERE rvm.round_id = :current_round_id
+                                  AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
+                              ) ranked
+                              WHERE rn = 1
+                            ),
+                            previous_urls AS (
+                              SELECT miner_uid, github_url
+                              FROM (
+                                SELECT
+                                  rvm.miner_uid,
+                                  NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') AS github_url,
+                                  ROW_NUMBER() OVER (
+                                    PARTITION BY rvm.miner_uid
+                                    ORDER BY rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
+                                  ) AS rn
+                                FROM round_validator_miners rvm
+                                WHERE rvm.round_id = :previous_round_id
+                                  AND NULLIF(TRIM(COALESCE(rvm.github_url, '')), '') IS NOT NULL
+                              ) ranked
+                              WHERE rn = 1
+                            )
+                            SELECT COUNT(*)::INTEGER
+                            FROM current_urls c
+                            JOIN previous_urls p USING (miner_uid)
+                            WHERE c.github_url IS DISTINCT FROM p.github_url
+                            """
+                        ),
+                        {
+                            "current_round_id": current_round_id,
+                            "previous_round_id": previous_round_id,
+                        },
+                    )
+                ).scalar_one()
+                or 0
+            )
+
+        new_agents_this_round = int(
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        WITH current_miners AS (
+                          SELECT DISTINCT rvm.miner_uid
+                          FROM round_validator_miners rvm
+                          WHERE rvm.round_id = :current_round_id
+                        )
+                        SELECT COUNT(*)::INTEGER
+                        FROM current_miners cm
+                        WHERE NOT EXISTS (
+                          SELECT 1
+                          FROM round_validator_miners hist
+                          JOIN rounds r ON r.round_id = hist.round_id
+                          JOIN seasons s ON s.season_id = r.season_id
+                          WHERE s.season_number = :season
+                            AND r.round_number_in_season < :round
+                            AND hist.miner_uid = cm.miner_uid
+                        )
+                        """
+                    ),
+                    {
+                        "current_round_id": current_round_id,
+                        "season": current_season,
+                        "round": current_round_in_season,
+                    },
+                )
+            ).scalar_one()
+            or 0
+        )
+
+        latest_finished_pair = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                          s.season_number,
+                          r.round_number_in_season,
+                          COALESCE(rs.leader_after_reward, 0) AS reward,
+                          rs.leader_after_miner_uid,
+                          (
+                            SELECT COALESCE(NULLIF(TRIM(COALESCE(rvm.name, '')), ''), 'miner ' || rs.leader_after_miner_uid::text)
+                            FROM round_validator_miners rvm
+                            WHERE rvm.round_id = r.round_id
+                              AND rvm.miner_uid = rs.leader_after_miner_uid
+                            ORDER BY rvm.updated_at DESC NULLS LAST, rvm.created_at DESC NULLS LAST
+                            LIMIT 1
+                          ) AS leader_name
+                        FROM round_summary rs
+                        JOIN rounds r ON r.round_id = rs.round_id
+                        JOIN seasons s ON s.season_id = r.season_id
+                        WHERE lower(COALESCE(r.status, '')) IN ('finished', 'evaluating_finished')
+                        ORDER BY s.season_number DESC, r.round_number_in_season DESC
+                        LIMIT 2
+                        """
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        reward_delta_from_previous_round = None
+        previous_round_leader_name = None
+        previous_round_leader_reward = None
+        previous_round_label = None
+        if len(latest_finished_pair) >= 2:
+            reward_delta_from_previous_round = float(latest_finished_pair[0]["reward"] or 0.0) - float(latest_finished_pair[1]["reward"] or 0.0)
+            previous_round_leader_name = latest_finished_pair[1].get("leader_name")
+            previous_round_leader_reward = float(latest_finished_pair[1]["reward"] or 0.0)
+            if latest_finished_pair[1].get("season_number") is not None and latest_finished_pair[1].get("round_number_in_season") is not None:
+                previous_round_label = f"Season {int(latest_finished_pair[1]['season_number'])} · Round {int(latest_finished_pair[1]['round_number_in_season'])}"
 
         if not has_finished_round:
             return {
@@ -154,7 +342,17 @@ class UIOverviewServiceMixin:
                 "currentRound": current_round_in_season,
                 "currentValidators": int(current_validators or 0),
                 "totalMiners": int(current_total_miners or 0),
-                "tasksPerValidator": int(current_tasks_per_validator or 0),
+                "tasksPerValidator": effective_tasks_per_validator,
+                "roundDurationMinutes": round_duration_minutes,
+                "seasonDurationMinutes": season_duration_minutes,
+                "seasonRounds": season_rounds,
+                "seasonTaskVolume": season_task_volume,
+                "minerUpdatesThisRound": miner_updates_this_round,
+                "newAgentsThisRound": new_agents_this_round,
+                "rewardDeltaFromPreviousRound": reward_delta_from_previous_round,
+                "previousRoundLeaderName": previous_round_leader_name,
+                "previousRoundLeaderReward": previous_round_leader_reward,
+                "previousRoundLabel": previous_round_label,
                 "minerList": [],
                 "subnetVersion": subnet_version,
                 "lastUpdated": datetime.now(timezone.utc).isoformat(),
@@ -504,7 +702,17 @@ class UIOverviewServiceMixin:
             "currentRound": current_round_in_season,
             "currentValidators": int(current_validators or 0),
             "totalMiners": len(miners),
-            "tasksPerValidator": int(tasks_per_validator or 0),
+            "tasksPerValidator": int(tasks_per_validator or effective_tasks_per_validator or 0),
+            "roundDurationMinutes": round_duration_minutes,
+            "seasonDurationMinutes": season_duration_minutes,
+            "seasonRounds": season_rounds,
+            "seasonTaskVolume": season_task_volume,
+            "minerUpdatesThisRound": miner_updates_this_round,
+            "newAgentsThisRound": new_agents_this_round,
+            "rewardDeltaFromPreviousRound": reward_delta_from_previous_round,
+            "previousRoundLeaderName": previous_round_leader_name,
+            "previousRoundLeaderReward": previous_round_leader_reward,
+            "previousRoundLabel": previous_round_label,
             "minerList": [dict(m) for m in miners],
             "subnetVersion": subnet_version,
             "lastUpdated": datetime.now(timezone.utc).isoformat(),
@@ -845,48 +1053,432 @@ class UIOverviewServiceMixin:
         }
 
     async def get_overview_recent_activity(self, limit: int) -> List[Dict[str, Any]]:
-        rows = (
+        lim = max(limit, 1)
+
+        season_rows = (
             (
                 await self.session.execute(
                     text(
                         """
-                    SELECT rr.round_id, rr.started_at, rr.ended_at, s.season_number, rr.round_number_in_season
-                    FROM rounds rr
-                    JOIN seasons s ON s.season_id = rr.season_id
-                    ORDER BY rr.ended_at DESC NULLS LAST, rr.started_at DESC NULLS LAST
-                    LIMIT :lim
-                    """
+                        SELECT
+                          season_id,
+                          season_number,
+                          status,
+                          start_at,
+                          end_at,
+                          created_at,
+                          updated_at
+                        FROM seasons
+                        ORDER BY COALESCE(end_at, start_at, updated_at, created_at) DESC
+                        LIMIT :lim
+                        """
                     ),
-                    {"lim": max(limit, 1)},
+                    {"lim": lim},
                 )
             )
             .mappings()
             .all()
         )
+
+        round_rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                          r.round_id,
+                          s.season_number,
+                          r.round_number_in_season,
+                          r.status,
+                          r.consensus_status,
+                          r.started_at,
+                          r.ended_at,
+                          r.created_at,
+                          r.updated_at
+                        FROM rounds r
+                        JOIN seasons s ON s.season_id = r.season_id
+                        ORDER BY COALESCE(r.ended_at, r.started_at, r.updated_at, r.created_at) DESC
+                        LIMIT :lim
+                        """
+                    ),
+                    {"lim": lim},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+        started_rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                          mer.agent_run_id,
+                          mer.created_at AS timestamp,
+                          rv.validator_round_id,
+                          rv.validator_uid,
+                          COALESCE(rv.name, 'validator ' || rv.validator_uid::text) AS validator_name,
+                          mer.miner_uid,
+                          COALESCE(rvm.name, 'miner ' || mer.miner_uid::text) AS miner_name,
+                          s.season_number,
+                          r.round_number_in_season
+                        FROM miner_evaluation_runs mer
+                        LEFT JOIN round_validators rv ON rv.round_validator_id = mer.round_validator_id
+                        LEFT JOIN rounds r ON r.round_id = rv.round_id
+                        LEFT JOIN seasons s ON s.season_id = r.season_id
+                        LEFT JOIN round_validator_miners rvm
+                          ON rvm.round_validator_id = mer.round_validator_id
+                         AND rvm.miner_uid = mer.miner_uid
+                        ORDER BY mer.created_at DESC
+                        LIMIT :lim
+                        """
+                    ),
+                    {"lim": lim},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+        finished_rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                          mer.agent_run_id,
+                          mer.updated_at AS timestamp,
+                          rv.validator_round_id,
+                          rv.validator_uid,
+                          COALESCE(rv.name, 'validator ' || rv.validator_uid::text) AS validator_name,
+                          mer.miner_uid,
+                          COALESCE(rvm.name, 'miner ' || mer.miner_uid::text) AS miner_name,
+                          s.season_number,
+                          r.round_number_in_season,
+                          COALESCE(rvm.local_avg_reward, rvm.best_local_reward, mer.average_reward) AS local_reward,
+                          COALESCE(NULLIF(rvm.local_avg_eval_score, 0), NULLIF(rvm.best_local_eval_score, 0), mer.average_score) AS local_score,
+                          COALESCE(rvm.local_avg_eval_time, rvm.best_local_eval_time, mer.average_execution_time) AS local_time,
+                          COALESCE(
+                            NULLIF(rvm.local_avg_eval_cost, 0),
+                            NULLIF(rvm.best_local_eval_cost, 0),
+                            (
+                              SELECT AVG(eval_total_cost)
+                              FROM (
+                                SELECT e.evaluation_id, SUM(COALESCE(elu.cost, 0)) AS eval_total_cost
+                                FROM evaluations e
+                                JOIN evaluation_llm_usage elu ON elu.evaluation_id = e.evaluation_id
+                                WHERE e.agent_run_id = mer.agent_run_id
+                                GROUP BY e.evaluation_id
+                              ) c
+                            )
+                          ) AS local_cost,
+                          CASE
+                            WHEN rvm.local_avg_reward IS NOT NULL
+                              OR rvm.local_avg_eval_score IS NOT NULL
+                              OR rvm.local_avg_eval_time IS NOT NULL
+                              OR rvm.local_avg_eval_cost IS NOT NULL
+                              THEN 'local'
+                            WHEN rvm.best_local_reward IS NOT NULL
+                              OR rvm.best_local_eval_score IS NOT NULL
+                              OR rvm.best_local_eval_time IS NOT NULL
+                              OR rvm.best_local_eval_cost IS NOT NULL
+                              THEN 'best_local'
+                            ELSE 'run'
+                          END AS metric_source,
+                          mer.success_tasks,
+                          mer.failed_tasks,
+                          mer.total_tasks
+                        FROM miner_evaluation_runs mer
+                        LEFT JOIN round_validators rv ON rv.round_validator_id = mer.round_validator_id
+                        LEFT JOIN rounds r ON r.round_id = rv.round_id
+                        LEFT JOIN seasons s ON s.season_id = r.season_id
+                        LEFT JOIN round_validator_miners rvm
+                          ON rvm.round_validator_id = mer.round_validator_id
+                         AND rvm.miner_uid = mer.miner_uid
+                        WHERE mer.ended_at IS NOT NULL
+                        ORDER BY mer.updated_at DESC
+                        LIMIT :lim
+                        """
+                    ),
+                    {"lim": lim},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+        uploaded_rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                          rv.validator_round_id,
+                          rv.updated_at AS timestamp,
+                          rv.validator_uid,
+                          COALESCE(rv.name, 'validator ' || rv.validator_uid::text) AS validator_name,
+                          s.season_number,
+                          r.round_number_in_season
+                        FROM round_validators rv
+                        LEFT JOIN rounds r ON r.round_id = rv.round_id
+                        LEFT JOIN seasons s ON s.season_id = r.season_id
+                        WHERE rv.ipfs_uploaded IS NOT NULL
+                        ORDER BY rv.updated_at DESC
+                        LIMIT :lim
+                        """
+                    ),
+                    {"lim": lim},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+        consensus_rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                          rv.validator_round_id,
+                          rv.updated_at AS timestamp,
+                          rv.validator_uid,
+                          COALESCE(rv.name, 'validator ' || rv.validator_uid::text) AS validator_name,
+                          s.season_number,
+                          r.round_number_in_season
+                        FROM round_validators rv
+                        LEFT JOIN rounds r ON r.round_id = rv.round_id
+                        LEFT JOIN seasons s ON s.season_id = r.season_id
+                        WHERE rv.post_consensus_json IS NOT NULL OR rv.ipfs_downloaded IS NOT NULL
+                        ORDER BY rv.updated_at DESC
+                        LIMIT :lim
+                        """
+                    ),
+                    {"lim": lim},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+        leader_rows = (
+            (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                          rs.round_summary_id,
+                          rs.created_at AS timestamp,
+                          rs.leader_after_miner_uid,
+                          COALESCE(rvm.name, 'miner ' || rs.leader_after_miner_uid::text) AS miner_name,
+                          rs.leader_after_reward,
+                          s.season_number,
+                          r.round_number_in_season
+                        FROM round_summary rs
+                        JOIN rounds r ON r.round_id = rs.round_id
+                        JOIN seasons s ON s.season_id = r.season_id
+                        LEFT JOIN round_validator_miners rvm
+                          ON rvm.round_id = rs.round_id
+                         AND rvm.miner_uid = rs.leader_after_miner_uid
+                        ORDER BY rs.created_at DESC
+                        LIMIT :lim
+                        """
+                    ),
+                    {"lim": lim},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
         acts: List[Dict[str, Any]] = []
-        for r in rows:
-            if r["started_at"]:
+
+        for row in season_rows:
+            started_at = row.get("start_at") or row.get("created_at")
+            if started_at:
                 acts.append(
                     {
-                        "id": f"round-{int(r['round_id'])}-start",
+                        "id": f"season-start-{row['season_id']}",
+                        "type": "season_started",
+                        "message": f"Season {int(row['season_number'])} opened",
+                        "timestamp": started_at.isoformat(),
+                        "metadata": {
+                            "seasonNumber": row.get("season_number"),
+                        },
+                    }
+                )
+            ended_at = row.get("end_at")
+            if ended_at:
+                acts.append(
+                    {
+                        "id": f"season-end-{row['season_id']}",
+                        "type": "season_finished",
+                        "message": f"Season {int(row['season_number'])} closed",
+                        "timestamp": ended_at.isoformat(),
+                        "metadata": {
+                            "seasonNumber": row.get("season_number"),
+                        },
+                    }
+                )
+
+        for row in round_rows:
+            started_at = row.get("started_at") or row.get("created_at")
+            if started_at:
+                acts.append(
+                    {
+                        "id": f"round-start-{row['round_id']}",
                         "type": "round_started",
-                        "message": f"Season {int(r['season_number'])} Round {int(r['round_number_in_season'])} started",
-                        "timestamp": r["started_at"].isoformat(),
-                        "metadata": {"roundId": int(r["round_id"])},
+                        "message": (f"Season {int(row['season_number'])} · Round {int(row['round_number_in_season'])} started"),
+                        "timestamp": started_at.isoformat(),
+                        "metadata": {
+                            "seasonNumber": row.get("season_number"),
+                            "roundNumber": row.get("round_number_in_season"),
+                        },
                     }
                 )
-            if r["ended_at"]:
+            ended_at = row.get("ended_at")
+            if ended_at:
                 acts.append(
                     {
-                        "id": f"round-{int(r['round_id'])}-end",
+                        "id": f"round-end-{row['round_id']}",
                         "type": "round_ended",
-                        "message": f"Season {int(r['season_number'])} Round {int(r['round_number_in_season'])} ended",
-                        "timestamp": r["ended_at"].isoformat(),
-                        "metadata": {"roundId": int(r["round_id"])},
+                        "message": (f"Season {int(row['season_number'])} · Round {int(row['round_number_in_season'])} closed"),
+                        "timestamp": ended_at.isoformat(),
+                        "metadata": {
+                            "seasonNumber": row.get("season_number"),
+                            "roundNumber": row.get("round_number_in_season"),
+                        },
                     }
                 )
+
+        for row in started_rows:
+            if not row.get("timestamp"):
+                continue
+            validator_name = row.get("validator_name") or "Validator"
+            miner_name = row.get("miner_name") or "Miner"
+            acts.append(
+                {
+                    "id": f"run-start-{row['agent_run_id']}",
+                    "type": "evaluation_started",
+                    "message": f"{validator_name} started evaluating {miner_name}",
+                    "timestamp": row["timestamp"].isoformat(),
+                    "metadata": {
+                        "validatorId": row.get("validator_round_id"),
+                        "validatorUid": row.get("validator_uid"),
+                        "validatorName": validator_name,
+                        "minerUid": row.get("miner_uid"),
+                        "minerName": miner_name,
+                        "seasonNumber": row.get("season_number"),
+                        "roundNumber": row.get("round_number_in_season"),
+                    },
+                }
+            )
+
+        for row in finished_rows:
+            if not row.get("timestamp"):
+                continue
+            validator_name = row.get("validator_name") or "Validator"
+            miner_name = row.get("miner_name") or "Miner"
+            reward = row.get("local_reward")
+            score = row.get("local_score")
+            eval_time = row.get("local_time")
+            cost = row.get("local_cost")
+            acts.append(
+                {
+                    "id": f"run-finish-{row['agent_run_id']}",
+                    "type": "evaluation_finished",
+                    "message": f"{validator_name} finished evaluating {miner_name}",
+                    "timestamp": row["timestamp"].isoformat(),
+                    "metadata": {
+                        "validatorId": row.get("validator_round_id"),
+                        "validatorUid": row.get("validator_uid"),
+                        "validatorName": validator_name,
+                        "minerUid": row.get("miner_uid"),
+                        "minerName": miner_name,
+                        "seasonNumber": row.get("season_number"),
+                        "roundNumber": row.get("round_number_in_season"),
+                        "reward": float(reward) if reward is not None else None,
+                        "score": float(score) if score is not None else None,
+                        "time": float(eval_time) if eval_time is not None else None,
+                        "cost": float(cost) if cost is not None else None,
+                        "metricSource": row.get("metric_source"),
+                    },
+                }
+            )
+
+        for row in uploaded_rows:
+            if not row.get("timestamp"):
+                continue
+            validator_name = row.get("validator_name") or "Validator"
+            acts.append(
+                {
+                    "id": f"snapshot-upload-{row['validator_round_id']}",
+                    "type": "consensus_waiting",
+                    "message": f"{validator_name} uploaded a snapshot and is waiting for consensus",
+                    "timestamp": row["timestamp"].isoformat(),
+                    "metadata": {
+                        "validatorId": row.get("validator_round_id"),
+                        "validatorUid": row.get("validator_uid"),
+                        "validatorName": validator_name,
+                        "seasonNumber": row.get("season_number"),
+                        "roundNumber": row.get("round_number_in_season"),
+                    },
+                }
+            )
+
+        for row in consensus_rows:
+            if not row.get("timestamp"):
+                continue
+            validator_name = row.get("validator_name") or "Validator"
+            acts.append(
+                {
+                    "id": f"consensus-entered-{row['validator_round_id']}",
+                    "type": "consensus_entered",
+                    "message": f"{validator_name} entered consensus",
+                    "timestamp": row["timestamp"].isoformat(),
+                    "metadata": {
+                        "validatorId": row.get("validator_round_id"),
+                        "validatorUid": row.get("validator_uid"),
+                        "validatorName": validator_name,
+                        "seasonNumber": row.get("season_number"),
+                        "roundNumber": row.get("round_number_in_season"),
+                    },
+                }
+            )
+
+        for row in leader_rows:
+            if not row.get("timestamp"):
+                continue
+            miner_name = row.get("miner_name") or "Miner"
+            reward = row.get("leader_after_reward")
+            acts.append(
+                {
+                    "id": f"leader-{row['round_summary_id']}",
+                    "type": "leader_confirmed",
+                    "message": (f"{miner_name} closed the round as season leader" + (f" · {(float(reward) * 100 if abs(float(reward)) <= 1 else float(reward)):.1f}%" if reward is not None else "")),
+                    "timestamp": row["timestamp"].isoformat(),
+                    "metadata": {
+                        "minerUid": row.get("leader_after_miner_uid"),
+                        "minerName": miner_name,
+                        "seasonNumber": row.get("season_number"),
+                        "roundNumber": row.get("round_number_in_season"),
+                        "reward": float(reward) if reward is not None else None,
+                    },
+                }
+            )
+
         acts = sorted(acts, key=lambda a: a["timestamp"], reverse=True)
-        return acts[:limit]
+        deduped: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in acts:
+            if item["id"] in seen:
+                continue
+            seen.add(item["id"])
+            deduped.append(item)
+            if len(deduped) >= lim:
+                break
+        return deduped
 
     async def get_overview_performance_trends(self, days: int) -> List[Dict[str, Any]]:
         rows = (

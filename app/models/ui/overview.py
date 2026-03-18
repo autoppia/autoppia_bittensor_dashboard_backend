@@ -58,6 +58,16 @@ class OverviewMetrics(BaseModel):
     currentValidators: int = 0
     totalMiners: int
     tasksPerValidator: Optional[int] = None  # Tasks in latest round for Autoppia validator
+    roundDurationMinutes: Optional[int] = None
+    seasonDurationMinutes: Optional[int] = None
+    seasonRounds: Optional[int] = None
+    seasonTaskVolume: Optional[int] = None
+    minerUpdatesThisRound: int = 0
+    newAgentsThisRound: int = 0
+    rewardDeltaFromPreviousRound: Optional[float] = None
+    previousRoundLeaderName: Optional[str] = None
+    previousRoundLeaderReward: Optional[float] = None
+    previousRoundLabel: Optional[str] = None
     minerList: Optional[List[MinerSummary]] = None  # UIDs and names for the metrics round
     subnetVersion: str
     lastUpdated: str  # ISO timestamp
@@ -231,9 +241,19 @@ class ActivityMetadata(BaseModel):
     """Activity metadata for recent activity feed."""
 
     validatorId: Optional[str] = None
+    validatorUid: Optional[int] = None
+    validatorName: Optional[str] = None
+    minerUid: Optional[int] = None
+    minerName: Optional[str] = None
     taskId: Optional[str] = None
     score: Optional[float] = None
+    reward: Optional[float] = None
+    time: Optional[float] = None
+    cost: Optional[float] = None
+    metricSource: Optional[str] = None
     roundId: Optional[str] = None
+    roundNumber: Optional[int] = None
+    seasonNumber: Optional[int] = None
     startBlock: Optional[int] = None
 
 
