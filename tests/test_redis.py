@@ -77,18 +77,6 @@ def load_env_file(env_path: Path) -> dict[str, str]:
     return env_vars
 
 
-def _mask_secret(secret: Optional[str]) -> str:
-    """
-    Return a masked representation of a secret for logging.
-
-    This keeps length information for debugging while avoiding clear-text
-    exposure of the underlying value.
-    """
-    if not secret:
-        return ""
-    return "*" * len(secret)
-
-
 def test_redis_status() -> None:
     """Test 1: Estado de Redis."""
     print("1️⃣  Estado de Redis:")
@@ -165,7 +153,7 @@ def test_redis_connection_with_password(password: str) -> bool:
     if "PONG" in output:
         print_success("Redis responde con la contraseña correcta")
         print()
-        print(f"   📝 Contraseña: {_mask_secret(password)}")
+        print("   📝 Contraseña: [REDACTED]")
         print()
         return True
     else:
@@ -180,7 +168,7 @@ def test_connection_info(has_password: str, password: Optional[str]) -> None:
     print("   Host: localhost (o IP del servidor)")
     print("   Puerto: 6379")
     if has_password == "yes" and password:
-        print(f"   Contraseña: {_mask_secret(password)}")
+        print("   Contraseña: [REDACTED]")
     else:
         print("   Contraseña: (ninguna)")
     print()
