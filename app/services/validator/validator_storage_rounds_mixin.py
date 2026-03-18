@@ -851,8 +851,8 @@ class ValidatorStorageRoundsMixin:
         owner_hotkey_from_request: Optional[str] = None,
     ) -> ValidatorRoundORM:
         """
-        Return the round row, creating a minimal shadow round-validator record if the
-        validator round does not exist (e.g. after IWAP reset).
+        Return the round row, creating a minimal shadow round-validator record only
+        when there is already a canonical active round for the same season/round.
 
         Important: do not insert through the legacy ``validator_rounds`` compatibility
         view here. That view has an INSTEAD OF trigger that materializes canonical
@@ -860,11 +860,43 @@ class ValidatorStorageRoundsMixin:
         uploading round logs from an older season/round; creating a synthetic
         validator_round through the view would recreate canonical rounds with
         ``start_block=0`` and poison IWAP state again.
+
+        After a reset, validators running old rounds may keep retrying ``round-log``
+        uploads for orphan validator_round_ids. Those uploads must not recreate any
+        state until the main validator opens the new canonical round.
         """
         stmt = select(ValidatorRoundORM).options(selectinload(ValidatorRoundORM.validator_snapshot)).where(ValidatorRoundORM.validator_round_id == validator_round_id)
         round_row = await self.session.scalar(stmt)
+        canonical_active_round = None
+        if season is not None and round_in_season is not None:
+            canonical_active_round = (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT r.round_id
+                        FROM rounds r
+                        JOIN seasons s ON s.season_id = r.season_id
+                        WHERE s.season_number = :season_number
+                          AND r.round_number_in_season = :round_number_in_season
+                          AND LOWER(COALESCE(r.status, '')) = 'active'
+                        LIMIT 1
+                        """
+                    ),
+                    {
+                        "season_number": int(season),
+                        "round_number_in_season": int(round_in_season),
+                    },
+                )
+            ).first()
+
         if round_row is not None:
+            if canonical_active_round is None:
+                raise ValueError(f"Cannot accept round-log for orphan validator_round_id={validator_round_id}: no canonical active round exists for season={season}, round_in_season={round_in_season}")
             return round_row
+
+        if canonical_active_round is None:
+            raise ValueError(f"Cannot accept round-log for orphan validator_round_id={validator_round_id}: no canonical active round exists for season={season}, round_in_season={round_in_season}")
+
         uid = int(validator_uid) if validator_uid is not None else 0
         hotkey = (validator_hotkey or owner_hotkey_from_request or "").strip()
         if not hotkey:
