@@ -12,7 +12,6 @@ from app.db.models import (
     EvaluationORM,
     TaskSolutionORM,
     ValidatorRoundORM,
-    ValidatorRoundValidatorORM,
 )
 from app.models.core import AgentEvaluationRun, ValidatorRound, ValidatorRoundMiner, ValidatorRoundSubmissionRequest, ValidatorRoundValidator
 from app.services.validator.validator_storage_common import DuplicateIdentifierError, PersistenceResult, RoundConflictError
@@ -852,9 +851,15 @@ class ValidatorStorageRoundsMixin:
         owner_hotkey_from_request: Optional[str] = None,
     ) -> ValidatorRoundORM:
         """
-        Return the round row, creating a minimal round + validator snapshot if the round
-        does not exist (e.g. after IWAP reset). Allows round-log upload to succeed and
-        finish_round to update the row later.
+        Return the round row, creating a minimal shadow round-validator record if the
+        validator round does not exist (e.g. after IWAP reset).
+
+        Important: do not insert through the legacy ``validator_rounds`` compatibility
+        view here. That view has an INSTEAD OF trigger that materializes canonical
+        ``seasons``/``rounds`` rows. During a DB reset, stale validators can keep
+        uploading round logs from an older season/round; creating a synthetic
+        validator_round through the view would recreate canonical rounds with
+        ``start_block=0`` and poison IWAP state again.
         """
         stmt = select(ValidatorRoundORM).options(selectinload(ValidatorRoundORM.validator_snapshot)).where(ValidatorRoundORM.validator_round_id == validator_round_id)
         round_row = await self.session.scalar(stmt)
@@ -864,39 +869,81 @@ class ValidatorStorageRoundsMixin:
         hotkey = (validator_hotkey or owner_hotkey_from_request or "").strip()
         if not hotkey:
             raise ValueError("Cannot create minimal round: validator_hotkey or owner_hotkey_from_request required")
-        round_row = ValidatorRoundORM(
-            validator_round_id=validator_round_id,
-            season_number=season,
-            round_number_in_season=round_in_season,
-            start_block=0,
-            end_block=None,
-            start_epoch=0,
-            end_epoch=None,
-            started_at=0.0,
-            ended_at=None,
-            n_tasks=0,
-            status="active",
+
+        await self.session.execute(
+            text(
+                """
+                INSERT INTO round_validators (
+                    round_id,
+                    season_number,
+                    round_number_in_season,
+                    start_block,
+                    end_block,
+                    start_epoch,
+                    end_epoch,
+                    pending_round_link,
+                    is_main_validator,
+                    validator_uid,
+                    validator_hotkey,
+                    validator_coldkey,
+                    validator_round_id,
+                    name,
+                    image_url,
+                    version,
+                    stake,
+                    vtrust,
+                    config,
+                    started_at,
+                    updated_at
+                )
+                VALUES (
+                    NULL,
+                    :season_number,
+                    :round_number_in_season,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    TRUE,
+                    FALSE,
+                    :validator_uid,
+                    :validator_hotkey,
+                    NULL,
+                    :validator_round_id,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NOW(),
+                    NOW()
+                )
+                ON CONFLICT (validator_round_id) DO UPDATE SET
+                    season_number = COALESCE(EXCLUDED.season_number, round_validators.season_number),
+                    round_number_in_season = COALESCE(EXCLUDED.round_number_in_season, round_validators.round_number_in_season),
+                    validator_uid = COALESCE(EXCLUDED.validator_uid, round_validators.validator_uid),
+                    validator_hotkey = COALESCE(EXCLUDED.validator_hotkey, round_validators.validator_hotkey),
+                    pending_round_link = TRUE,
+                    updated_at = NOW()
+                """
+            ),
+            {
+                "season_number": int(season) if season is not None else None,
+                "round_number_in_season": int(round_in_season) if round_in_season is not None else None,
+                "validator_uid": uid,
+                "validator_hotkey": hotkey,
+                "validator_round_id": validator_round_id,
+            },
         )
-        self.session.add(round_row)
-        await self.session.flush()
-        snapshot = ValidatorRoundValidatorORM(
-            validator_round_id=validator_round_id,
-            validator_uid=uid,
-            validator_hotkey=hotkey,
-            validator_coldkey=None,
-            name=None,
-            stake=None,
-            vtrust=None,
-            image_url=None,
-            version=None,
-            config=None,
-        )
-        self.session.add(snapshot)
-        await self.session.flush()
+
         stmt = select(ValidatorRoundORM).options(selectinload(ValidatorRoundORM.validator_snapshot)).where(ValidatorRoundORM.validator_round_id == validator_round_id)
         round_row = await self.session.scalar(stmt)
         assert round_row is not None
-        logger.info("Created minimal validator round %s for round-log upload (e.g. after IWAP reset)", validator_round_id)
+        logger.info(
+            "Created minimal SHADOW validator round %s for round-log upload (round_id stays NULL after IWAP reset)",
+            validator_round_id,
+        )
         return round_row
 
     async def ensure_unique_round_number(
