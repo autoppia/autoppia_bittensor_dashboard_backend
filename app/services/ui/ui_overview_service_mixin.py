@@ -87,13 +87,78 @@ class UIOverviewServiceMixin:
                 "lastUpdated": datetime.now(timezone.utc).isoformat(),
             }
 
-        metrics_source = latest_finished or latest_any
-        metrics_season = int(metrics_source["season_number"])
-        metrics_round_id = int(metrics_source["round_id"])
-        metrics_round_in_season = int(metrics_source["round_number_in_season"])
+        has_finished_round = latest_finished is not None
+        metrics_source = latest_finished
+        metrics_season = int(metrics_source["season_number"]) if metrics_source else None
+        metrics_round_id = int(metrics_source["round_id"]) if metrics_source else None
+        metrics_round_in_season = int(metrics_source["round_number_in_season"]) if metrics_source else None
 
         current_season = int(latest_any["season_number"])
         current_round_in_season = int(latest_any["round_number_in_season"])
+        current_round_id = int(latest_any["round_id"])
+
+        current_validators = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT COUNT(DISTINCT rv.validator_uid)
+                    FROM round_validators rv
+                    WHERE rv.round_id = :round_id
+                    """
+                ),
+                {"round_id": current_round_id},
+            )
+        ).scalar_one()
+
+        current_total_miners = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT COUNT(DISTINCT rvm.miner_uid)
+                    FROM round_validator_miners rvm
+                    WHERE rvm.round_id = :round_id
+                    """
+                ),
+                {"round_id": current_round_id},
+            )
+        ).scalar_one()
+
+        current_tasks_per_validator = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT COALESCE(MAX(cnt),0)
+                    FROM (
+                      SELECT round_validator_id, COUNT(*) AS cnt
+                      FROM tasks
+                      WHERE round_validator_id IN (
+                        SELECT rv.round_validator_id
+                        FROM round_validators rv
+                        WHERE rv.round_id = :round_id
+                      )
+                      GROUP BY round_validator_id
+                    ) x
+                    """
+                ),
+                {"round_id": current_round_id},
+            )
+        ).scalar_one()
+
+        if not has_finished_round:
+            return {
+                "hasFinishedRound": False,
+                "leader": None,
+                "season": None,
+                "round": None,
+                "currentSeason": current_season,
+                "currentRound": current_round_in_season,
+                "currentValidators": int(current_validators or 0),
+                "totalMiners": int(current_total_miners or 0),
+                "tasksPerValidator": int(current_tasks_per_validator or 0),
+                "minerList": [],
+                "subnetVersion": subnet_version,
+                "lastUpdated": datetime.now(timezone.utc).isoformat(),
+            }
 
         leader = (
             (
@@ -431,11 +496,13 @@ class UIOverviewServiceMixin:
                 "tasksSuccess": int(leader_row["tasks_success"] or 0) if leader_row else 0,
             }
         return {
+            "hasFinishedRound": True,
             "leader": leader_payload,
             "season": metrics_season,
             "round": metrics_round_in_season,
             "currentSeason": current_season,
             "currentRound": current_round_in_season,
+            "currentValidators": int(current_validators or 0),
             "totalMiners": len(miners),
             "tasksPerValidator": int(tasks_per_validator or 0),
             "minerList": [dict(m) for m in miners],
