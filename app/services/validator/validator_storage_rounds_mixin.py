@@ -889,15 +889,46 @@ class ValidatorStorageRoundsMixin:
                 )
             ).first()
 
+        uid = int(validator_uid) if validator_uid is not None else 0
+        current_validator_round_id = None
+        if canonical_active_round is not None and uid > 0:
+            current_validator_round_id = (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT rv.validator_round_id
+                        FROM round_validators rv
+                        WHERE rv.round_id = :round_id
+                          AND rv.validator_uid = :validator_uid
+                        LIMIT 1
+                        """
+                    ),
+                    {
+                        "round_id": int(canonical_active_round[0]),
+                        "validator_uid": uid,
+                    },
+                )
+            ).scalar_one_or_none()
+
         if round_row is not None:
             if canonical_active_round is None:
                 raise ValueError(f"Cannot accept round-log for orphan validator_round_id={validator_round_id}: no canonical active round exists for season={season}, round_in_season={round_in_season}")
+            if current_validator_round_id and str(current_validator_round_id) != validator_round_id:
+                raise ValueError(
+                    f"Cannot accept stale round-log for validator_round_id={validator_round_id}: "
+                    f"validator_uid={uid} is already registered for the canonical active round as "
+                    f"validator_round_id={current_validator_round_id}"
+                )
             return round_row
 
         if canonical_active_round is None:
             raise ValueError(f"Cannot accept round-log for orphan validator_round_id={validator_round_id}: no canonical active round exists for season={season}, round_in_season={round_in_season}")
-
-        uid = int(validator_uid) if validator_uid is not None else 0
+        if current_validator_round_id and str(current_validator_round_id) != validator_round_id:
+            raise ValueError(
+                f"Cannot accept stale round-log for validator_round_id={validator_round_id}: "
+                f"validator_uid={uid} is already registered for the canonical active round as "
+                f"validator_round_id={current_validator_round_id}"
+            )
         hotkey = (validator_hotkey or owner_hotkey_from_request or "").strip()
         if not hotkey:
             raise ValueError("Cannot create minimal round: validator_hotkey or owner_hotkey_from_request required")
