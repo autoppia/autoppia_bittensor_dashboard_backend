@@ -49,11 +49,13 @@ class OverviewMetrics(BaseModel):
 
     model_config = {"extra": "allow"}
 
+    hasFinishedRound: bool = False
     leader: Optional[OverviewLeader] = None
     season: Optional[int] = None  # Last FINISHED round's season number
     round: Optional[int] = None  # Last FINISHED round's round number
     currentSeason: Optional[int] = None  # Currently active round's season number
     currentRound: Optional[int] = None  # Currently active round's round number
+    currentValidators: int = 0
     totalMiners: int
     tasksPerValidator: Optional[int] = None  # Tasks in latest round for Autoppia validator
     minerList: Optional[List[MinerSummary]] = None  # UIDs and names for the metrics round

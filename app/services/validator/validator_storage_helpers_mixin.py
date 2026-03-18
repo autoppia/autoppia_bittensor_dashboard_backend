@@ -77,12 +77,16 @@ class ValidatorStorageHelpersMixin:
 
     async def _close_stale_active_seasons_for_incoming(self, incoming_season_number: int) -> None:
         """
-        Close older active seasons that no longer have active rounds.
+        Close invalid or stale active seasons that no longer have active rounds.
 
         This prevents false conflicts like:
         "Cannot start season N: season N-1 is still active"
         when season N-1 already finished all its rounds but its season row
         remained active due missing finalize transition.
+
+        It also clears orphan active seasons created with invalid boundaries
+        (for example start_block=0) after a partial reset, even if their
+        season_number is higher than the incoming season.
         """
         if incoming_season_number <= 0:
             return
@@ -104,7 +108,10 @@ class ValidatorStorageHelpersMixin:
                         ) AS inferred_end_at
                     FROM seasons s
                     WHERE LOWER(COALESCE(s.status, '')) = 'active'
-                      AND s.season_number < :incoming_season_number
+                      AND (
+                          s.season_number < :incoming_season_number
+                          OR COALESCE(s.start_block, 0) <= 0
+                      )
                       AND NOT EXISTS (
                           SELECT 1
                           FROM rounds r
@@ -506,6 +513,8 @@ class ValidatorStorageHelpersMixin:
             if current_block is None:
                 raise RoundConflictError("Chain state unavailable: non-main validator cannot trigger fallback start")
             planned_start_block = int(getattr(validator_round, "start_block", 0) or 0)
+            if planned_start_block <= 0:
+                raise RoundConflictError("Fallback start denied: validator payload is missing a valid start_block")
             grace_blocks = int(getattr(settings, "MAIN_VALIDATOR_START_GRACE_BLOCKS", 25))
             if current_block <= (planned_start_block + grace_blocks):
                 raise RoundConflictError(
