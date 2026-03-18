@@ -22,7 +22,7 @@ def _service(session: AsyncSession) -> UIDataService:
 
 
 # ---------------------------------------------------------------------------
-# Query models (Sonar: reduce endpoint params)
+# Query models for miners endpoints
 # ---------------------------------------------------------------------------
 
 

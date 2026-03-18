@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/v1/subnets", tags=["subnets"])
 
 
 # ---------------------------------------------------------------------------
-# Query model (Sonar: reduce endpoint params)
+# Query model for the subnet timeline endpoint
 # ---------------------------------------------------------------------------
 
 
@@ -60,7 +60,7 @@ def get_subnet_timeline_query(
 
 
 # ---------------------------------------------------------------------------
-# Helper (Sonar: shared logic, not a FastAPI Depends)
+# Helper shared outside FastAPI dependency injection
 # ---------------------------------------------------------------------------
 
 

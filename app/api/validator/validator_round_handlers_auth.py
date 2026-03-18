@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 
 class ValidatorAuthCheckResponse(BaseModel):
-    """Response for GET /auth-check (Sonar: avoid raw dict)."""
+    """Response for GET /auth-check."""
 
     message: str = "Validator authentication verified"
 

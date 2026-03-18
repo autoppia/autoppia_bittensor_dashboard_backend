@@ -36,7 +36,7 @@ PORT_TO_NAME = {
 
 NAME_TO_PORT = {v: k for k, v in PORT_TO_NAME.items()}
 
-# Tolerance for "score == 1.0" to avoid float equality (Sonar / reliability)
+# Tolerance for "score == 1.0" to avoid float equality issues
 SCORE_ONE_TOLERANCE = 1e-9
 
 

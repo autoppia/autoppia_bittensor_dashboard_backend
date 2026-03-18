@@ -11,7 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Load .env early to determine environment mode
 load_dotenv()
 
-# Sonar S1192: shared URL literals
+# Shared URL literals
 IWA_PROD_URL = "https://infinitewebarena.autoppia.com"
 IWA_DEV_URL = "https://dev-infinitewebarena.autoppia.com"
 

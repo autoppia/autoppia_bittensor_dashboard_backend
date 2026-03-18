@@ -108,7 +108,7 @@ if __name__ == "__main__":
         asyncio.run(main())
     except Exception as e:  # noqa: BLE001
         err = str(e).strip()
-        # Keyword to detect auth-related errors in message (not a credential; Sonar S2068)
+        # Keyword to detect auth-related errors in message (not a credential)
         _auth_err_keyword = "password"
         if _auth_err_keyword in err.lower() or "authentication" in err.lower():
             print("Error: fallo de autenticación con PostgreSQL.")

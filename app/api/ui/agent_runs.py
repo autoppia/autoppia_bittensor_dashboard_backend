@@ -36,12 +36,12 @@ def _service(session: AsyncSession) -> UIDataService:
 
 
 # ---------------------------------------------------------------------------
-# Query/body models (Sonar: reduce params, typed body)
+# Query/body models to keep endpoint signatures compact and typed
 # ---------------------------------------------------------------------------
 
 
 class AgentRunsListQuery(BaseModel):
-    """Query params for list endpoint (keeps endpoint under Sonar param limit)."""
+    """Query params for list endpoint."""
 
     page: int = 1
     limit: int = 20
@@ -90,13 +90,13 @@ def get_agent_runs_list_query(
 
 
 class CompareRunsRequest(BaseModel):
-    """Body for POST /compare (Sonar: avoid raw dict)."""
+    """Body for POST /compare."""
 
     runIds: list[str] = Field(..., min_length=1, description="Non-empty list of run IDs to compare")
 
 
 # ---------------------------------------------------------------------------
-# Helper: get run data or 404 (Sonar: deduplicate repeated try/except pattern)
+# Helper: get run data or 404
 # ---------------------------------------------------------------------------
 
 

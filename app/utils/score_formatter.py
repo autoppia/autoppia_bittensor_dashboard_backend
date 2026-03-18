@@ -4,7 +4,7 @@ Utility functions for formatting scores as percentages.
 
 from __future__ import annotations
 
-# Tolerance for "score == 1.0" to avoid float equality (Sonar / reliability)
+# Tolerance for "score == 1.0" to avoid float equality issues
 _SCORE_ONE_TOLERANCE = 1e-9
 
 

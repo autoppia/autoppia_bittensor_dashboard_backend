@@ -44,7 +44,7 @@ async def _reset_session_transaction(session: AsyncSession) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Query model (Sonar: reduce list endpoint params)
+# Query model for the list endpoint
 # ---------------------------------------------------------------------------
 
 
@@ -83,7 +83,7 @@ def get_evaluation_list_query(
 
 
 # ---------------------------------------------------------------------------
-# Helper: fetch evaluation/task data or 404 (Sonar: deduplicate try/except)
+# Helper: fetch evaluation/task data or 404
 # ---------------------------------------------------------------------------
 
 

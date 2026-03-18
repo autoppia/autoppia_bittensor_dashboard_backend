@@ -21,7 +21,7 @@ def _service(session: AsyncSession) -> UIDataService:
 
 
 # ---------------------------------------------------------------------------
-# Query model (Sonar: reduce params, avoid shadowing built-in "round")
+# Query model that avoids shadowing the built-in "round"
 # ---------------------------------------------------------------------------
 
 

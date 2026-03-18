@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
-# Reusable response docs for Sonar (document HTTPException in responses)
+# Reusable response docs
 RESPONSES_404_500 = {
     404: {"description": "Resource not found"},
     500: {"description": "Internal server error"},

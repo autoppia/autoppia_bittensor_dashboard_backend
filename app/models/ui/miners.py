@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.utils.validation import validate_miner_image_url
 
-# Sonar S1192: shared Field description literals
+# Shared Field description literals
 DESC_MINER_UID = "Miner UID"
 DESC_MINER_NAME = "Miner name"
 DESC_TIME_RANGE = "Time range"

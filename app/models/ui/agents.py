@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-# Sonar S1192: shared Field description literals
+# Shared Field description literals
 DESC_AGENT_IDENTIFIER = "Agent identifier"
 
 

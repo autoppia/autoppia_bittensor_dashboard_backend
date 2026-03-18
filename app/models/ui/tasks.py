@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-# Sonar S1192: shared Field description literals
+# Shared Field description literals
 DESC_TOTAL_NUMBER_OF_ACTIONS = "Total number of actions"
 DESC_TOTAL_NUMBER_OF_TASKS = "Total number of tasks"
 DESC_NUMBER_OF_FAILED_TASKS = "Number of failed tasks"

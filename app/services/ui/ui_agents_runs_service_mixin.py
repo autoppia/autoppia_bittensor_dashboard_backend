@@ -9,7 +9,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.services.media_storage import build_public_url
 
-# SQL fragment reused for miner-scoped raw queries (Sonar: literal duplication)
+# SQL fragment reused for miner-scoped raw queries
 _SQL_WHERE_MINER_UID = "WHERE miner_uid = :uid"
 
 
