@@ -22,8 +22,12 @@ from app.services.round_calc import compute_season_number  # noqa: E402
 async def seed_data():
     """Seed Season 1, Round 1 data via endpoints."""
 
-    # Use real database
-    os.environ["DATABASE_URL"] = "postgresql+asyncpg://autoppia_user:REMOVED_DEV_DB_PASSWORD@127.0.0.1:5432/autoppia_dev"
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("DATABASE_URL must be set before running this script")
+
+    # Use the configured database URL instead of embedding credentials in the script
+    os.environ["DATABASE_URL"] = database_url
 
     # Mock current block to be at start of Season 1, Round 1
     start_block = int(settings.DZ_STARTING_BLOCK)  # 4493500

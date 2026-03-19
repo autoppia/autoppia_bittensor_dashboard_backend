@@ -22,9 +22,11 @@ DB_PORT="5432"
 # (sin pedirla por consola, apto para cron) #
 #############################################
 
-# Si no viene definida PGPASSWORD, se pone la fija
-if [ -z "${PGPASSWORD:-}" ]; then
-  export PGPASSWORD="REMOVED_PROD_DB_PASSWORD"
+# El script requiere PGPASSWORD para poder ejecutarse sin prompt (por ejemplo en cron).
+if [[ -z "${PGPASSWORD:-}" ]]; then
+  echo "Error: PGPASSWORD no está definida." >&2
+  echo "Define la variable antes de ejecutar el script o configúrala en el entorno del cron." >&2
+  exit 1
 fi
 
 #############################################

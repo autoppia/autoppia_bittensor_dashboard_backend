@@ -51,6 +51,14 @@ def _as_dict(v):
     return {}
 
 
+def _require_env(*names: str) -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    raise RuntimeError(f"Missing required environment variable. Set one of: {', '.join(names)}")
+
+
 async def _scalar(conn: asyncpg.Connection, sql: str) -> int:
     return int((await conn.fetchval(sql)) or 0)
 
@@ -60,10 +68,7 @@ async def run_audit() -> list[CheckResult]:
     host = os.getenv("POSTGRES_HOST_DEVELOPMENT", os.getenv("POSTGRES_HOST", "127.0.0.1"))
     port = int(os.getenv("POSTGRES_PORT_DEVELOPMENT", os.getenv("POSTGRES_PORT", "5432")))
     user = os.getenv("POSTGRES_USER_DEVELOPMENT", os.getenv("POSTGRES_USER", "autoppia_user"))
-    password = os.getenv(
-        "POSTGRES_PASSWORD_DEVELOPMENT",
-        os.getenv("POSTGRES_PASSWORD", "REMOVED_DEV_DB_PASSWORD"),
-    )
+    password = _require_env("POSTGRES_PASSWORD_DEVELOPMENT", "POSTGRES_PASSWORD")
     database = os.getenv("POSTGRES_DB_DEVELOPMENT", os.getenv("POSTGRES_DB", "autoppia_dev"))
 
     conn = await asyncpg.connect(

@@ -57,9 +57,8 @@ Variables principales:
 
 Password:
 
-- Si `PGPASSWORD` no está definida, el script exporta una contraseña fija para ejecución no interactiva (cron).
-
-> Nota: al estar embebida en el script, cualquiera con acceso al archivo puede leerla.
+- El script requiere que `PGPASSWORD` ya esté definida en el entorno.
+- Para `cron`, configúrala en el propio entorno del job o usa un mecanismo seguro del sistema para inyectarla antes de ejecutar el script.
 
 ---
 
