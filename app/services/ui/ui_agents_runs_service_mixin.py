@@ -48,8 +48,8 @@ class UIAgentsRunsServiceMixin:
         if not isinstance(payload, dict):
             return False
         summary = payload.get("summary")
-        if isinstance(summary, dict) and isinstance(summary.get("validator_all_runs_zero"), bool):
-            return bool(summary.get("validator_all_runs_zero"))
+        if isinstance(summary, dict) and isinstance(summary.get("validator_all_best_runs_zero"), bool):
+            return bool(summary.get("validator_all_best_runs_zero"))
 
         miners = payload.get("miners")
         if not isinstance(miners, list) or not miners:

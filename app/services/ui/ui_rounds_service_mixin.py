@@ -247,6 +247,38 @@ class UIRoundsServiceMixin:
         hotkey, github_url, reward = cls._miner_identity_from_post_consensus(miner)
         return uid, hotkey, github_url, reward
 
+    @staticmethod
+    def _normalize_leadership_chain(
+        *,
+        leader_before: Optional[Dict[str, Any]],
+        candidate: Optional[Dict[str, Any]],
+        leader_after: Optional[Dict[str, Any]],
+        required_improvement_pct: float,
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], bool, Optional[float]]:
+        leader_before_norm = dict(leader_before) if isinstance(leader_before, dict) else None
+        candidate_norm = dict(candidate) if isinstance(candidate, dict) else None
+        leader_after_norm = dict(leader_after) if isinstance(leader_after, dict) else None
+
+        if leader_before_norm is None:
+            effective = candidate_norm or leader_after_norm
+            return None, effective, effective, False, None
+
+        leader_before_reward = float(leader_before_norm.get("reward") or 0.0)
+        threshold = leader_before_reward * (1.0 + float(required_improvement_pct))
+
+        if candidate_norm is None:
+            return leader_before_norm, None, leader_before_norm, False, threshold
+
+        candidate_reward = float(candidate_norm.get("reward") or 0.0)
+        dethroned = bool(candidate_reward > threshold)
+        return (
+            leader_before_norm,
+            candidate_norm,
+            dict(candidate_norm if dethroned else leader_before_norm),
+            dethroned,
+            threshold,
+        )
+
     async def _resolve_miner_identity(
         self,
         *,
@@ -923,6 +955,41 @@ class UIRoundsServiceMixin:
         post_consensus_json = row.get("post_consensus_json")
         summary = self._post_consensus_summary(post_consensus_json)
 
+        previous_row = None
+        if int(round_in_season) > 1:
+            previous_row = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT
+                              rs.leader_after_miner_uid AS uid,
+                              rs.leader_after_miner_hotkey AS hotkey,
+                              rs.leader_after_github_url AS github_url,
+                              rs.leader_after_reward AS reward,
+                              rs.leader_after_eval_score AS score,
+                              rs.leader_after_eval_time AS time,
+                              rs.leader_after_eval_cost AS cost
+                            FROM round_summary rs
+                            JOIN rounds r ON r.round_id = rs.round_id
+                            JOIN seasons s ON s.season_id = r.season_id
+                            WHERE s.season_number = :season
+                              AND r.round_number_in_season < :round_in_season
+                              AND rs.leader_after_miner_uid IS NOT NULL
+                            ORDER BY r.round_number_in_season DESC, rs.round_summary_id DESC
+                            LIMIT 1
+                            """
+                        ),
+                        {
+                            "season": season,
+                            "round_in_season": round_in_season,
+                        },
+                    )
+                )
+                .mappings()
+                .first()
+            )
+
         leader_before_uid = self._coerce_int(row.get("leader_before_miner_uid"))
         candidate_uid = self._coerce_int(row.get("candidate_miner_uid"))
         leader_after_uid = self._coerce_int(row.get("leader_after_miner_uid"))
@@ -938,6 +1005,20 @@ class UIRoundsServiceMixin:
         leader_after_reward = self._coerce_float(row.get("leader_after_reward"))
 
         summary_leader_before = summary.get("leader_before_round")
+        if previous_row:
+            leader_before_uid = self._coerce_int(previous_row.get("uid"))
+            leader_before_hotkey = previous_row.get("hotkey")
+            leader_before_github_url = previous_row.get("github_url")
+            leader_before_reward = self._coerce_float(previous_row.get("reward"))
+            summary_leader_before = {
+                "uid": leader_before_uid,
+                "hotkey": leader_before_hotkey,
+                "github_url": leader_before_github_url,
+                "reward": leader_before_reward,
+                "score": self._coerce_float(previous_row.get("score")),
+                "time": self._coerce_float(previous_row.get("time")),
+                "cost": self._coerce_float(previous_row.get("cost")),
+            }
         if leader_before_uid is None and isinstance(summary_leader_before, dict):
             leader_before_uid = self._coerce_int(summary_leader_before.get("uid"))
             leader_before_hotkey = leader_before_hotkey or summary_leader_before.get("hotkey")
@@ -999,6 +1080,10 @@ class UIRoundsServiceMixin:
             _lb_score = row.get("leader_before_eval_score")
             _lb_time = row.get("leader_before_eval_time")
             _lb_cost = row.get("leader_before_eval_cost")
+            if previous_row:
+                _lb_score = self._coerce_float(previous_row.get("score"))
+                _lb_time = self._coerce_float(previous_row.get("time"))
+                _lb_cost = self._coerce_float(previous_row.get("cost"))
             if _lb_score is not None:
                 leader_before["score"] = float(_lb_score)
             if _lb_time is not None:
@@ -1035,6 +1120,24 @@ class UIRoundsServiceMixin:
         leader_after_eval_time = float(row["leader_after_eval_time"]) if row.get("leader_after_eval_time") is not None else None
         leader_after_eval_cost = float(row["leader_after_eval_cost"]) if row.get("leader_after_eval_cost") is not None else None
 
+        (
+            leader_before,
+            candidate,
+            leader_after,
+            dethroned,
+            required_reward_to_dethrone,
+        ) = self._normalize_leadership_chain(
+            leader_before=leader_before,
+            candidate=candidate,
+            leader_after=leader_after,
+            required_improvement_pct=float(row.get("required_improvement_pct") or 0.05),
+        )
+
+        if leader_after is not None:
+            leader_after_eval_score = self._coerce_float(leader_after.get("score"))
+            leader_after_eval_time = self._coerce_float(leader_after.get("time"))
+            leader_after_eval_cost = self._coerce_float(leader_after.get("cost"))
+
         return {
             "round_id": round_id,
             "round_key": f"{season}/{round_in_season}",
@@ -1046,8 +1149,8 @@ class UIRoundsServiceMixin:
                 "candidate": candidate,
                 "leader_after": leader_after,
                 "required_improvement_pct": float(row.get("required_improvement_pct") or 0.05),
-                "required_reward_to_dethrone": (float(row["required_reward_to_dethrone"]) if row.get("required_reward_to_dethrone") is not None else None),
-                "dethroned": bool(row.get("dethroned")),
+                "required_reward_to_dethrone": required_reward_to_dethrone,
+                "dethroned": dethroned,
                 "validators_count": int(row.get("validators_count") or 0),
                 "miners_evaluated": int(row.get("miners_evaluated") or 0),
                 "tasks_evaluated": int(row.get("tasks_evaluated") or 0),

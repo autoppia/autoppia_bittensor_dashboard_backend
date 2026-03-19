@@ -219,7 +219,7 @@ async def test_round_validators_views_reconstruct_local_state_from_runs_and_down
                 "current_run": None,
             },
         ],
-        "summary": {"validator_all_runs_zero": False},
+        "summary": {"validator_all_best_runs_zero": False},
     }
     ipfs_downloaded = {
         "validators_participated": 2,
