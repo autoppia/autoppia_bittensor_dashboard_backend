@@ -11,6 +11,19 @@ from app.utils.images import resolve_validator_image
 
 
 class UIRoundsServiceMixin:
+    @staticmethod
+    def _miner_fallback_image(uid: Any) -> str:
+        try:
+            numeric_uid = int(uid or 0)
+        except Exception:
+            numeric_uid = 0
+        return f"/miners/{abs(numeric_uid) % 50}.svg"
+
+    @classmethod
+    def _resolve_miner_image(cls, image_url: Any, uid: Any) -> str:
+        candidate = str(image_url or "").strip()
+        return candidate or cls._miner_fallback_image(uid)
+
     async def _get_main_validator_uid(self) -> int:
         row = (
             (
@@ -321,7 +334,7 @@ class UIRoundsServiceMixin:
             "name": row.get("name") or f"Miner {int(miner_uid)}",
             "hotkey": hotkey or row.get("miner_hotkey"),
             "github_url": github_url or row.get("github_url"),
-            "image": row.get("image_url") or f"/miners/{int(miner_uid) % 100}.svg",
+            "image": self._resolve_miner_image(row.get("image_url"), miner_uid),
         }
 
     async def get_latest_season_number(self) -> Optional[int]:
@@ -478,7 +491,7 @@ class UIRoundsServiceMixin:
                 dedup[uid] = {
                     "uid": uid,
                     "name": r["name"],
-                    "image": f"/miners/{uid % 100}.svg",
+                    "image": self._resolve_miner_image(r.get("image_url"), uid),
                     "post_consensus_avg_reward": reward,
                     "tasks_received": int(r["tasks_received"] or 0),
                     "round_reward": reward,
@@ -579,7 +592,7 @@ class UIRoundsServiceMixin:
             {
                 "uid": int(r["uid"]),
                 "name": r["name"],
-                "image": r["image"] or f"/miners/{int(r['uid']) % 100}.svg",
+                "image": self._resolve_miner_image(r["image"], r["uid"]),
                 "post_consensus_avg_reward": float(r["best_reward"] or 0.0),
                 "best_reward_in_season": float(r["best_reward"] or 0.0),
                 "best_local_round_reward": float(r["best_reward"] or 0.0),
@@ -1341,7 +1354,7 @@ class UIRoundsServiceMixin:
                     "name": item.get("name") or fallback_ipfs.get("name") or f"Miner {miner_uid}",
                     "hotkey": item.get("miner_hotkey") or fallback_ipfs.get("hotkey"),
                     "github_url": item.get("github_url") or fallback_ipfs.get("github_url"),
-                    "image": item.get("image_url") or f"/miners/{miner_uid % 100}.svg",
+                    "image": self._resolve_miner_image(item.get("image_url"), miner_uid),
                     "competition_rank": (int(item["best_local_rank"]) if item.get("best_local_rank") is not None else None),
                     "local_avg_reward": local_avg_reward,
                     "local_avg_eval_score": local_avg_eval_score,
@@ -1719,7 +1732,7 @@ class UIRoundsServiceMixin:
                 "validatorId": f"round-{round_id}",
                 "isSota": bool(r["is_sota"]),
                 "provider": "autoppia",
-                "imageUrl": f"/miners/{int(r['miner_uid']) % 100}.svg",
+                "imageUrl": self._resolve_miner_image(r.get("image_url"), r["miner_uid"]),
             }
             miners.append(item)
         if success is not None:
