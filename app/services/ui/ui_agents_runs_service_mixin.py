@@ -17,6 +17,8 @@ class UIAgentsRunsServiceMixin:
             numeric_uid = int(uid or 0)
         except Exception:
             numeric_uid = 0
+        if numeric_uid == 48:
+            return "/images/icons/validators/Autoppia.png"
         return f"/miners/{abs(numeric_uid) % 50}.svg"
 
     @classmethod
