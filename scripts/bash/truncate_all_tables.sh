@@ -6,8 +6,13 @@ set -euo pipefail
 # --- Load .env file automatically if present ---
 if [[ -f ".env" ]]; then
   echo "📄 Loading environment variables from .env"
-  # export all lines that aren't comments
-  export $(grep -v '^#' .env | xargs)
+  while IFS='=' read -r key value; do
+    [[ -z "${key}" || "${key}" =~ ^[[:space:]]*# ]] && continue
+    key="${key%%[[:space:]]*}"
+    if [[ -z "${!key:-}" ]]; then
+      export "${key}=${value}"
+    fi
+  done < .env
 else
   echo "⚠️  No .env file found in current directory. Make sure env vars are set manually."
 fi

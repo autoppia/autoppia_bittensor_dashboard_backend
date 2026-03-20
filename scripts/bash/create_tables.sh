@@ -7,7 +7,13 @@ set -euo pipefail
 # --- Load .env file automatically if present ---
 if [[ -f ".env" ]]; then
   echo "📄 Loading environment variables from .env"
-  export $(grep -v '^#' .env | xargs)
+  while IFS='=' read -r key value; do
+    [[ -z "${key}" || "${key}" =~ ^[[:space:]]*# ]] && continue
+    key="${key%%[[:space:]]*}"
+    if [[ -z "${!key:-}" ]]; then
+      export "${key}=${value}"
+    fi
+  done < .env
 else
   echo "⚠️  No .env file found in current directory. Make sure env vars are set manually."
 fi
@@ -607,10 +613,17 @@ CREATE TABLE IF NOT EXISTS miner_evaluation_runs (
     total_tasks INTEGER NOT NULL,
     success_tasks INTEGER NOT NULL,
     failed_tasks INTEGER NOT NULL,
+    tasks_attempted INTEGER,
     zero_reason VARCHAR(128),
+    early_stop_reason VARCHAR(128),
+    early_stop_message TEXT,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE miner_evaluation_runs ADD COLUMN IF NOT EXISTS tasks_attempted INTEGER;
+ALTER TABLE miner_evaluation_runs ADD COLUMN IF NOT EXISTS early_stop_reason VARCHAR(128);
+ALTER TABLE miner_evaluation_runs ADD COLUMN IF NOT EXISTS early_stop_message TEXT;
 
 CREATE TABLE IF NOT EXISTS tasks (
     id SERIAL PRIMARY KEY,
