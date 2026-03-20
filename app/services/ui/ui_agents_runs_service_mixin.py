@@ -859,8 +859,8 @@ class UIAgentsRunsServiceMixin:
 
         best_round_number = int(best_round_history_row["round_number_in_season"]) if best_round_history_row.get("round_number_in_season") is not None else round_in_season
         best_round_matches_selected = requested_round_in_season is None or int(round_in_season) == int(best_round_number)
-        best_round_tasks_received = total_tasks if canonical_total_tasks is not None else (derived_tasks_received if derived_tasks_received is not None else total_tasks)
-        best_round_tasks_success = success_tasks if canonical_success_tasks is not None else (derived_tasks_success if derived_tasks_success is not None else success_tasks)
+        best_round_tasks_received = derived_tasks_received if derived_tasks_received is not None else (canonical_total_tasks if canonical_total_tasks is not None else total_tasks)
+        best_round_tasks_success = derived_tasks_success if derived_tasks_success is not None else (canonical_success_tasks if canonical_success_tasks is not None else success_tasks)
         best_round_payload = (
             {
                 "round": int(best_round_number),
