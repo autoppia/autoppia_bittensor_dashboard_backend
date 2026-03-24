@@ -27,7 +27,7 @@ async def test_round_validators_views_reconstruct_local_state_from_runs_and_down
     await db_session.execute(
         text(
             """
-            CREATE TABLE config_app_runtime (
+            CREATE TABLE IF NOT EXISTS config_app_runtime (
               id INTEGER PRIMARY KEY,
               main_validator_uid INTEGER
             )
@@ -37,7 +37,7 @@ async def test_round_validators_views_reconstruct_local_state_from_runs_and_down
     await db_session.execute(
         text(
             """
-            CREATE TABLE seasons (
+            CREATE TABLE IF NOT EXISTS seasons (
               season_id INTEGER PRIMARY KEY,
               season_number INTEGER NOT NULL,
               leader_miner_uid INTEGER,
@@ -55,7 +55,15 @@ async def test_round_validators_views_reconstruct_local_state_from_runs_and_down
     await db_session.execute(
         text(
             """
-            CREATE TABLE rounds (
+            ALTER TABLE seasons
+            ADD COLUMN IF NOT EXISTS required_improvement_pct DOUBLE PRECISION
+            """
+        )
+    )
+    await db_session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS rounds (
               round_id INTEGER PRIMARY KEY,
               season_id INTEGER NOT NULL,
               round_number_in_season INTEGER NOT NULL,
@@ -78,7 +86,7 @@ async def test_round_validators_views_reconstruct_local_state_from_runs_and_down
     await db_session.execute(
         text(
             """
-            CREATE TABLE round_validators (
+            CREATE TABLE IF NOT EXISTS round_validators (
               round_validator_id INTEGER PRIMARY KEY,
               round_id INTEGER NOT NULL,
               season_number INTEGER,
@@ -110,7 +118,7 @@ async def test_round_validators_views_reconstruct_local_state_from_runs_and_down
     await db_session.execute(
         text(
             """
-            CREATE TABLE round_validator_miners (
+            CREATE TABLE IF NOT EXISTS round_validator_miners (
               id INTEGER PRIMARY KEY,
               round_validator_id INTEGER NOT NULL,
               round_id INTEGER NOT NULL,
@@ -134,7 +142,16 @@ async def test_round_validators_views_reconstruct_local_state_from_runs_and_down
         )
     )
     await db_session.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS round_validator_id INTEGER"))
-    await db_session.execute(text("INSERT INTO config_app_runtime (id, main_validator_uid) VALUES (1, 83)"))
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO config_app_runtime (id, main_validator_uid)
+            VALUES (1, 83)
+            ON CONFLICT (id) DO UPDATE
+            SET main_validator_uid = EXCLUDED.main_validator_uid
+            """
+        )
+    )
 
     await db_session.execute(
         text(

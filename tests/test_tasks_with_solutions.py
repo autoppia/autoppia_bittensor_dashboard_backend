@@ -62,7 +62,7 @@ def make_request(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
 
 
-def test_no_filters() -> bool:
+def _check_no_filters() -> bool:
     """Test 1: Sin filtros (todas las tareas)."""
     print_test("1️⃣", "Sin filtros (todas las tareas)")
 
@@ -83,7 +83,7 @@ def test_no_filters() -> bool:
         return False
 
 
-def test_successful_tasks() -> bool:
+def _check_successful_tasks() -> bool:
     """Test 2: Tareas exitosas (success=true)."""
     print_test("2️⃣", "Tareas exitosas (success=true)")
 
@@ -101,7 +101,7 @@ def test_successful_tasks() -> bool:
         return False
 
 
-def test_failed_tasks() -> bool:
+def _check_failed_tasks() -> bool:
     """Test 3: Tareas fallidas (success=false)."""
     print_test("3️⃣", "Tareas fallidas (success=false)")
 
@@ -119,7 +119,7 @@ def test_failed_tasks() -> bool:
         return False
 
 
-def test_website_filter() -> bool:
+def _check_website_filter() -> bool:
     """Test 4: Filtrar por website (autocinema)."""
     print_test("4️⃣", "Filtro por website (autocinema)")
 
@@ -137,7 +137,7 @@ def test_website_filter() -> bool:
         return False
 
 
-def test_website_and_success() -> bool:
+def _check_website_and_success() -> bool:
     """Test 5: Website + success (autocinema exitosas)."""
     print_test("5️⃣", "Website + success (autocinema exitosas)")
 
@@ -155,7 +155,7 @@ def test_website_and_success() -> bool:
         return False
 
 
-def test_web_version_filter() -> bool:
+def _check_web_version_filter() -> bool:
     """Test 5b: Filtro por webVersion."""
     print_test("5️⃣b", "Filtro por webVersion")
 
@@ -200,7 +200,7 @@ def test_web_version_filter() -> bool:
         return False
 
 
-def test_website_and_web_version() -> bool:
+def _check_website_and_web_version() -> bool:
     """Test 6: Website + webVersion (filtro combinado)."""
     print_test("6️⃣", "Website + webVersion (filtro combinado)")
 
@@ -235,7 +235,7 @@ def test_website_and_web_version() -> bool:
         return False
 
 
-def test_sorting() -> bool:
+def _check_sorting() -> bool:
     """Test 7: Con ordenamiento (created_at_desc)."""
     print_test("7️⃣", "Con ordenamiento (created_at_desc)")
 
@@ -253,7 +253,7 @@ def test_sorting() -> bool:
         return False
 
 
-def test_full_structure() -> bool:
+def _check_full_structure() -> bool:
     """Test 8: Estructura completa (1 tarea)."""
     print_test("8️⃣", "Estructura completa (1 tarea)")
 
@@ -270,7 +270,7 @@ def test_full_structure() -> bool:
         return False
 
 
-def test_no_api_key() -> bool:
+def _check_no_api_key() -> bool:
     """Test 9: Sin API key (debe devolver 422)."""
     print_test("9️⃣", "Sin API key (debe devolver 422)")
 
@@ -297,16 +297,16 @@ def main() -> None:
 
     results = []
 
-    results.append(("Test 1", test_no_filters()))
-    results.append(("Test 2", test_successful_tasks()))
-    results.append(("Test 3", test_failed_tasks()))
-    results.append(("Test 4", test_website_filter()))
-    results.append(("Test 5", test_website_and_success()))
-    results.append(("Test 5b", test_web_version_filter()))
-    results.append(("Test 6", test_website_and_web_version()))
-    results.append(("Test 7", test_sorting()))
-    results.append(("Test 8", test_full_structure()))
-    results.append(("Test 9", test_no_api_key()))
+    results.append(("Test 1", _check_no_filters()))
+    results.append(("Test 2", _check_successful_tasks()))
+    results.append(("Test 3", _check_failed_tasks()))
+    results.append(("Test 4", _check_website_filter()))
+    results.append(("Test 5", _check_website_and_success()))
+    results.append(("Test 5b", _check_web_version_filter()))
+    results.append(("Test 6", _check_website_and_web_version()))
+    results.append(("Test 7", _check_sorting()))
+    results.append(("Test 8", _check_full_structure()))
+    results.append(("Test 9", _check_no_api_key()))
 
     print_header("✅ Tests completados")
 

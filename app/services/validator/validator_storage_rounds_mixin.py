@@ -167,6 +167,26 @@ class ValidatorStorageRoundsMixin:
             ),
             {"season_number": int(season_number)},
         )
+        legacy_miners_table_exists = await self.session.scalar(text("SELECT to_regclass('public.round_validator_miners') IS NOT NULL"))
+        if not legacy_miners_table_exists:
+            # Some test/bootstrap paths only create canonical tables.
+            # Skip legacy backfill safely when the legacy table is absent.
+            return
+        legacy_round_id_column_exists = await self.session.scalar(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'round_validator_miners'
+                      AND column_name = 'round_id'
+                )
+                """
+            )
+        )
+        if not legacy_round_id_column_exists:
+            return
         # Backfill per-miner rows that were persisted before canonical linking,
         # covering all rounds in the season that were just linked or previously missed.
         await self.session.execute(

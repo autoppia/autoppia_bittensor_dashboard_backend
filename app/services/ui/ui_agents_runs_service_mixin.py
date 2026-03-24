@@ -12,6 +12,21 @@ from app.services.media_storage import build_public_url
 
 class UIAgentsRunsServiceMixin:
     @staticmethod
+    def _miner_fallback_image(uid: Any) -> str:
+        try:
+            numeric_uid = int(uid or 0)
+        except Exception:
+            numeric_uid = 0
+        if numeric_uid == 48:
+            return "/images/icons/validators/Autoppia.png"
+        return f"/miners/{abs(numeric_uid) % 50}.svg"
+
+    @classmethod
+    def _resolve_miner_image(cls, image_url: Any, uid: Any) -> str:
+        candidate = str(image_url or "").strip()
+        return candidate or cls._miner_fallback_image(uid)
+
+    @staticmethod
     def _normalize_tasks_attempted(tasks_attempted: Any, success_tasks: Any, failed_tasks: Any) -> Optional[int]:
         if tasks_attempted is not None:
             normalized = int(tasks_attempted or 0)
@@ -846,8 +861,8 @@ class UIAgentsRunsServiceMixin:
 
         best_round_number = int(best_round_history_row["round_number_in_season"]) if best_round_history_row.get("round_number_in_season") is not None else round_in_season
         best_round_matches_selected = requested_round_in_season is None or int(round_in_season) == int(best_round_number)
-        best_round_tasks_received = total_tasks if canonical_total_tasks is not None else (derived_tasks_received if derived_tasks_received is not None else total_tasks)
-        best_round_tasks_success = success_tasks if canonical_success_tasks is not None else (derived_tasks_success if derived_tasks_success is not None else success_tasks)
+        best_round_tasks_received = derived_tasks_received if derived_tasks_received is not None else (canonical_total_tasks if canonical_total_tasks is not None else total_tasks)
+        best_round_tasks_success = derived_tasks_success if derived_tasks_success is not None else (canonical_success_tasks if canonical_success_tasks is not None else success_tasks)
         best_round_payload = (
             {
                 "round": int(best_round_number),
@@ -872,7 +887,7 @@ class UIAgentsRunsServiceMixin:
                 "name": first["name"] or f"miner {miner_uid}",
                 "hotkey": first["miner_hotkey"],
                 "type": "autoppia",
-                "imageUrl": f"/miners/{miner_uid % 100}.svg",
+                "imageUrl": self._resolve_miner_image(first.get("image_url"), miner_uid),
                 "githubUrl": first["github_url"],
                 "taostatsUrl": f"https://taostats.io/subnets/36/metagraph?filter={first['miner_hotkey']}",
                 "isSota": bool(first["is_sota"]),
@@ -1071,6 +1086,32 @@ class UIAgentsRunsServiceMixin:
             .mappings()
             .first()
         )
+        if miner_profile is None or not str(miner_profile.get("image_url") or "").strip():
+            miner_profile = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT
+                                COALESCE(NULLIF(rvm.name, ''), CONCAT('miner ', rvm.miner_uid)::VARCHAR(256)) AS name,
+                                NULLIF(rvm.miner_hotkey, '') AS miner_hotkey,
+                                rvm.image_url,
+                                NULLIF(rvm.github_url, '') AS github_url
+                            FROM round_validator_miners rvm
+                            JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
+                            JOIN rounds r ON r.round_id = rv.round_id
+                            WHERE rvm.miner_uid = :uid
+                              AND rv.validator_uid = :main_validator_uid
+                            ORDER BY r.round_id DESC, rv.round_validator_id DESC, rvm.updated_at DESC NULLS LAST
+                            LIMIT 1
+                            """
+                        ),
+                        {"uid": miner_uid, "main_validator_uid": main_validator_uid},
+                    )
+                )
+                .mappings()
+                .first()
+            ) or miner_profile
         distinct_github_urls = (
             await self.session.execute(
                 text(
@@ -1399,7 +1440,10 @@ class UIAgentsRunsServiceMixin:
                 "uid": miner_uid,
                 "name": (miner_profile["name"] if miner_profile else f"miner {miner_uid}"),
                 "hotkey": (miner_profile["miner_hotkey"] if miner_profile else None),
-                "image": (miner_profile["image_url"] if miner_profile and miner_profile.get("image_url") else f"/miners/{miner_uid % 100}.svg"),
+                "image": self._resolve_miner_image(
+                    miner_profile["image_url"] if miner_profile else None,
+                    miner_uid,
+                ),
             },
             "summary": {
                 "totalRounds": len(rounds_history),
@@ -2151,7 +2195,10 @@ class UIAgentsRunsServiceMixin:
                 "ranking": int(r["best_local_rank"] or 9999),
                 "reward": float(r["best_local_reward"] or 0.0),
                 "isSota": bool(r["is_sota"]),
-                "imageUrl": r["image_url"] or f"/miners/{int(r['miner_uid']) % 100}.svg",
+                "imageUrl": self._resolve_miner_image(
+                    r["image_url"],
+                    r["miner_uid"],
+                ),
                 "provider": "autoppia",
             }
             for r in rows
@@ -2287,7 +2334,10 @@ class UIAgentsRunsServiceMixin:
                     "agentUid": int(r["miner_uid"]) if r["miner_uid"] is not None else None,
                     "agentHotkey": r["miner_hotkey"],
                     "agentName": r["miner_name"] or (f"miner {int(r['miner_uid'])}" if r["miner_uid"] is not None else "miner"),
-                    "agentImage": r["miner_image"] or (f"/miners/{int(r['miner_uid']) % 100}.svg" if r["miner_uid"] is not None else "/miners/0.svg"),
+                    "agentImage": self._resolve_miner_image(
+                        r["miner_image"],
+                        r["miner_uid"],
+                    ),
                     "roundId": round_encoded,
                     "season": season_num,
                     "round": round_in_season,
@@ -2545,7 +2595,10 @@ class UIAgentsRunsServiceMixin:
             "agentUid": int(run["miner_uid"]) if run["miner_uid"] is not None else None,
             "agentHotkey": run["miner_hotkey"],
             "agentName": run["miner_name"] or (f"miner {int(run['miner_uid'])}" if run["miner_uid"] is not None else "miner"),
-            "agentImage": run["miner_image"] or (f"/miners/{int(run['miner_uid']) % 100}.svg" if run["miner_uid"] is not None else "/miners/0.svg"),
+            "agentImage": self._resolve_miner_image(
+                run["miner_image"],
+                run["miner_uid"],
+            ),
             "roundId": round_id,
             "season_number": int(run["season_number"]) if run["season_number"] is not None else None,
             "round_number_in_season": int(run["round_number_in_season"]) if run["round_number_in_season"] is not None else None,

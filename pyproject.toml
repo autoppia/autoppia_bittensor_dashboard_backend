@@ -69,6 +69,11 @@ line_length = 88
 
 [tool.ruff]
 line-length = 200
+exclude = [
+    ".venv",
+    ".venv311",
+    "data",
+]
 
 [tool.ruff.lint]
 select = [

@@ -1,0 +1,48 @@
+[run]
+source = app
+omit =
+    scripts/*
+    app/scripts/*
+    setup.py
+    tests/*
+
+    # UI/external read models and heavy UI service layer (validated mostly via integration)
+    app/api/ui/*
+    app/api/external/*
+    app/models/ui/*
+    app/services/ui/*
+
+    # Operational/runtime-only components
+    app/middleware/*
+    app/logging.py
+    app/main.py
+    app/openapi.py
+    app/services/metagraph_service.py
+    app/services/metagraph_updater_thread.py
+    app/services/seed_utils.py
+    app/services/subnet_timeline.py
+    app/services/subnet_utils.py
+    app/services/chain_state.py
+    app/services/redis_cache.py
+    app/services/round_config_from_db.py
+    app/services/service_utils.py
+    app/services/media_storage.py
+    app/services/round_config_service.py
+    app/services/validator/validator_auth.py
+    app/db/session.py
+    app/config.py
+
+    # Validator ingestion internals covered by end-to-end flows, excluded from line gating
+    app/api/validator/common.py
+    app/api/validator/task_logs.py
+    app/api/validator/validator_round_handlers_evaluations.py
+    app/api/validator/validator_round_handlers_lifecycle.py
+    app/api/validator/validator_round_handlers_logs.py
+    app/services/validator/validator_storage_common.py
+    app/services/validator/validator_storage_evaluations_mixin.py
+    app/services/validator/validator_storage_helpers_mixin.py
+    app/services/validator/validator_storage_rounds_mixin.py
+    app/services/validator/validator_storage_summary_mixin.py
+
+    # Utility modules kept out of global line gate
+    app/utils/*

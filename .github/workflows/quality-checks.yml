@@ -1,0 +1,104 @@
+name: Quality checks
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+
+jobs:
+  lint-and-audit:
+    name: Lint & dependency audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "ruff==0.10.0" radon
+
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      # Maintainability report: cyclomatic complexity (C901), too many args/statements. Tune in pyproject; add to extend-select to fail.
+      - name: Ruff maintainability report
+        run: ruff check app scripts --select C901,PLR0913,PLR0915 --output-format=concise
+        continue-on-error: true
+
+      - name: Radon cyclomatic complexity
+        run: |
+          echo "=== Cyclomatic complexity (app, scripts) ==="
+          radon cc app scripts -a -s --total-average
+
+      - name: Radon maintainability index
+        run: |
+          echo "=== Maintainability index (app, scripts) ==="
+          radon mi app scripts -s
+
+      # Complexity gate: radon cc grades A(1-5) B(6-10) C(11-20) D(21-30) E(31-40) F(41+).
+      # -n F = fail only on F (41+). Use -n E to fail on E or F; -n D to fail on D/E/F.
+      # To fix: refactor (extract functions, reduce if/elif/for/while/and/or branches). Remove continue-on-error when ready to enforce.
+      - name: Radon complexity gate (app only, fail on F)
+        continue-on-error: true
+        run: |
+          bad=$(radon cc app -n F --no-assert 2>/dev/null | grep -c . || true)
+          if [ "${bad:-0}" -gt 0 ]; then
+            echo "::error::app/ has cyclomatic complexity F (41+). Run 'radon cc app -n F' locally to list. Refactor: extract functions, reduce branches."
+            radon cc app -n F --no-assert
+            exit 1
+          fi
+
+      # Maintainability index (per module): A=best, B, C, D, E=worst. Formula: LOC + complexity + comments.
+      # -n D = fail only on D or E (allow A/B/C). Use -n C to fail on C/D/E (require min B). Add continue-on-error to only report.
+      - name: Radon maintainability gate (app only, fail on D/E)
+        run: |
+          bad=$(radon mi app -n D 2>/dev/null | grep -c . || true)
+          if [ "${bad:-0}" -gt 0 ]; then
+            echo "::error::app/ has maintainability index D or E (threshold: min C). Run 'radon mi app -n D' locally to list."
+            radon mi app -n D
+            exit 1
+          fi
+
+
+  pre-commit:
+    name: Pre-commit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files

@@ -178,8 +178,6 @@ class TasksDomainServiceMixin:
         max_score: Optional[float] = None,
         success_only: Optional[bool] = None,
         success_mode: Optional[str] = None,
-        season: Optional[int] = None,
-        round: Optional[int] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         sort_by: str = "startTime",
@@ -210,8 +208,6 @@ class TasksDomainServiceMixin:
                 max_score=max_score,
                 success_only=success_only,
                 success_mode=success_mode,
-                season=season,
-                round=round,
                 start_date=start_date.isoformat() if start_date else None,
                 end_date=end_date.isoformat() if end_date else None,
                 sort_by=sort_by,
@@ -242,8 +238,6 @@ class TasksDomainServiceMixin:
                 max_score=max_score,
                 success_only=success_only,
                 success_mode=success_mode,
-                season=season,
-                round=round,
                 start_date=start_date,
                 end_date=end_date,
                 sort_by=sort_by,
@@ -327,11 +321,6 @@ class TasksDomainServiceMixin:
                 use_case_name = self._extract_use_case(context.task)
                 if use_case_name != use_case:
                     continue
-
-            if season is not None and getattr(context.round, "season_number", None) != season:
-                continue
-            if round is not None and getattr(context.round, "round_number_in_season", None) != round:
-                continue
 
             ui_task = self._build_ui_task(context)
             evaluation_score = getattr(context.evaluation, "evaluation_score", 0.0) if context.evaluation else 0.0
@@ -480,8 +469,6 @@ class TasksDomainServiceMixin:
         max_score: Optional[float] = None,
         success_only: Optional[bool] = None,
         success_mode: Optional[str] = None,
-        season: Optional[int] = None,
-        round: Optional[int] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         sort_by: str = "startTime",
@@ -491,14 +478,7 @@ class TasksDomainServiceMixin:
         from sqlalchemy import func
 
         # Start from EVALUATIONS (one row per task+miner) instead of tasks
-        base_stmt = (
-            select(EvaluationORM)
-            .join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
-            .join(
-                ValidatorRoundORM,
-                EvaluationORM.validator_round_id == ValidatorRoundORM.validator_round_id,
-            )
-        )
+        base_stmt = select(EvaluationORM).join(TaskORM, EvaluationORM.task_id == TaskORM.task_id)
         filters = []
 
         if website:
@@ -543,13 +523,6 @@ class TasksDomainServiceMixin:
         elif success_only:
             filters.append(EvaluationORM.reward > 0)
 
-        if season is not None:
-            filters.append(ValidatorRoundORM.season_number == season)
-        if round is not None:
-            filters.append(
-                ValidatorRoundORM.round_number_in_season == round
-            )
-
         if miner_uid is not None:
             filters.append(EvaluationORM.miner_uid == miner_uid)
 
@@ -584,18 +557,7 @@ class TasksDomainServiceMixin:
         order_expr = sort_column.desc() if sort_order.lower() == "desc" else sort_column.asc()
         # Optimize COUNT: build count query without ORDER BY (faster)
         # COUNT doesn't need ordering, so we avoid the subquery overhead
-        count_stmt = (
-            select(func.count(EvaluationORM.id))
-            .select_from(
-                EvaluationORM.__table__
-                .join(TaskORM.__table__, EvaluationORM.task_id == TaskORM.task_id)
-                .join(
-                    ValidatorRoundORM.__table__,
-                    EvaluationORM.validator_round_id
-                    == ValidatorRoundORM.validator_round_id,
-                )
-            )
-        )
+        count_stmt = select(func.count(EvaluationORM.id)).select_from(EvaluationORM.__table__.join(TaskORM.__table__, EvaluationORM.task_id == TaskORM.task_id))
         if filters:
             count_stmt = count_stmt.where(*filters)
 
