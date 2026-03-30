@@ -131,8 +131,10 @@ async def init_db() -> None:
         # ------------------------------------------------------------------
         # Views — recreated on every start so schema changes are picked up
         # ------------------------------------------------------------------
-        for view_sql in (
-            """
+        for view_name, view_sql in (
+            (
+                "validator_rounds",
+                """
             CREATE OR REPLACE VIEW validator_rounds AS
             SELECT
                 rv.round_validator_id AS id,
@@ -168,7 +170,10 @@ async def init_db() -> None:
                 GROUP BY tasks.round_validator_id
             ) t ON t.round_validator_id = rv.round_validator_id
             """,
-            """
+            ),
+            (
+                "validator_round_validators",
+                """
             CREATE OR REPLACE VIEW validator_round_validators AS
             SELECT
                 rv.round_validator_id AS id,
@@ -186,7 +191,10 @@ async def init_db() -> None:
                 rv.updated_at
             FROM round_validators rv
             """,
-            """
+            ),
+            (
+                "validator_round_miners",
+                """
             CREATE OR REPLACE VIEW validator_round_miners AS
             SELECT
                 rvm.id,
@@ -204,7 +212,10 @@ async def init_db() -> None:
             FROM round_validator_miners rvm
             JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
             """,
-            """
+            ),
+            (
+                "validator_round_summary_miners",
+                """
             CREATE OR REPLACE VIEW validator_round_summary_miners AS
             SELECT
                 rvm.id,
@@ -231,13 +242,36 @@ async def init_db() -> None:
             FROM round_validator_miners rvm
             JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
             """,
+            ),
         ):
+            relkind = (
+                (
+                    await conn.execute(
+                        text(
+                            """
+                            SELECT c.relkind
+                            FROM pg_class c
+                            JOIN pg_namespace n ON n.oid = c.relnamespace
+                            WHERE n.nspname = 'public' AND c.relname = :view_name
+                            LIMIT 1
+                            """
+                        ),
+                        {"view_name": view_name},
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            # Only replace when target is absent or already a plain view.
+            # Skip tables/materialized views/other relation kinds.
+            if relkind not in {None, "v"}:
+                continue
             await conn.execute(text(view_sql))
 
         # ------------------------------------------------------------------
         # Triggers — prevent malformed block/time ranges being persisted
         # ------------------------------------------------------------------
-        for fn_sql, drop_sql, trigger_sql in (
+        for fn_sql, target_rel, drop_sql, trigger_sql in (
             (
                 """
                 CREATE OR REPLACE FUNCTION normalize_round_boundaries()
@@ -253,6 +287,7 @@ async def init_db() -> None:
                 END;
                 $$ LANGUAGE plpgsql;
                 """,
+                "rounds",
                 "DROP TRIGGER IF EXISTS trg_normalize_round_boundaries ON rounds",
                 """
                 CREATE TRIGGER trg_normalize_round_boundaries
@@ -281,6 +316,7 @@ async def init_db() -> None:
                 END;
                 $$ LANGUAGE plpgsql;
                 """,
+                "round_validators",
                 "DROP TRIGGER IF EXISTS trg_normalize_round_validator_boundaries ON round_validators",
                 """
                 CREATE TRIGGER trg_normalize_round_validator_boundaries
@@ -289,6 +325,27 @@ async def init_db() -> None:
                 """,
             ),
         ):
+            relkind = (
+                (
+                    await conn.execute(
+                        text(
+                            """
+                            SELECT c.relkind
+                            FROM pg_class c
+                            JOIN pg_namespace n ON n.oid = c.relnamespace
+                            WHERE n.nspname = 'public' AND c.relname = :rel_name
+                            LIMIT 1
+                            """
+                        ),
+                        {"rel_name": target_rel},
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            # Triggers only apply to base/partitioned tables, never views.
+            if relkind not in {"r", "p"}:
+                continue
             await conn.execute(text(fn_sql))
             await conn.execute(text(drop_sql))
             await conn.execute(text(trigger_sql))

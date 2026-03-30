@@ -91,7 +91,7 @@ def test_redis_logs() -> None:
     print()
 
 
-def test_redis_connection_no_password() -> tuple[str, bool]:
+def _check_redis_connection_no_password() -> tuple[str, bool]:
     """Test 3: Probar conexión SIN contraseña."""
     print("3️⃣  Probando conexión SIN contraseña:")
 
@@ -138,7 +138,7 @@ def get_redis_password() -> Optional[str]:
     return password
 
 
-def test_redis_connection_with_password(password: str) -> bool:
+def _check_redis_connection_with_password(password: str) -> bool:
     """Test 4: Probar conexión CON contraseña."""
     print("4️⃣  Probando conexión CON contraseña...")
 
@@ -162,7 +162,7 @@ def test_redis_connection_with_password(password: str) -> bool:
         return False
 
 
-def test_connection_info(has_password: str, password: Optional[str]) -> None:
+def _print_connection_info(has_password: str, password: Optional[str]) -> None:
     """Test 5: Información de conexión."""
     print("5️⃣  Información de conexión:")
     print("   Host: localhost (o IP del servidor)")
@@ -174,7 +174,7 @@ def test_connection_info(has_password: str, password: Optional[str]) -> None:
     print()
 
 
-def test_redis_set_get(has_password: str, password: Optional[str]) -> None:
+def _check_redis_set_get(has_password: str, password: Optional[str]) -> None:
     """Test 6: Probar SET/GET."""
     print("6️⃣  Probando SET/GET:")
 
@@ -214,23 +214,23 @@ def main() -> None:
     test_redis_logs()
 
     # Test 3: Conexión sin contraseña
-    has_password, connection_ok = test_redis_connection_no_password()
+    has_password, connection_ok = _check_redis_connection_no_password()
 
     # Test 4: Conexión con contraseña (si es necesario)
     password = None
     if has_password == "yes":
         password = get_redis_password()
         if password:
-            test_redis_connection_with_password(password)
+            _check_redis_connection_with_password(password)
         else:
             print_warning("No hay contraseña en .env para el entorno actual")
             print()
 
     # Test 5: Información de conexión
-    test_connection_info(has_password, password)
+    _print_connection_info(has_password, password)
 
     # Test 6: SET/GET
-    test_redis_set_get(has_password, password)
+    _check_redis_set_get(has_password, password)
 
     print("✅ Verificación completada")
 
