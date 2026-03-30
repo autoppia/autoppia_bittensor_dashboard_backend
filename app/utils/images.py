@@ -44,6 +44,10 @@ DEFAULT_ALLOWED_IMAGE_HOSTS = {
     "autoppia-subnet.s3.eu-west-1.amazonaws.com",  # S3 bucket for validators/miners/gifs
     "autoppia-subnet.s3.amazonaws.com",  # S3 default region URL
 }
+S3_IMAGE_HOSTS = {
+    "autoppia-subnet.s3.eu-west-1.amazonaws.com",
+    "autoppia-subnet.s3.amazonaws.com",
+}
 
 
 def _slugify(value: str) -> str:
@@ -152,7 +156,7 @@ def _sanitize_url(candidate: Optional[str]) -> str:
             # For S3 URLs, return the FULL URL (not relative path)
             # This allows Next.js Image component to load from S3
             hostname_lower = (parsed.hostname or "").lower()
-            if "s3.amazonaws.com" in hostname_lower or "s3.eu-west-1.amazonaws.com" in hostname_lower:
+            if hostname_lower in S3_IMAGE_HOSTS:
                 return rewritten  # Return full S3 URL
             # For other allowed hosts, convert to relative path
             query = f"?{parsed.query}" if parsed.query else ""

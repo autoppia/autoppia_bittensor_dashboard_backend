@@ -153,7 +153,7 @@ def _check_redis_connection_with_password(password: str) -> bool:
     if "PONG" in output:
         print_success("Redis responde con la contraseña correcta")
         print()
-        print("   📝 Contraseña: (oculta)")
+        print("   📝 Contraseña: (redacted)")
         print()
         return True
     else:
@@ -168,7 +168,7 @@ def _print_connection_info(has_password: str, password: Optional[str]) -> None:
     print("   Host: localhost (o IP del servidor)")
     print("   Puerto: 6379")
     if has_password == "yes" and password:
-        print("   Contraseña: configurada (oculta)")
+        print("   Contraseña: (redacted)")
     else:
         print("   Contraseña: (ninguna)")
     print()
