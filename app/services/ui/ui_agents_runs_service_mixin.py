@@ -114,6 +114,49 @@ class UIAgentsRunsServiceMixin:
             return None, None
         return total_tasks, success_tasks
 
+    @staticmethod
+    def _stake_weighted_average(
+        validator_rows: List[Dict[str, Any]],
+        metric_key: str,
+    ) -> Optional[float]:
+        weighted_sum = 0.0
+        stake_sum = 0.0
+
+        for row in validator_rows:
+            metric_value = row.get(metric_key)
+            stake = float(row.get("stake") or 0.0)
+            if metric_value is None or stake <= 0.0:
+                continue
+            weighted_sum += float(metric_value) * stake
+            stake_sum += stake
+
+        if stake_sum <= 0.0:
+            return None
+        return weighted_sum / stake_sum
+
+    @classmethod
+    def _derive_round_local_consensus(cls, validator_rows: List[Dict[str, Any]]) -> Dict[str, Optional[float | int]]:
+        tasks_received, tasks_success = cls._derive_consensus_task_totals(validator_rows)
+        return {
+            "reward": cls._stake_weighted_average(validator_rows, "run_reward"),
+            "score": cls._stake_weighted_average(validator_rows, "run_score"),
+            "time": cls._stake_weighted_average(validator_rows, "run_time"),
+            "avg_cost": cls._stake_weighted_average(validator_rows, "run_avg_cost"),
+            "tasks_received": tasks_received,
+            "tasks_success": tasks_success,
+        }
+
+    @classmethod
+    def _derive_round_ranking_consensus(cls, validator_rows: List[Dict[str, Any]]) -> Dict[str, Optional[float | int]]:
+        return {
+            "reward": cls._stake_weighted_average(validator_rows, "post_consensus_avg_reward"),
+            "score": cls._stake_weighted_average(validator_rows, "post_consensus_avg_eval_score"),
+            "time": cls._stake_weighted_average(validator_rows, "post_consensus_avg_eval_time"),
+            "avg_cost": cls._stake_weighted_average(validator_rows, "post_consensus_avg_eval_cost"),
+            "tasks_received": cls._stake_weighted_average(validator_rows, "post_consensus_tasks_received"),
+            "tasks_success": cls._stake_weighted_average(validator_rows, "post_consensus_tasks_success"),
+        }
+
     async def get_agent_detail(self, miner_uid: int, season: Optional[int], round_in_season: Optional[int]) -> Dict[str, Any]:
         requested_round_in_season = round_in_season
         if season is None:
@@ -1830,7 +1873,12 @@ class UIAgentsRunsServiceMixin:
         """
         Return all rounds where the agent participated, grouped by round.
         Each round contains:
-        - consensus: stake-weighted aggregate (reward, score, time, tasks, rank)
+        - consensus: stake-weighted aggregate of the **displayed** per-validator runs
+          (miner_evaluation_runs / run_*), plus summed tasks — one coherent view of
+          “what this round’s executions looked like”.
+        - ranking: stake-weighted **post-consensus** metrics (from DB; may reflect
+          best_run_consensus / effective competition). Use for leaderboard position
+          and “official” round reward vs other miners.
         - validators: each validator's individual run metrics for this agent
         Used exclusively by the "Runs" tab on the agent page.
         """
@@ -1974,47 +2022,14 @@ class UIAgentsRunsServiceMixin:
             round_consensus_status = str(rd.get("round_consensus_status") or "").strip().lower()
             round_is_finalized = round_status == "finished" and round_consensus_status in {"finalized", "finished", "completed"}
 
-            # Build per-validator entries and collect values for consensus.
-            # All metrics (reward, score, time, cost) are stake-weighted averages of
-            # the actual per-validator run values. Tasks use stake-weighted average of
-            # the post_consensus values (which already represent the consensus-agreed total).
+            # Build per-validator entries; aggregate twice:
+            # - run_*  → consensus card (aligned with listed runs)
+            # - post_consensus_* → ranking card (effective / best-run consensus in DB)
             validators_out: List[Dict[str, Any]] = []
-            weighted_reward_sum = 0.0
-            weighted_score_sum = 0.0
-            weighted_time_sum = 0.0
-            weighted_cost_sum = 0.0
-            stake_sum_reward = 0.0
-            stake_sum_score = 0.0
-            stake_sum_time = 0.0
-            stake_sum_cost = 0.0
+
             post_consensus_rank: Optional[int] = None
-            post_consensus_time: Optional[float] = None
-            post_consensus_tasks_received = 0
-            post_consensus_tasks_success = 0
-            post_consensus_avg_cost: Optional[float] = None
 
             for vr in validator_rows:
-                stake = float(vr["stake"] or 0.0)
-                aggregate_reward = vr["post_consensus_avg_reward"] if round_is_finalized else vr["run_reward"]
-                aggregate_score = vr["post_consensus_avg_eval_score"] if round_is_finalized else vr["run_score"]
-                aggregate_time = vr["post_consensus_avg_eval_time"] if round_is_finalized else vr["run_time"]
-                aggregate_cost = vr["post_consensus_avg_eval_cost"] if round_is_finalized else vr["run_avg_cost"]
-
-                # Stake-weighted consensus metrics from each validator's run values.
-                if aggregate_reward is not None and stake > 0:
-                    weighted_reward_sum += float(aggregate_reward) * stake
-                    stake_sum_reward += stake
-                if aggregate_score is not None and stake > 0:
-                    weighted_score_sum += float(aggregate_score) * stake
-                    stake_sum_score += stake
-                if aggregate_time is not None and stake > 0:
-                    weighted_time_sum += float(aggregate_time) * stake
-                    stake_sum_time += stake
-                if aggregate_cost is not None and stake > 0:
-                    weighted_cost_sum += float(aggregate_cost) * stake
-                    stake_sum_cost += stake
-
-                # Only need rank for the consensus rank display
                 rk = vr["post_consensus_rank"]
                 if rk is not None:
                     if post_consensus_rank is None or int(rk) < post_consensus_rank:
@@ -2072,34 +2087,25 @@ class UIAgentsRunsServiceMixin:
                     }
                 )
 
-            consensus_reward = None
-            consensus_score = None
-            post_consensus_time = None
-            post_consensus_avg_cost = None
+            round_local_consensus = self._derive_round_local_consensus(validator_rows)
+
+            ranking_reward = None
+            ranking_score = None
+            ranking_time = None
+            ranking_avg_cost = None
+            ranking_tasks_received: Optional[int] = None
+            ranking_tasks_success: Optional[int] = None
             post_consensus_available = False
 
             if round_is_finalized:
-                consensus_reward = weighted_reward_sum / stake_sum_reward if stake_sum_reward > 0 else None
-                consensus_score = weighted_score_sum / stake_sum_score if stake_sum_score > 0 else None
-                post_consensus_time = weighted_time_sum / stake_sum_time if stake_sum_time > 0 else None
-                post_consensus_avg_cost = weighted_cost_sum / stake_sum_cost if stake_sum_cost > 0 else None
-                weighted_tasks_received_sum = 0.0
-                weighted_tasks_success_sum = 0.0
-                stake_sum_tasks_received = 0.0
-                stake_sum_tasks_success = 0.0
-                for vr in validator_rows:
-                    stake = float(vr["stake"] or 0.0)
-                    if vr["post_consensus_tasks_received"] is not None and stake > 0:
-                        weighted_tasks_received_sum += float(vr["post_consensus_tasks_received"] or 0.0) * stake
-                        stake_sum_tasks_received += stake
-                    if vr["post_consensus_tasks_success"] is not None and stake > 0:
-                        weighted_tasks_success_sum += float(vr["post_consensus_tasks_success"] or 0.0) * stake
-                        stake_sum_tasks_success += stake
-                if stake_sum_tasks_received > 0:
-                    post_consensus_tasks_received = int(round(weighted_tasks_received_sum / stake_sum_tasks_received))
-                if stake_sum_tasks_success > 0:
-                    post_consensus_tasks_success = int(round(weighted_tasks_success_sum / stake_sum_tasks_success))
-                post_consensus_available = post_consensus_rank is not None or consensus_reward is not None
+                round_ranking_consensus = self._derive_round_ranking_consensus(validator_rows)
+                ranking_reward = round_ranking_consensus["reward"]
+                ranking_score = round_ranking_consensus["score"]
+                ranking_time = round_ranking_consensus["time"]
+                ranking_avg_cost = round_ranking_consensus["avg_cost"]
+                ranking_tasks_received = int(round(float(round_ranking_consensus["tasks_received"]))) if round_ranking_consensus["tasks_received"] is not None else None
+                ranking_tasks_success = int(round(float(round_ranking_consensus["tasks_success"]))) if round_ranking_consensus["tasks_success"] is not None else None
+                post_consensus_available = post_consensus_rank is not None or ranking_reward is not None
 
             rounds_out.append(
                 {
@@ -2114,13 +2120,22 @@ class UIAgentsRunsServiceMixin:
                     "websites_count": rd["websites_count"],
                     "post_consensus_available": post_consensus_available,
                     "consensus": {
+                        "rank": None,
+                        "reward": round_local_consensus["reward"],
+                        "score": round_local_consensus["score"],
+                        "time": round_local_consensus["time"],
+                        "tasks_received": round_local_consensus["tasks_received"],
+                        "tasks_success": round_local_consensus["tasks_success"],
+                        "avg_cost": round_local_consensus["avg_cost"],
+                    },
+                    "ranking": {
                         "rank": post_consensus_rank,
-                        "reward": consensus_reward,
-                        "score": consensus_score,
-                        "time": post_consensus_time,
-                        "tasks_received": post_consensus_tasks_received,
-                        "tasks_success": post_consensus_tasks_success,
-                        "avg_cost": post_consensus_avg_cost,
+                        "reward": ranking_reward,
+                        "score": ranking_score,
+                        "time": ranking_time,
+                        "tasks_received": ranking_tasks_received,
+                        "tasks_success": ranking_tasks_success,
+                        "avg_cost": ranking_avg_cost,
                     },
                     "validators": validators_out if round_is_finalized else [],
                 }
