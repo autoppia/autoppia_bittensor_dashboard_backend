@@ -411,3 +411,66 @@ async def get_tasks_with_solutions(
         "limit": limit,
         "totalPages": (total + limit - 1) // limit if limit > 0 else 0,
     }
+
+
+def _task_orm_to_external_dict(task_orm: TaskORM, round_row: RoundORM) -> Dict[str, Any]:
+    """Shape aligned with the `task` object in /with-solutions, plus round context."""
+    website_name = _map_website_port_to_name(task_orm.url)
+    use_case_name = "unknown"
+    if isinstance(task_orm.use_case, dict):
+        use_case_name = task_orm.use_case.get("name", "unknown")
+    elif isinstance(task_orm.use_case, str):
+        use_case_name = task_orm.use_case
+
+    return {
+        "taskId": task_orm.task_id,
+        "website": website_name,
+        "useCase": use_case_name,
+        "prompt": task_orm.prompt or "",
+        "startUrl": task_orm.url or "",
+        "requiredUrl": None,
+        "webVersion": task_orm.web_version,
+        "webProjectId": task_orm.web_project_id,
+        "specifications": dict(task_orm.specifications or {}),
+        "tests": _normalize_tests(task_orm.tests),
+        "createdAt": (task_orm.created_at.isoformat() if task_orm.created_at else None),
+        "validatorRoundId": task_orm.validator_round_id,
+        "seasonNumber": round_row.season_number,
+        "roundNumberInSeason": round_row.round_number_in_season,
+    }
+
+
+async def get_tasks_by_season(
+    session: AsyncSession,
+    season: int,
+    page: int = 1,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    List all task rows whose validator round belongs to the given season_number.
+
+    Same task_id may appear multiple times if it was used in different rounds/validators.
+    """
+    skip = max(0, (page - 1) * limit)
+
+    base_stmt = select(TaskORM, RoundORM).join(RoundORM, TaskORM.validator_round_id == RoundORM.validator_round_id).where(RoundORM.season_number == season).order_by(TaskORM.created_at.desc())
+
+    count_stmt = select(func.count()).select_from(TaskORM).join(RoundORM, TaskORM.validator_round_id == RoundORM.validator_round_id).where(RoundORM.season_number == season)
+
+    total = int(await session.scalar(count_stmt) or 0)
+
+    result = await session.execute(base_stmt.offset(skip).limit(limit))
+    rows = result.all()
+
+    tasks_out: List[Dict[str, Any]] = []
+    for task_orm, round_row in rows:
+        tasks_out.append(_task_orm_to_external_dict(task_orm, round_row))
+
+    return {
+        "season": season,
+        "tasks": tasks_out,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "totalPages": (total + limit - 1) // limit if limit > 0 else 0,
+    }

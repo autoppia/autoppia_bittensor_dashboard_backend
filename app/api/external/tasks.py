@@ -7,11 +7,28 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
-from app.services.ui.external_tasks_query import get_tasks_with_solutions
+from app.services.ui.external_tasks_query import get_tasks_by_season, get_tasks_with_solutions
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["external-tasks"])
+
+
+@router.get("/by-season")
+async def get_tasks_by_season_endpoint(
+    session: AsyncSession = Depends(get_session),
+    season: int = Query(..., ge=0, description="Season number (validator_rounds.season_number)"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """
+    List tasks for all validator rounds in a season (no solutions/evaluations).
+
+    Each row is one task record as stored per round; the same logical `taskId` may repeat
+    across different rounds or validators within the season.
+    """
+    data = await get_tasks_by_season(session=session, season=season, page=page, limit=limit)
+    return {"success": True, "data": data}
 
 
 @router.get("/with-solutions")
