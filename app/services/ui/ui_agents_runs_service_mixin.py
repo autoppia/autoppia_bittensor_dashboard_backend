@@ -157,205 +157,180 @@ class UIAgentsRunsServiceMixin:
             "tasks_success": cls._stake_weighted_average(validator_rows, "post_consensus_tasks_success"),
         }
 
-    async def get_agent_detail(self, miner_uid: int, season: Optional[int], round_in_season: Optional[int]) -> Dict[str, Any]:
-        requested_round_in_season = round_in_season
-        if season is None:
-            season = await self.get_latest_season_number()
-        if season is None:
-            raise ValueError(f"Agent {miner_uid} not found")
-        main_validator_uid = await self._get_main_validator_uid()
+    @staticmethod
+    def _best_round_sort_key(row: Dict[str, Any]) -> tuple[float, int, int]:
+        return (
+            float(row.get("reward") or 0.0),
+            -(int(row.get("rank")) if row.get("rank") is not None else 9999),
+            -(int(row.get("round_number_in_season")) if row.get("round_number_in_season") is not None else 0),
+        )
 
-        if round_in_season is None:
-            best_round_ref = (
-                (
-                    await self.session.execute(
-                        text(
-                            """
-                        SELECT
-                          s.season_number,
-                          r.round_number_in_season
-                        FROM round_validator_miners rvm
-                        JOIN rounds r ON r.round_id = rvm.round_id
-                        JOIN seasons s ON s.season_id = r.season_id
-                        WHERE rvm.miner_uid = :miner_uid
-                          AND s.season_number = :season
-                        ORDER BY
-                          CASE
-                            WHEN rvm.post_consensus_avg_reward IS NOT NULL
-                              OR rvm.post_consensus_rank IS NOT NULL
-                              OR rvm.post_consensus_tasks_received IS NOT NULL
-                            THEN 0
-                            ELSE 1
-                          END ASC,
-                          COALESCE(rvm.post_consensus_avg_reward, 0) DESC,
-                          COALESCE(rvm.post_consensus_rank, 9999) ASC,
-                          r.round_number_in_season ASC,
-                          r.round_id ASC
-                        LIMIT 1
-                        """
-                        ),
-                        {
-                            "miner_uid": miner_uid,
-                            "season": season,
-                        },
-                    )
-                )
-                .mappings()
-                .first()
-            )
-            if best_round_ref:
-                round_in_season = int(best_round_ref["round_number_in_season"])
-        if season is None or round_in_season is None:
-            raise ValueError(f"Agent {miner_uid} not found")
-
-        season_round_rows = (
+    async def _get_season_round_metric_rows(self, miner_uid: int, season: int) -> List[Dict[str, Any]]:
+        rows = (
             (
                 await self.session.execute(
                     text(
                         """
-                    WITH per_round AS (
-                      SELECT
-                        r.round_id,
-                        s.season_number,
-                        r.round_number_in_season,
-                        MIN(COALESCE(rvm.post_consensus_rank, 9999)) AS rank,
-                        CASE
-                          WHEN SUM(
+                        WITH per_round AS (
+                          SELECT
+                            r.round_id,
+                            s.season_number,
+                            r.round_number_in_season,
+                            MIN(COALESCE(rvm.post_consensus_rank, 9999)) AS rank,
+                            SUM(COALESCE(mer.total_tasks, rvm.local_tasks_received, 0))::INTEGER AS tasks_received,
+                            SUM(COALESCE(mer.success_tasks, rvm.local_tasks_success, 0))::INTEGER AS tasks_success,
                             CASE
-                              WHEN rvm.post_consensus_tasks_received IS NOT NULL AND COALESCE(rv.stake, 0) > 0
-                              THEN COALESCE(rv.stake, 0)
+                              WHEN SUM(
+                                CASE
+                                  WHEN COALESCE(mer.average_reward, rvm.local_avg_reward) IS NOT NULL
+                                       AND COALESCE(rv.stake, 0) > 0
+                                  THEN COALESCE(rv.stake, 0)
+                                  ELSE 0
+                                END
+                              ) > 0
+                              THEN SUM(COALESCE(mer.average_reward, rvm.local_avg_reward, 0) * COALESCE(rv.stake, 0))
+                                   / SUM(
+                                     CASE
+                                       WHEN COALESCE(mer.average_reward, rvm.local_avg_reward) IS NOT NULL
+                                            AND COALESCE(rv.stake, 0) > 0
+                                       THEN COALESCE(rv.stake, 0)
+                                       ELSE 0
+                                     END
+                                   )
                               ELSE 0
-                            END
-                          ) > 0
-                          THEN ROUND(
-                            SUM(COALESCE(rvm.post_consensus_tasks_received, 0) * COALESCE(rv.stake, 0))
-                            / NULLIF(SUM(
-                              CASE
-                                WHEN rvm.post_consensus_tasks_received IS NOT NULL AND COALESCE(rv.stake, 0) > 0
-                                THEN COALESCE(rv.stake, 0)
-                                ELSE 0
-                              END
-                            ), 0)
-                          )::int
-                          ELSE 0
-                        END AS tasks_received,
-                        CASE
-                          WHEN SUM(
+                            END AS reward,
                             CASE
-                              WHEN rvm.post_consensus_tasks_success IS NOT NULL AND COALESCE(rv.stake, 0) > 0
-                              THEN COALESCE(rv.stake, 0)
+                              WHEN SUM(
+                                CASE
+                                  WHEN COALESCE(mer.average_score, rvm.local_avg_eval_score) IS NOT NULL
+                                       AND COALESCE(rv.stake, 0) > 0
+                                  THEN COALESCE(rv.stake, 0)
+                                  ELSE 0
+                                END
+                              ) > 0
+                              THEN SUM(COALESCE(mer.average_score, rvm.local_avg_eval_score, 0) * COALESCE(rv.stake, 0))
+                                   / SUM(
+                                     CASE
+                                       WHEN COALESCE(mer.average_score, rvm.local_avg_eval_score) IS NOT NULL
+                                            AND COALESCE(rv.stake, 0) > 0
+                                       THEN COALESCE(rv.stake, 0)
+                                       ELSE 0
+                                     END
+                                   )
                               ELSE 0
-                            END
-                          ) > 0
-                          THEN ROUND(
-                            SUM(COALESCE(rvm.post_consensus_tasks_success, 0) * COALESCE(rv.stake, 0))
-                            / NULLIF(SUM(
-                              CASE
-                                WHEN rvm.post_consensus_tasks_success IS NOT NULL AND COALESCE(rv.stake, 0) > 0
-                                THEN COALESCE(rv.stake, 0)
-                                ELSE 0
-                              END
-                            ), 0)
-                          )::int
-                          ELSE 0
-                        END AS tasks_success,
-                        CASE
-                          WHEN SUM(
+                            END AS eval_score,
                             CASE
-                              WHEN rvm.post_consensus_avg_reward IS NOT NULL AND COALESCE(rv.stake, 0) > 0
-                              THEN COALESCE(rv.stake, 0)
+                              WHEN SUM(
+                                CASE
+                                  WHEN COALESCE(mer.average_execution_time, rvm.local_avg_eval_time) IS NOT NULL
+                                       AND COALESCE(rv.stake, 0) > 0
+                                  THEN COALESCE(rv.stake, 0)
+                                  ELSE 0
+                                END
+                              ) > 0
+                              THEN SUM(COALESCE(mer.average_execution_time, rvm.local_avg_eval_time, 0) * COALESCE(rv.stake, 0))
+                                   / SUM(
+                                     CASE
+                                       WHEN COALESCE(mer.average_execution_time, rvm.local_avg_eval_time) IS NOT NULL
+                                            AND COALESCE(rv.stake, 0) > 0
+                                       THEN COALESCE(rv.stake, 0)
+                                       ELSE 0
+                                     END
+                                   )
                               ELSE 0
-                            END
-                          ) > 0
-                          THEN SUM(COALESCE(rvm.post_consensus_avg_reward, 0) * COALESCE(rv.stake, 0))
-                               / SUM(
-                                 CASE
-                                   WHEN rvm.post_consensus_avg_reward IS NOT NULL AND COALESCE(rv.stake, 0) > 0
-                                   THEN COALESCE(rv.stake, 0)
-                                   ELSE 0
-                                 END
-                               )
-                          ELSE 0
-                        END AS reward,
-                        CASE
-                          WHEN SUM(
+                            END AS eval_time,
                             CASE
-                              WHEN rvm.post_consensus_avg_eval_score IS NOT NULL AND COALESCE(rv.stake, 0) > 0
-                              THEN COALESCE(rv.stake, 0)
-                              ELSE 0
-                            END
-                          ) > 0
-                          THEN SUM(COALESCE(rvm.post_consensus_avg_eval_score, 0) * COALESCE(rv.stake, 0))
-                               / SUM(
-                                 CASE
-                                   WHEN rvm.post_consensus_avg_eval_score IS NOT NULL AND COALESCE(rv.stake, 0) > 0
-                                   THEN COALESCE(rv.stake, 0)
-                                   ELSE 0
-                                 END
-                               )
-                          ELSE 0
-                        END AS eval_score,
-                        CASE
-                          WHEN SUM(
+                              WHEN SUM(
+                                CASE
+                                  WHEN COALESCE(mer.run_avg_cost, rvm.local_avg_eval_cost) IS NOT NULL
+                                       AND COALESCE(rv.stake, 0) > 0
+                                  THEN COALESCE(rv.stake, 0)
+                                  ELSE 0
+                                END
+                              ) > 0
+                              THEN SUM(COALESCE(mer.run_avg_cost, rvm.local_avg_eval_cost, 0) * COALESCE(rv.stake, 0))
+                                   / SUM(
+                                     CASE
+                                       WHEN COALESCE(mer.run_avg_cost, rvm.local_avg_eval_cost) IS NOT NULL
+                                            AND COALESCE(rv.stake, 0) > 0
+                                       THEN COALESCE(rv.stake, 0)
+                                       ELSE 0
+                                     END
+                                   )
+                              ELSE NULL
+                            END AS eval_cost,
                             CASE
-                              WHEN rvm.post_consensus_avg_eval_time IS NOT NULL AND COALESCE(rv.stake, 0) > 0
-                              THEN COALESCE(rv.stake, 0)
+                              WHEN SUM(
+                                CASE
+                                  WHEN rvm.post_consensus_avg_reward IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                                  THEN COALESCE(rv.stake, 0)
+                                  ELSE 0
+                                END
+                              ) > 0
+                              THEN SUM(COALESCE(rvm.post_consensus_avg_reward, 0) * COALESCE(rv.stake, 0))
+                                   / SUM(
+                                     CASE
+                                       WHEN rvm.post_consensus_avg_reward IS NOT NULL AND COALESCE(rv.stake, 0) > 0
+                                       THEN COALESCE(rv.stake, 0)
+                                       ELSE 0
+                                     END
+                                   )
                               ELSE 0
-                            END
-                          ) > 0
-                          THEN SUM(COALESCE(rvm.post_consensus_avg_eval_time, 0) * COALESCE(rv.stake, 0))
-                               / SUM(
-                                 CASE
-                                   WHEN rvm.post_consensus_avg_eval_time IS NOT NULL AND COALESCE(rv.stake, 0) > 0
-                                   THEN COALESCE(rv.stake, 0)
-                                   ELSE 0
-                                 END
-                               )
-                          ELSE 0
-                        END AS eval_time,
-                        CASE
-                          WHEN SUM(
-                            CASE
-                              WHEN rvm.post_consensus_avg_eval_cost IS NOT NULL AND COALESCE(rv.stake, 0) > 0
-                              THEN COALESCE(rv.stake, 0)
-                              ELSE 0
-                            END
-                          ) > 0
-                          THEN SUM(COALESCE(rvm.post_consensus_avg_eval_cost, 0) * COALESCE(rv.stake, 0))
-                               / SUM(
-                                 CASE
-                                   WHEN rvm.post_consensus_avg_eval_cost IS NOT NULL AND COALESCE(rv.stake, 0) > 0
-                                   THEN COALESCE(rv.stake, 0)
-                                   ELSE 0
-                                 END
-                               )
-                          ELSE NULL
-                        END AS eval_cost,
-                        MAX(rs.leader_after_reward) AS top_reward
-                      FROM round_validator_miners rvm
-                      JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
-                      JOIN rounds r ON r.round_id = rvm.round_id
-                      JOIN seasons s ON s.season_id = r.season_id
-                      LEFT JOIN round_summary rs ON rs.round_id = r.round_id
-                      WHERE rvm.miner_uid = :miner_uid
-                        AND s.season_number = :season
-                      GROUP BY r.round_id, s.season_number, r.round_number_in_season
-                    )
-                    SELECT
-                      round_id,
-                      season_number,
-                      round_number_in_season,
-                      reward,
-                      rank,
-                      eval_score,
-                      eval_time,
-                      eval_cost,
-                      tasks_received,
-                      tasks_success,
-                      top_reward
-                    FROM per_round
-                    ORDER BY round_number_in_season DESC
-                    """
+                            END AS competition_reward,
+                            MAX(rs.leader_after_reward) AS top_reward,
+                            MAX(COALESCE(rvm.subnet_price, 0)) AS subnet_price,
+                            AVG(rvm.weight) FILTER (WHERE rvm.weight IS NOT NULL) AS weight
+                          FROM round_validator_miners rvm
+                          JOIN round_validators rv ON rv.round_validator_id = rvm.round_validator_id
+                          JOIN rounds r ON r.round_id = rvm.round_id
+                          JOIN seasons s ON s.season_id = r.season_id
+                          LEFT JOIN round_summary rs ON rs.round_id = r.round_id
+                          LEFT JOIN LATERAL (
+                              SELECT
+                                mer.agent_run_id,
+                                mer.average_reward,
+                                mer.average_score,
+                                mer.average_execution_time,
+                                mer.total_tasks,
+                                mer.success_tasks,
+                                (
+                                    SELECT AVG(sub_cost.task_cost)
+                                    FROM (
+                                        SELECT e.evaluation_id, COALESCE(SUM(lu.cost), 0.0) AS task_cost
+                                        FROM evaluations e
+                                        LEFT JOIN evaluation_llm_usage lu ON lu.evaluation_id = e.evaluation_id
+                                        WHERE e.agent_run_id = mer.agent_run_id
+                                        GROUP BY e.evaluation_id
+                                    ) sub_cost
+                                ) AS run_avg_cost
+                              FROM miner_evaluation_runs mer
+                              WHERE mer.round_validator_id = rvm.round_validator_id
+                                AND mer.miner_uid = rvm.miner_uid
+                              ORDER BY mer.started_at DESC NULLS LAST, mer.created_at DESC NULLS LAST
+                              LIMIT 1
+                          ) mer ON TRUE
+                          WHERE rvm.miner_uid = :miner_uid
+                            AND s.season_number = :season
+                          GROUP BY r.round_id, s.season_number, r.round_number_in_season
+                        )
+                        SELECT
+                          round_id,
+                          season_number,
+                          round_number_in_season,
+                          reward,
+                          rank,
+                          eval_score,
+                          eval_time,
+                          eval_cost,
+                          tasks_received,
+                          tasks_success,
+                          top_reward,
+                          subnet_price,
+                          weight,
+                          competition_reward
+                        FROM per_round
+                        ORDER BY round_number_in_season DESC
+                        """
                     ),
                     {
                         "miner_uid": miner_uid,
@@ -366,7 +341,24 @@ class UIAgentsRunsServiceMixin:
             .mappings()
             .all()
         )
+        return [dict(row) for row in rows]
+
+    async def get_agent_detail(self, miner_uid: int, season: Optional[int], round_in_season: Optional[int]) -> Dict[str, Any]:
+        requested_round_in_season = round_in_season
+        if season is None:
+            season = await self.get_latest_season_number()
+        if season is None:
+            raise ValueError(f"Agent {miner_uid} not found")
+        main_validator_uid = await self._get_main_validator_uid()
+
+        season_round_rows = await self._get_season_round_metric_rows(miner_uid, season)
         if not season_round_rows:
+            raise ValueError(f"Agent {miner_uid} not found")
+
+        best_round_history_row = max(season_round_rows, key=self._best_round_sort_key)
+        if requested_round_in_season is None and best_round_history_row.get("round_number_in_season") is not None:
+            round_in_season = int(best_round_history_row["round_number_in_season"])
+        if round_in_season is None:
             raise ValueError(f"Agent {miner_uid} not found")
 
         season_rank_row = (
@@ -427,14 +419,6 @@ class UIAgentsRunsServiceMixin:
         )
         season_rank = int(season_rank_row["season_rank"]) if season_rank_row and season_rank_row.get("season_rank") is not None else None
 
-        best_round_history_row = max(
-            season_round_rows,
-            key=lambda row: (
-                float(row["reward"] or 0.0),
-                -(int(row["rank"]) if row["rank"] is not None else 9999),
-                -(int(row["round_number_in_season"]) if row["round_number_in_season"] is not None else 0),
-            ),
-        )
         best_rank_history_row = min(
             season_round_rows,
             key=lambda row: (
@@ -563,7 +547,7 @@ class UIAgentsRunsServiceMixin:
         reward = (
             float(selected_round_history_row["reward"])
             if selected_round_history_row and selected_round_history_row.get("reward") is not None
-            else float(first["post_consensus_avg_reward"] or first["best_local_reward"] or first["local_avg_reward"] or 0.0)
+            else float(first["local_avg_reward"] or first["best_local_reward"] or first["post_consensus_avg_reward"] or 0.0)
         )
         rank = (
             int(selected_round_history_row["rank"])
@@ -967,52 +951,39 @@ class UIAgentsRunsServiceMixin:
 
     async def get_miner_historical(self, miner_uid: int, season: Optional[int]) -> Dict[str, Any]:
         main_validator_uid = await self._get_main_validator_uid()
-        where = "WHERE round_validator_miners.miner_uid = :uid"
         params: Dict[str, Any] = {"uid": miner_uid, "main_validator_uid": main_validator_uid}
-        if season is not None:
-            where += " AND round_validator_miners.round_id IN (SELECT r.round_id FROM rounds r JOIN seasons s ON s.season_id=r.season_id WHERE s.season_number=:season)"
-            params["season"] = season
-        rows = (
-            (
-                await self.session.execute(
-                    text(
-                        f"""
-                    SELECT round_validator_miners.round_id AS round_id, post_consensus_rank, post_consensus_avg_reward,
-                           post_consensus_avg_eval_score, post_consensus_avg_eval_time,
-                           post_consensus_avg_eval_cost,
-                           post_consensus_tasks_received, post_consensus_tasks_success,
-                           subnet_price, weight
-                    FROM round_validator_miners
-                    {where}
-                    ORDER BY round_id DESC
-                    """
-                    ),
-                    params,
+        if season is None:
+            season_rows = (
+                (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT DISTINCT s.season_number
+                            FROM round_validator_miners rvm
+                            JOIN rounds r ON r.round_id = rvm.round_id
+                            JOIN seasons s ON s.season_id = r.season_id
+                            WHERE rvm.miner_uid = :uid
+                            ORDER BY s.season_number DESC
+                            """
+                        ),
+                        {"uid": miner_uid},
+                    )
                 )
+                .scalars()
+                .all()
             )
-            .mappings()
-            .all()
-        )
-        if not rows:
+            seasons_to_fetch = [int(s) for s in season_rows]
+        else:
+            seasons_to_fetch = [season]
+
+        round_metric_rows: List[Dict[str, Any]] = []
+        for season_number in seasons_to_fetch:
+            round_metric_rows.extend(await self._get_season_round_metric_rows(miner_uid, int(season_number)))
+        if not round_metric_rows:
             raise ValueError(f"Miner {miner_uid} not found in any round")
 
-        by_round: Dict[int, Dict[str, Any]] = {}
-        for r in rows:
-            rid = int(r["round_id"])
-            current = by_round.get(rid)
-            incoming_rank = r["post_consensus_rank"]
-            current_rank = current["post_consensus_rank"] if current else None
-            replace = current is None
-            if not replace:
-                if incoming_rank is not None and (current_rank is None or int(incoming_rank) < int(current_rank)):
-                    replace = True
-                elif incoming_rank == current_rank:
-                    replace = float(r["post_consensus_avg_reward"] or 0.0) > float(current["post_consensus_avg_reward"] or 0.0)
-            if replace:
-                by_round[rid] = dict(r)
-
         rounds_history = []
-        for r in sorted(by_round.values(), key=lambda item: int(item["round_id"]), reverse=True):
+        for r in sorted(round_metric_rows, key=lambda item: int(item["round_id"]), reverse=True):
             sr = (
                 (
                     await self.session.execute(
@@ -1069,31 +1040,21 @@ class UIAgentsRunsServiceMixin:
             rounds_history.append(
                 {
                     "round": f"{int(sr['season_number'])}/{int(sr['round_number_in_season'])}" if sr else str(int(r["round_id"])),
-                    "post_consensus_rank": r["post_consensus_rank"],
-                    "post_consensus_avg_reward": float(r["post_consensus_avg_reward"] or 0.0),
-                    "post_consensus_avg_eval_score": float(r["post_consensus_avg_eval_score"] or 0.0),
-                    "post_consensus_avg_eval_time": float(r["post_consensus_avg_eval_time"] or 0.0),
-                    "post_consensus_avg_eval_cost": (float(r["post_consensus_avg_eval_cost"]) if r["post_consensus_avg_eval_cost"] is not None else None),
-                    "tasks_received": int(r["post_consensus_tasks_received"] or 0),
-                    "tasks_success": int(r["post_consensus_tasks_success"] or 0),
-                    "tasks_failed": max(int(r["post_consensus_tasks_received"] or 0) - int(r["post_consensus_tasks_success"] or 0), 0),
-                    "is_winner": (r["post_consensus_rank"] == 1),
+                    "post_consensus_rank": r["rank"],
+                    "post_consensus_avg_reward": float(r["reward"] or 0.0),
+                    "post_consensus_avg_eval_score": float(r["eval_score"] or 0.0),
+                    "post_consensus_avg_eval_time": float(r["eval_time"] or 0.0),
+                    "post_consensus_avg_eval_cost": (float(r["eval_cost"]) if r["eval_cost"] is not None else None),
+                    "competition_reward": float(r["competition_reward"] or 0.0),
+                    "tasks_received": int(r["tasks_received"] or 0),
+                    "tasks_success": int(r["tasks_success"] or 0),
+                    "tasks_failed": max(int(r["tasks_received"] or 0) - int(r["tasks_success"] or 0), 0),
+                    "is_winner": (r["rank"] == 1),
                     "validators_count": int(sr["validators_count"] or 0) if sr else 0,
                     "websites_count": int(sr["websites_count"] or 0) if sr else 0,
-                    "post_consensus_available": any(
-                        r.get(key) is not None
-                        for key in (
-                            "post_consensus_rank",
-                            "post_consensus_avg_reward",
-                            "post_consensus_avg_eval_score",
-                            "post_consensus_avg_eval_time",
-                            "post_consensus_avg_eval_cost",
-                            "post_consensus_tasks_received",
-                            "post_consensus_tasks_success",
-                        )
-                    ),
-                    "subnet_price": subnet_price,
-                    "weight": weight,
+                    "post_consensus_available": any(r.get(key) is not None for key in ("rank", "reward", "eval_score", "eval_time", "eval_cost", "tasks_received", "tasks_success")),
+                    "subnet_price": float(r.get("subnet_price") or subnet_price),
+                    "weight": float(r.get("weight") or weight),
                     "round_epochs": round_epochs,
                     "alpha_earned": alpha_earned,
                     "tao_earned": tao_earned,
