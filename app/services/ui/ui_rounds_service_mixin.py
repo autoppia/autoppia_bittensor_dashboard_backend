@@ -125,6 +125,30 @@ class UIRoundsServiceMixin:
         summary = post_consensus_json.get("summary")
         return summary if isinstance(summary, dict) else {}
 
+    @classmethod
+    def _king_overfit_judge_summary(cls, summary: Dict[str, Any]) -> Dict[str, Any]:
+        judgements = summary.get("king_overfit_judgements")
+        if not isinstance(judgements, list):
+            judgements = []
+        rejected_uids_raw = summary.get("king_overfit_rejected_uids")
+        if not isinstance(rejected_uids_raw, list):
+            rejected_uids_raw = []
+
+        rejected_uids: List[int] = []
+        for value in rejected_uids_raw:
+            uid = cls._coerce_int(value)
+            if uid is not None:
+                rejected_uids.append(uid)
+
+        latest = judgements[-1] if judgements and isinstance(judgements[-1], dict) else None
+        return {
+            "enabled": bool(judgements or rejected_uids),
+            "judgements": judgements,
+            "rejected_uids": rejected_uids,
+            "latest": latest,
+            "rejected_count": len(set(rejected_uids)),
+        }
+
     @staticmethod
     def _post_consensus_miners(post_consensus_json: Any) -> List[Dict[str, Any]]:
         if not isinstance(post_consensus_json, dict):
@@ -969,6 +993,7 @@ class UIRoundsServiceMixin:
         row = dict(row)
         post_consensus_json = row.get("post_consensus_json")
         summary = self._post_consensus_summary(post_consensus_json)
+        king_overfit_judge = self._king_overfit_judge_summary(summary)
 
         previous_row = None
         if int(round_in_season) > 1:
@@ -1177,6 +1202,9 @@ class UIRoundsServiceMixin:
                 "leader_after_eval_score": leader_after_eval_score,
                 "leader_after_eval_time": leader_after_eval_time,
                 "leader_after_eval_cost": leader_after_eval_cost,
+                "king_overfit_judge": king_overfit_judge,
+                "king_overfit_judgements": king_overfit_judge["judgements"],
+                "king_overfit_rejected_uids": king_overfit_judge["rejected_uids"],
                 "post_consensus_json": row.get("post_consensus_json"),
             },
         }

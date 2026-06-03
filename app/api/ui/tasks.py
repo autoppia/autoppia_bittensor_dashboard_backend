@@ -196,6 +196,39 @@ async def get_task_actions(
     }
 
 
+@router.get("/{task_id}/trajectory")
+async def get_task_trajectory(
+    task_id: str,
+    session: AsyncSession = Depends(get_session),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+):
+    service = await _service(session)
+    try:
+        context = await service.get_task(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    trajectory = service.build_actions(context)
+    total = len(trajectory)
+    success_count = sum(1 for tool in trajectory if getattr(tool, "success", False))
+    fail_count = sum(1 for tool in trajectory if getattr(tool, "error", False) or not getattr(tool, "success", False))
+
+    start = (page - 1) * limit
+    end = start + limit
+    paginated = trajectory[start:end]
+    return {
+        "success": True,
+        "data": {
+            "trajectory": [tool.model_dump() for tool in paginated],
+            "toolsCount": total,
+            "successCount": success_count,
+            "failCount": fail_count,
+            "page": page,
+            "limit": limit,
+        },
+    }
+
+
 @router.get("/{task_id}/screenshots")
 async def get_task_screenshots(task_id: str, session: AsyncSession = Depends(get_session)):
     service = await _service(session)

@@ -192,6 +192,41 @@ async def get_evaluation_actions(
     }
 
 
+@router.get("/{evaluation_id}/trajectory")
+async def get_evaluation_trajectory(
+    evaluation_id: str,
+    session: AsyncSession = Depends(get_session),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Get submitted trajectory tools for an evaluation."""
+    service = await _service(session)
+    try:
+        task_context = await service.get_task_by_evaluation_id(evaluation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    trajectory = service.build_actions(task_context)
+    total = len(trajectory)
+    success_count = sum(1 for tool in trajectory if getattr(tool, "success", False))
+    fail_count = sum(1 for tool in trajectory if getattr(tool, "error", False) or not getattr(tool, "success", False))
+
+    start = (page - 1) * limit
+    end = start + limit
+    paginated = trajectory[start:end]
+    return {
+        "success": True,
+        "data": {
+            "trajectory": [tool.model_dump() for tool in paginated],
+            "toolsCount": total,
+            "successCount": success_count,
+            "failCount": fail_count,
+            "page": page,
+            "limit": limit,
+        },
+    }
+
+
 @router.get("/{evaluation_id}/screenshots")
 async def get_evaluation_screenshots(
     evaluation_id: str,

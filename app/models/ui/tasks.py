@@ -133,6 +133,8 @@ class Task(BaseModel):
     createdAt: datetime = Field(..., description="Task creation time")
     updatedAt: datetime = Field(..., description="Last update time")
     actions: Optional[List[TaskAction]] = Field(None, description="List of task actions")
+    trajectory: Optional[List[TaskAction]] = Field(None, description="Submitted trajectory tools; alias of actions for the harvester protocol")
+    replayExecutionHistory: Optional[List[Any]] = Field(None, description="Execution history captured while replaying the submitted trajectory")
     screenshots: Optional[List[str]] = Field(None, description="List of screenshot filenames")
     logs: Optional[List[str]] = Field(None, description="List of log messages")
     metadata: Optional[TaskMetadata] = Field(None, description="Task metadata")
@@ -225,6 +227,7 @@ class TaskSolutionSummary(BaseModel):
     minerUid: Optional[int] = Field(None, description="Miner UID that submitted the solution")
     validatorUid: int = Field(..., description="Validator UID overseeing the solution")
     actionsCount: int = Field(..., description="Number of actions in the solution")
+    trajectoryToolsCount: int = Field(..., description="Number of tools in the submitted trajectory")
     webAgentId: Optional[str] = Field(None, description="Web agent identifier used during execution")
 
 

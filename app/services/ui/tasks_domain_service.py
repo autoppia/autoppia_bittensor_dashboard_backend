@@ -707,6 +707,8 @@ class TasksDomainServiceMixin:
                     createdAt=task_row.created_at,
                     updatedAt=task_row.updated_at,
                     actions=None,
+                    trajectory=None,
+                    replayExecutionHistory=None,
                     screenshots=None,
                     logs=None,
                     metadata=None,
@@ -1184,6 +1186,7 @@ class TasksDomainServiceMixin:
                 minerUid=context.solution.miner_uid,
                 validatorUid=context.solution.validator_uid,
                 actionsCount=len(context.solution.actions or []),
+                trajectoryToolsCount=len(context.solution.actions or []),
             )
 
         relationships = TaskRelationships(
@@ -1196,6 +1199,8 @@ class TasksDomainServiceMixin:
         )
 
         task_payload = task.model_dump()
+        task_payload["trajectory"] = task_payload.get("actions")
+        task_payload["replayExecutionHistory"] = list(getattr(context.evaluation, "execution_history", []) or []) if context.evaluation else []
         task_payload["performance"] = performance
         task_payload["metadata"] = metadata
         task_payload["relationships"] = relationships
@@ -1801,6 +1806,8 @@ class TasksDomainServiceMixin:
             createdAt=_parse_iso(start_time),
             updatedAt=_parse_iso(end_time),
             actions=actions,
+            trajectory=actions,
+            replayExecutionHistory=list(getattr(evaluation, "execution_history", []) or []) if evaluation else [],
             screenshots=[],
             logs=[],
             metadata=None,
@@ -2013,6 +2020,8 @@ class TasksDomainServiceMixin:
 
         return {
             "actions": [action.model_dump() for action in actions],
+            "trajectory": [action.model_dump() for action in actions],
+            "replayExecutionHistory": list(getattr(context.evaluation, "execution_history", []) or []) if context.evaluation else [],
             "screenshots": [shot.model_dump() for shot in screenshots],
             "task_details": task_details,
             "result": results,
