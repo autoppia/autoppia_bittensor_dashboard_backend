@@ -101,6 +101,7 @@ logs/
 
 # Exported tasks/output
 output/
+data/
 
 # Database backups
 *.dump

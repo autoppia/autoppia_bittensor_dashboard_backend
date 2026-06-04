@@ -300,26 +300,8 @@ def main():
             time_until_next = METAGRAPH_CACHE_TTL - (age_minutes * 60)
             logger.info(f"⏭️  Existing data is fresh, next update in {time_until_next / 60:.1f} minutes")
 
-    # Perform initial update if needed
-    if should_update_immediately:
-        logger.info("🔄 Performing initial metagraph update...")
-        perform_metagraph_update()
-
-    # Prime price/block only if cache is stale or missing.
-    try:
-        last_price_update_cached = redis_cache.get(REDIS_KEY_PRICE_LAST_UPDATE)
-        price_age = (time.time() - float(last_price_update_cached)) if last_price_update_cached is not None else None
-        if price_age is None or price_age >= PRICE_UPDATE_INTERVAL:
-            logger.info("💰 Performing initial price update...")
-            fetch_and_cache_price()
-        else:
-            logger.info(
-                "⏭️  Skipping initial price update (fresh cache: %.1fs old)",
-                price_age,
-            )
-    except Exception as exc:  # noqa: BLE001
-        logger.error(f"Failed initial price update check: {exc}")
-
+    # Prime block first so validator ingestion is not blocked by a slow
+    # metagraph refresh on startup.
     try:
         last_block_update_cached = redis_cache.get(REDIS_KEY_BLOCK_LAST_UPDATE)
         block_age = (time.time() - float(last_block_update_cached)) if last_block_update_cached is not None else None
@@ -333,6 +315,26 @@ def main():
             )
     except Exception as exc:  # noqa: BLE001
         logger.error(f"Failed initial block update check: {exc}")
+
+    # Perform initial metagraph update if needed.
+    if should_update_immediately:
+        logger.info("🔄 Performing initial metagraph update...")
+        perform_metagraph_update()
+
+    # Prime price only if cache is stale or missing.
+    try:
+        last_price_update_cached = redis_cache.get(REDIS_KEY_PRICE_LAST_UPDATE)
+        price_age = (time.time() - float(last_price_update_cached)) if last_price_update_cached is not None else None
+        if price_age is None or price_age >= PRICE_UPDATE_INTERVAL:
+            logger.info("💰 Performing initial price update...")
+            fetch_and_cache_price()
+        else:
+            logger.info(
+                "⏭️  Skipping initial price update (fresh cache: %.1fs old)",
+                price_age,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"Failed initial price update check: {exc}")
 
     # Initialize counters and timestamps
     metagraph_update_count = 0
