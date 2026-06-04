@@ -71,6 +71,14 @@ def _env_var(base_name: str, default: Any = None) -> Any:
     return default
 
 
+def _parse_csv_env(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
 class Settings(BaseSettings):
     APP_NAME: str = os.getenv("APP_NAME", "Autoppia Leaderboard API")
     API_V1_PREFIX: str = "/api/v1"
@@ -211,9 +219,12 @@ class Settings(BaseSettings):
 
     # CORS Configuration
     # Prefer explicit origins to support credentials; fallback to wildcard in local env
-    CORS_ORIGINS: list[str] = [
+    CORS_ORIGINS: list[str] = _parse_csv_env(_env_var("CORS_ORIGINS")) or [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:3011",
+        "http://127.0.0.1:3011",
+        "http://207.180.245.67:3011",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "https://dev-infinitewebarena.autoppia.com",
