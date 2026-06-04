@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Optional
@@ -59,6 +60,28 @@ def _task_log_prefix() -> str:
 
 def _validator_round_log_prefix() -> str:
     return settings.AWS_S3_VALIDATOR_ROUND_LOG_PREFIX.strip("/")
+
+
+def _local_artifacts_dir() -> Path:
+    base = Path(settings.LOCAL_ARTIFACTS_DIR)
+    if not base.is_absolute():
+        base = Path(__file__).resolve().parents[2] / base
+    return base
+
+
+def _local_public_prefix() -> str:
+    return settings.LOCAL_ARTIFACTS_PUBLIC_PATH.strip("/") or "artifacts"
+
+
+def _local_key(object_key: str) -> str:
+    return f"{_local_public_prefix()}/{object_key.lstrip('/')}"
+
+
+async def _write_local_artifact(object_key: str, data: bytes) -> str:
+    path = _local_artifacts_dir() / object_key.lstrip("/")
+    await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+    await asyncio.to_thread(path.write_bytes, data)
+    return _local_key(object_key)
 
 
 def build_gif_key(evaluation_id: str) -> str:
@@ -118,9 +141,15 @@ def build_validator_round_log_key(
 def build_public_url(object_key: str) -> str:
     """Construct the public URL for an object key."""
     normalized = object_key.lstrip("/")
+    if normalized.startswith(f"{_local_public_prefix()}/"):
+        return f"/{normalized}"
+
     public_base = settings.AWS_S3_PUBLIC_BASE_URL or settings.ASSET_BASE_URL
     if public_base:
         return f"{public_base.rstrip('/')}/{normalized}"
+
+    if not settings.AWS_S3_BUCKET:
+        return f"/{_local_key(normalized)}"
 
     bucket = settings.AWS_S3_BUCKET
     region = settings.AWS_REGION or "us-east-1"
@@ -132,9 +161,12 @@ def build_public_url(object_key: str) -> str:
 
 
 async def store_gif(evaluation_id: str, data: bytes) -> str:
-    """Upload GIF bytes to S3 and return the object key."""
-    client = get_s3_client()
     object_key = build_gif_key(evaluation_id)
+    if not settings.AWS_S3_BUCKET:
+        logger.debug("Storing evaluation %s GIF in local artifacts at %s", evaluation_id, object_key)
+        return await _write_local_artifact(object_key, data)
+
+    client = get_s3_client()
     bucket = settings.AWS_S3_BUCKET
 
     logger.debug("Uploading evaluation %s GIF to s3://%s/%s", evaluation_id, bucket, object_key)
@@ -158,8 +190,7 @@ async def store_task_log(
     round_in_season: Optional[int] = None,
     validator_round_id: Optional[str] = None,
 ) -> str:
-    """Upload a gzipped JSON task log to S3 and return the object key."""
-    client = get_s3_client()
+    """Store a gzipped JSON task log and return the object key."""
     object_key = build_task_log_key(
         task_id,
         agent_run_id,
@@ -167,6 +198,11 @@ async def store_task_log(
         round_in_season=round_in_season,
         validator_round_id=validator_round_id,
     )
+    if not settings.AWS_S3_BUCKET:
+        logger.debug("Storing task log for task %s in local artifacts at %s", task_id, object_key)
+        return await _write_local_artifact(object_key, data)
+
+    client = get_s3_client()
     bucket = settings.AWS_S3_BUCKET
     timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -199,8 +235,7 @@ async def store_validator_round_log(
     validator_uid: Optional[int] = None,
     validator_hotkey: Optional[str] = None,
 ) -> str:
-    """Upload a raw validator-round log dump to S3 and return the object key."""
-    client = get_s3_client()
+    """Store a raw validator-round log dump and return the object key."""
     object_key = build_validator_round_log_key(
         validator_round_id,
         season=season,
@@ -208,6 +243,11 @@ async def store_validator_round_log(
         validator_uid=validator_uid,
         validator_hotkey=validator_hotkey,
     )
+    if not settings.AWS_S3_BUCKET:
+        logger.debug("Storing round log for %s in local artifacts at %s", validator_round_id, object_key)
+        return await _write_local_artifact(object_key, data)
+
+    client = get_s3_client()
     bucket = settings.AWS_S3_BUCKET
     timestamp = datetime.now(timezone.utc).isoformat()
 

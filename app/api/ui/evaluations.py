@@ -379,7 +379,10 @@ async def upload_evaluation_gif(
     try:
         logger.info("Storing GIF for evaluation %s", evaluation_id)
         object_key = await store_gif(evaluation_id, file_data)
-    except (GifStorageConfigError, BotoCoreError, ClientError) as exc:
+    except GifStorageConfigError as exc:
+        logger.error("Failed to store GIF for %s: %s", evaluation_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to store GIF image") from exc
+    except (BotoCoreError, ClientError) as exc:
         logger.error("Failed to upload GIF for %s: %s", evaluation_id, exc)
         raise HTTPException(status_code=500, detail="Failed to store GIF image") from exc
 

@@ -89,6 +89,9 @@ if settings.LOG_REQUEST_BODY or settings.LOG_RESPONSE_BODY:
 
 # Static files
 images_path = os.path.join(os.path.dirname(__file__), "..", "images")
+artifacts_path = settings.LOCAL_ARTIFACTS_DIR
+if not os.path.isabs(artifacts_path):
+    artifacts_path = os.path.join(os.path.dirname(__file__), "..", artifacts_path)
 try:
     os.makedirs(images_path, exist_ok=True)
 except OSError as exc:
@@ -96,6 +99,14 @@ except OSError as exc:
 else:
     app.mount("/images", StaticFiles(directory=images_path), name="images")
     logger.info(f"Mounted static files from {images_path}")
+
+try:
+    os.makedirs(artifacts_path, exist_ok=True)
+except OSError as exc:
+    logger.warning(f"Unable to prepare artifacts directory at {artifacts_path}: {exc}")
+else:
+    app.mount(settings.LOCAL_ARTIFACTS_PUBLIC_PATH, StaticFiles(directory=artifacts_path), name="artifacts")
+    logger.info(f"Mounted local artifacts from {artifacts_path}")
 
 
 # Request logging (compact)

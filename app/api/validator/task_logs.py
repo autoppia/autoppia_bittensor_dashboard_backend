@@ -180,11 +180,16 @@ async def upload_task_execution_log(
             validator_round_id=request.validator_round_id,
         )
     except GifStorageConfigError as exc:
-        logger.error("Task log upload failed (S3 not configured): %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="S3 not configured for task logs",
-        ) from exc
+        logger.warning("Task log upload skipped because S3 is not configured: %s", exc)
+        return TaskExecutionLogUploadResponse(
+            success=True,
+            data={
+                "objectKey": None,
+                "url": None,
+                "payloadBytes": raw_size,
+                "storage": "disabled",
+            },
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error("Task log upload failed: %s", exc)
         raise HTTPException(

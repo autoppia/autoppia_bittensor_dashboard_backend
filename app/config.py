@@ -159,13 +159,15 @@ class Settings(BaseSettings):
     AWS_S3_TASK_LOG_PREFIX: str = _env_var("AWS_S3_TASK_LOG_PREFIX", "task-solutions-logs")
     AWS_S3_VALIDATOR_ROUND_LOG_PREFIX: str = _env_var("AWS_S3_VALIDATOR_ROUND_LOG_PREFIX", "validator-round-logs")
     AWS_S3_PUBLIC_BASE_URL: Optional[str] = _env_var("AWS_S3_PUBLIC_BASE_URL", "")
+    LOCAL_ARTIFACTS_DIR: str = _env_var("LOCAL_ARTIFACTS_DIR", "data/artifacts")
+    LOCAL_ARTIFACTS_PUBLIC_PATH: str = _env_var("LOCAL_ARTIFACTS_PUBLIC_PATH", "/artifacts")
 
     # Authentication
     # Reads from .env with environment suffix:
     # MIN_VALIDATOR_STAKE_LOCAL, AUTH_DISABLED_LOCAL, etc.
     VALIDATOR_AUTH_MESSAGE: str = "I am a honest validator"
     MIN_VALIDATOR_STAKE: float = float(_env_var("MIN_VALIDATOR_STAKE", "0.0"))
-    VALIDATOR_NETUID: int = 36
+    VALIDATOR_NETUID: int = int(_env_var("VALIDATOR_NETUID", "36"))
     SUBTENSOR_NETWORK: Optional[str] = os.getenv("SUBTENSOR_NETWORK")
     # Back-compat / alias envs (preferred names many users expect)
     BITTENSOR_NETWORK: Optional[str] = os.getenv("BITTENSOR_NETWORK")

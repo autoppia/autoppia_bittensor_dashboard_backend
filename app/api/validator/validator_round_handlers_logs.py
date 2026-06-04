@@ -66,11 +66,19 @@ async def upload_round_log(
             validator_hotkey=payload.validator_hotkey,
         )
     except GifStorageConfigError as exc:
-        logger.error("Round log upload failed (S3 not configured): %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="S3 not configured for round log uploads",
-        ) from exc
+        logger.warning("Round log upload skipped because S3 is not configured: %s", exc)
+        return ValidatorRoundLogUploadResponse(
+            success=True,
+            data={
+                "objectKey": None,
+                "url": None,
+                "payloadBytes": len(data),
+                "validator_round_id": validator_round_id,
+                "validator_uid": payload.validator_uid,
+                "validator_hotkey": payload.validator_hotkey,
+                "storage": "disabled",
+            },
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error("Round log upload failed: %s", exc)
         raise HTTPException(
